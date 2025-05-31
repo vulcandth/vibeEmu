@@ -1119,6 +1119,631 @@ impl Cpu {
         self.ime = true;
         self.pc = self.pc.wrapping_add(1);
     }
+
+    // Jump Instructions
+    // JP nn (0xC3)
+    pub fn jp_nn(&mut self, addr_lo: u8, addr_hi: u8) {
+        let address = ((addr_hi as u16) << 8) | (addr_lo as u16);
+        self.pc = address;
+        // No flags are affected by this instruction.
+    }
+
+    // JP HL (0xE9)
+    pub fn jp_hl(&mut self) {
+        let address = ((self.h as u16) << 8) | (self.l as u16);
+        self.pc = address;
+        // No flags are affected by this instruction.
+    }
+
+    // JP cc, nn (0xC2, 0xCA, 0xD2, 0xDA)
+    // Helper function for conditional jumps
+    fn jp_cc_nn(&mut self, condition: bool, addr_lo: u8, addr_hi: u8) {
+        if condition {
+            let address = ((addr_hi as u16) << 8) | (addr_lo as u16);
+            self.pc = address;
+        } else {
+            self.pc = self.pc.wrapping_add(3); // Skip opcode and 2-byte operand
+        }
+        // No flags are affected by this instruction.
+    }
+
+    pub fn jp_nz_nn(&mut self, addr_lo: u8, addr_hi: u8) {
+        let condition = !self.is_flag_z();
+        self.jp_cc_nn(condition, addr_lo, addr_hi);
+    }
+
+    pub fn jp_z_nn(&mut self, addr_lo: u8, addr_hi: u8) {
+        let condition = self.is_flag_z();
+        self.jp_cc_nn(condition, addr_lo, addr_hi);
+    }
+
+    pub fn jp_nc_nn(&mut self, addr_lo: u8, addr_hi: u8) {
+        let condition = !self.is_flag_c();
+        self.jp_cc_nn(condition, addr_lo, addr_hi);
+    }
+
+    pub fn jp_c_nn(&mut self, addr_lo: u8, addr_hi: u8) {
+        let condition = self.is_flag_c();
+        self.jp_cc_nn(condition, addr_lo, addr_hi);
+    }
+
+    // JR d8 (0x18)
+    pub fn jr_e8(&mut self, offset: u8) {
+        let current_pc_val = self.pc; // PC at the JR opcode itself
+        let pc_after_instruction = current_pc_val.wrapping_add(2);
+        let signed_offset = offset as i8;
+        self.pc = pc_after_instruction.wrapping_add(signed_offset as i16 as u16);
+        // No flags are affected
+    }
+
+    // JR cc, d8 helper
+    fn jr_cc_e8(&mut self, condition: bool, offset: u8) {
+        if condition {
+            // If condition met, PC is relative to the instruction *after* JR cc, d8
+            // JR cc, d8 is 2 bytes. So PC at JR + 2, then add offset.
+            let current_pc_val = self.pc;
+            let pc_after_instruction = current_pc_val.wrapping_add(2);
+            let signed_offset = offset as i8;
+            self.pc = pc_after_instruction.wrapping_add(signed_offset as i16 as u16);
+        } else {
+            // If condition not met, just skip the 2-byte JR instruction
+            self.pc = self.pc.wrapping_add(2);
+        }
+        // No flags are affected
+    }
+
+    // JR NZ, d8 (0x20)
+    pub fn jr_nz_e8(&mut self, offset: u8) {
+        let condition = !self.is_flag_z();
+        self.jr_cc_e8(condition, offset);
+    }
+
+    // JR Z, d8 (0x28)
+    pub fn jr_z_e8(&mut self, offset: u8) {
+        let condition = self.is_flag_z();
+        self.jr_cc_e8(condition, offset);
+    }
+
+    // JR NC, d8 (0x30)
+    pub fn jr_nc_e8(&mut self, offset: u8) {
+        let condition = !self.is_flag_c();
+        self.jr_cc_e8(condition, offset);
+    }
+
+    // JR C, d8 (0x38)
+    pub fn jr_c_e8(&mut self, offset: u8) {
+        let condition = self.is_flag_c();
+        self.jr_cc_e8(condition, offset);
+    }
+
+    // CALL nn (0xCD)
+    pub fn call_nn(&mut self, addr_lo: u8, addr_hi: u8) {
+        // CALL is a 3-byte instruction. Return address is PC + 3.
+        let return_addr = self.pc.wrapping_add(3);
+
+        // Push return address onto stack
+        self.sp = self.sp.wrapping_sub(1);
+        self.memory[self.sp as usize] = (return_addr >> 8) as u8; // High byte
+        self.sp = self.sp.wrapping_sub(1);
+        self.memory[self.sp as usize] = (return_addr & 0xFF) as u8; // Low byte
+
+        // Jump to the new address
+        let call_address = ((addr_hi as u16) << 8) | (addr_lo as u16);
+        self.pc = call_address;
+        // No flags are affected by this instruction.
+    }
+
+    // CALL cc, nn (0xC4, 0xCC, 0xD4, 0xDC)
+    // Helper function for conditional calls
+    fn call_cc_nn(&mut self, condition: bool, addr_lo: u8, addr_hi: u8) {
+        if condition {
+            // Condition met: Perform the call
+            let return_addr = self.pc.wrapping_add(3); // Return address is after the 3-byte CALL instruction
+
+            self.sp = self.sp.wrapping_sub(1);
+            self.memory[self.sp as usize] = (return_addr >> 8) as u8; // Push high byte of return address
+            self.sp = self.sp.wrapping_sub(1);
+            self.memory[self.sp as usize] = (return_addr & 0xFF) as u8; // Push low byte of return address
+
+            let call_address = ((addr_hi as u16) << 8) | (addr_lo as u16);
+            self.pc = call_address;
+        } else {
+            // Condition not met: Skip the call and the 2-byte operand
+            self.pc = self.pc.wrapping_add(3);
+        }
+        // No flags are affected by this instruction.
+    }
+
+    pub fn call_nz_nn(&mut self, addr_lo: u8, addr_hi: u8) {
+        let condition = !self.is_flag_z();
+        self.call_cc_nn(condition, addr_lo, addr_hi);
+    }
+
+    pub fn call_z_nn(&mut self, addr_lo: u8, addr_hi: u8) {
+        let condition = self.is_flag_z();
+        self.call_cc_nn(condition, addr_lo, addr_hi);
+    }
+
+    pub fn call_nc_nn(&mut self, addr_lo: u8, addr_hi: u8) {
+        let condition = !self.is_flag_c();
+        self.call_cc_nn(condition, addr_lo, addr_hi);
+    }
+
+    pub fn call_c_nn(&mut self, addr_lo: u8, addr_hi: u8) {
+        let condition = self.is_flag_c();
+        self.call_cc_nn(condition, addr_lo, addr_hi);
+    }
+
+    // RET (0xC9)
+    pub fn ret(&mut self) {
+        let pc_lo = self.memory[self.sp as usize] as u16;
+        self.sp = self.sp.wrapping_add(1);
+        let pc_hi = self.memory[self.sp as usize] as u16;
+        self.sp = self.sp.wrapping_add(1);
+        self.pc = (pc_hi << 8) | pc_lo;
+        // No flags are affected.
+    }
+
+    // RET cc (0xC0, 0xC8, 0xD0, 0xD8)
+    // Helper function for conditional returns
+    fn ret_cc(&mut self, condition: bool) {
+        if condition {
+            // Condition met: Perform the return
+            let pc_lo = self.memory[self.sp as usize] as u16;
+            self.sp = self.sp.wrapping_add(1);
+            let pc_hi = self.memory[self.sp as usize] as u16;
+            self.sp = self.sp.wrapping_add(1);
+            self.pc = (pc_hi << 8) | pc_lo;
+        } else {
+            // Condition not met: Skip the return, just increment PC for the RET cc opcode
+            self.pc = self.pc.wrapping_add(1);
+        }
+        // No flags are affected.
+    }
+
+    pub fn ret_nz(&mut self) {
+        let condition = !self.is_flag_z();
+        self.ret_cc(condition);
+    }
+
+    pub fn ret_z(&mut self) {
+        let condition = self.is_flag_z();
+        self.ret_cc(condition);
+    }
+
+    pub fn ret_nc(&mut self) {
+        let condition = !self.is_flag_c();
+        self.ret_cc(condition);
+    }
+
+    pub fn ret_c(&mut self) {
+        let condition = self.is_flag_c();
+        self.ret_cc(condition);
+    }
+
+    // RETI (0xD9)
+    pub fn reti(&mut self) {
+        // Pop return address from stack
+        let pc_lo = self.memory[self.sp as usize] as u16;
+        self.sp = self.sp.wrapping_add(1);
+        let pc_hi = self.memory[self.sp as usize] as u16;
+        self.sp = self.sp.wrapping_add(1);
+        self.pc = (pc_hi << 8) | pc_lo;
+
+        // Enable interrupts
+        self.ime = true;
+        // Other flags are not affected.
+    }
+
+    // RST n (0xC7, 0xCF, 0xD7, 0xDF, 0xE7, 0xEF, 0xF7, 0xFF)
+    // Helper function for RST instructions
+    fn rst_n(&mut self, target_addr: u16) {
+        // RST is a 1-byte instruction. Return address is PC + 1.
+        let return_addr = self.pc.wrapping_add(1);
+
+        // Push return address onto stack
+        self.sp = self.sp.wrapping_sub(1);
+        self.memory[self.sp as usize] = (return_addr >> 8) as u8; // High byte
+        self.sp = self.sp.wrapping_sub(1);
+        self.memory[self.sp as usize] = (return_addr & 0xFF) as u8; // Low byte
+
+        // Jump to the target address
+        self.pc = target_addr;
+        // No flags are affected by this instruction.
+    }
+
+    pub fn rst_00h(&mut self) { self.rst_n(0x0000); }
+    pub fn rst_08h(&mut self) { self.rst_n(0x0008); }
+    pub fn rst_10h(&mut self) { self.rst_n(0x0010); }
+    pub fn rst_18h(&mut self) { self.rst_n(0x0018); }
+    pub fn rst_20h(&mut self) { self.rst_n(0x0020); }
+    pub fn rst_28h(&mut self) { self.rst_n(0x0028); }
+    pub fn rst_30h(&mut self) { self.rst_n(0x0030); }
+    pub fn rst_38h(&mut self) { self.rst_n(0x0038); }
+
+    // CB-prefixed instructions
+    // Helper for RLC operation, updates flags and returns new value
+    fn rlc_val(&mut self, value: u8) -> u8 {
+        let carry = (value >> 7) & 1;
+        let result = (value << 1) | carry;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(carry == 1);
+        result
+    }
+
+    // Helper for RRC operation
+    fn rrc_val(&mut self, value: u8) -> u8 {
+        let carry = value & 1;
+        let result = (value >> 1) | (carry << 7);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(carry == 1);
+        result
+    }
+
+    // Helper for RL operation
+    fn rl_val(&mut self, value: u8) -> u8 {
+        let old_carry = self.is_flag_c();
+        let new_carry_val = (value >> 7) & 1;
+        let result = (value << 1) | (if old_carry { 1 } else { 0 });
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(new_carry_val == 1);
+        result
+    }
+
+    // Helper for RR operation
+    fn rr_val(&mut self, value: u8) -> u8 {
+        let old_carry = self.is_flag_c();
+        let new_carry_val = value & 1;
+        let result = (value >> 1) | (if old_carry { 1 << 7 } else { 0 });
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(new_carry_val == 1);
+        result
+    }
+
+    // Helper for SLA operation
+    fn sla_val(&mut self, value: u8) -> u8 {
+        let carry = (value >> 7) & 1;
+        let result = value << 1; // Bit 0 is shifted to 0
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(carry == 1);
+        result
+    }
+
+    // Helper for SRA operation
+    fn sra_val(&mut self, value: u8) -> u8 {
+        let carry = value & 1;
+        let result = (value >> 1) | (value & 0x80); // Bit 7 remains unchanged
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(carry == 1);
+        result
+    }
+
+    // Helper for SWAP operation
+    fn swap_val(&mut self, value: u8) -> u8 {
+        let result = (value << 4) | (value >> 4);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(false); // SWAP always clears Carry
+        result
+    }
+
+    // Helper for SRL operation
+    fn srl_val(&mut self, value: u8) -> u8 {
+        let carry = value & 1;
+        let result = value >> 1; // Bit 7 is shifted to 0
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(carry == 1);
+        result
+    }
+
+    // --- CB Prefixed: Bit Operations ---
+    // BIT b, r / BIT b, (HL)
+    // Action: Test bit `b` of register `r` or memory value at `(HL)`.
+    // Flags: Z (set if bit `b` is 0), N=0, H=1, C (not affected).
+    fn exec_bit_op(&mut self, bit_idx: u8, value: u8) {
+        let bit_is_zero = (value >> bit_idx) & 1 == 0;
+        self.set_flag_z(bit_is_zero);
+        self.set_flag_n(false);
+        self.set_flag_h(true);
+        // C flag is not affected by BIT operations
+    }
+
+    // RES b, r / RES b, (HL)
+    // Action: Reset bit `b` of register `r` or memory value at `(HL)` to 0.
+    // Flags: Not affected.
+    fn exec_res_op(&mut self, bit_idx: u8, value: u8) -> u8 {
+        value & !(1 << bit_idx)
+        // Flags are not affected by RES operations
+    }
+
+    // SET b, r / SET b, (HL)
+    // Action: Set bit `b` of register `r` or memory value at `(HL)` to 1.
+    // Flags: Not affected.
+    fn exec_set_op(&mut self, bit_idx: u8, value: u8) -> u8 {
+        value | (1 << bit_idx)
+        // Flags are not affected by SET operations
+    }
+
+    // RLC r8 instructions
+    fn rlc_b_cb(&mut self) { self.b = self.rlc_val(self.b); }
+    fn rlc_c_cb(&mut self) { self.c = self.rlc_val(self.c); }
+    fn rlc_d_cb(&mut self) { self.d = self.rlc_val(self.d); }
+    fn rlc_e_cb(&mut self) { self.e = self.rlc_val(self.e); }
+    fn rlc_h_cb(&mut self) { self.h = self.rlc_val(self.h); }
+    fn rlc_l_cb(&mut self) { self.l = self.rlc_val(self.l); }
+    fn rlc_a_cb(&mut self) { self.a = self.rlc_val(self.a); }
+    fn rlc_hl_mem_cb(&mut self) {
+        let value = self.read_hl_mem();
+        let result = self.rlc_val(value);
+        self.write_hl_mem(result);
+    }
+
+    // RRC r8 instructions
+    fn rrc_b_cb(&mut self) { self.b = self.rrc_val(self.b); }
+    fn rrc_c_cb(&mut self) { self.c = self.rrc_val(self.c); }
+    fn rrc_d_cb(&mut self) { self.d = self.rrc_val(self.d); }
+    fn rrc_e_cb(&mut self) { self.e = self.rrc_val(self.e); }
+    fn rrc_h_cb(&mut self) { self.h = self.rrc_val(self.h); }
+    fn rrc_l_cb(&mut self) { self.l = self.rrc_val(self.l); }
+    fn rrc_a_cb(&mut self) { self.a = self.rrc_val(self.a); }
+    fn rrc_hl_mem_cb(&mut self) {
+        let value = self.read_hl_mem();
+        let result = self.rrc_val(value);
+        self.write_hl_mem(result);
+    }
+
+    // RL r8 instructions
+    fn rl_b_cb(&mut self) { self.b = self.rl_val(self.b); }
+    fn rl_c_cb(&mut self) { self.c = self.rl_val(self.c); }
+    fn rl_d_cb(&mut self) { self.d = self.rl_val(self.d); }
+    fn rl_e_cb(&mut self) { self.e = self.rl_val(self.e); }
+    fn rl_h_cb(&mut self) { self.h = self.rl_val(self.h); }
+    fn rl_l_cb(&mut self) { self.l = self.rl_val(self.l); }
+    fn rl_a_cb(&mut self) { self.a = self.rl_val(self.a); }
+    fn rl_hl_mem_cb(&mut self) {
+        let value = self.read_hl_mem();
+        let result = self.rl_val(value);
+        self.write_hl_mem(result);
+    }
+
+    // RR r8 instructions
+    fn rr_b_cb(&mut self) { self.b = self.rr_val(self.b); }
+    fn rr_c_cb(&mut self) { self.c = self.rr_val(self.c); }
+    fn rr_d_cb(&mut self) { self.d = self.rr_val(self.d); }
+    fn rr_e_cb(&mut self) { self.e = self.rr_val(self.e); }
+    fn rr_h_cb(&mut self) { self.h = self.rr_val(self.h); }
+    fn rr_l_cb(&mut self) { self.l = self.rr_val(self.l); }
+    fn rr_a_cb(&mut self) { self.a = self.rr_val(self.a); }
+    fn rr_hl_mem_cb(&mut self) {
+        let value = self.read_hl_mem();
+        let result = self.rr_val(value);
+        self.write_hl_mem(result);
+    }
+
+    // SLA r8 instructions
+    fn sla_b_cb(&mut self) { self.b = self.sla_val(self.b); }
+    fn sla_c_cb(&mut self) { self.c = self.sla_val(self.c); }
+    fn sla_d_cb(&mut self) { self.d = self.sla_val(self.d); }
+    fn sla_e_cb(&mut self) { self.e = self.sla_val(self.e); }
+    fn sla_h_cb(&mut self) { self.h = self.sla_val(self.h); }
+    fn sla_l_cb(&mut self) { self.l = self.sla_val(self.l); }
+    fn sla_a_cb(&mut self) { self.a = self.sla_val(self.a); }
+    fn sla_hl_mem_cb(&mut self) {
+        let value = self.read_hl_mem();
+        let result = self.sla_val(value);
+        self.write_hl_mem(result);
+    }
+
+    // SRA r8 instructions
+    fn sra_b_cb(&mut self) { self.b = self.sra_val(self.b); }
+    fn sra_c_cb(&mut self) { self.c = self.sra_val(self.c); }
+    fn sra_d_cb(&mut self) { self.d = self.sra_val(self.d); }
+    fn sra_e_cb(&mut self) { self.e = self.sra_val(self.e); }
+    fn sra_h_cb(&mut self) { self.h = self.sra_val(self.h); }
+    fn sra_l_cb(&mut self) { self.l = self.sra_val(self.l); }
+    fn sra_a_cb(&mut self) { self.a = self.sra_val(self.a); }
+    fn sra_hl_mem_cb(&mut self) {
+        let value = self.read_hl_mem();
+        let result = self.sra_val(value);
+        self.write_hl_mem(result);
+    }
+
+    // SWAP r8 instructions
+    fn swap_b_cb(&mut self) { self.b = self.swap_val(self.b); }
+    fn swap_c_cb(&mut self) { self.c = self.swap_val(self.c); }
+    fn swap_d_cb(&mut self) { self.d = self.swap_val(self.d); }
+    fn swap_e_cb(&mut self) { self.e = self.swap_val(self.e); }
+    fn swap_h_cb(&mut self) { self.h = self.swap_val(self.h); }
+    fn swap_l_cb(&mut self) { self.l = self.swap_val(self.l); }
+    fn swap_a_cb(&mut self) { self.a = self.swap_val(self.a); }
+    fn swap_hl_mem_cb(&mut self) {
+        let value = self.read_hl_mem();
+        let result = self.swap_val(value);
+        self.write_hl_mem(result);
+    }
+
+    // SRL r8 instructions
+    fn srl_b_cb(&mut self) { self.b = self.srl_val(self.b); }
+    fn srl_c_cb(&mut self) { self.c = self.srl_val(self.c); }
+    fn srl_d_cb(&mut self) { self.d = self.srl_val(self.d); }
+    fn srl_e_cb(&mut self) { self.e = self.srl_val(self.e); }
+    fn srl_h_cb(&mut self) { self.h = self.srl_val(self.h); }
+    fn srl_l_cb(&mut self) { self.l = self.srl_val(self.l); }
+    fn srl_a_cb(&mut self) { self.a = self.srl_val(self.a); }
+    fn srl_hl_mem_cb(&mut self) {
+        let value = self.read_hl_mem();
+        let result = self.srl_val(value);
+        self.write_hl_mem(result);
+    }
+
+    // Main dispatcher for CB-prefixed opcodes
+    pub fn execute_cb_prefixed(&mut self, opcode: u8) {
+        // PC has already been incremented for the CB prefix and this opcode.
+        // So, no PC incrementing in these functions.
+        match opcode {
+            0x00 => self.rlc_b_cb(),
+            0x01 => self.rlc_c_cb(),
+            0x02 => self.rlc_d_cb(),
+            0x03 => self.rlc_e_cb(),
+            0x04 => self.rlc_h_cb(),
+            0x05 => self.rlc_l_cb(),
+            0x06 => self.rlc_hl_mem_cb(),
+            0x07 => self.rlc_a_cb(),
+
+            0x08 => self.rrc_b_cb(),
+            0x09 => self.rrc_c_cb(),
+            0x0A => self.rrc_d_cb(),
+            0x0B => self.rrc_e_cb(),
+            0x0C => self.rrc_h_cb(),
+            0x0D => self.rrc_l_cb(),
+            0x0E => self.rrc_hl_mem_cb(),
+            0x0F => self.rrc_a_cb(),
+
+            0x10 => self.rl_b_cb(),
+            0x11 => self.rl_c_cb(),
+            0x12 => self.rl_d_cb(),
+            0x13 => self.rl_e_cb(),
+            0x14 => self.rl_h_cb(),
+            0x15 => self.rl_l_cb(),
+            0x16 => self.rl_hl_mem_cb(),
+            0x17 => self.rl_a_cb(),
+
+            0x18 => self.rr_b_cb(),
+            0x19 => self.rr_c_cb(),
+            0x1A => self.rr_d_cb(),
+            0x1B => self.rr_e_cb(),
+            0x1C => self.rr_h_cb(),
+            0x1D => self.rr_l_cb(),
+            0x1E => self.rr_hl_mem_cb(),
+            0x1F => self.rr_a_cb(),
+
+            0x20 => self.sla_b_cb(),
+            0x21 => self.sla_c_cb(),
+            0x22 => self.sla_d_cb(),
+            0x23 => self.sla_e_cb(),
+            0x24 => self.sla_h_cb(),
+            0x25 => self.sla_l_cb(),
+            0x26 => self.sla_hl_mem_cb(),
+            0x27 => self.sla_a_cb(),
+
+            0x28 => self.sra_b_cb(),
+            0x29 => self.sra_c_cb(),
+            0x2A => self.sra_d_cb(),
+            0x2B => self.sra_e_cb(),
+            0x2C => self.sra_h_cb(),
+            0x2D => self.sra_l_cb(),
+            0x2E => self.sra_hl_mem_cb(),
+            0x2F => self.sra_a_cb(),
+
+            0x30 => self.swap_b_cb(),
+            0x31 => self.swap_c_cb(),
+            0x32 => self.swap_d_cb(),
+            0x33 => self.swap_e_cb(),
+            0x34 => self.swap_h_cb(),
+            0x35 => self.swap_l_cb(),
+            0x36 => self.swap_hl_mem_cb(),
+            0x37 => self.swap_a_cb(),
+
+            0x38 => self.srl_b_cb(),
+            0x39 => self.srl_c_cb(),
+            0x3A => self.srl_d_cb(),
+            0x3B => self.srl_e_cb(),
+            0x3C => self.srl_h_cb(),
+            0x3D => self.srl_l_cb(),
+            0x3E => self.srl_hl_mem_cb(),
+            0x3F => self.srl_a_cb(),
+
+            // BIT b, r / BIT b, (HL) : Opcodes 0x40 - 0x7F
+            0x40..=0x7F => {
+                let bit_idx = (opcode >> 3) & 0b111; // Bits 3,4,5 determine the bit index
+                let reg_operand_bits = opcode & 0b111; // Bits 0,1,2 determine the register
+
+                let value_to_test = match reg_operand_bits {
+                    0b000 => self.b,
+                    0b001 => self.c,
+                    0b010 => self.d,
+                    0b011 => self.e,
+                    0b100 => self.h,
+                    0b101 => self.l,
+                    0b110 => self.read_hl_mem(),
+                    0b111 => self.a,
+                    _ => unreachable!(), // Should not happen due to opcode range
+                };
+                self.exec_bit_op(bit_idx, value_to_test);
+            }
+
+            // RES b, r / RES b, (HL) : Opcodes 0x80 - 0xBF
+            0x80..=0xBF => {
+                let bit_idx = (opcode >> 3) & 0b111;
+                let reg_operand_bits = opcode & 0b111;
+
+                match reg_operand_bits {
+                    0b000 => self.b = self.exec_res_op(bit_idx, self.b),
+                    0b001 => self.c = self.exec_res_op(bit_idx, self.c),
+                    0b010 => self.d = self.exec_res_op(bit_idx, self.d),
+                    0b011 => self.e = self.exec_res_op(bit_idx, self.e),
+                    0b100 => self.h = self.exec_res_op(bit_idx, self.h),
+                    0b101 => self.l = self.exec_res_op(bit_idx, self.l),
+                    0b110 => {
+                        let old_val = self.read_hl_mem();
+                        let new_val = self.exec_res_op(bit_idx, old_val);
+                        self.write_hl_mem(new_val);
+                    }
+                    0b111 => self.a = self.exec_res_op(bit_idx, self.a),
+                    _ => unreachable!(),
+                };
+            }
+
+            // SET b, r / SET b, (HL) : Opcodes 0xC0 - 0xFF
+            0xC0..=0xFF => {
+                let bit_idx = (opcode >> 3) & 0b111;
+                let reg_operand_bits = opcode & 0b111;
+
+                match reg_operand_bits {
+                    0b000 => self.b = self.exec_set_op(bit_idx, self.b),
+                    0b001 => self.c = self.exec_set_op(bit_idx, self.c),
+                    0b010 => self.d = self.exec_set_op(bit_idx, self.d),
+                    0b011 => self.e = self.exec_set_op(bit_idx, self.e),
+                    0b100 => self.h = self.exec_set_op(bit_idx, self.h),
+                    0b101 => self.l = self.exec_set_op(bit_idx, self.l),
+                    0b110 => {
+                        let old_val = self.read_hl_mem();
+                        let new_val = self.exec_set_op(bit_idx, old_val);
+                        self.write_hl_mem(new_val);
+                    }
+                    0b111 => self.a = self.exec_set_op(bit_idx, self.a),
+                    _ => unreachable!(),
+                };
+            }
+            // Note: Removed the catch-all `_` case for now, assuming full coverage of 0x00-0xFF for CB.
+            // If adding more CB groups later and some are missing, this will need adjustment.
+            // For now, with BIT, RES, SET, and the earlier rotate/shifts, 0x00-0xFF for CB *should* be covered.
+            // Re-add if necessary: _ => { /* TODO: Handle undefined CB opcode */ }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3092,5 +3717,1206 @@ mod tests {
             assert_eq!(cpu.ime, true);
             assert_eq!(cpu.pc, 1);
         }
+    }
+
+    mod jump_instructions {
+        use super::*;
+
+        #[test]
+        fn test_jp_nn() {
+            let mut cpu = setup_cpu();
+            cpu.pc = 0x0100; // Initial PC
+            cpu.f = 0xB0;    // Z=1, N=0, H=1, C=1
+
+            let addr_lo = 0x34;
+            let addr_hi = 0x12;
+            // Expected jump address 0x1234
+
+            cpu.jp_nn(addr_lo, addr_hi);
+
+            assert_eq!(cpu.pc, 0x1234, "PC should be updated to the new address");
+            // Check that flags are not affected
+            assert_flags!(cpu, true, false, true, true);
+
+            // Test jump to 0x0000
+            cpu.pc = 0x0200;
+            cpu.f = 0x00; // Clear all flags
+            cpu.jp_nn(0x00, 0x00);
+            assert_eq!(cpu.pc, 0x0000, "PC should be updated to 0x0000");
+            assert_flags!(cpu, false, false, false, false);
+
+            // Test jump to 0xFFFF
+            cpu.pc = 0x0300;
+            cpu.f = 0xF0; // Set all flags
+            cpu.jp_nn(0xFF, 0xFF);
+            assert_eq!(cpu.pc, 0xFFFF, "PC should be updated to 0xFFFF");
+            assert_flags!(cpu, true, true, true, true);
+        }
+
+        #[test]
+        fn test_jp_hl() {
+            let mut cpu = setup_cpu();
+            cpu.pc = 0x0100; // Initial PC
+            cpu.f = 0xB0;    // Z=1, N=0, H=1, C=1
+
+            cpu.h = 0x12;
+            cpu.l = 0x34;
+            // Expected jump address 0x1234
+
+            cpu.jp_hl();
+
+            assert_eq!(cpu.pc, 0x1234, "PC should be updated to the address in HL");
+            // Check that flags are not affected
+            assert_flags!(cpu, true, false, true, true);
+
+            // Test jump to 0x0000
+            cpu.pc = 0x0200;
+            cpu.f = 0x00; // Clear all flags
+            cpu.h = 0x00;
+            cpu.l = 0x00;
+            cpu.jp_hl();
+            assert_eq!(cpu.pc, 0x0000, "PC should be updated to 0x0000");
+            assert_flags!(cpu, false, false, false, false);
+
+            // Test jump to 0xFFFF
+            cpu.pc = 0x0300;
+            cpu.f = 0xF0; // Set all flags
+            cpu.h = 0xFF;
+            cpu.l = 0xFF;
+            cpu.jp_hl();
+            assert_eq!(cpu.pc, 0xFFFF, "PC should be updated to 0xFFFF");
+            assert_flags!(cpu, true, true, true, true);
+        }
+
+        #[test]
+        fn test_jp_nz_nn() {
+            let mut cpu = setup_cpu();
+            let addr_lo = 0x34;
+            let addr_hi = 0x12; // Jump to 0x1234
+            let initial_pc = 0x0100;
+
+            // Case 1: Condition met (Z flag is 0)
+            cpu.pc = initial_pc;
+            cpu.set_flag_z(false); // NZ is true
+            cpu.f = cpu.f & 0x0F; // Keep other flags as they are (e.g. 0x00, or some other combo)
+            let flags_before_jump = cpu.f;
+            cpu.jp_nz_nn(addr_lo, addr_hi);
+            assert_eq!(cpu.pc, 0x1234, "PC should jump to 0x1234 when Z is false");
+            assert_eq!(cpu.f, flags_before_jump, "Flags should not change on jump");
+
+            // Case 2: Condition not met (Z flag is 1)
+            cpu.pc = initial_pc;
+            cpu.set_flag_z(true); // NZ is false
+            cpu.f = (cpu.f & 0x0F) | (1 << ZERO_FLAG_BYTE_POSITION); // Ensure Z is set, other flags as they are
+            let flags_before_no_jump = cpu.f;
+            cpu.jp_nz_nn(addr_lo, addr_hi);
+            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when Z is true");
+            assert_eq!(cpu.f, flags_before_no_jump, "Flags should not change on no jump");
+        }
+
+        #[test]
+        fn test_jp_z_nn() {
+            let mut cpu = setup_cpu();
+            let addr_lo = 0xCD;
+            let addr_hi = 0xAB; // Jump to 0xABCD
+            let initial_pc = 0x0200;
+
+            // Case 1: Condition met (Z flag is 1)
+            cpu.pc = initial_pc;
+            cpu.set_flag_z(true);
+            cpu.f = (cpu.f & 0x0F) | (1 << ZERO_FLAG_BYTE_POSITION);
+            let flags_before_jump = cpu.f;
+            cpu.jp_z_nn(addr_lo, addr_hi);
+            assert_eq!(cpu.pc, 0xABCD, "PC should jump to 0xABCD when Z is true");
+            assert_eq!(cpu.f, flags_before_jump, "Flags should not change on jump");
+
+            // Case 2: Condition not met (Z flag is 0)
+            cpu.pc = initial_pc;
+            cpu.set_flag_z(false);
+            cpu.f = cpu.f & 0x0F;
+            let flags_before_no_jump = cpu.f;
+            cpu.jp_z_nn(addr_lo, addr_hi);
+            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when Z is false");
+            assert_eq!(cpu.f, flags_before_no_jump, "Flags should not change on no jump");
+        }
+
+        #[test]
+        fn test_jp_nc_nn() {
+            let mut cpu = setup_cpu();
+            let addr_lo = 0x78;
+            let addr_hi = 0x56; // Jump to 0x5678
+            let initial_pc = 0x0300;
+
+            // Case 1: Condition met (C flag is 0)
+            cpu.pc = initial_pc;
+            cpu.set_flag_c(false); // NC is true
+            cpu.f = cpu.f & 0x0F;
+            let flags_before_jump = cpu.f;
+            cpu.jp_nc_nn(addr_lo, addr_hi);
+            assert_eq!(cpu.pc, 0x5678, "PC should jump to 0x5678 when C is false");
+            assert_eq!(cpu.f, flags_before_jump, "Flags should not change on jump");
+
+            // Case 2: Condition not met (C flag is 1)
+            cpu.pc = initial_pc;
+            cpu.set_flag_c(true); // NC is false
+            cpu.f = (cpu.f & 0x0F) | (1 << CARRY_FLAG_BYTE_POSITION);
+            let flags_before_no_jump = cpu.f;
+            cpu.jp_nc_nn(addr_lo, addr_hi);
+            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when C is true");
+            assert_eq!(cpu.f, flags_before_no_jump, "Flags should not change on no jump");
+        }
+
+        #[test]
+        fn test_jp_c_nn() {
+            let mut cpu = setup_cpu();
+            let addr_lo = 0xBC;
+            let addr_hi = 0x9A; // Jump to 0x9ABC
+            let initial_pc = 0x0400;
+
+            // Case 1: Condition met (C flag is 1)
+            cpu.pc = initial_pc;
+            cpu.set_flag_c(true);
+            cpu.f = (cpu.f & 0x0F) | (1 << CARRY_FLAG_BYTE_POSITION);
+            let flags_before_jump = cpu.f;
+            cpu.jp_c_nn(addr_lo, addr_hi);
+            assert_eq!(cpu.pc, 0x9ABC, "PC should jump to 0x9ABC when C is true");
+            assert_eq!(cpu.f, flags_before_jump, "Flags should not change on jump");
+
+            // Case 2: Condition not met (C flag is 0)
+            cpu.pc = initial_pc;
+            cpu.set_flag_c(false);
+            cpu.f = cpu.f & 0x0F;
+            let flags_before_no_jump = cpu.f;
+            cpu.jp_c_nn(addr_lo, addr_hi);
+            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when C is false");
+            assert_eq!(cpu.f, flags_before_no_jump, "Flags should not change on no jump");
+        }
+
+        #[test]
+        fn test_jr_e8() {
+            let mut cpu = setup_cpu();
+
+            // Forward jump
+            cpu.pc = 0x0100;
+            cpu.f = 0xB0; // Example flags
+            let initial_flags = cpu.f;
+            cpu.jr_e8(0x0A); // Jump 10 bytes forward from PC+2
+            // Expected: 0x0100 (JR) + 2 (operand) + 0x0A (offset) = 0x010C
+            assert_eq!(cpu.pc, 0x010C, "JR forward jump failed");
+            assert_eq!(cpu.f, initial_flags, "JR forward: Flags should not change");
+
+            // Backward jump
+            cpu.pc = 0x010C;
+            cpu.f = 0x50;
+            let initial_flags_back = cpu.f;
+            cpu.jr_e8(0xF6 as u8); // Jump -10 bytes (0xF6 is -10 as i8) from PC+2
+            // Expected: 0x010C (JR_opcode_addr) + 2 (length_of_JR_instr) + offset (-10) = 0x010E - 10 = 0x0104
+            assert_eq!(cpu.pc, 0x0104, "JR backward jump failed");
+            assert_eq!(cpu.f, initial_flags_back, "JR backward: Flags should not change");
+
+            // Jump across 0x0000 (backward)
+            cpu.pc = 0x0005;
+            cpu.jr_e8(0xF9 as u8); // Offset of -7. PC+2 = 0x0007. 0x0007 - 7 = 0x0000
+            assert_eq!(cpu.pc, 0x0000, "JR backward jump across 0x0000 failed");
+
+            // Jump across 0xFFFF (forward)
+            cpu.pc = 0xFFF0;
+            cpu.jr_e8(0x0E); // Offset +14. PC+2 = 0xFFF2. 0xFFF2 + 14 = 0x0000 (wrapped)
+            assert_eq!(cpu.pc, 0x0000, "JR forward jump across 0xFFFF failed");
+        }
+
+        #[test]
+        fn test_jr_nz_e8() {
+            let mut cpu = setup_cpu();
+            let initial_pc = 0x0150;
+            let offset_fwd = 0x10; // Jump +16
+            let offset_bwd = 0xE0 as u8; // Jump -32 (0xE0 as i8 = -32)
+
+            // Case 1: NZ is true (Z=0), jump taken
+            cpu.pc = initial_pc; cpu.set_flag_z(false); cpu.f = 0x00; let flags = cpu.f;
+            cpu.jr_nz_e8(offset_fwd);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset_fwd as i8 as i16 as u16), "JR NZ fwd (Z=0) failed");
+            assert_eq!(cpu.f, flags, "JR NZ fwd (Z=0) flags changed");
+
+            cpu.pc = initial_pc; cpu.set_flag_z(false); cpu.f = 0x00;
+            cpu.jr_nz_e8(offset_bwd);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset_bwd as i8 as i16 as u16), "JR NZ bwd (Z=0) failed");
+
+
+            // Case 2: NZ is false (Z=1), jump not taken
+            cpu.pc = initial_pc; cpu.set_flag_z(true); cpu.f = (1 << ZERO_FLAG_BYTE_POSITION); let flags_no_jump = cpu.f;
+            cpu.jr_nz_e8(offset_fwd);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "JR NZ fwd (Z=1) no jump failed");
+            assert_eq!(cpu.f, flags_no_jump, "JR NZ fwd (Z=1) no jump flags changed");
+        }
+
+        #[test]
+        fn test_jr_z_e8() {
+            let mut cpu = setup_cpu();
+            let initial_pc = 0x0250;
+            let offset = 0x0A;
+
+            // Case 1: Z is true, jump taken
+            cpu.pc = initial_pc; cpu.set_flag_z(true); cpu.f = (1 << ZERO_FLAG_BYTE_POSITION); let flags = cpu.f;
+            cpu.jr_z_e8(offset);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset as i8 as i16 as u16));
+            assert_eq!(cpu.f, flags);
+
+            // Case 2: Z is false, jump not taken
+            cpu.pc = initial_pc; cpu.set_flag_z(false); cpu.f = 0x00; let flags_no_jump = cpu.f;
+            cpu.jr_z_e8(offset);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2));
+            assert_eq!(cpu.f, flags_no_jump);
+        }
+
+        #[test]
+        fn test_jr_nc_e8() {
+            let mut cpu = setup_cpu();
+            let initial_pc = 0x0350;
+            let offset = 0x1A;
+
+            // Case 1: NC is true (C=0), jump taken
+            cpu.pc = initial_pc; cpu.set_flag_c(false); cpu.f = 0x00; let flags = cpu.f;
+            cpu.jr_nc_e8(offset);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset as i8 as i16 as u16));
+            assert_eq!(cpu.f, flags);
+
+            // Case 2: NC is false (C=1), jump not taken
+            cpu.pc = initial_pc; cpu.set_flag_c(true); cpu.f = (1 << CARRY_FLAG_BYTE_POSITION); let flags_no_jump = cpu.f;
+            cpu.jr_nc_e8(offset);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2));
+            assert_eq!(cpu.f, flags_no_jump);
+        }
+
+        #[test]
+        fn test_jr_c_e8() {
+            let mut cpu = setup_cpu();
+            let initial_pc = 0x0450;
+            let offset = 0x05;
+
+            // Case 1: C is true, jump taken
+            cpu.pc = initial_pc; cpu.set_flag_c(true); cpu.f = (1 << CARRY_FLAG_BYTE_POSITION); let flags = cpu.f;
+            cpu.jr_c_e8(offset);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset as i8 as i16 as u16));
+            assert_eq!(cpu.f, flags);
+
+            // Case 2: C is false, jump not taken
+            cpu.pc = initial_pc; cpu.set_flag_c(false); cpu.f = 0x00; let flags_no_jump = cpu.f;
+            cpu.jr_c_e8(offset);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2));
+            assert_eq!(cpu.f, flags_no_jump);
+        }
+
+    }
+
+    mod call_return_instructions {
+        use super::*;
+
+        #[test]
+        fn test_call_nn() {
+            let mut cpu = setup_cpu();
+            cpu.pc = 0x0100;    // Initial PC
+            cpu.sp = 0xFFFE;    // Initial SP
+            cpu.f = 0xB0;       // Z=1, N=0, H=1, C=1 (example flags)
+
+            let flags_before_call = cpu.f;
+            let initial_sp = cpu.sp;
+            let expected_return_addr = cpu.pc.wrapping_add(3); // 0x0103
+
+            let addr_lo = 0x34;
+            let addr_hi = 0x12; // Call address 0x1234
+
+            cpu.call_nn(addr_lo, addr_hi);
+
+            // Check PC
+            assert_eq!(cpu.pc, 0x1234, "PC should be updated to the call address 0x1234");
+
+            // Check SP
+            assert_eq!(cpu.sp, initial_sp.wrapping_sub(2), "SP should be decremented by 2");
+
+            // Check stack content (return address)
+            let pushed_pc_lo = cpu.memory[cpu.sp as usize];
+            let pushed_pc_hi = cpu.memory[cpu.sp.wrapping_add(1) as usize];
+            let pushed_return_addr = ((pushed_pc_hi as u16) << 8) | (pushed_pc_lo as u16);
+
+            assert_eq!(pushed_return_addr, expected_return_addr, "Return address pushed onto stack is incorrect");
+            assert_eq!(pushed_pc_lo, (expected_return_addr & 0xFF) as u8, "Pushed PC lo byte is incorrect");
+            assert_eq!(pushed_pc_hi, (expected_return_addr >> 8) as u8, "Pushed PC hi byte is incorrect");
+
+            // Check flags
+            assert_eq!(cpu.f, flags_before_call, "Flags should not be affected by CALL nn");
+
+            // Test CALL to 0x0000
+            cpu.pc = 0x0250;
+            cpu.sp = 0x8000;
+            cpu.f = 0x00; // Clear flags
+            let flags_before_call_2 = cpu.f;
+            let initial_sp_2 = cpu.sp;
+            let expected_return_addr_2 = cpu.pc.wrapping_add(3); // 0x0253
+
+            cpu.call_nn(0x00, 0x00);
+            assert_eq!(cpu.pc, 0x0000);
+            assert_eq!(cpu.sp, initial_sp_2.wrapping_sub(2));
+            let pushed_pc_lo_2 = cpu.memory[cpu.sp as usize];
+            let pushed_pc_hi_2 = cpu.memory[cpu.sp.wrapping_add(1) as usize];
+            assert_eq!(((pushed_pc_hi_2 as u16) << 8) | (pushed_pc_lo_2 as u16), expected_return_addr_2);
+            assert_eq!(cpu.f, flags_before_call_2);
+
+
+            // Test SP wrapping
+            cpu.pc = 0x0300;
+            cpu.sp = 0x0001; // SP will wrap around (0x0001 -> 0x0000 -> 0xFFFF)
+            cpu.f = 0xF0; // Set all flags
+            let flags_before_call_3 = cpu.f;
+            let initial_sp_3 = cpu.sp;
+            let expected_return_addr_3 = cpu.pc.wrapping_add(3); // 0x0303
+
+            cpu.call_nn(0xFF, 0xEE); // Call 0xEEFF
+            assert_eq!(cpu.pc, 0xEEFF);
+            assert_eq!(cpu.sp, initial_sp_3.wrapping_sub(2)); // 0xFFFF
+            assert_eq!(cpu.sp, 0xFFFF);
+            let pushed_pc_lo_3 = cpu.memory[cpu.sp as usize]; // memory[0xFFFF]
+            let pushed_pc_hi_3 = cpu.memory[cpu.sp.wrapping_add(1) as usize]; // memory[0x0000]
+            assert_eq!(((pushed_pc_hi_3 as u16) << 8) | (pushed_pc_lo_3 as u16), expected_return_addr_3);
+            assert_eq!(cpu.f, flags_before_call_3);
+        }
+
+        #[test]
+        fn test_call_nz_nn() {
+            let mut cpu = setup_cpu();
+            let call_addr_lo = 0x34;
+            let call_addr_hi = 0x12; // Call 0x1234
+            let initial_pc = 0x0100;
+            let initial_sp_val = 0xFFFE;
+
+            // Case 1: Condition met (Z flag is 0)
+            cpu.pc = initial_pc;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_z(false); // NZ is true
+            cpu.f = (cpu.f & 0xF0) | 0b0000_0100; // Example: N=0, H=1, C=0, Z=0
+            let flags_before = cpu.f;
+            let expected_return_addr = initial_pc.wrapping_add(3);
+
+            cpu.call_nz_nn(call_addr_lo, call_addr_hi);
+            assert_eq!(cpu.pc, 0x1234, "CALL NZ: PC should be 0x1234 when Z is false");
+            assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL NZ: SP should decrement by 2 when Z is false");
+            let pushed_lo = cpu.memory[cpu.sp as usize];
+            let pushed_hi = cpu.memory[cpu.sp.wrapping_add(1) as usize];
+            assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL NZ: Return address on stack incorrect when Z is false");
+            assert_eq!(cpu.f, flags_before, "CALL NZ: Flags should not change when Z is false");
+
+            // Case 2: Condition not met (Z flag is 1)
+            cpu.pc = initial_pc;
+            cpu.sp = initial_sp_val; // Reset SP
+            cpu.set_flag_z(true);  // NZ is false
+            cpu.f = (cpu.f & 0xF0) | 0b1000_0100; // Example: N=0, H=1, C=0, Z=1
+            let flags_before_no_call = cpu.f;
+            let memory_at_sp_before = cpu.memory[initial_sp_val.wrapping_sub(1) as usize]; // Check if stack is touched
+            let memory_at_sp_minus_1_before = cpu.memory[initial_sp_val.wrapping_sub(2) as usize];
+
+
+            cpu.call_nz_nn(call_addr_lo, call_addr_hi);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL NZ: PC should increment by 3 when Z is true");
+            assert_eq!(cpu.sp, initial_sp_val, "CALL NZ: SP should not change when Z is true");
+            assert_eq!(cpu.memory[initial_sp_val.wrapping_sub(1) as usize], memory_at_sp_before, "CALL NZ: Stack should not be modified at SP-1 when Z is true");
+            assert_eq!(cpu.memory[initial_sp_val.wrapping_sub(2) as usize], memory_at_sp_minus_1_before, "CALL NZ: Stack should not be modified at SP-2 when Z is true");
+            assert_eq!(cpu.f, flags_before_no_call, "CALL NZ: Flags should not change when Z is true");
+        }
+
+        #[test]
+        fn test_call_z_nn() {
+            let mut cpu = setup_cpu();
+            let call_addr_lo = 0xCD;
+            let call_addr_hi = 0xAB; // Call 0xABCD
+            let initial_pc = 0x0200;
+            let initial_sp_val = 0xFFFE;
+
+            // Case 1: Condition met (Z flag is 1)
+            cpu.pc = initial_pc;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_z(true);
+            cpu.f = (cpu.f & 0xF0) | 0b1000_0000; // Z=1
+            let flags_before = cpu.f;
+            let expected_return_addr = initial_pc.wrapping_add(3);
+
+            cpu.call_z_nn(call_addr_lo, call_addr_hi);
+            assert_eq!(cpu.pc, 0xABCD, "CALL Z: PC should be 0xABCD when Z is true");
+            assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL Z: SP should decrement by 2 when Z is true");
+            let pushed_lo = cpu.memory[cpu.sp as usize];
+            let pushed_hi = cpu.memory[cpu.sp.wrapping_add(1) as usize];
+            assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL Z: Return address on stack incorrect");
+            assert_eq!(cpu.f, flags_before, "CALL Z: Flags should not change");
+
+            // Case 2: Condition not met (Z flag is 0)
+            cpu.pc = initial_pc;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_z(false);
+            cpu.f = cpu.f & 0xF0 & !(1 << ZERO_FLAG_BYTE_POSITION); // Z=0
+            let flags_before_no_call = cpu.f;
+
+            cpu.call_z_nn(call_addr_lo, call_addr_hi);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL Z: PC should increment by 3 when Z is false");
+            assert_eq!(cpu.sp, initial_sp_val, "CALL Z: SP should not change when Z is false");
+            assert_eq!(cpu.f, flags_before_no_call, "CALL Z: Flags should not change when Z is false");
+        }
+
+        #[test]
+        fn test_call_nc_nn() {
+            let mut cpu = setup_cpu();
+            let call_addr_lo = 0x78;
+            let call_addr_hi = 0x56; // Call 0x5678
+            let initial_pc = 0x0300;
+            let initial_sp_val = 0xFFFE;
+
+            // Case 1: Condition met (C flag is 0)
+            cpu.pc = initial_pc;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_c(false);
+            cpu.f = cpu.f & 0xF0 & !(1 << CARRY_FLAG_BYTE_POSITION); // C=0
+            let flags_before = cpu.f;
+            let expected_return_addr = initial_pc.wrapping_add(3);
+
+            cpu.call_nc_nn(call_addr_lo, call_addr_hi);
+            assert_eq!(cpu.pc, 0x5678, "CALL NC: PC should be 0x5678 when C is false");
+            assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL NC: SP should decrement by 2");
+            let pushed_lo = cpu.memory[cpu.sp as usize];
+            let pushed_hi = cpu.memory[cpu.sp.wrapping_add(1) as usize];
+            assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL NC: Return address incorrect");
+            assert_eq!(cpu.f, flags_before, "CALL NC: Flags should not change");
+
+            // Case 2: Condition not met (C flag is 1)
+            cpu.pc = initial_pc;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_c(true);
+            cpu.f = (cpu.f & 0xF0) | (1 << CARRY_FLAG_BYTE_POSITION); // C=1
+            let flags_before_no_call = cpu.f;
+
+            cpu.call_nc_nn(call_addr_lo, call_addr_hi);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL NC: PC should increment by 3 when C is true");
+            assert_eq!(cpu.sp, initial_sp_val, "CALL NC: SP should not change when C is true");
+            assert_eq!(cpu.f, flags_before_no_call, "CALL NC: Flags should not change when C is true");
+        }
+
+        #[test]
+        fn test_call_c_nn() {
+            let mut cpu = setup_cpu();
+            let call_addr_lo = 0xBC;
+            let call_addr_hi = 0x9A; // Call 0x9ABC
+            let initial_pc = 0x0400;
+            let initial_sp_val = 0xFFFE;
+
+            // Case 1: Condition met (C flag is 1)
+            cpu.pc = initial_pc;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_c(true);
+            cpu.f = (cpu.f & 0xF0) | (1 << CARRY_FLAG_BYTE_POSITION); // C=1
+            let flags_before = cpu.f;
+            let expected_return_addr = initial_pc.wrapping_add(3);
+
+            cpu.call_c_nn(call_addr_lo, call_addr_hi);
+            assert_eq!(cpu.pc, 0x9ABC, "CALL C: PC should be 0x9ABC when C is true");
+            assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL C: SP should decrement by 2");
+            let pushed_lo = cpu.memory[cpu.sp as usize];
+            let pushed_hi = cpu.memory[cpu.sp.wrapping_add(1) as usize];
+            assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL C: Return address incorrect");
+            assert_eq!(cpu.f, flags_before, "CALL C: Flags should not change");
+
+            // Case 2: Condition not met (C flag is 0)
+            cpu.pc = initial_pc;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_c(false);
+            cpu.f = cpu.f & 0xF0 & !(1 << CARRY_FLAG_BYTE_POSITION); // C=0
+            let flags_before_no_call = cpu.f;
+
+            cpu.call_c_nn(call_addr_lo, call_addr_hi);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL C: PC should increment by 3 when C is false");
+            assert_eq!(cpu.sp, initial_sp_val, "CALL C: SP should not change when C is false");
+            assert_eq!(cpu.f, flags_before_no_call, "CALL C: Flags should not change when C is false");
+        }
+
+        #[test]
+        fn test_ret() {
+            let mut cpu = setup_cpu();
+            let return_addr = 0x1234;
+            cpu.sp = 0xFFFC; // Initial SP
+            // Push return address onto stack manually
+            cpu.memory[cpu.sp as usize] = (return_addr & 0xFF) as u8; // Lo byte
+            cpu.memory[cpu.sp.wrapping_add(1) as usize] = (return_addr >> 8) as u8; // Hi byte
+
+            cpu.pc = 0x0000; // Dummy PC before RET
+            cpu.f = 0xB0;    // Example flags Z=1, N=0, H=1, C=1
+            let flags_before_ret = cpu.f;
+            let initial_sp = cpu.sp;
+
+            cpu.ret();
+
+            assert_eq!(cpu.pc, return_addr, "PC should be updated to the return address from stack");
+            assert_eq!(cpu.sp, initial_sp.wrapping_add(2), "SP should be incremented by 2");
+            assert_eq!(cpu.f, flags_before_ret, "Flags should not be affected by RET");
+
+            // Test RET with SP wrapping from 0xFFFE
+            let return_addr_2 = 0xABCD;
+            cpu.sp = 0xFFFE;
+            cpu.memory[cpu.sp as usize] = (return_addr_2 & 0xFF) as u8; // Lo at 0xFFFE
+            cpu.memory[cpu.sp.wrapping_add(1) as usize] = (return_addr_2 >> 8) as u8; // Hi at 0xFFFF
+            cpu.pc = 0x0010;
+            cpu.f = 0x00;
+            let flags_before_ret_2 = cpu.f;
+            let initial_sp_2 = cpu.sp;
+
+            cpu.ret();
+            assert_eq!(cpu.pc, return_addr_2, "PC should be 0xABCD after RET with SP wrap");
+            assert_eq!(cpu.sp, initial_sp_2.wrapping_add(2), "SP should wrap from 0xFFFE to 0x0000"); // 0xFFFE + 2 = 0x0000
+            assert_eq!(cpu.f, flags_before_ret_2, "Flags should not be affected by RET with SP wrap");
+
+            // Test RET with SP wrapping from 0xFFFF
+            let return_addr_3 = 0x55AA;
+            cpu.sp = 0xFFFF;
+            cpu.memory[cpu.sp as usize] = (return_addr_3 & 0xFF) as u8; // Lo at 0xFFFF
+            // For this to work, memory[0x0000] must exist for the high byte
+            cpu.memory[0x0000 as usize] = (return_addr_3 >> 8) as u8; // Hi at 0x0000
+            cpu.pc = 0x0020;
+            cpu.f = 0xF0;
+            let flags_before_ret_3 = cpu.f;
+            let initial_sp_3 = cpu.sp;
+
+            cpu.ret();
+            assert_eq!(cpu.pc, return_addr_3, "PC should be 0x55AA after RET with SP wrap from 0xFFFF");
+            assert_eq!(cpu.sp, initial_sp_3.wrapping_add(2), "SP should wrap from 0xFFFF to 0x0001"); // 0xFFFF + 2 = 0x0001
+            assert_eq!(cpu.f, flags_before_ret_3, "Flags should not be affected by RET with SP wrap from 0xFFFF");
+        }
+
+        #[test]
+        fn test_ret_nz() {
+            let mut cpu = setup_cpu();
+            let return_addr = 0x1234;
+            let initial_pc_val = 0x0100; // PC where RET NZ is located
+            let initial_sp_val: u16 = 0xFFFC;
+
+            // Setup stack
+            cpu.memory[initial_sp_val as usize] = (return_addr & 0xFF) as u8; // Lo
+            cpu.memory[initial_sp_val.wrapping_add(1) as usize] = (return_addr >> 8) as u8; // Hi
+
+            // Case 1: Condition met (Z flag is 0)
+            cpu.pc = initial_pc_val;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_z(false); // NZ is true
+            cpu.f = (cpu.f & 0xF0) | 0b0000_0100; // Example flags (Z=0, N=0,H=1,C=0)
+            let flags_before = cpu.f;
+
+            cpu.ret_nz();
+            assert_eq!(cpu.pc, return_addr, "RET NZ: PC should be return_addr when Z is false");
+            assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2), "RET NZ: SP should increment by 2 when Z is false");
+            assert_eq!(cpu.f, flags_before, "RET NZ: Flags should not change when Z is false");
+
+            // Case 2: Condition not met (Z flag is 1)
+            cpu.pc = initial_pc_val;
+            cpu.sp = initial_sp_val; // Reset SP
+            cpu.set_flag_z(true);  // NZ is false
+            cpu.f = (cpu.f & 0xF0) | 0b1000_0100; // Example flags (Z=1, N=0,H=1,C=0)
+            let flags_before_no_ret = cpu.f;
+            // To check if stack was touched, read memory before op (though RET doesn't write, good practice)
+            let mem_val_sp = cpu.memory[initial_sp_val as usize];
+            let mem_val_sp_plus_1 = cpu.memory[initial_sp_val.wrapping_add(1) as usize];
+
+            cpu.ret_nz();
+            assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1), "RET NZ: PC should increment by 1 when Z is true");
+            assert_eq!(cpu.sp, initial_sp_val, "RET NZ: SP should not change when Z is true");
+            assert_eq!(cpu.memory[initial_sp_val as usize], mem_val_sp, "RET NZ: Stack Lo should not change on no return");
+            assert_eq!(cpu.memory[initial_sp_val.wrapping_add(1) as usize], mem_val_sp_plus_1, "RET NZ: Stack Hi should not change on no return");
+            assert_eq!(cpu.f, flags_before_no_ret, "RET NZ: Flags should not change when Z is true");
+        }
+
+        #[test]
+        fn test_ret_z() {
+            let mut cpu = setup_cpu();
+            let return_addr = 0xABCD;
+            let initial_pc_val = 0x0200;
+            let initial_sp_val: u16 = 0xFFFC;
+            cpu.memory[initial_sp_val as usize] = (return_addr & 0xFF) as u8;
+            cpu.memory[initial_sp_val.wrapping_add(1) as usize] = (return_addr >> 8) as u8;
+
+            // Case 1: Condition met (Z flag is 1)
+            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_z(true);
+            let flags_before = cpu.f;
+            cpu.ret_z();
+            assert_eq!(cpu.pc, return_addr);
+            assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2));
+            assert_eq!(cpu.f, flags_before);
+
+            // Case 2: Condition not met (Z flag is 0)
+            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_z(false);
+            let flags_before_no_ret = cpu.f;
+            cpu.ret_z();
+            assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1));
+            assert_eq!(cpu.sp, initial_sp_val);
+            assert_eq!(cpu.f, flags_before_no_ret);
+        }
+
+        #[test]
+        fn test_ret_nc() {
+            let mut cpu = setup_cpu();
+            let return_addr = 0x5678;
+            let initial_pc_val = 0x0300;
+            let initial_sp_val: u16 = 0xFFFC;
+            cpu.memory[initial_sp_val as usize] = (return_addr & 0xFF) as u8;
+            cpu.memory[initial_sp_val.wrapping_add(1) as usize] = (return_addr >> 8) as u8;
+
+            // Case 1: Condition met (C flag is 0)
+            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(false);
+            let flags_before = cpu.f;
+            cpu.ret_nc();
+            assert_eq!(cpu.pc, return_addr);
+            assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2));
+            assert_eq!(cpu.f, flags_before);
+
+            // Case 2: Condition not met (C flag is 1)
+            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(true);
+            let flags_before_no_ret = cpu.f;
+            cpu.ret_nc();
+            assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1));
+            assert_eq!(cpu.sp, initial_sp_val);
+            assert_eq!(cpu.f, flags_before_no_ret);
+        }
+
+        #[test]
+        fn test_ret_c() {
+            let mut cpu = setup_cpu();
+            let return_addr = 0x9ABC;
+            let initial_pc_val = 0x0400;
+            let initial_sp_val: u16 = 0xFFFC;
+            cpu.memory[initial_sp_val as usize] = (return_addr & 0xFF) as u8;
+            cpu.memory[initial_sp_val.wrapping_add(1) as usize] = (return_addr >> 8) as u8;
+
+            // Case 1: Condition met (C flag is 1)
+            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(true);
+            let flags_before = cpu.f;
+            cpu.ret_c();
+            assert_eq!(cpu.pc, return_addr);
+            assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2));
+            assert_eq!(cpu.f, flags_before);
+
+            // Case 2: Condition not met (C flag is 0)
+            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(false);
+            let flags_before_no_ret = cpu.f;
+            cpu.ret_c();
+            assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1));
+            assert_eq!(cpu.sp, initial_sp_val);
+            assert_eq!(cpu.f, flags_before_no_ret);
+        }
+
+        #[test]
+        fn test_reti() {
+            let mut cpu = setup_cpu();
+            let return_addr = 0x4567;
+            cpu.sp = 0xFFFA; // Initial SP
+            // Push return address onto stack manually
+            cpu.memory[cpu.sp as usize] = (return_addr & 0xFF) as u8; // Lo byte
+            cpu.memory[cpu.sp.wrapping_add(1) as usize] = (return_addr >> 8) as u8; // Hi byte
+
+            cpu.pc = 0x0000; // Dummy PC before RETI
+            cpu.f = 0x70;    // Example flags (Z=0, N=1, H=1, C=1)
+            cpu.ime = false; // Ensure IME is false before RETI
+
+            let flags_before_reti = cpu.f;
+            let initial_sp = cpu.sp;
+
+            cpu.reti();
+
+            assert_eq!(cpu.pc, return_addr, "RETI: PC should be updated to the return address");
+            assert_eq!(cpu.sp, initial_sp.wrapping_add(2), "RETI: SP should be incremented by 2");
+            assert_eq!(cpu.ime, true, "RETI: IME should be set to true");
+            assert_eq!(cpu.f, flags_before_reti, "RETI: Other flags should not be affected");
+
+            // Test RETI with SP wrapping from 0xFFFE
+            let return_addr_2 = 0xBEEF;
+            cpu.sp = 0xFFFE;
+            cpu.memory[cpu.sp as usize] = (return_addr_2 & 0xFF) as u8; // Lo at 0xFFFE
+            cpu.memory[cpu.sp.wrapping_add(1) as usize] = (return_addr_2 >> 8) as u8; // Hi at 0xFFFF
+            cpu.pc = 0x0010;
+            cpu.f = 0x10; // Z=0, N=0, H=0, C=1
+            cpu.ime = false;
+            let flags_before_reti_2 = cpu.f;
+            let initial_sp_2 = cpu.sp;
+
+            cpu.reti();
+            assert_eq!(cpu.pc, return_addr_2, "RETI: PC should be 0xBEEF after SP wrap");
+            assert_eq!(cpu.sp, initial_sp_2.wrapping_add(2), "RETI: SP should wrap from 0xFFFE to 0x0000");
+            assert_eq!(cpu.ime, true, "RETI: IME should be set after SP wrap");
+            assert_eq!(cpu.f, flags_before_reti_2, "RETI: Other flags should not be affected after SP wrap");
+        }
+    }
+
+    mod rst_instructions {
+        use super::*;
+
+        // Helper to test a single RST instruction
+        fn test_rst_individual(cpu: &mut Cpu, rst_fn: fn(&mut Cpu), target_addr: u16, initial_pc_val: u16) {
+            cpu.pc = initial_pc_val;
+            cpu.sp = 0xFFFE;    // Initial SP
+            cpu.f = 0xB0;       // Example flags (Z=1,N=0,H=1,C=1)
+
+            let flags_before_rst = cpu.f;
+            let initial_sp = cpu.sp;
+            let expected_return_addr = initial_pc_val.wrapping_add(1);
+
+            rst_fn(cpu); // Call the specific RST function (e.g., cpu.rst_00h())
+
+            // Check PC
+            assert_eq!(cpu.pc, target_addr, "RST to 0x{:02X}: PC should be updated to target address", target_addr);
+
+            // Check SP
+            assert_eq!(cpu.sp, initial_sp.wrapping_sub(2), "RST to 0x{:02X}: SP should be decremented by 2", target_addr);
+
+            // Check stack content (return address)
+            let pushed_pc_lo = cpu.memory[cpu.sp as usize];
+            let pushed_pc_hi = cpu.memory[cpu.sp.wrapping_add(1) as usize];
+            let pushed_return_addr = ((pushed_pc_hi as u16) << 8) | (pushed_pc_lo as u16);
+
+            assert_eq!(pushed_return_addr, expected_return_addr, "RST to 0x{:02X}: Return address (0x{:04X}) pushed onto stack is incorrect (was 0x{:04X})", target_addr, expected_return_addr, pushed_return_addr);
+            assert_eq!(pushed_pc_lo, (expected_return_addr & 0xFF) as u8, "RST to 0x{:02X}: Pushed PC lo byte is incorrect", target_addr);
+            assert_eq!(pushed_pc_hi, (expected_return_addr >> 8) as u8, "RST to 0x{:02X}: Pushed PC hi byte is incorrect", target_addr);
+
+            // Check flags
+            assert_eq!(cpu.f, flags_before_rst, "RST to 0x{:02X}: Flags should not be affected", target_addr);
+        }
+
+        #[test]
+        fn test_rst_all_targets() {
+            let mut cpu = setup_cpu();
+            let initial_pc_base = 0x0100;
+
+            test_rst_individual(&mut cpu, Cpu::rst_00h, 0x0000, initial_pc_base);
+            test_rst_individual(&mut cpu, Cpu::rst_08h, 0x0008, initial_pc_base + 0x10);
+            test_rst_individual(&mut cpu, Cpu::rst_10h, 0x0010, initial_pc_base + 0x20);
+            test_rst_individual(&mut cpu, Cpu::rst_18h, 0x0018, initial_pc_base + 0x30);
+            test_rst_individual(&mut cpu, Cpu::rst_20h, 0x0020, initial_pc_base + 0x40);
+            test_rst_individual(&mut cpu, Cpu::rst_28h, 0x0028, initial_pc_base + 0x50);
+            test_rst_individual(&mut cpu, Cpu::rst_30h, 0x0030, initial_pc_base + 0x60);
+            test_rst_individual(&mut cpu, Cpu::rst_38h, 0x0038, initial_pc_base + 0x70);
+        }
+
+        #[test]
+        fn test_rst_sp_wrapping() {
+            let mut cpu = setup_cpu();
+            let initial_pc_val = 0x0200;
+            let target_addr = 0x0028; // Using RST 28H for this test
+
+            cpu.pc = initial_pc_val;
+            cpu.sp = 0x0001; // SP will wrap (0x0001 -> 0x0000 -> 0xFFFF)
+            cpu.f = 0x00;
+            let flags_before_rst = cpu.f;
+            let initial_sp = cpu.sp;
+            let expected_return_addr = initial_pc_val.wrapping_add(1); // 0x0201
+
+            cpu.rst_28h();
+
+            assert_eq!(cpu.pc, target_addr, "RST SP Wrap: PC should be target address");
+            assert_eq!(cpu.sp, initial_sp.wrapping_sub(2), "RST SP Wrap: SP should wrap correctly (0x0001 -> 0xFFFF)");
+            assert_eq!(cpu.sp, 0xFFFF);
+
+            let pushed_pc_lo = cpu.memory[cpu.sp as usize]; // memory[0xFFFF]
+            let pushed_pc_hi = cpu.memory[cpu.sp.wrapping_add(1) as usize]; // memory[0x0000] (as SP wrapped)
+            let pushed_return_addr = ((pushed_pc_hi as u16) << 8) | (pushed_pc_lo as u16);
+
+            assert_eq!(pushed_return_addr, expected_return_addr, "RST SP Wrap: Return address incorrect");
+            assert_eq!(cpu.f, flags_before_rst, "RST SP Wrap: Flags should not be affected");
+        }
+    }
+
+    mod cb_prefixed_instructions {
+        use super::*;
+
+        // Test RLC operations
+        #[test]
+        fn test_rlc_b_cb() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0b1000_0000; // Bit 7 set, result will be 0b0000_0001, C=1, Z=0
+            cpu.execute_cb_prefixed(0x00);
+            assert_eq!(cpu.b, 0b0000_0001);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.b = 0b0100_0000; // Bit 7 clear, result 0b1000_0000, C=0, Z=0
+            cpu.execute_cb_prefixed(0x00);
+            assert_eq!(cpu.b, 0b1000_0000);
+            assert_flags!(cpu, false, false, false, false);
+
+            cpu.b = 0x00; // Result 0, C=0, Z=1
+            cpu.execute_cb_prefixed(0x00);
+            assert_eq!(cpu.b, 0x00);
+            assert_flags!(cpu, true, false, false, false);
+
+            cpu.b = 0xFF; // 1111_1111 -> C=1, result 1111_1111
+            cpu.execute_cb_prefixed(0x00);
+            assert_eq!(cpu.b, 0xFF);
+            assert_flags!(cpu, false, false, false, true);
+        }
+
+        #[test]
+        fn test_rlc_c_cb() {
+            let mut cpu = setup_cpu();
+            cpu.c = 0b1000_0001; // C=1, Z=0
+            cpu.execute_cb_prefixed(0x01);
+            assert_eq!(cpu.c, 0b0000_0011);
+            assert_flags!(cpu, false, false, false, true);
+        }
+        // Minimal tests for other registers to ensure dispatch works
+        #[test]
+        fn test_rlc_d_cb() { let mut cpu = setup_cpu(); cpu.d=0x80; cpu.execute_cb_prefixed(0x02); assert_eq!(cpu.d, 0x01); assert_flags!(cpu,false,false,false,true); }
+        #[test]
+        fn test_rlc_e_cb() { let mut cpu = setup_cpu(); cpu.e=0x01; cpu.execute_cb_prefixed(0x03); assert_eq!(cpu.e, 0x02); assert_flags!(cpu,false,false,false,false); }
+        #[test]
+        fn test_rlc_h_cb() { let mut cpu = setup_cpu(); cpu.h=0x00; cpu.execute_cb_prefixed(0x04); assert_eq!(cpu.h, 0x00); assert_flags!(cpu,true,false,false,false); }
+        #[test]
+        fn test_rlc_l_cb() { let mut cpu = setup_cpu(); cpu.l=0xFF; cpu.execute_cb_prefixed(0x05); assert_eq!(cpu.l, 0xFF); assert_flags!(cpu,false,false,false,true); }
+        #[test]
+        fn test_rlc_a_cb() { let mut cpu = setup_cpu(); cpu.a=0x42; cpu.execute_cb_prefixed(0x07); assert_eq!(cpu.a, 0x84); assert_flags!(cpu,false,false,false,false); }
+
+
+        #[test]
+        fn test_rlc_hl_mem_cb() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x12; cpu.l = 0x34;
+            let addr = 0x1234;
+
+            cpu.memory[addr] = 0b1000_0000; // C=1, Z=0
+            cpu.execute_cb_prefixed(0x06);
+            assert_eq!(cpu.memory[addr], 0b0000_0001);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.memory[addr] = 0x00; // C=0, Z=1
+            cpu.execute_cb_prefixed(0x06);
+            assert_eq!(cpu.memory[addr], 0x00);
+            assert_flags!(cpu, true, false, false, false);
+
+            cpu.memory[addr] = 0xFF; // C=1, Z=0
+            cpu.execute_cb_prefixed(0x06);
+            assert_eq!(cpu.memory[addr], 0xFF);
+            assert_flags!(cpu, false, false, false, true);
+        }
+
+        // Test RRC operations
+        #[test]
+        fn test_rrc_b_cb() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0b0000_0001; // Bit 0 set, result 0b1000_0000, C=1, Z=0
+            cpu.execute_cb_prefixed(0x08);
+            assert_eq!(cpu.b, 0b1000_0000);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.b = 0b0000_0010; // Bit 0 clear, result 0b0000_0001, C=0, Z=0
+            cpu.execute_cb_prefixed(0x08);
+            assert_eq!(cpu.b, 0b0000_0001);
+            assert_flags!(cpu, false, false, false, false);
+
+            cpu.b = 0x00; // Result 0, C=0, Z=1
+            cpu.execute_cb_prefixed(0x08);
+            assert_eq!(cpu.b, 0x00);
+            assert_flags!(cpu, true, false, false, false);
+
+            cpu.b = 0xFF; // 1111_1111 -> C=1, result 1111_1111
+            cpu.execute_cb_prefixed(0x08);
+            assert_eq!(cpu.b, 0xFF);
+            assert_flags!(cpu, false, false, false, true);
+        }
+        #[test]
+        fn test_rrc_hl_mem_cb() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0xDE; cpu.l = 0xAD;
+            let addr = 0xDEAD;
+
+            cpu.memory[addr] = 0b0000_0001; // C=1, Z=0
+            cpu.execute_cb_prefixed(0x0E);
+            assert_eq!(cpu.memory[addr], 0b1000_0000);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.memory[addr] = 0x00; // C=0, Z=1
+            cpu.execute_cb_prefixed(0x0E);
+            assert_eq!(cpu.memory[addr], 0x00);
+            assert_flags!(cpu, true, false, false, false);
+        }
+        // Minimal tests for other RRC registers
+        #[test] fn test_rrc_c_cb() { let mut c = setup_cpu(); c.c=0x01; c.execute_cb_prefixed(0x09); assert_eq!(c.c, 0x80); assert_flags!(c,false,false,false,true); }
+        #[test] fn test_rrc_d_cb() { let mut c = setup_cpu(); c.d=0x02; c.execute_cb_prefixed(0x0A); assert_eq!(c.d, 0x01); assert_flags!(c,false,false,false,false); }
+        #[test] fn test_rrc_e_cb() { let mut c = setup_cpu(); c.e=0x80; c.execute_cb_prefixed(0x0B); assert_eq!(c.e, 0x40); assert_flags!(c,false,false,false,false); }
+        #[test] fn test_rrc_h_cb() { let mut c = setup_cpu(); c.h=0x00; c.execute_cb_prefixed(0x0C); assert_eq!(c.h, 0x00); assert_flags!(c,true,false,false,false); }
+        #[test] fn test_rrc_l_cb() { let mut c = setup_cpu(); c.l=0xFF; c.execute_cb_prefixed(0x0D); assert_eq!(c.l, 0xFF); assert_flags!(c,false,false,false,true); }
+        #[test] fn test_rrc_a_cb() { let mut c = setup_cpu(); c.a=0x01; c.execute_cb_prefixed(0x0F); assert_eq!(c.a, 0x80); assert_flags!(c,false,false,false,true); }
+
+        // Test RL operations
+        #[test]
+        fn test_rl_b_cb() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0b1000_0000; cpu.set_flag_c(false); // old_C=0, new_C=1 (from bit 7), result 0b0000_0000
+            cpu.execute_cb_prefixed(0x10);
+            assert_eq!(cpu.b, 0b0000_0000);
+            assert_flags!(cpu, true, false, false, true);
+
+            cpu.b = 0b0000_0000; cpu.set_flag_c(true);  // old_C=1, new_C=0 (from bit 7), result 0b0000_0001
+            cpu.execute_cb_prefixed(0x10);
+            assert_eq!(cpu.b, 0b0000_0001);
+            assert_flags!(cpu, false, false, false, false);
+
+            cpu.b = 0b1010_1010; cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b0101_0101
+            cpu.execute_cb_prefixed(0x10);
+            assert_eq!(cpu.b, 0b0101_0101);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.b = 0x00; cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
+            cpu.execute_cb_prefixed(0x10);
+            assert_eq!(cpu.b, 0x00);
+            assert_flags!(cpu, true, false, false, false);
+        }
+
+        #[test]
+        fn test_rl_hl_mem_cb() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0xDA; cpu.l = 0xFE;
+            let addr = 0xDAFE;
+
+            cpu.memory[addr] = 0b1000_0000; cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b0000_0001
+            cpu.execute_cb_prefixed(0x16);
+            assert_eq!(cpu.memory[addr], 0b0000_0001);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.memory[addr] = 0x00; cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
+            cpu.execute_cb_prefixed(0x16);
+            assert_eq!(cpu.memory[addr], 0x00);
+            assert_flags!(cpu, true, false, false, false);
+        }
+        // Minimal tests for other RL registers
+        #[test] fn test_rl_c_cb() { let mut c = setup_cpu(); c.c=0x80; c.set_flag_c(true); c.execute_cb_prefixed(0x11); assert_eq!(c.c, 0x01); assert_flags!(c,false,false,false,true); }
+        #[test] fn test_rl_a_cb() { let mut c = setup_cpu(); c.a=0x00; c.set_flag_c(true); c.execute_cb_prefixed(0x17); assert_eq!(c.a, 0x01); assert_flags!(c,false,false,false,false); }
+
+        // Test RR operations
+        #[test]
+        fn test_rr_b_cb() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0b0000_0001; cpu.set_flag_c(false); // old_C=0, new_C=1 (from bit 0), result 0b0000_0000
+            cpu.execute_cb_prefixed(0x18);
+            assert_eq!(cpu.b, 0b0000_0000);
+            assert_flags!(cpu, true, false, false, true);
+
+            cpu.b = 0b0000_0000; cpu.set_flag_c(true);  // old_C=1, new_C=0 (from bit 0), result 0b1000_0000
+            cpu.execute_cb_prefixed(0x18);
+            assert_eq!(cpu.b, 0b1000_0000);
+            assert_flags!(cpu, false, false, false, false);
+
+            cpu.b = 0b0101_0101; cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b1010_1010
+            cpu.execute_cb_prefixed(0x18);
+            assert_eq!(cpu.b, 0b1010_1010);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.b = 0x00; cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
+            cpu.execute_cb_prefixed(0x18);
+            assert_eq!(cpu.b, 0x00);
+            assert_flags!(cpu, true, false, false, false);
+        }
+
+        #[test]
+        fn test_rr_hl_mem_cb() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0xCA; cpu.l = 0xFE;
+            let addr = 0xCAFE;
+
+            cpu.memory[addr] = 0b0000_0001; cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b1000_0000
+            cpu.execute_cb_prefixed(0x1E);
+            assert_eq!(cpu.memory[addr], 0b1000_0000);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.memory[addr] = 0x00; cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
+            cpu.execute_cb_prefixed(0x1E);
+            assert_eq!(cpu.memory[addr], 0x00);
+            assert_flags!(cpu, true, false, false, false);
+        }
+        // Minimal tests for other RR registers
+        #[test] fn test_rr_c_cb() { let mut c = setup_cpu(); c.c=0x01; c.set_flag_c(true); c.execute_cb_prefixed(0x19); assert_eq!(c.c, 0x80); assert_flags!(c,false,false,false,true); }
+        #[test] fn test_rr_a_cb() { let mut c = setup_cpu(); c.a=0x00; c.set_flag_c(true); c.execute_cb_prefixed(0x1F); assert_eq!(c.a, 0x80); assert_flags!(c,false,false,false,false); }
+
+        // Test SLA operations
+        #[test]
+        fn test_sla_b_cb() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0b1000_0000; // C=1, result 0b0000_0000, Z=1
+            cpu.execute_cb_prefixed(0x20);
+            assert_eq!(cpu.b, 0b0000_0000);
+            assert_flags!(cpu, true, false, false, true);
+
+            cpu.b = 0b0100_0001; // C=0, result 0b1000_0010, Z=0
+            cpu.execute_cb_prefixed(0x20);
+            assert_eq!(cpu.b, 0b1000_0010);
+            assert_flags!(cpu, false, false, false, false);
+
+            cpu.b = 0x00; // C=0, result 0x00, Z=1
+            cpu.execute_cb_prefixed(0x20);
+            assert_eq!(cpu.b, 0x00);
+            assert_flags!(cpu, true, false, false, false);
+
+            cpu.b = 0xFF; // C=1, result 0xFE (1111_1110), Z=0
+            cpu.execute_cb_prefixed(0x20);
+            assert_eq!(cpu.b, 0xFE);
+            assert_flags!(cpu, false, false, false, true);
+        }
+
+        #[test]
+        fn test_sla_hl_mem_cb() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0xBB; cpu.l = 0xCC;
+            let addr = 0xBBCC;
+
+            cpu.memory[addr] = 0b1000_0001; // C=1, Z=0, result 0b0000_0010
+            cpu.execute_cb_prefixed(0x26);
+            assert_eq!(cpu.memory[addr], 0b0000_0010);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.memory[addr] = 0x00; // C=0, Z=1
+            cpu.execute_cb_prefixed(0x26);
+            assert_eq!(cpu.memory[addr], 0x00);
+            assert_flags!(cpu, true, false, false, false);
+        }
+        // Minimal tests for other SLA registers
+        #[test] fn test_sla_c_cb() { let mut c = setup_cpu(); c.c=0x80; c.execute_cb_prefixed(0x21); assert_eq!(c.c, 0x00); assert_flags!(c,true,false,false,true); }
+        #[test] fn test_sla_a_cb() { let mut c = setup_cpu(); c.a=0x01; c.execute_cb_prefixed(0x27); assert_eq!(c.a, 0x02); assert_flags!(c,false,false,false,false); }
+
+        // Test SRA operations
+        #[test]
+        fn test_sra_b_cb() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0b1000_0001; // C=1, result 0b1100_0000, Z=0
+            cpu.execute_cb_prefixed(0x28);
+            assert_eq!(cpu.b, 0b1100_0000);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.b = 0b0000_0010; // C=0, result 0b0000_0001, Z=0
+            cpu.execute_cb_prefixed(0x28);
+            assert_eq!(cpu.b, 0b0000_0001);
+            assert_flags!(cpu, false, false, false, false);
+
+            cpu.b = 0x00; // C=0, result 0x00, Z=1
+            cpu.execute_cb_prefixed(0x28);
+            assert_eq!(cpu.b, 0x00);
+            assert_flags!(cpu, true, false, false, false);
+
+            cpu.b = 0xFF; // C=1, result 0xFF (1111_1111), Z=0
+            cpu.execute_cb_prefixed(0x28);
+            assert_eq!(cpu.b, 0xFF);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.b = 0x80; // 1000_0000 -> C=0, result 1100_0000
+            cpu.execute_cb_prefixed(0x28);
+            assert_eq!(cpu.b, 0xC0);
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_sra_hl_mem_cb() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0xDD; cpu.l = 0xEE;
+            let addr = 0xDDEE;
+
+            cpu.memory[addr] = 0b1000_0001; // C=1, Z=0, result 0b1100_0000
+            cpu.execute_cb_prefixed(0x2E);
+            assert_eq!(cpu.memory[addr], 0b1100_0000);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.memory[addr] = 0x01; // C=1, Z=0, result 0x00 (as bit 7 is 0)
+            cpu.set_flag_z(false); // clear Z before test
+            cpu.execute_cb_prefixed(0x2E);
+            assert_eq!(cpu.memory[addr], 0x00);
+            assert_flags!(cpu, true, false, false, true);
+        }
+        // Minimal tests for other SRA registers
+        #[test] fn test_sra_c_cb() { let mut c = setup_cpu(); c.c=0x81; c.execute_cb_prefixed(0x29); assert_eq!(c.c, 0xC0); assert_flags!(c,false,false,false,true); }
+        #[test] fn test_sra_a_cb() { let mut c = setup_cpu(); c.a=0x02; c.execute_cb_prefixed(0x2F); assert_eq!(c.a, 0x01); assert_flags!(c,false,false,false,false); }
+
+        // Test SWAP operations
+        #[test]
+        fn test_swap_b_cb() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0xAB; // result 0xBA
+            cpu.execute_cb_prefixed(0x30);
+            assert_eq!(cpu.b, 0xBA);
+            assert_flags!(cpu, false, false, false, false);
+
+            cpu.b = 0x00; // result 0x00, Z=1
+            cpu.execute_cb_prefixed(0x30);
+            assert_eq!(cpu.b, 0x00);
+            assert_flags!(cpu, true, false, false, false);
+
+            cpu.b = 0xF0; // result 0x0F
+            cpu.execute_cb_prefixed(0x30);
+            assert_eq!(cpu.b, 0x0F);
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_swap_hl_mem_cb() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0xFF; cpu.l = 0x01;
+            let addr = 0xFF01;
+
+            cpu.memory[addr] = 0xCD; // result 0xDC
+            cpu.execute_cb_prefixed(0x36);
+            assert_eq!(cpu.memory[addr], 0xDC);
+            assert_flags!(cpu, false, false, false, false);
+
+            cpu.memory[addr] = 0x00; // result 0x00, Z=1
+            cpu.execute_cb_prefixed(0x36);
+            assert_eq!(cpu.memory[addr], 0x00);
+            assert_flags!(cpu, true, false, false, false);
+        }
+        // Minimal tests for other SWAP registers
+        #[test] fn test_swap_c_cb() { let mut c = setup_cpu(); c.c=0x12; c.execute_cb_prefixed(0x31); assert_eq!(c.c, 0x21); assert_flags!(c,false,false,false,false); }
+        #[test] fn test_swap_a_cb() { let mut c = setup_cpu(); c.a=0x00; c.execute_cb_prefixed(0x37); assert_eq!(c.a, 0x00); assert_flags!(c,true,false,false,false); }
+
+        // Test SRL operations
+        #[test]
+        fn test_srl_b_cb() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0b1000_0001; // C=1, result 0b0100_0000, Z=0
+            cpu.execute_cb_prefixed(0x38);
+            assert_eq!(cpu.b, 0b0100_0000);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.b = 0b0000_0010; // C=0, result 0b0000_0001, Z=0
+            cpu.execute_cb_prefixed(0x38);
+            assert_eq!(cpu.b, 0b0000_0001);
+            assert_flags!(cpu, false, false, false, false);
+
+            cpu.b = 0x01; // C=1, result 0x00, Z=1
+            cpu.execute_cb_prefixed(0x38);
+            assert_eq!(cpu.b, 0x00);
+            assert_flags!(cpu, true, false, false, true);
+
+            cpu.b = 0xFF; // C=1, result 0x7F (0111_1111), Z=0
+            cpu.execute_cb_prefixed(0x38);
+            assert_eq!(cpu.b, 0x7F);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.b = 0x80; // 1000_0000 -> C=0, result 0100_0000 (0x40)
+            cpu.execute_cb_prefixed(0x38);
+            assert_eq!(cpu.b, 0x40);
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_srl_hl_mem_cb() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0xAA; cpu.l = 0xBB;
+            let addr = 0xAABB;
+
+            cpu.memory[addr] = 0b1000_0001; // C=1, Z=0, result 0b0100_0000
+            cpu.execute_cb_prefixed(0x3E);
+            assert_eq!(cpu.memory[addr], 0b0100_0000);
+            assert_flags!(cpu, false, false, false, true);
+
+            cpu.memory[addr] = 0x01; // C=1, Z=1, result 0x00
+            cpu.execute_cb_prefixed(0x3E);
+            assert_eq!(cpu.memory[addr], 0x00);
+            assert_flags!(cpu, true, false, false, true);
+        }
+        // Minimal tests for other SRL registers
+        #[test] fn test_srl_c_cb() { let mut c = setup_cpu(); c.c=0x81; c.execute_cb_prefixed(0x39); assert_eq!(c.c, 0x40); assert_flags!(c,false,false,false,true); }
+        #[test] fn test_srl_a_cb() { let mut c = setup_cpu(); c.a=0x02; c.execute_cb_prefixed(0x3F); assert_eq!(c.a, 0x01); assert_flags!(c,false,false,false,false); }
     }
 }
