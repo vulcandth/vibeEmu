@@ -13,7 +13,8 @@ mod joypad;
 mod serial;
 mod timer;
 
-
+use std::fs::File; // Added for file operations
+use std::io::{Read, Result}; // Added for file operations and Result type
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -23,80 +24,84 @@ use std::cell::RefCell;
 use crate::cpu::Cpu;
 use crate::bus::Bus;
 
+// Function to load ROM data from a file
+fn load_rom_file(path: &str) -> Result<Vec<u8>> {
+    let mut file = File::open(path)?;
+    let mut data = Vec::new();
+    file.read_to_end(&mut data)?;
+    Ok(data)
+}
+
 fn main() {
     println!("GBC Emulator starting...");
 
+    // Define the path to the ROM
+    let rom_path = "roms/cpu_instrs.gb"; // Path to the ROM file
+
+    // Load the ROM data from the file
+    let rom_data = match load_rom_file(rom_path) {
+        Ok(data) => data,
+        Err(e) => {
+            // If the user needs to supply the ROM, it's better to panic here.
+            // For automated testing where the ROM might not be present,
+            // providing a default empty ROM might be an alternative,
+            // but for actual emulation, ROM is essential.
+            panic!("Failed to load ROM file '{}': {}", rom_path, e);
+        }
+    };
+
     // Create the Bus, wrapped in Rc and RefCell for shared mutable access
-    let bus = Rc::new(RefCell::new(Bus::new()));
+    let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
 
     // Create the Cpu, passing a clone of the Rc-wrapped bus
     let mut cpu = Cpu::new(bus.clone());
 
-    // --- Test execution ---
-    // Manually put some opcodes in WRAM via the bus for the CPU to fetch.
-    // WRAM starts at 0xC000.
-    // NOP (0x00) at 0xC000
-    // HALT (0x76) at 0xC001
-    bus.borrow_mut().write_byte(0xC000, 0x00); // NOP
-    bus.borrow_mut().write_byte(0xC001, 0x76); // HALT
+    // Initialize CPU state if needed (e.g., PC to ROM start 0x0100 or 0x0000 for some test ROMs)
+    // For cpu_instrs.gb, execution typically starts at 0x0100 after the Nintendo logo scroll.
+    // However, the boot ROM (if emulated) would handle setting PC to 0x0100.
+    // If no boot ROM, we might need to set PC manually.
+    // For now, let's assume the ROM itself starts execution correctly or a boot ROM would set PC.
+    // Default PC is 0x0000 from Cpu::new(). Some test ROMs might start at 0x0000.
+    // cpu_instrs.gb expects to start at 0x0100 if no bootrom is run.
+    // Let's set PC to 0x0100 for cpu_instrs.gb compatibility.
+    cpu.pc = 0x0100;
+    // TODO: Implement proper boot ROM behavior or make this configurable.
 
-    // Set CPU's program counter to start execution from WRAM for this test
-    cpu.pc = 0xC000;
+    println!("Initial CPU state: PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}", cpu.pc, cpu.sp, cpu.a, cpu.f);
 
-    println!("Initial CPU state: PC=0x{:04X}, A=0x{:02X}", cpu.pc, cpu.a);
-    println!("Memory at 0xC000 (WRAM): 0x{:02X}", bus.borrow().read_byte(0xC000));
-    println!("Memory at 0xC001 (WRAM): 0x{:02X}", bus.borrow().read_byte(0xC001));
+    const MAX_STEPS: u64 = 5_000_000; // Define a maximum number of steps for the emulation loop
+    const SERIAL_PRINT_INTERVAL: u64 = 100_000;
 
-    // Simplified fetch-decode-execute cycle for testing
-    // We'll manually call the CPU methods for NOP and HALT for this test.
-    // A full emulator would have a loop and a large match statement for opcodes.
+    for i in 0..MAX_STEPS {
+        cpu.step(); // Execute one CPU step
 
-    if !cpu.is_halted {
-        // 1. Fetch first opcode (NOP)
-        // The CPU's internal fetch mechanism isn't used here yet; we're driving manually.
-        // In a real scenario, cpu.tick() or cpu.step() would handle this.
-        let opcode1 = bus.borrow().read_byte(cpu.pc);
-        println!("Fetched opcode 0x{:02X} from PC=0x{:04X}", opcode1, cpu.pc);
+        if cpu.is_halted {
+            println!("CPU Halted at step {}.", i + 1);
+            break;
+        }
 
-        if opcode1 == 0x00 { // NOP
-            cpu.nop(); // This should advance PC to 0xC001
-            println!("Executed NOP. New CPU state: PC=0x{:04X}", cpu.pc);
-
-            // 2. Fetch second opcode (HALT)
-            if cpu.pc == 0xC001 && !cpu.is_halted { // Check if PC advanced correctly
-                let opcode2 = bus.borrow().read_byte(cpu.pc);
-                println!("Fetched opcode 0x{:02X} from PC=0x{:04X}", opcode2, cpu.pc);
-
-                if opcode2 == 0x76 { // HALT
-                    cpu.halt(); // This should advance PC to 0xC002 and set is_halted
-                     println!("Executed HALT. New CPU state: PC=0x{:04X}, is_halted: {}", cpu.pc, cpu.is_halted);
-                } else {
-                    println!("Expected HALT (0x76) but got 0x{:02X}", opcode2);
-                }
+        if (i + 1) % SERIAL_PRINT_INTERVAL == 0 {
+            let serial_data = bus.borrow().get_serial_output_string();
+            if !serial_data.is_empty() {
+                println!("Serial Output (step {}):\n{}", i + 1, serial_data);
+                // Optionally clear serial_output after printing if desired
+                // bus.borrow_mut().serial_output.clear();
             }
-        } else if opcode1 == 0x76 { // HALT (if PC somehow started at 0xC001)
-            cpu.halt();
-            println!("Executed HALT directly. CPU state: PC=0x{:04X}, is_halted: {}", cpu.pc, cpu.is_halted);
-        } else {
-            println!("Expected NOP (0x00) but got 0x{:02X}", opcode1);
+            println!("Current CPU state (step {}): PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
+                     i + 1, cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
+        }
+
+        if i == MAX_STEPS - 1 {
+            println!("Emulation finished after {} steps (max steps reached).", MAX_STEPS);
         }
     }
 
+    // Final serial output check
+    let serial_data = bus.borrow().get_serial_output_string();
+    if !serial_data.is_empty() {
+        println!("Final Serial Output:\n{}", serial_data);
+    }
+
     println!("Final CPU state: PC=0x{:04X}, is_halted: {}", cpu.pc, cpu.is_halted);
-    println!("Memory at 0xC000 (WRAM) after execution: 0x{:02X}", bus.borrow().read_byte(0xC000));
-    println!("Memory at 0xC001 (WRAM) after execution: 0x{:02X}", bus.borrow().read_byte(0xC001));
-
-    // Example: Test reading from HRAM (FF80-FFFE) via Bus then Memory
-    bus.borrow_mut().write_byte(0xFF80, 0xAA);
-    bus.borrow_mut().write_byte(0xFFFE, 0xBB);
-    println!("Value at HRAM 0xFF80: 0x{:02X}", bus.borrow().read_byte(0xFF80));
-    println!("Value at HRAM 0xFFFE: 0x{:02X}", bus.borrow().read_byte(0xFFFE));
-
-    // Example: Test PPU/APU placeholder calls via Bus
-    println!("Attempting PPU read at 0x8000: 0x{:02X}", bus.borrow().read_byte(0x8000)); // VRAM
-    bus.borrow_mut().write_byte(0x8000, 0xCC);
-    println!("Attempting APU read at 0xFF10: 0x{:02X}", bus.borrow().read_byte(0xFF10)); // APU Reg
-    bus.borrow_mut().write_byte(0xFF10, 0xDD);
-
-    println!("GBC Emulator finished basic test.");
+    println!("GBC Emulator finished.");
 }

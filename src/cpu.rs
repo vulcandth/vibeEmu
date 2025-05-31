@@ -1748,6 +1748,226 @@ impl Cpu {
             // Re-add if necessary: _ => { /* TODO: Handle undefined CB opcode */ }
         }
     }
+
+    pub fn step(&mut self) -> u32 {
+        let opcode = self.bus.borrow().read_byte(self.pc);
+        // println!("PC: {:#04X} Opcode: {:#02X}", self.pc, opcode); // Debug print
+
+        match opcode {
+            0x00 => self.nop(),
+            0x01 => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_bc_nn(lo, hi);
+            }
+            0x06 => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_b_n(n);
+            }
+            // 0x0E was here, removed duplicate
+            // 0x11 was here, removed duplicate
+            // 0x16 was here, removed duplicate
+            // 0x1E was here, removed duplicate
+            // 0x21 was here, removed duplicate
+            // 0x22 was here, removed duplicate
+            // 0x26 was here, removed duplicate
+            // 0x2A was here, removed duplicate
+            // 0x2E was here, removed duplicate
+            // 0x31 was here, removed duplicate
+            // 0x32 was here, removed duplicate
+            // 0x36 was here, removed duplicate
+            // 0x3A was here, removed duplicate
+            0x02 => self.ld_bc_mem_a(),
+            0x0A => self.ld_a_bc_mem(),
+            0x0E => { // This is the first (and now only) instance
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_c_n(n);
+            }
+            0x11 => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_de_nn(lo, hi);
+            }
+            0x12 => self.ld_de_mem_a(),
+            0x16 => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_d_n(n);
+            }
+            0x1A => self.ld_a_de_mem(),
+            0x18 => {
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.jr_e8(offset);
+            }
+            0x1E => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_e_n(n);
+            }
+            0x20 => {
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.jr_nz_e8(offset);
+            }
+            0x21 => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_hl_nn(lo, hi);
+            }
+            0x22 => self.ldi_hl_mem_a(),
+            0x26 => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_h_n(n);
+            }
+            0x28 => {
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.jr_z_e8(offset);
+            }
+            0x2A => self.ldi_a_hl_mem(),
+            0x2E => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_l_n(n);
+            }
+            0x31 => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_sp_nn(lo, hi);
+            }
+            0x32 => self.ldd_hl_mem_a(),
+            0x36 => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_hl_mem_n(n);
+            }
+            0x3A => self.ldd_a_hl_mem(),
+            0x3E => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_a_n(n);
+            }
+
+            // LD r, r' opcodes
+            0x40 => self.ld_b_b(), // LD B,B (effectively NOP for value change)
+            0x41 => self.ld_b_c(),
+            0x42 => self.ld_b_d(),
+            0x43 => self.ld_b_e(),
+            0x44 => self.ld_b_h(),
+            0x45 => self.ld_b_l(),
+            // 0x46 => ld_b_hl_mem - needs operand fetch logic like other (HL)
+            0x47 => self.ld_b_a(),
+            0x48 => self.ld_c_b(),
+            0x49 => self.ld_c_c(),
+            0x4A => self.ld_c_d(),
+            0x4B => self.ld_c_e(),
+            0x4C => self.ld_c_h(),
+            0x4D => self.ld_c_l(),
+            // 0x4E => ld_c_hl_mem
+            0x4F => self.ld_c_a(),
+            0x50 => self.ld_d_b(),
+            0x51 => self.ld_d_c(),
+            0x52 => self.ld_d_d(),
+            0x53 => self.ld_d_e(),
+            0x54 => self.ld_d_h(),
+            0x55 => self.ld_d_l(),
+            // 0x56 => ld_d_hl_mem
+            0x57 => self.ld_d_a(),
+            0x58 => self.ld_e_b(),
+            0x59 => self.ld_e_c(),
+            0x5A => self.ld_e_d(),
+            0x5B => self.ld_e_e(),
+            0x5C => self.ld_e_h(),
+            0x5D => self.ld_e_l(),
+            // 0x5E => ld_e_hl_mem
+            0x5F => self.ld_e_a(),
+            0x60 => self.ld_h_b(),
+            0x61 => self.ld_h_c(),
+            0x62 => self.ld_h_d(),
+            0x63 => self.ld_h_e(),
+            0x64 => self.ld_h_h(),
+            0x65 => self.ld_h_l(),
+            // 0x66 => ld_h_hl_mem
+            0x67 => self.ld_h_a(),
+            0x68 => self.ld_l_b(),
+            0x69 => self.ld_l_c(),
+            0x6A => self.ld_l_d(),
+            0x6B => self.ld_l_e(),
+            0x6C => self.ld_l_h(),
+            0x6D => self.ld_l_l(),
+            // 0x6E => ld_l_hl_mem
+            0x6F => self.ld_l_a(),
+            // 0x70-0x75 LD (HL),r - these write to memory, not just register to register
+            // 0x76 is HALT
+            0x77 => self.ld_hl_mem_a(), // LD (HL), A
+            0x78 => self.ld_a_b(),
+            0x79 => self.ld_a_c(),
+            0x7A => self.ld_a_d(),
+            0x7B => self.ld_a_e(),
+            0x7C => self.ld_a_h(),
+            0x7D => self.ld_a_l(),
+            // 0x7E => ld_a_hl_mem
+            0x7F => self.ld_a_a(), // LD A,A (effectively NOP for value change)
+
+            0xAF => self.xor_a_a(),
+
+            0xC1 => self.pop_bc(),
+            0xC3 => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.jp_nn(lo, hi);
+            }
+            0xC5 => self.push_bc(),
+            0xC9 => self.ret(),
+            0xCD => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.call_nn(lo, hi);
+            }
+            0xD1 => self.pop_de(),
+            0xD5 => self.push_de(),
+            0xE0 => {
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ldh_n_offset_mem_a(offset);
+            }
+            0xE1 => self.pop_hl(),
+            0xE5 => self.push_hl(),
+            0xEA => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_nn_mem_a(lo, hi);
+            }
+            0xF0 => {
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ldh_a_n_offset_mem(offset);
+            }
+            0xF1 => self.pop_af(),
+            0xF5 => self.push_af(),
+            0xFA => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_a_nn_mem(lo, hi);
+            }
+            0xFE => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.cp_a_n(n);
+            }
+
+            0xCB => {
+                // For CB-prefixed opcodes, PC is currently at the CB opcode.
+                // We need to read the next byte (the actual CB opcode) at PC+1.
+                // The execute_cb_prefixed method does *not* handle PC increment for the CB prefix itself or its operand.
+                // So, we must advance PC past CB and past the cb_opcode.
+                let cb_opcode = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.pc = self.pc.wrapping_add(2); // Increment PC by 2 (for 0xCB and cb_opcode)
+                self.execute_cb_prefixed(cb_opcode);
+                // execute_cb_prefixed itself does not increment PC further.
+            }
+            0x76 => self.halt(),
+            // NOTE: The following lines were the duplicated, unreachable patterns.
+            // They are removed in this REPLACE block by simply not including them.
+            // The primary instances of these opcodes (0x0E, 0x11, etc.) are already present
+            // earlier in the match statement from the previous subtask's merge.
+
+            _ => panic!("Unimplemented opcode: {:#04X} at PC: {:#04X}", opcode, self.pc),
+        }
+
+        // Placeholder cycle count
+        4
+    }
 }
 
 #[cfg(test)]
@@ -1767,7 +1987,9 @@ mod tests {
     }
 
     fn setup_cpu() -> Cpu {
-        let bus = Rc::new(RefCell::new(Bus::new()));
+        // Provide dummy ROM data for Bus creation in CPU tests
+        let rom_data = vec![0; 0x100]; // Example: 256 bytes of ROM
+        let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
         Cpu::new(bus) // Initializes PC and SP to 0x0000, memory to 0s via bus.
     }
 

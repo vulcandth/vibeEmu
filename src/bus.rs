@@ -8,6 +8,8 @@ pub struct Bus {
     pub memory: Memory,
     pub ppu: Ppu,
     pub apu: Apu,
+    pub rom_data: Vec<u8>, // Added ROM data field
+    pub serial_output: Vec<u8>, // Added for serial output capture
     // TODO: Add interrupt enable (IE) and interrupt flag (IF) registers here later
     // For now, IF is 0xFF0F and IE is 0xFFFF
     // pub interrupt_enable_register: u8,
@@ -15,24 +17,29 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new() -> Self {
+    pub fn new(rom_data: Vec<u8>) -> Self { // Added rom_data parameter
         Self {
             memory: Memory::new(),
             ppu: Ppu::new(),
             apu: Apu::new(),
+            rom_data, // Initialize rom_data
+            serial_output: Vec::new(), // Initialize serial_output
             // interrupt_enable_register: 0, // Default value
             // interrupt_flag: 0,            // Default value
         }
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
-        println!("Bus read at 0x{:04X}", addr);
+        // println!("Bus read at 0x{:04X}", addr); // Commented out for less verbose logging
         match addr {
-            0x0000..=0x7FFF => {
-                // ROM - Not implemented yet
-                // For now, panic or return a fixed value.
-                // panic!("Read from ROM not implemented. Address: {:#04X}", addr);
-                0xFF
+            0x0000..=0x7FFF => { // ROM area
+                let index = addr as usize;
+                if index < self.rom_data.len() {
+                    self.rom_data[index]
+                } else {
+                    // Address is past the end of the loaded ROM
+                    0xFF
+                }
             }
             0x8000..=0x9FFF => self.ppu.read_byte(addr),
             0xA000..=0xBFFF => {
@@ -88,7 +95,7 @@ impl Bus {
     }
 
     pub fn write_byte(&mut self, addr: u16, value: u8) {
-        println!("Bus write at 0x{:04X} with value 0x{:02X}", addr, value);
+        // println!("Bus write at 0x{:04X} with value 0x{:02X}", addr, value); // Commented out for less verbose logging
         match addr {
             0x0000..=0x7FFF => {
                 // ROM - Writes are generally ignored or have special behavior
@@ -115,8 +122,17 @@ impl Bus {
                     0xFF00 => {
                         // Joypad - Placeholder
                     }
-                    0xFF01..=0xFF02 => {
-                        // Serial - Placeholder
+                    0xFF01..=0xFF02 => { // Serial Data Transfer
+                        if addr == 0xFF01 { // SB: Serial Transfer Data
+                            // For now, we just append the byte to our serial_output vector
+                            // This allows us to capture and inspect what the game is trying to "print"
+                            // A full implementation would involve timing, control bits from 0xFF02 (SC), etc.
+                            println!("Serial port (0xFF01) received byte: 0x{:02X} ('{}')", value, value as char);
+                            self.serial_output.push(value);
+                        }
+                        // 0xFF02 (SC - Serial Transfer Control) is not fully handled here yet.
+                        // Writes to SC might clear serial_output or trigger other behavior in a full system.
+                        // For now, we only capture data written to SB (0xFF01).
                     }
                     0xFF04..=0xFF07 => {
                         // Timer - Placeholder
@@ -139,15 +155,27 @@ impl Bus {
         }
     }
 
+    // Method to get the captured serial output as a String
+    pub fn get_serial_output_string(&self) -> String {
+        String::from_utf8_lossy(&self.serial_output).into_owned()
+    }
+} // This closes the `impl Bus` block. The test module should be outside.
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Make sure Bus is in scope, usually true with `super::*` if Bus is at the crate/module root.
+    // If Bus is not found, it might be due to module structure.
+    // For this specific project structure, Bus is defined in src/bus.rs,
+    // and this test module is also in src/bus.rs. So `super::Bus` or `Bus` (via `super::*`) should work.
     use crate::cpu::Cpu; // Assuming cpu.rs is in crate root
     use std::rc::Rc;
     use std::cell::RefCell;
 
     fn setup_test_env() -> (Cpu, Rc<RefCell<Bus>>) {
-        let bus = Rc::new(RefCell::new(Bus::new()));
+        // Provide dummy ROM data for Bus creation
+        let rom_data = vec![0; 0x100]; // Example: 256 bytes of ROM
+        let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
         let cpu = Cpu::new(bus.clone());
         (cpu, bus)
     }
@@ -298,5 +326,90 @@ mod tests {
         let read_back_val = bus.borrow().read_byte(apu_ch1_vol_addr);
         assert_eq!(read_back_val, 0xFF, "Reading from APU placeholder after write should return dummy value");
     }
-}
+
+    #[test]
+    fn test_read_from_rom_area() {
+        // ROM data for this specific test
+        let mut test_rom_data = vec![0; 0x200]; // 512 bytes ROM
+        test_rom_data[0x00] = 0xAA;
+        test_rom_data[0xFF] = 0xBB; // Last byte of the initial 0x100 dummy ROM in setup_test_env
+                                    // This will be overwritten by the new bus instance's ROM.
+        test_rom_data[0x1FE] = 0xCC; // Second to last byte of our 512 byte ROM
+        test_rom_data[0x1FF] = 0xDD; // Last byte of our 512 byte ROM
+
+        let bus_with_specific_rom = Rc::new(RefCell::new(Bus::new(test_rom_data.clone()))); // Use clone if test_rom_data is needed later for asserts
+
+        // 1. Reading from an address within the bounds of rom_data returns the correct byte.
+        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x0000), 0xAA, "Read from ROM start incorrect");
+
+        // We used 0x100 in setup_test_env, but this test creates its own Bus instance.
+        // Let's re-evaluate the address for 0xBB based on test_rom_data.
+        // If we want to test the specific rom_data[0xFF] = 0xBB, we need to ensure it's set in test_rom_data.
+        // The previous rom_data[0xFF] = 0xBB was a bit confusing as it mixed setup_test_env's ROM
+        // with this test's specific ROM.
+        // Let's make it clear:
+        let specific_addr_ff = 0x00FF;
+        // Ensure test_rom_data has a value at 0x00FF if we are to test it.
+        // The current test_rom_data is initialized with 0s, then specific values.
+        // So test_rom_data[0x00FF] would be 0 unless we set it.
+        // Let's assume the intention was to read a value we explicitly set in test_rom_data for this test.
+        // The original rom_data[0xFF] = 0xBB would have been for the `bus` from `setup_test_env()`,
+        // not `bus_with_specific_rom`.
+
+        // Let's pick a different address for clarity with test_rom_data.
+        let mid_rom_addr = 0x00A5;
+        // test_rom_data is currently all zeros except for 0x00, 0x1FE, 0x1FF.
+        // So, reading from 0x00A5 should return 0.
+        assert_eq!(bus_with_specific_rom.borrow().read_byte(mid_rom_addr), 0x00, "Read from middle of ROM (unset byte) incorrect");
+
+        // Let's set a value in the middle of test_rom_data and test it
+        // We need to recreate the bus if we modify test_rom_data after Bus::new
+        // Or, modify test_rom_data before Bus::new
+        // For simplicity, let's just use the values already set.
+
+        // 2. Reading from an address just at the end of rom_data returns the correct byte.
+        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x01FE), 0xCC, "Read from ROM near end incorrect");
+        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x01FF), 0xDD, "Read from ROM end incorrect");
+
+        // 3. Reading from an address within 0x0000..=0x7FFF but outside the bounds of loaded rom_data returns 0xFF.
+        // test_rom_data has size 0x200 (512 bytes). So addresses from 0x0200 up to 0x7FFF are out of bounds.
+        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x0200), 0xFF, "Read from ROM out of bounds (start) incorrect");
+        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x3000), 0xFF, "Read from ROM out of bounds (middle) incorrect");
+        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x7FFF), 0xFF, "Read from ROM out of bounds (end of range) incorrect");
+
+        // Test reading from original setup_test_env bus to ensure its rom_data is used.
+        let (_cpu, bus_from_setup) = setup_test_env(); // This bus has rom_data vec![0; 0x100]
+        // So, bus_from_setup.rom_data[0] should be 0.
+        // And bus_from_setup.rom_data[0xFF] should be 0.
+        // And bus_from_setup.rom_data[0x100] should be out of bounds (0xFF).
+        assert_eq!(bus_from_setup.borrow().read_byte(0x0000), 0x00, "Read from setup_test_env ROM (start) incorrect");
+        assert_eq!(bus_from_setup.borrow().read_byte(0x00FF), 0x00, "Read from setup_test_env ROM (end) incorrect");
+        assert_eq!(bus_from_setup.borrow().read_byte(0x0100), 0xFF, "Read from setup_test_env ROM (out of bounds) incorrect");
+
+    }
+
+    #[test]
+    fn test_serial_output_capture() {
+        let rom_data = vec![0; 0x100]; // Dummy ROM
+        let mut bus = Bus::new(rom_data); // Not using Rc<RefCell<Bus>> here as we need direct mutable access for this test.
+
+        // Write "Test" to serial port (0xFF01)
+        bus.write_byte(0xFF01, b'T');
+        bus.write_byte(0xFF01, b'e');
+        bus.write_byte(0xFF01, b's');
+        bus.write_byte(0xFF01, b't');
+
+        assert_eq!(bus.get_serial_output_string(), "Test", "Serial output string incorrect after initial write");
+
+        // Write more bytes
+        bus.write_byte(0xFF01, b' ');
+        bus.write_byte(0xFF01, b'1');
+        bus.write_byte(0xFF01, b'2');
+        bus.write_byte(0xFF01, b'3');
+
+        assert_eq!(bus.get_serial_output_string(), "Test 123", "Serial output string incorrect after further writes");
+
+        // Check internal Vec<u8> directly
+        assert_eq!(bus.serial_output, vec![b'T', b'e', b's', b't', b' ', b'1', b'2', b'3']);
+    }
 }
