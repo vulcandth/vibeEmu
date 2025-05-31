@@ -15,6 +15,8 @@ pub struct Cpu {
     pub pc: u16,
     pub sp: u16,
     pub memory: [u8; 0xFFFF + 1],
+    pub ime: bool,      // Interrupt Master Enable flag
+    pub is_halted: bool, // CPU is halted
 }
 
 impl Cpu {
@@ -31,6 +33,8 @@ impl Cpu {
             pc: 0x0000,
             sp: 0x0000,
             memory: [0; 0xFFFF + 1],
+            ime: true, // Typically true after BIOS runs
+            is_halted: false,
         }
     }
 
@@ -658,6 +662,462 @@ impl Cpu {
 
     pub fn is_flag_c(&self) -> bool {
         (self.f >> CARRY_FLAG_BYTE_POSITION) & 1 != 0
+    }
+
+    // 8-bit INC instructions
+    pub fn inc_b(&mut self) {
+        let original_val = self.b;
+        self.b = original_val.wrapping_add(1);
+        self.set_flag_z(self.b == 0);
+        self.set_flag_n(false);
+        self.set_flag_h((original_val & 0x0F) + 1 > 0x0F);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn inc_c(&mut self) {
+        let original_val = self.c;
+        self.c = original_val.wrapping_add(1);
+        self.set_flag_z(self.c == 0);
+        self.set_flag_n(false);
+        self.set_flag_h((original_val & 0x0F) + 1 > 0x0F);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn inc_d(&mut self) {
+        let original_val = self.d;
+        self.d = original_val.wrapping_add(1);
+        self.set_flag_z(self.d == 0);
+        self.set_flag_n(false);
+        self.set_flag_h((original_val & 0x0F) + 1 > 0x0F);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn inc_e(&mut self) {
+        let original_val = self.e;
+        self.e = original_val.wrapping_add(1);
+        self.set_flag_z(self.e == 0);
+        self.set_flag_n(false);
+        self.set_flag_h((original_val & 0x0F) + 1 > 0x0F);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn inc_h(&mut self) {
+        let original_val = self.h;
+        self.h = original_val.wrapping_add(1);
+        self.set_flag_z(self.h == 0);
+        self.set_flag_n(false);
+        self.set_flag_h((original_val & 0x0F) + 1 > 0x0F);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn inc_l(&mut self) {
+        let original_val = self.l;
+        self.l = original_val.wrapping_add(1);
+        self.set_flag_z(self.l == 0);
+        self.set_flag_n(false);
+        self.set_flag_h((original_val & 0x0F) + 1 > 0x0F);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn inc_a(&mut self) {
+        let original_val = self.a;
+        self.a = original_val.wrapping_add(1);
+        self.set_flag_z(self.a == 0);
+        self.set_flag_n(false);
+        self.set_flag_h((original_val & 0x0F) + 1 > 0x0F);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn inc_hl_mem(&mut self) {
+        let original_val = self.read_hl_mem();
+        let result = original_val.wrapping_add(1);
+        self.write_hl_mem(result);
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h((original_val & 0x0F) + 1 > 0x0F);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    // 8-bit DEC instructions
+    pub fn dec_b(&mut self) {
+        let original_val = self.b;
+        self.b = original_val.wrapping_sub(1);
+        self.set_flag_z(self.b == 0);
+        self.set_flag_n(true);
+        self.set_flag_h((original_val & 0x0F) < 1);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn dec_c(&mut self) {
+        let original_val = self.c;
+        self.c = original_val.wrapping_sub(1);
+        self.set_flag_z(self.c == 0);
+        self.set_flag_n(true);
+        self.set_flag_h((original_val & 0x0F) < 1);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn dec_d(&mut self) {
+        let original_val = self.d;
+        self.d = original_val.wrapping_sub(1);
+        self.set_flag_z(self.d == 0);
+        self.set_flag_n(true);
+        self.set_flag_h((original_val & 0x0F) < 1);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn dec_e(&mut self) {
+        let original_val = self.e;
+        self.e = original_val.wrapping_sub(1);
+        self.set_flag_z(self.e == 0);
+        self.set_flag_n(true);
+        self.set_flag_h((original_val & 0x0F) < 1);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn dec_h(&mut self) {
+        let original_val = self.h;
+        self.h = original_val.wrapping_sub(1);
+        self.set_flag_z(self.h == 0);
+        self.set_flag_n(true);
+        self.set_flag_h((original_val & 0x0F) < 1);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn dec_l(&mut self) {
+        let original_val = self.l;
+        self.l = original_val.wrapping_sub(1);
+        self.set_flag_z(self.l == 0);
+        self.set_flag_n(true);
+        self.set_flag_h((original_val & 0x0F) < 1);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn dec_a(&mut self) {
+        let original_val = self.a;
+        self.a = original_val.wrapping_sub(1);
+        self.set_flag_z(self.a == 0);
+        self.set_flag_n(true);
+        self.set_flag_h((original_val & 0x0F) < 1);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn dec_hl_mem(&mut self) {
+        let original_val = self.read_hl_mem();
+        let result = original_val.wrapping_sub(1);
+        self.write_hl_mem(result);
+        self.set_flag_z(result == 0);
+        self.set_flag_n(true);
+        self.set_flag_h((original_val & 0x0F) < 1);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    // 16-bit INC instructions
+    pub fn inc_bc(&mut self) {
+        let mut val = ((self.b as u16) << 8) | (self.c as u16);
+        val = val.wrapping_add(1);
+        self.b = (val >> 8) as u8;
+        self.c = (val & 0xFF) as u8;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn inc_de(&mut self) {
+        let mut val = ((self.d as u16) << 8) | (self.e as u16);
+        val = val.wrapping_add(1);
+        self.d = (val >> 8) as u8;
+        self.e = (val & 0xFF) as u8;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn inc_hl(&mut self) {
+        let mut val = ((self.h as u16) << 8) | (self.l as u16);
+        val = val.wrapping_add(1);
+        self.h = (val >> 8) as u8;
+        self.l = (val & 0xFF) as u8;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn inc_sp(&mut self) {
+        self.sp = self.sp.wrapping_add(1);
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    // 16-bit DEC instructions
+    pub fn dec_bc(&mut self) {
+        let mut val = ((self.b as u16) << 8) | (self.c as u16);
+        val = val.wrapping_sub(1);
+        self.b = (val >> 8) as u8;
+        self.c = (val & 0xFF) as u8;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn dec_de(&mut self) {
+        let mut val = ((self.d as u16) << 8) | (self.e as u16);
+        val = val.wrapping_sub(1);
+        self.d = (val >> 8) as u8;
+        self.e = (val & 0xFF) as u8;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn dec_hl(&mut self) {
+        let mut val = ((self.h as u16) << 8) | (self.l as u16);
+        val = val.wrapping_sub(1);
+        self.h = (val >> 8) as u8;
+        self.l = (val & 0xFF) as u8;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn dec_sp(&mut self) {
+        self.sp = self.sp.wrapping_sub(1);
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    // 16-bit ADD HL, rr instructions
+    pub fn add_hl_bc(&mut self) {
+        let hl = ((self.h as u16) << 8) | (self.l as u16);
+        let bc = ((self.b as u16) << 8) | (self.c as u16);
+        let result = hl.wrapping_add(bc);
+
+        self.set_flag_n(false);
+        // H: Carry from bit 11 to bit 12
+        self.set_flag_h((hl & 0x0FFF) + (bc & 0x0FFF) > 0x0FFF);
+        // C: Carry from bit 15 to bit 16
+        self.set_flag_c(hl as u32 + bc as u32 > 0xFFFF);
+
+        self.h = (result >> 8) as u8;
+        self.l = (result & 0xFF) as u8;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn add_hl_de(&mut self) {
+        let hl = ((self.h as u16) << 8) | (self.l as u16);
+        let de = ((self.d as u16) << 8) | (self.e as u16);
+        let result = hl.wrapping_add(de);
+
+        self.set_flag_n(false);
+        self.set_flag_h((hl & 0x0FFF) + (de & 0x0FFF) > 0x0FFF);
+        self.set_flag_c(hl as u32 + de as u32 > 0xFFFF);
+
+        self.h = (result >> 8) as u8;
+        self.l = (result & 0xFF) as u8;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn add_hl_hl(&mut self) {
+        let hl = ((self.h as u16) << 8) | (self.l as u16);
+        // Source is also HL
+        let result = hl.wrapping_add(hl);
+
+        self.set_flag_n(false);
+        self.set_flag_h((hl & 0x0FFF) + (hl & 0x0FFF) > 0x0FFF);
+        self.set_flag_c(hl as u32 + hl as u32 > 0xFFFF);
+
+        self.h = (result >> 8) as u8;
+        self.l = (result & 0xFF) as u8;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn add_hl_sp(&mut self) {
+        let hl = ((self.h as u16) << 8) | (self.l as u16);
+        let sp_val = self.sp;
+        let result = hl.wrapping_add(sp_val);
+
+        self.set_flag_n(false);
+        self.set_flag_h((hl & 0x0FFF) + (sp_val & 0x0FFF) > 0x0FFF);
+        self.set_flag_c(hl as u32 + sp_val as u32 > 0xFFFF);
+
+        self.h = (result >> 8) as u8;
+        self.l = (result & 0xFF) as u8;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    // ADD SP, e8 instruction
+    pub fn add_sp_e8(&mut self, e8_unsigned: u8) {
+        let offset = e8_unsigned as i8 as i16;
+        let original_sp = self.sp;
+        let result_sp = original_sp.wrapping_add(offset as u16);
+
+        self.set_flag_z(false);
+        self.set_flag_n(false);
+        // H: Carry from bit 3 of (SP_lo & 0x0F) + (e8 & 0x0F)
+        self.set_flag_h(((original_sp & 0x000F) + (e8_unsigned as u16 & 0x000F)) > 0x000F);
+        // C: Carry from bit 7 of (SP_lo & 0xFF) + e8_unsigned
+        self.set_flag_c(((original_sp & 0x00FF) + (e8_unsigned as u16 & 0x00FF)) > 0x00FF);
+
+        self.sp = result_sp;
+        self.pc = self.pc.wrapping_add(2);
+    }
+
+    // LD HL, SP+e8 instruction
+    pub fn ld_hl_sp_plus_e8(&mut self, e8_unsigned: u8) {
+        let offset = e8_unsigned as i8 as i16;
+        let original_sp = self.sp;
+        let result_hl = original_sp.wrapping_add(offset as u16);
+
+        self.set_flag_z(false);
+        self.set_flag_n(false);
+        // H: Carry from bit 3 of (SP_lo & 0x0F) + (e8 & 0x0F)
+        self.set_flag_h(((original_sp & 0x000F) + (e8_unsigned as u16 & 0x000F)) > 0x000F);
+        // C: Carry from bit 7 of (SP_lo & 0xFF) + e8_unsigned
+        self.set_flag_c(((original_sp & 0x00FF) + (e8_unsigned as u16 & 0x00FF)) > 0x00FF);
+
+        self.h = (result_hl >> 8) as u8;
+        self.l = (result_hl & 0xFF) as u8;
+        self.pc = self.pc.wrapping_add(2);
+    }
+
+    // Rotate Accumulator Instructions
+    pub fn rlca(&mut self) {
+        let carry = (self.a >> 7) & 1;
+        self.a = (self.a << 1) | carry;
+        self.set_flag_z(false);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(carry == 1);
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn rrca(&mut self) {
+        let carry = self.a & 1;
+        self.a = (self.a >> 1) | (carry << 7);
+        self.set_flag_z(false);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(carry == 1);
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn rla(&mut self) {
+        let old_carry = self.is_flag_c();
+        let new_carry = (self.a >> 7) & 1;
+        self.a = (self.a << 1) | (if old_carry { 1 } else { 0 });
+        self.set_flag_z(false);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(new_carry == 1);
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn rra(&mut self) {
+        let old_carry = self.is_flag_c();
+        let new_carry = self.a & 1;
+        self.a = (self.a >> 1) | (if old_carry { 1 << 7 } else { 0 });
+        self.set_flag_z(false);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(new_carry == 1);
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    // Decimal Adjust Accumulator
+    pub fn daa(&mut self) {
+        let mut a_val = self.a;
+        let mut adjust = if self.is_flag_c() { 0x60 } else { 0x00 };
+
+        if self.is_flag_h() {
+            adjust |= 0x06;
+        }
+
+        if !self.is_flag_n() { // last operation was addition
+            if (a_val & 0x0F) > 0x09 || self.is_flag_h() {
+                adjust |= 0x06;
+            }
+            if a_val > 0x99 || self.is_flag_c() {
+                adjust |= 0x60;
+            }
+            a_val = a_val.wrapping_add(adjust);
+        } else { // last operation was subtraction
+            a_val = a_val.wrapping_sub(adjust);
+        }
+
+        // Update C flag based on whether 0x60 was part of adjustment for upper nibble
+        // This specific logic for C flag in DAA is tricky and varies slightly between Z80 and SM83.
+        // The provided logic (adjust >= 0x60) is common in GB emulators.
+        // It means C is set if the upper nibble adjustment occurred OR if C was already set (and N=0, a_val > 0x99)
+        if (adjust & 0x60) != 0 {
+             self.set_flag_c(true);
+        }
+        // If adjust didn't include 0x60, C flag is NOT cleared by DAA. It retains its value from previous op or earlier DAA setting.
+        // However, the common interpretation is that DAA *can* set C, but doesn't clear it if not set by DAA's own logic.
+        // The provided logic `self.set_flag_c(adjust >= 0x60)` seems to be a simplification that might be correct for SM83.
+        // Let's stick to the one in the prompt: `self.set_flag_c(adjust >= 0x60);`
+        // This means if adjust was 0x06, C flag is not set by this line. If it was 0x60 or 0x66, it is.
+        // This also matches the coffee-gb logic for setting C.
+
+        self.set_flag_h(false); // H is always reset
+        self.set_flag_z(a_val == 0);
+        self.a = a_val;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    // Other Accumulator/Flag Instructions
+    pub fn cpl(&mut self) {
+        self.a = !self.a;
+        // Z flag is not affected
+        self.set_flag_n(true);
+        self.set_flag_h(true);
+        // C flag is not affected
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn scf(&mut self) {
+        // Z flag is not affected
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(true);
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn ccf(&mut self) {
+        // Z flag is not affected
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(!self.is_flag_c());
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    // CPU Control Instructions
+    pub fn halt(&mut self) {
+        self.is_halted = true;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn stop(&mut self) {
+        // For now, treat as a 1-byte NOP-like instruction.
+        // Full STOP mode implementation is more complex.
+        // Pandocs notes 0x10 0x00, but often the 0x00 is consumed as part of STOP's effect.
+        // If emulating as just advancing PC, it should be by 1 for the 0x10 opcode.
+        // If the hardware truly expects two bytes to be "consumed" by STOP even if it's a NOP,
+        // then PC should be +2. The prompt asked for +1 for simplicity.
+        self.pc = self.pc.wrapping_add(1); // Assuming 1-byte for now as per prompt simplification
+    }
+
+    pub fn di(&mut self) {
+        self.ime = false;
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn ei(&mut self) {
+        // Real hardware delays enabling IME by one instruction.
+        // For now, enable immediately. This detail is often handled in the main emulation loop.
+        self.ime = true;
+        self.pc = self.pc.wrapping_add(1);
     }
 }
 
@@ -1618,5 +2078,1019 @@ mod tests {
     mod arithmetic_logical_8bit {
         use super::*;
         // Tests for ADD, ADC, SUB, SBC, AND, OR, XOR, CP will go here or in submodules.
+    }
+
+    mod arith_8bit_inc_dec {
+        use super::*;
+
+        // INC r8 Tests
+        #[test]
+        fn test_inc_a() {
+            let mut cpu = setup_cpu();
+            cpu.a = 0x00;
+            cpu.inc_a();
+            assert_eq!(cpu.a, 0x01);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.a = 0x0F;
+            cpu.pc = 0; // Reset pc
+            cpu.inc_a();
+            assert_eq!(cpu.a, 0x10);
+            assert_flags!(cpu, false, false, true, false); // H flag
+            assert_eq!(cpu.pc, 1);
+
+            cpu.a = 0xFF;
+            cpu.pc = 0; // Reset pc
+            cpu.inc_a();
+            assert_eq!(cpu.a, 0x00);
+            assert_flags!(cpu, true, false, true, false); // Z and H flags
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_b() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0x05;
+            cpu.inc_b();
+            assert_eq!(cpu.b, 0x06);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.b = 0x0F;
+            cpu.pc = 0;
+            cpu.inc_b();
+            assert_eq!(cpu.b, 0x10);
+            assert_flags!(cpu, false, false, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.b = 0xFF;
+            cpu.pc = 0;
+            cpu.inc_b();
+            assert_eq!(cpu.b, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_c() {
+            let mut cpu = setup_cpu();
+            cpu.c = 0x1A;
+            cpu.inc_c();
+            assert_eq!(cpu.c, 0x1B);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.c = 0x2F;
+            cpu.pc = 0;
+            cpu.inc_c();
+            assert_eq!(cpu.c, 0x30);
+            assert_flags!(cpu, false, false, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.c = 0xFF;
+            cpu.pc = 0;
+            cpu.inc_c();
+            assert_eq!(cpu.c, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_d() {
+            let mut cpu = setup_cpu();
+            cpu.d = 0x33;
+            cpu.inc_d();
+            assert_eq!(cpu.d, 0x34);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.d = 0x4F;
+            cpu.pc = 0;
+            cpu.inc_d();
+            assert_eq!(cpu.d, 0x50);
+            assert_flags!(cpu, false, false, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.d = 0xFF;
+            cpu.pc = 0;
+            cpu.inc_d();
+            assert_eq!(cpu.d, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_e() {
+            let mut cpu = setup_cpu();
+            cpu.e = 0x55;
+            cpu.inc_e();
+            assert_eq!(cpu.e, 0x56);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.e = 0x6F;
+            cpu.pc = 0;
+            cpu.inc_e();
+            assert_eq!(cpu.e, 0x70);
+            assert_flags!(cpu, false, false, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.e = 0xFF;
+            cpu.pc = 0;
+            cpu.inc_e();
+            assert_eq!(cpu.e, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_h() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x77;
+            cpu.inc_h();
+            assert_eq!(cpu.h, 0x78);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.h = 0x8F;
+            cpu.pc = 0;
+            cpu.inc_h();
+            assert_eq!(cpu.h, 0x90);
+            assert_flags!(cpu, false, false, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.h = 0xFF;
+            cpu.pc = 0;
+            cpu.inc_h();
+            assert_eq!(cpu.h, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_l() {
+            let mut cpu = setup_cpu();
+            cpu.l = 0x99;
+            cpu.inc_l();
+            assert_eq!(cpu.l, 0x9A);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.l = 0xAF;
+            cpu.pc = 0;
+            cpu.inc_l();
+            assert_eq!(cpu.l, 0xB0);
+            assert_flags!(cpu, false, false, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.l = 0xFF;
+            cpu.pc = 0;
+            cpu.inc_l();
+            assert_eq!(cpu.l, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_hl_mem() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x12;
+            cpu.l = 0x34;
+            let addr = 0x1234;
+
+            cpu.memory[addr] = 0x00;
+            cpu.pc = 0;
+            cpu.inc_hl_mem();
+            assert_eq!(cpu.memory[addr], 0x01);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.memory[addr] = 0x0F;
+            cpu.pc = 0;
+            cpu.inc_hl_mem();
+            assert_eq!(cpu.memory[addr], 0x10);
+            assert_flags!(cpu, false, false, true, false); // H flag
+            assert_eq!(cpu.pc, 1);
+
+            cpu.memory[addr] = 0xFF;
+            cpu.pc = 0;
+            cpu.inc_hl_mem();
+            assert_eq!(cpu.memory[addr], 0x00);
+            assert_flags!(cpu, true, false, true, false); // Z and H flags
+            assert_eq!(cpu.pc, 1);
+        }
+
+        // DEC r8 Tests
+        #[test]
+        fn test_dec_a() {
+            let mut cpu = setup_cpu();
+            cpu.a = 0x01;
+            cpu.dec_a();
+            assert_eq!(cpu.a, 0x00);
+            assert_flags!(cpu, true, true, false, false); // Z flag
+            assert_eq!(cpu.pc, 1);
+
+            cpu.a = 0x10;
+            cpu.pc = 0; // Reset pc
+            cpu.dec_a();
+            assert_eq!(cpu.a, 0x0F);
+            assert_flags!(cpu, false, true, true, false); // H flag
+            assert_eq!(cpu.pc, 1);
+
+            cpu.a = 0x00;
+            cpu.pc = 0; // Reset pc
+            cpu.dec_a();
+            assert_eq!(cpu.a, 0xFF);
+            assert_flags!(cpu, false, true, true, false); // H flag (borrow from bit 4)
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_dec_b() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0x06;
+            cpu.dec_b();
+            assert_eq!(cpu.b, 0x05);
+            assert_flags!(cpu, false, true, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.b = 0x10;
+            cpu.pc = 0;
+            cpu.dec_b();
+            assert_eq!(cpu.b, 0x0F);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.b = 0x00;
+            cpu.pc = 0;
+            cpu.dec_b();
+            assert_eq!(cpu.b, 0xFF);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_dec_c() {
+            let mut cpu = setup_cpu();
+            cpu.c = 0x1B;
+            cpu.dec_c();
+            assert_eq!(cpu.c, 0x1A);
+            assert_flags!(cpu, false, true, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.c = 0x30;
+            cpu.pc = 0;
+            cpu.dec_c();
+            assert_eq!(cpu.c, 0x2F);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.c = 0x00;
+            cpu.pc = 0;
+            cpu.dec_c();
+            assert_eq!(cpu.c, 0xFF);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_dec_d() {
+            let mut cpu = setup_cpu();
+            cpu.d = 0x34;
+            cpu.dec_d();
+            assert_eq!(cpu.d, 0x33);
+            assert_flags!(cpu, false, true, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.d = 0x50;
+            cpu.pc = 0;
+            cpu.dec_d();
+            assert_eq!(cpu.d, 0x4F);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.d = 0x00;
+            cpu.pc = 0;
+            cpu.dec_d();
+            assert_eq!(cpu.d, 0xFF);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_dec_e() {
+            let mut cpu = setup_cpu();
+            cpu.e = 0x56;
+            cpu.dec_e();
+            assert_eq!(cpu.e, 0x55);
+            assert_flags!(cpu, false, true, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.e = 0x70;
+            cpu.pc = 0;
+            cpu.dec_e();
+            assert_eq!(cpu.e, 0x6F);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.e = 0x00;
+            cpu.pc = 0;
+            cpu.dec_e();
+            assert_eq!(cpu.e, 0xFF);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_dec_h() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x78;
+            cpu.dec_h();
+            assert_eq!(cpu.h, 0x77);
+            assert_flags!(cpu, false, true, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.h = 0x90;
+            cpu.pc = 0;
+            cpu.dec_h();
+            assert_eq!(cpu.h, 0x8F);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.h = 0x00;
+            cpu.pc = 0;
+            cpu.dec_h();
+            assert_eq!(cpu.h, 0xFF);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_dec_l() {
+            let mut cpu = setup_cpu();
+            cpu.l = 0x9A;
+            cpu.dec_l();
+            assert_eq!(cpu.l, 0x99);
+            assert_flags!(cpu, false, true, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.l = 0xB0;
+            cpu.pc = 0;
+            cpu.dec_l();
+            assert_eq!(cpu.l, 0xAF);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+
+            cpu.l = 0x00;
+            cpu.pc = 0;
+            cpu.dec_l();
+            assert_eq!(cpu.l, 0xFF);
+            assert_flags!(cpu, false, true, true, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_dec_hl_mem() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x12;
+            cpu.l = 0x34;
+            let addr = 0x1234;
+
+            cpu.memory[addr] = 0x01;
+            cpu.pc = 0;
+            cpu.dec_hl_mem();
+            assert_eq!(cpu.memory[addr], 0x00);
+            assert_flags!(cpu, true, true, false, false); // Z flag
+            assert_eq!(cpu.pc, 1);
+
+            cpu.memory[addr] = 0x10;
+            cpu.pc = 0;
+            cpu.dec_hl_mem();
+            assert_eq!(cpu.memory[addr], 0x0F);
+            assert_flags!(cpu, false, true, true, false); // H flag
+            assert_eq!(cpu.pc, 1);
+
+            cpu.memory[addr] = 0x00;
+            cpu.pc = 0;
+            cpu.dec_hl_mem();
+            assert_eq!(cpu.memory[addr], 0xFF);
+            assert_flags!(cpu, false, true, true, false); // H flag
+            assert_eq!(cpu.pc, 1);
+        }
+    }
+
+    mod arith_16bit_inc_dec {
+        use super::*;
+
+        // INC rr Tests
+        #[test]
+        fn test_inc_bc_normal() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0x12;
+            cpu.c = 0x34;
+            cpu.set_flag_z(true); // Pre-set some flags
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(true);
+            cpu.set_flag_c(true);
+            let initial_pc = cpu.pc;
+
+            cpu.inc_bc();
+
+            assert_eq!(((cpu.b as u16) << 8) | cpu.c as u16, 0x1235);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, true, false, true, true); // Flags should be unchanged
+        }
+
+        #[test]
+        fn test_inc_bc_wrap() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0xFF;
+            cpu.c = 0xFF;
+            cpu.set_flag_z(false);
+            cpu.set_flag_n(true); // Set N to true to ensure it's not reset by INC
+            let initial_pc = cpu.pc;
+
+            cpu.inc_bc();
+
+            assert_eq!(((cpu.b as u16) << 8) | cpu.c as u16, 0x0000);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, true, false, false); // Flags should be unchanged (N stays true)
+        }
+
+        #[test]
+        fn test_inc_de_normal() {
+            let mut cpu = setup_cpu();
+            cpu.d = 0x56;
+            cpu.e = 0x78;
+            let initial_pc = cpu.pc;
+            // Flags are all false by default from setup_cpu()
+            cpu.inc_de();
+            assert_eq!(((cpu.d as u16) << 8) | cpu.e as u16, 0x5679);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_inc_de_wrap() {
+            let mut cpu = setup_cpu();
+            cpu.d = 0xFF;
+            cpu.e = 0xFF;
+            let initial_pc = cpu.pc;
+            cpu.inc_de();
+            assert_eq!(((cpu.d as u16) << 8) | cpu.e as u16, 0x0000);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_inc_hl_normal() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x9A;
+            cpu.l = 0xBC;
+            let initial_pc = cpu.pc;
+            cpu.inc_hl();
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x9ABD);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_inc_hl_wrap() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0xFF;
+            cpu.l = 0xFF;
+            let initial_pc = cpu.pc;
+            cpu.inc_hl();
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0000);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_inc_sp_normal() {
+            let mut cpu = setup_cpu();
+            cpu.sp = 0x1234;
+            let initial_pc = cpu.pc;
+            cpu.inc_sp();
+            assert_eq!(cpu.sp, 0x1235);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_inc_sp_wrap() {
+            let mut cpu = setup_cpu();
+            cpu.sp = 0xFFFF;
+            let initial_pc = cpu.pc;
+            cpu.inc_sp();
+            assert_eq!(cpu.sp, 0x0000);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        // DEC rr Tests
+        #[test]
+        fn test_dec_bc_normal() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0x12;
+            cpu.c = 0x35;
+            cpu.set_flag_z(true);
+            cpu.set_flag_c(true);
+            let initial_pc = cpu.pc;
+
+            cpu.dec_bc();
+
+            assert_eq!(((cpu.b as u16) << 8) | cpu.c as u16, 0x1234);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, true, false, false, true); // Flags unchanged
+        }
+
+        #[test]
+        fn test_dec_bc_wrap() {
+            let mut cpu = setup_cpu();
+            cpu.b = 0x00;
+            cpu.c = 0x00;
+            cpu.set_flag_n(true); // N should not be affected
+            let initial_pc = cpu.pc;
+
+            cpu.dec_bc();
+
+            assert_eq!(((cpu.b as u16) << 8) | cpu.c as u16, 0xFFFF);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, true, false, false); // Flags unchanged
+        }
+
+        #[test]
+        fn test_dec_de_normal() {
+            let mut cpu = setup_cpu();
+            cpu.d = 0x56;
+            cpu.e = 0x79;
+            let initial_pc = cpu.pc;
+            cpu.dec_de();
+            assert_eq!(((cpu.d as u16) << 8) | cpu.e as u16, 0x5678);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_dec_de_wrap() {
+            let mut cpu = setup_cpu();
+            cpu.d = 0x00;
+            cpu.e = 0x00;
+            let initial_pc = cpu.pc;
+            cpu.dec_de();
+            assert_eq!(((cpu.d as u16) << 8) | cpu.e as u16, 0xFFFF);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_dec_hl_normal() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x9A;
+            cpu.l = 0xBD;
+            let initial_pc = cpu.pc;
+            cpu.dec_hl();
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x9ABC);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_dec_hl_wrap() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x00;
+            cpu.l = 0x00;
+            let initial_pc = cpu.pc;
+            cpu.dec_hl();
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0xFFFF);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_dec_sp_normal() {
+            let mut cpu = setup_cpu();
+            cpu.sp = 0x1235;
+            let initial_pc = cpu.pc;
+            cpu.dec_sp();
+            assert_eq!(cpu.sp, 0x1234);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_dec_sp_wrap() {
+            let mut cpu = setup_cpu();
+            cpu.sp = 0x0000;
+            let initial_pc = cpu.pc;
+            cpu.dec_sp();
+            assert_eq!(cpu.sp, 0xFFFF);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+            assert_flags!(cpu, false, false, false, false);
+        }
+    }
+
+    mod arith_16bit_add_load {
+        use super::*;
+
+        // ADD HL, rr Tests
+        #[test]
+        fn test_add_hl_bc() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x12; cpu.l = 0x34; // HL = 0x1234
+            cpu.b = 0x01; cpu.c = 0x02; // BC = 0x0102
+            let initial_f_z = cpu.is_flag_z();
+            cpu.add_hl_bc(); // HL = 0x1234 + 0x0102 = 0x1336
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1336);
+            assert_flags!(cpu, initial_f_z, false, false, false); // Z not affected, N=0, H=0, C=0
+            assert_eq!(cpu.pc, 1);
+
+            // Test H flag
+            cpu.h = 0x0F; cpu.l = 0x00; // HL = 0x0F00
+            cpu.b = 0x01; cpu.c = 0x00; // BC = 0x0100
+            // HL + BC = 0x0F00 + 0x0100 = 0x1000. (HL & 0xFFF) = 0xF00. (BC & 0xFFF) = 0x100. Sum = 0x1000. H set.
+            let initial_f_z = cpu.is_flag_z();
+            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
+            cpu.add_hl_bc();
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000);
+            assert_flags!(cpu, false, false, true, false); // Z is false due to clearing, N=0, H=1, C=0
+
+            // Test C flag
+            cpu.h = 0xF0; cpu.l = 0x00; // HL = 0xF000
+            cpu.b = 0x10; cpu.c = 0x00; // BC = 0x1000
+            // HL + BC = 0xF000 + 0x1000 = 0x0000 (carry). C set.
+            let initial_f_z = cpu.is_flag_z(); // This will be false from previous clear
+            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
+            cpu.add_hl_bc();
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0000);
+            assert_flags!(cpu, false, false, false, true); // Z is false, N=0, H=0, C=1
+
+            // Test H and C flag
+            cpu.h = 0x8F; cpu.l = 0xFF; // HL = 0x8FFF
+            cpu.b = 0x80; cpu.c = 0x01; // BC = 0x8001
+            // HL + BC = 0x8FFF + 0x8001 = 0x1000 (H set, C set)
+            // H: (0x8FFF & 0xFFF) = 0xFFF. (0x8001 & 0xFFF) = 1. Sum = 0x1000. H set.
+            // C: 0x8FFF + 0x8001 = 0x11000. C set.
+            let initial_f_z = cpu.is_flag_z(); // This will be false
+            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
+            cpu.add_hl_bc();
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000);
+            assert_flags!(cpu, false, false, true, true); // Z is false, N=0, H=1, C=1
+        }
+
+        #[test]
+        fn test_add_hl_de() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x23; cpu.l = 0x45; // HL = 0x2345
+            cpu.d = 0x01; cpu.e = 0x02; // DE = 0x0102
+            let initial_f_z = cpu.is_flag_z();
+            cpu.add_hl_de(); // HL = 0x2345 + 0x0102 = 0x2447
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x2447);
+            assert_flags!(cpu, initial_f_z, false, false, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_add_hl_hl() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x01; cpu.l = 0x02; // HL = 0x0102
+            let initial_f_z = cpu.is_flag_z();
+            cpu.add_hl_hl(); // HL = 0x0102 + 0x0102 = 0x0204
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0204);
+            assert_flags!(cpu, initial_f_z, false, false, false);
+            assert_eq!(cpu.pc, 1);
+
+            // Test C and H flag for ADD HL, HL
+            cpu.h = 0x8F; cpu.l = 0x00; // HL = 0x8F00
+            // HL + HL = 0x8F00 + 0x8F00 = 0x1E00. H should set. C should set.
+            // H: (0x8F00 & 0xFFF) = 0xF00. 0xF00 + 0xF00 = 0x1E00. H set.
+            // C: 0x8F00 + 0x8F00 = 0x11E00. C set.
+            let initial_f_z = cpu.is_flag_z(); // Will be false from previous operations if tests run sequentially in one instance
+            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
+            cpu.add_hl_hl();
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1E00);
+            assert_flags!(cpu, false, false, true, true); // Z is false
+        }
+
+        #[test]
+        fn test_add_hl_sp() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x10; cpu.l = 0x00; // HL = 0x1000
+            cpu.sp = 0x0123;
+            let initial_f_z = cpu.is_flag_z();
+            cpu.add_hl_sp(); // HL = 0x1000 + 0x0123 = 0x1123
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1123);
+            assert_flags!(cpu, initial_f_z, false, false, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        // ADD SP, e8 Tests
+        #[test]
+        fn test_add_sp_e8() {
+            let mut cpu = setup_cpu();
+            // Positive e8, no carries
+            cpu.sp = 0x1000;
+            cpu.add_sp_e8(0x10); // SP = 0x1000 + 0x10 = 0x1010
+            assert_eq!(cpu.sp, 0x1010);
+            assert_flags!(cpu, false, false, false, false); // Z=0, N=0, H=0, C=0
+            assert_eq!(cpu.pc, 2);
+
+            // Positive e8, H carry
+            cpu.sp = 0x100F; cpu.pc = 0;
+            cpu.add_sp_e8(0x01); // SP = 0x100F + 0x01 = 0x1010. H: (0xF & F) + (1&F) = 0x10 > F. H set.
+            assert_eq!(cpu.sp, 0x1010);
+            assert_flags!(cpu, false, false, true, false); // Z=0, N=0, H=1, C=0
+
+            // Positive e8, C carry
+            cpu.sp = 0x10F0; cpu.pc = 0;
+            cpu.add_sp_e8(0x10); // SP = 0x10F0 + 0x10 = 0x1100. C: (0xF0 & FF) + 0x10 = 0x100 > FF. C set.
+            assert_eq!(cpu.sp, 0x1100);
+            assert_flags!(cpu, false, false, false, true); // Z=0, N=0, H=0, C=1
+
+            // Positive e8, H and C carry
+            cpu.sp = 0x00FF; cpu.pc = 0;
+            cpu.add_sp_e8(0x01); // SP = 0x00FF + 0x01 = 0x0100. H set, C set.
+            assert_eq!(cpu.sp, 0x0100);
+            assert_flags!(cpu, false, false, true, true); // Z=0, N=0, H=1, C=1
+
+            // Negative e8, no borrows (for H/C flags)
+            cpu.sp = 0x1010; cpu.pc = 0;
+            cpu.add_sp_e8(0xF0 as u8); // SP = 0x1010 - 0x10 = 0x1000. e8_unsigned = 0xF0
+            // H: (0x10 & F) + (0xF0 & F) = 0+0=0. H clear.
+            // C: (0x10 & FF) + 0xF0 = 0x10 + 0xF0 = 0x100. C set.
+            assert_eq!(cpu.sp, 0x1000);
+            assert_flags!(cpu, false, false, false, true);
+
+            // Negative e8, with H "borrow"
+            cpu.sp = 0x0000; cpu.pc = 0;
+            cpu.add_sp_e8(0xFF as u8); // SP = 0x0000 - 1 = 0xFFFF. e8_unsigned = 0xFF
+            // H: (0x0 & F) + (0xFF & F) = 0xF. H clear.
+            // C: (0x0 & FF) + 0xFF = 0xFF. C clear.
+            assert_eq!(cpu.sp, 0xFFFF);
+            assert_flags!(cpu, false, false, false, false);
+
+            cpu.sp = 0x0010; cpu.pc = 0;
+            cpu.add_sp_e8(0xFF as u8); // SP = 0x0010 - 1 = 0x000F. e8_unsigned = 0xFF
+            // H: (0x10 & F) + (0xFF & F) = 0x0 + 0xF = 0xF. H clear.
+            // C: (0x10 & FF) + 0xFF = 0x10 + 0xFF = 0x10F. C set.
+            assert_eq!(cpu.sp, 0x000F);
+            assert_flags!(cpu, false, false, false, true);
+        }
+
+        // LD HL, SP+e8 Tests
+        #[test]
+        fn test_ld_hl_sp_plus_e8() {
+            let mut cpu = setup_cpu();
+            // Positive e8, no carries
+            cpu.sp = 0x1000;
+            cpu.ld_hl_sp_plus_e8(0x10); // HL = 0x1000 + 0x10 = 0x1010
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1010);
+            assert_flags!(cpu, false, false, false, false); // Z=0, N=0, H=0, C=0
+            assert_eq!(cpu.pc, 2);
+            assert_eq!(cpu.sp, 0x1000); // SP unchanged
+
+            // Positive e8, H carry
+            cpu.sp = 0x100F; cpu.pc = 0;
+            cpu.ld_hl_sp_plus_e8(0x01); // HL = 0x100F + 0x01 = 0x1010
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1010);
+            assert_flags!(cpu, false, false, true, false); // Z=0, N=0, H=1, C=0
+
+            // Positive e8, C carry
+            cpu.sp = 0x10F0; cpu.pc = 0;
+            cpu.ld_hl_sp_plus_e8(0x10); // HL = 0x10F0 + 0x10 = 0x1100
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1100);
+            assert_flags!(cpu, false, false, false, true); // Z=0, N=0, H=0, C=1
+
+            // Negative e8
+            cpu.sp = 0x1010; cpu.pc = 0;
+            cpu.ld_hl_sp_plus_e8(0xF0 as u8); // HL = 0x1010 - 0x10 = 0x1000
+            // H: (0x10 & F) + (0xF0 & F) = 0. H clear.
+            // C: (0x10 & FF) + 0xF0 = 0x100. C set.
+            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000);
+            assert_flags!(cpu, false, false, false, true);
+        }
+    }
+
+    mod rotate_misc_control {
+        use super::*;
+
+        #[test]
+        fn test_rlca() {
+            let mut cpu = setup_cpu();
+            cpu.a = 0b1000_0001; // Bit 7 is 1, Bit 0 is 1
+            cpu.rlca();
+            assert_eq!(cpu.a, 0b0000_0011); // A = (A << 1) | bit7
+            assert_flags!(cpu, false, false, false, true); // Z=0,N=0,H=0, C=1 (old bit 7)
+            assert_eq!(cpu.pc, 1);
+
+            cpu.a = 0b0100_0010; // Bit 7 is 0, Bit 0 is 0
+            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); cpu.pc = 0;
+            cpu.rlca();
+            assert_eq!(cpu.a, 0b1000_0100);
+            assert_flags!(cpu, false, false, false, false); // C=0 (old bit 7)
+        }
+
+        #[test]
+        fn test_rrca() {
+            let mut cpu = setup_cpu();
+            cpu.a = 0b1000_0001; // Bit 7 is 1, Bit 0 is 1
+            cpu.rrca();
+            assert_eq!(cpu.a, 0b1100_0000); // A = (A >> 1) | (bit0 << 7)
+            assert_flags!(cpu, false, false, false, true); // C=1 (old bit 0)
+            assert_eq!(cpu.pc, 1);
+
+            cpu.a = 0b0100_0010; // Bit 7 is 0, Bit 0 is 0
+            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); cpu.pc = 0;
+            cpu.rrca();
+            assert_eq!(cpu.a, 0b0010_0001);
+            assert_flags!(cpu, false, false, false, false); // C=0 (old bit 0)
+        }
+
+        #[test]
+        fn test_rla() {
+            let mut cpu = setup_cpu();
+            cpu.a = 0b1000_0000;
+            cpu.set_flag_c(true); // Old carry is 1
+            cpu.pc = 0;
+            cpu.rla(); // A = (A << 1) | old_carry; new_carry = old bit 7
+            assert_eq!(cpu.a, 0b0000_0001);
+            assert_flags!(cpu, false, false, false, true); // C=1 (old bit 7)
+
+            cpu.a = 0b0000_0001;
+            cpu.set_flag_c(false); // Old carry is 0
+            cpu.pc = 0;
+            cpu.rla();
+            assert_eq!(cpu.a, 0b0000_0010);
+            assert_flags!(cpu, false, false, false, false); // C=0 (old bit 7)
+        }
+
+        #[test]
+        fn test_rra() {
+            let mut cpu = setup_cpu();
+            cpu.a = 0b0000_0001;
+            cpu.set_flag_c(true); // Old carry is 1
+            cpu.pc = 0;
+            cpu.rra(); // A = (A >> 1) | (old_carry << 7); new_carry = old bit 0
+            assert_eq!(cpu.a, 0b1000_0000);
+            assert_flags!(cpu, false, false, false, true); // C=1 (old bit 0)
+
+            cpu.a = 0b0000_0010;
+            cpu.set_flag_c(false); // Old carry is 0
+            cpu.pc = 0;
+            cpu.rra();
+            assert_eq!(cpu.a, 0b0000_0001);
+            assert_flags!(cpu, false, false, false, false); // C=0 (old bit 0)
+        }
+
+        #[test]
+        fn test_daa() {
+            let mut cpu = setup_cpu();
+            // Example from prompt: After ADD: A=0x99, H=0,C=0,N=0 -> A=0x99, ZNHC=0000. DAA -> A=0x99, ZNHC=0000
+            cpu.a = 0x99; cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false);
+            cpu.daa();
+            assert_eq!(cpu.a, 0x99);
+            assert_flags!(cpu, false, false, false, false); // Z=0, N=0, H=0, C=0 by daa logic (adjust == 0)
+
+            // After ADD: A=0x9A, H=0,C=0,N=0 -> DAA -> A=0x00, C=1 (0x9A + 0x66 = 0x100)
+            // DAA logic: !N, (A&0F > 9 (false)), H (false) -> no 0x06. A > 99 (false), C(false) -> no 0x60.
+            // (a_val & 0x0F) > 0x09 (0xA > 0x09 is true) -> adjust |= 0x06
+            // a_val > 0x99 (0x9A > 0x99 is false), is_flag_c() (false) -> adjust no 0x60 from this
+            // So adjust = 0x06. a_val = 0x9A + 0x06 = 0xA0. set_flag_c(adjust>=0x60) is false. Z=0,H=0.
+            // This seems different from prompt example. Let's use the prompt logic for test.
+            // Prompt example: A=0x9A, H=0,C=0,N=0 -> DAA -> A=0x00, Z=1, N=0, H=0, C=1 (adjust 0x66)
+            // My DAA: a_val = 0x9A. N=0, H=0, C=0. adjust = 0.
+            //   (a&0F)=0xA > 9 -> adjust |= 0x06. (adjust=0x06)
+            //   a > 0x99 (false), C (false) -> no change to adjust from here for 0x60.
+            //   a_val = 0x9A + 0x06 = 0xA0.
+            //   set_c(adjust (0x06) >= 0x60) -> C=false. H=0. Z=(0xA0==0) = false.
+            // The DAA logic in prompt for `(adjust & 0x60) != 0` for C seems more aligned with tests.
+            cpu.a = 0x9A; cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); cpu.pc = 0;
+            cpu.daa(); // My code: A=A0, Z0 N0 H0 C0.
+            // The prompt's expected output for 0x9A (add, N=0,H=0,C=0) is A=0x00, C=1.
+            // This means an adjustment of 0x66 was expected (0x9A + 0x66 = 0x100).
+            // For this, (a&0F)>9 needs to trigger 0x06, AND a>0x99 (or C) needs to trigger 0x60.
+            // My DAA: (0x9A&0x0F > 9) -> adjust=0x06. (0x9A > 0x99 is false, C is false) -> no 0x60.
+            // So, adjust = 0x06. A = 0x9A + 0x06 = 0xA0. C from (0x06 & 0x60 != 0) is false.
+            // This test case highlights a known tricky part of DAA. I will use test cases that match the implemented logic.
+            // Corrected trace: A=9A, N=0,H=0,C=0. adjust=0. (A&0F)>9 -> adjust|=0x06. A>99 -> adjust|=0x60. adjust=0x66. A = 9A+66=00. C=(0x66&0x60)!=0 -> C=true. Z=true,H=false.
+            assert_eq!(cpu.a, 0x00);
+            assert_flags!(cpu, true, false, false, true);
+
+
+            // After ADD: A=0x00, H=1,C=0,N=0 -> DAA -> A=0x06, ZNHC=0000
+            cpu.a = 0x00; cpu.set_flag_n(false); cpu.set_flag_h(true); cpu.set_flag_c(false); cpu.pc = 0;
+            cpu.daa(); // adjust gets 0x06 from H. Then (a&0F)>9 (false), H (true) -> adjust |=0x06. (still 0x06)
+                       // a>99 (false), C (false) -> no 0x60.
+                       // a = 0 + 0x06 = 0x06. C = false. Z=0, H=0.
+            assert_eq!(cpu.a, 0x06);
+            assert_flags!(cpu, false, false, false, false);
+
+            // Test case where C gets set by DAA (addition)
+            // A=0x99, N=0, H=0, C=0. Add 1 -> A=0x9A. Flags N=0,H=0,C=0 (for 0x99+1 in a real add)
+            // Then DAA on 0x9A. (implemented logic: A=0xA0, C=0)
+            // If A=0x40, N=0, H=0, C=1 (e.g. 0x80+0x80=0x00, C=1, H=0). DAA on 0x00 with C=1, N=0, H=0:
+            // adjust = 0x60 (from C). (a&0F)>9 (false), H(false). a>99 (false), C(true) -> adjust|=0x60.
+            // a = 0x00 + 0x60 = 0x60. C becomes true (0x60&0x60 !=0). Z=0,H=0.
+            cpu.a = 0x00; cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(true); cpu.pc = 0;
+            cpu.daa();
+            assert_eq!(cpu.a, 0x60);
+            assert_flags!(cpu, false, false, false, true);
+
+
+            // After SUB: A=0x01, H=1,C=0,N=1 -> DAA -> A=0xFB (-0x06), C=0
+            // My DAA: a=0x01, N=1, H=1, C=0. adjust = 0 (C is false). H is true -> adjust |=0x06. (adjust=0x06)
+            // N is true. a = 0x01 - 0x06 = 0xFB.
+            // C from (0x06&0x60!=0) is false. Z=0, H=0.
+            cpu.a = 0x01; cpu.set_flag_n(true); cpu.set_flag_h(true); cpu.set_flag_c(false); cpu.pc = 0;
+            cpu.daa();
+            assert_eq!(cpu.a, 0xFB);
+            assert_flags!(cpu, false, true, false, false);
+
+            // After SUB: A=0x90, H=0,C=1,N=1 -> DAA -> A=0x30 (-0x60), C=1
+            // My DAA: a=0x90, N=1, H=0, C=1. adjust = 0x60 (from C). H is false.
+            // N is true. a = 0x90 - 0x60 = 0x30.
+            // C from (0x60&0x60!=0) is true. Z=0, H=0.
+            cpu.a = 0x90; cpu.set_flag_n(true); cpu.set_flag_h(false); cpu.set_flag_c(true); cpu.pc = 0;
+            cpu.daa();
+            assert_eq!(cpu.a, 0x30);
+            assert_flags!(cpu, false, true, false, true);
+        }
+
+        #[test]
+        fn test_cpl() {
+            let mut cpu = setup_cpu();
+            cpu.a = 0b1010_0101;
+            cpu.set_flag_z(true); cpu.set_flag_c(true); // Z and C should not be affected
+            cpu.pc = 0;
+            cpu.cpl();
+            assert_eq!(cpu.a, 0b0101_1010);
+            assert_flags!(cpu, true, true, true, true); // Z unchanged, N=1, H=1, C unchanged
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_scf() {
+            let mut cpu = setup_cpu();
+            cpu.set_flag_z(true); // Z should not be affected
+            cpu.set_flag_c(false); // Ensure C is changed
+            cpu.pc = 0;
+            cpu.scf();
+            assert_flags!(cpu, true, false, false, true); // Z unchanged, N=0, H=0, C=1
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_ccf() {
+            let mut cpu = setup_cpu();
+            cpu.set_flag_z(true); // Z should not be affected
+            cpu.set_flag_c(true); // Start with C=1
+            cpu.pc = 0;
+            cpu.ccf();
+            assert_flags!(cpu, true, false, false, false); // Z unchanged, N=0, H=0, C=0 (flipped)
+            assert_eq!(cpu.pc, 1);
+
+            cpu.set_flag_c(false); // Start with C=0
+            cpu.pc = 0;
+            cpu.ccf();
+            assert_flags!(cpu, true, false, false, true); // C=1 (flipped)
+        }
+
+        #[test]
+        fn test_halt() {
+            let mut cpu = setup_cpu();
+            assert_eq!(cpu.is_halted, false);
+            cpu.halt();
+            assert_eq!(cpu.is_halted, true);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_stop() {
+            let mut cpu = setup_cpu();
+            let initial_pc = cpu.pc;
+            cpu.stop();
+            // For now, just PC increment as per simplified requirement
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
+        }
+
+        #[test]
+        fn test_di() {
+            let mut cpu = setup_cpu();
+            cpu.ime = true; // Ensure it's true before DI
+            cpu.di();
+            assert_eq!(cpu.ime, false);
+            assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_ei() {
+            let mut cpu = setup_cpu();
+            cpu.ime = false; // Ensure it's false before EI
+            cpu.ei();
+            assert_eq!(cpu.ime, true);
+            assert_eq!(cpu.pc, 1);
+        }
     }
 }
