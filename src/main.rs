@@ -20,11 +20,17 @@ use std::path::Path; // For path manipulation
 use std::rc::Rc;
 use std::cell::RefCell;
 
+use minifb::{Key, Window, WindowOptions}; // Added for minifb
+
 // Use crate:: if gbc_emulator is a library and main.rs is an example or bin.
 // If main.rs is part of the library itself (e.g. src/main.rs in a binary crate),
 // then `crate::` is appropriate.
 use crate::cpu::Cpu;
 use crate::bus::Bus;
+
+// Define window dimensions
+const WINDOW_WIDTH: usize = 160;
+const WINDOW_HEIGHT: usize = 144;
 
 // Function to load ROM data from a file
 fn load_rom_file(path: &str) -> Result<Vec<u8>> {
@@ -32,6 +38,28 @@ fn load_rom_file(path: &str) -> Result<Vec<u8>> {
     let mut data = Vec::new();
     file.read_to_end(&mut data)?;
     Ok(data)
+}
+
+// Function to convert PPU's RGB888 framebuffer to minifb's U32 (ARGB) buffer
+fn convert_rgb_to_u32_buffer(rgb_buffer: &[u8], width: usize, height: usize) -> Vec<u32> {
+    let mut u32_buffer = vec![0u32; width * height];
+    for y in 0..height {
+        for x in 0..width {
+            let idx_rgb = (y * width + x) * 3;
+            // Ensure we don't read out of bounds if rgb_buffer is unexpectedly short
+            if idx_rgb + 2 < rgb_buffer.len() {
+                let r = rgb_buffer[idx_rgb] as u32;
+                let g = rgb_buffer[idx_rgb + 1] as u32;
+                let b = rgb_buffer[idx_rgb + 2] as u32;
+                // minifb expects ARGB format where Alpha is the highest byte,
+                // but we don't have alpha from PPU, so set it to 0xFF (opaque) or 0x00.
+                // Or, more simply, just pack RGB: 0xRRGGBB.
+                // Let's assume 0xRRGGBB is fine for minifb if not specified otherwise.
+                u32_buffer[y * width + x] = (r << 16) | (g << 8) | b;
+            }
+        }
+    }
+    u32_buffer
 }
 
 fn main() {
@@ -82,100 +110,83 @@ fn main() {
 
     println!("Initial CPU state: PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}", cpu.pc, cpu.sp, cpu.a, cpu.f);
 
-    // Test ROM specific configurations
-    let test_check_addr = 0x6000; // For Blargg's test status
-    let blargg_test_running_magic_val = 0x80; // Blargg's tests write 0x80 here while running.
-    // let blargg_test_string_addr = 0x6004; // Start of Blargg's test result string
-    // let newer_blargg_test_string_addr = 0xA004; // Some newer tests use this
+    // Create minifb window
+    let mut window = Window::new(
+        "GBC Emulator - Press ESC to exit",
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT,
+        WindowOptions::default(),
+    )
+    .unwrap_or_else(|e| {
+        panic!("{}", e);
+    });
 
-    const MAX_STEPS: u64 = 30_000_000; // Increased max steps for longer tests
-    const SERIAL_PRINT_INTERVAL: u64 = 500_000; // Adjusted for potentially longer tests
-    let mut blargg_test_passed = false;
-    let mut blargg_test_failed_code: Option<u8> = None;
+    // Limit window update rate (optional, minifb handles this reasonably well)
+    // window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Approx 60Hz
 
-    for i in 0..MAX_STEPS {
+    // General emulation settings
+    const SERIAL_PRINT_INTERVAL: u64 = 500_000; // Print serial output every N steps
+
+    // Main emulation loop using minifb window
+    let mut emulation_steps: u64 = 0; // Total CPU steps executed
+
+    // PPU timing: Game Boy PPU runs at a fixed speed.
+    // Total PPU cycles per frame = Scanlines (154) * Cycles per scanline (456)
+    const CYCLES_PER_FRAME: u32 = 456 * 154;
+    let mut ppu_cycles_this_frame: u32 = 0;
+
+    while window.is_open() && !window.is_key_down(Key::Escape) {
         let m_cycles = cpu.step(); // Execute one CPU step and get M-cycles
 
         // PPU runs 4 times faster than CPU M-cycles (T-cycles = M-cycles * 4)
-        let t_cycles = m_cycles * 4;
-        for _ in 0..t_cycles {
+        // Each CPU M-cycle corresponds to 4 PPU T-cycles.
+        let t_cycles_for_step = m_cycles * 4; // These are PPU T-cycles
+
+        for _ in 0..t_cycles_for_step {
             bus.borrow_mut().ppu.tick();
             // TODO: PPU could request VBlank/STAT interrupts here
             // Example: if bus.borrow().ppu.vblank_interrupt_requested() {
             //              bus.borrow_mut().request_interrupt(Interrupt::VBlank);
             //          }
         }
+        ppu_cycles_this_frame += t_cycles_for_step as u32;
 
-        // Check for Blargg test completion via memory mapped status
-        let status = bus.borrow().read_byte(test_check_addr);
-        if status != 0x00 && status != blargg_test_running_magic_val {
-            println!(
-                "Test status at {:#06X}: {:#04X}. Assuming test complete.",
-                test_check_addr, status
+        // Frame rendering logic
+        if ppu_cycles_this_frame >= CYCLES_PER_FRAME {
+            ppu_cycles_this_frame -= CYCLES_PER_FRAME; // Reset for next frame, handling overflow
+
+            let ppu_framebuffer = &bus.borrow().ppu.framebuffer; // This is Vec<u8> RGB
+            let display_buffer = convert_rgb_to_u32_buffer(
+                ppu_framebuffer,
+                WINDOW_WIDTH,
+                WINDOW_HEIGHT,
             );
-            if status == 0x01 { // Typical pass code for Blargg's tests
-                blargg_test_passed = true;
-                println!("Blargg Test: PASSED (Code 0x01 at {:#06X})", test_check_addr);
-            } else {
-                blargg_test_failed_code = Some(status);
-                println!("Blargg Test: FAILED (Code {:#04X} at {:#06X})", status, test_check_addr);
-            }
-            // TODO: Read optional string output from 0x6004 or 0xA004
-            break;
+            window.update_with_buffer(&display_buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
+                .unwrap_or_else(|e| panic!("Failed to update window buffer: {}", e));
         }
 
-        // Check for halt condition (could be end of non-Blargg test or other issue)
+        // Check for halt condition
         if cpu.is_halted {
-            println!("CPU Halted at step {}.", i + 1);
-            // Check if it's the typical Blargg infinite loop: JR -2 (0x18, 0xFE)
-            // This usually means the test is done and waiting.
-            let current_opcode = bus.borrow().read_byte(cpu.pc.wrapping_sub(2)); // Opcode of JR
-            let operand = bus.borrow().read_byte(cpu.pc.wrapping_sub(1));     // Operand of JR
-            if current_opcode == 0x18 && operand == 0xFE {
-                 println!("CPU Halted in typical Blargg test infinite loop (JR -2).");
-                 // If status at 0x6000 is still 0x80 (running), it means test might rely on serial output
-                 // or visual check. For now, just break.
-            }
+            println!("CPU Halted at step {}.", emulation_steps);
+            // Break the loop if CPU is halted. User can see final state and serial output.
             break;
         }
 
-        if (i + 1) % SERIAL_PRINT_INTERVAL == 0 {
+        // Periodic logging
+        if emulation_steps % SERIAL_PRINT_INTERVAL == 0 {
             let serial_data = bus.borrow().get_serial_output_string();
             if !serial_data.is_empty() {
-                println!("Serial Output (step {}):\n{}", i + 1, serial_data);
+                println!("Serial Output (step {}):\n{}", emulation_steps, serial_data);
             }
             println!("Current CPU state (step {}): PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
-                     i + 1, cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
+                     emulation_steps, cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
         }
 
-        if i == MAX_STEPS - 1 {
-            println!("Emulation finished after {} steps (max steps reached).", MAX_STEPS);
-        }
+        emulation_steps += 1;
     }
 
     // After loop actions
     println!("\n--- Emulation Loop Ended ---");
-
-    if blargg_test_passed {
-        println!("Overall Test Result: PASSED");
-    } else if let Some(code) = blargg_test_failed_code {
-        println!("Overall Test Result: FAILED (Code: {:#04X})", code);
-    } else {
-        println!("Overall Test Result: UNKNOWN (Test did not write a conclusive status or was interrupted).");
-    }
-
-    // Save screenshot
-    let rom_filename_stem = Path::new(&rom_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown_rom");
-    let screenshot_path = format!("test_output_{}.png", rom_filename_stem);
-
-    println!("Saving screenshot to {}...", screenshot_path);
-    match bus.borrow().ppu.save_framebuffer_to_png(&bus.borrow().ppu.framebuffer, 160, 144, &screenshot_path) {
-        Ok(_) => println!("Screenshot saved successfully."),
-        Err(e) => eprintln!("Failed to save screenshot: {}", e),
-    }
 
     // Final serial output check
     let serial_data = bus.borrow().get_serial_output_string();
