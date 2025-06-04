@@ -139,13 +139,48 @@ impl Cpu {
         let address = ((self.h as u16) << 8) | (self.l as u16);
         self.bus.borrow().read_byte(address)
     }
-    pub fn ld_a_hl_mem(&mut self) { self.a = self.read_hl_mem(); self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_b_hl_mem(&mut self) { self.b = self.read_hl_mem(); self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_c_hl_mem(&mut self) { self.c = self.read_hl_mem(); self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_d_hl_mem(&mut self) { self.d = self.read_hl_mem(); self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_e_hl_mem(&mut self) { self.e = self.read_hl_mem(); self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_h_hl_mem(&mut self) { self.h = self.read_hl_mem(); self.pc = self.pc.wrapping_add(1); } // H = (HL)
-    pub fn ld_l_hl_mem(&mut self) { self.l = self.read_hl_mem(); self.pc = self.pc.wrapping_add(1); } // L = (HL)
+    // LD A,(HL)
+    pub fn ld_a_hl_mem(&mut self) {
+        self.a = self.read_hl_mem();
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
+    // LD B,(HL)
+    pub fn ld_b_hl_mem(&mut self) {
+        self.b = self.read_hl_mem();
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
+    // LD C,(HL)
+    pub fn ld_c_hl_mem(&mut self) {
+        self.c = self.read_hl_mem();
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
+    // LD D,(HL)
+    pub fn ld_d_hl_mem(&mut self) {
+        self.d = self.read_hl_mem();
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
+    // LD E,(HL)
+    pub fn ld_e_hl_mem(&mut self) {
+        self.e = self.read_hl_mem();
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
+    // LD H,(HL)
+    pub fn ld_h_hl_mem(&mut self) {
+        self.h = self.read_hl_mem();
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
+    // LD L,(HL)
+    pub fn ld_l_hl_mem(&mut self) {
+        self.l = self.read_hl_mem();
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
 
     // LD (HL), r
     fn write_hl_mem(&mut self, value: u8) {
@@ -1855,6 +1890,7 @@ impl Cpu {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.ld_l_n(n);
             }
+            0x2F => self.cpl(), // CPL
             0x31 => {
                 let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
@@ -1872,13 +1908,13 @@ impl Cpu {
             }
 
             // LD r, r' opcodes
-            0x40 => self.ld_b_b(), // LD B,B (effectively NOP for value change)
+            0x40 => self.ld_b_b(),
             0x41 => self.ld_b_c(),
             0x42 => self.ld_b_d(),
             0x43 => self.ld_b_e(),
             0x44 => self.ld_b_h(),
             0x45 => self.ld_b_l(),
-            // 0x46 => ld_b_hl_mem - needs operand fetch logic like other (HL)
+            0x46 => self.ld_b_hl_mem(), // LD B,(HL)
             0x47 => self.ld_b_a(),
             0x48 => self.ld_c_b(),
             0x49 => self.ld_c_c(),
@@ -1886,7 +1922,7 @@ impl Cpu {
             0x4B => self.ld_c_e(),
             0x4C => self.ld_c_h(),
             0x4D => self.ld_c_l(),
-            // 0x4E => ld_c_hl_mem
+            0x4E => self.ld_c_hl_mem(), // LD C,(HL)
             0x4F => self.ld_c_a(),
             0x50 => self.ld_d_b(),
             0x51 => self.ld_d_c(),
@@ -1894,7 +1930,7 @@ impl Cpu {
             0x53 => self.ld_d_e(),
             0x54 => self.ld_d_h(),
             0x55 => self.ld_d_l(),
-            // 0x56 => ld_d_hl_mem
+            0x56 => self.ld_d_hl_mem(), // LD D,(HL)
             0x57 => self.ld_d_a(),
             0x58 => self.ld_e_b(),
             0x59 => self.ld_e_c(),
@@ -1902,7 +1938,7 @@ impl Cpu {
             0x5B => self.ld_e_e(),
             0x5C => self.ld_e_h(),
             0x5D => self.ld_e_l(),
-            // 0x5E => ld_e_hl_mem
+            0x5E => self.ld_e_hl_mem(), // LD E,(HL)
             0x5F => self.ld_e_a(),
             0x60 => self.ld_h_b(),
             0x61 => self.ld_h_c(),
@@ -1910,7 +1946,7 @@ impl Cpu {
             0x63 => self.ld_h_e(),
             0x64 => self.ld_h_h(),
             0x65 => self.ld_h_l(),
-            // 0x66 => ld_h_hl_mem
+            0x66 => self.ld_h_hl_mem(), // LD H,(HL)
             0x67 => self.ld_h_a(),
             0x68 => self.ld_l_b(),
             0x69 => self.ld_l_c(),
@@ -1918,12 +1954,9 @@ impl Cpu {
             0x6B => self.ld_l_e(),
             0x6C => self.ld_l_h(),
             0x6D => self.ld_l_l(),
-            // 0x6E => ld_l_hl_mem
+            0x6E => self.ld_l_hl_mem(), // LD L,(HL)
             0x6F => self.ld_l_a(),
-            // 0x70-0x75 LD (HL),r - these write to memory, not just register to register
-            // Opcodes like 0x70 (LD (HL),B), 0x71 (LD (HL),C), 0x72 (LD (HL),D), 0x73 (LD (HL),E), 0x75 (LD (HL),L)
-            // would go here if individually implemented in the step function.
-            // Currently, their respective methods (e.g. ld_hl_mem_b) exist but are not directly mapped here.
+
             0x70 => self.ld_hl_mem_b(), // LD (HL), B
             0x71 => self.ld_hl_mem_c(), // LD (HL), C
             0x72 => self.ld_hl_mem_d(), // LD (HL), D
@@ -1938,8 +1971,8 @@ impl Cpu {
             0x7B => self.ld_a_e(),
             0x7C => self.ld_a_h(),
             0x7D => self.ld_a_l(),
-            // 0x7E => ld_a_hl_mem
-            0x7F => self.ld_a_a(), // LD A,A (effectively NOP for value change)
+            0x7E => self.ld_a_hl_mem(), // LD A,(HL)
+            0x7F => self.ld_a_a(),
 
             0xAF => self.xor_a_a(),
 
@@ -2308,21 +2341,100 @@ mod tests {
         }
 
         #[test]
-        fn test_ld_l_hl_mem() {
+        fn test_ld_c_hl_mem() {
+            let mut cpu = setup_cpu();
+            let addr = 0xC002;
+            cpu.h = (addr >> 8) as u8;
+            cpu.l = (addr & 0xFF) as u8;
+            cpu.bus.borrow_mut().write_byte(addr, 0x66);
+            cpu.a = 0xFF; // Control
+            let initial_pc = cpu.pc;
+
+            cpu.ld_c_hl_mem();
+
+            assert_eq!(cpu.c, 0x66, "C should be loaded from memory[HL]");
+            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x66, "Memory should be unchanged");
+            assert_eq!(cpu.a, 0xFF, "A should be unchanged");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_ld_d_hl_mem() {
+            let mut cpu = setup_cpu();
+            let addr = 0xC003;
+            cpu.h = (addr >> 8) as u8;
+            cpu.l = (addr & 0xFF) as u8;
+            cpu.bus.borrow_mut().write_byte(addr, 0x77);
+            cpu.a = 0xFF; // Control
+            let initial_pc = cpu.pc;
+
+            cpu.ld_d_hl_mem();
+
+            assert_eq!(cpu.d, 0x77, "D should be loaded from memory[HL]");
+            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x77, "Memory should be unchanged");
+            assert_eq!(cpu.a, 0xFF, "A should be unchanged");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_ld_e_hl_mem() {
+            let mut cpu = setup_cpu();
+            let addr = 0xC004;
+            cpu.h = (addr >> 8) as u8;
+            cpu.l = (addr & 0xFF) as u8;
+            cpu.bus.borrow_mut().write_byte(addr, 0x88);
+            cpu.a = 0xFF; // Control
+            let initial_pc = cpu.pc;
+
+            cpu.ld_e_hl_mem();
+
+            assert_eq!(cpu.e, 0x88, "E should be loaded from memory[HL]");
+            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x88, "Memory should be unchanged");
+            assert_eq!(cpu.a, 0xFF, "A should be unchanged");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_ld_h_hl_mem() { // Tests H = (HL)
+            let mut cpu = setup_cpu();
+            let addr = 0xC005;
+            cpu.h = (addr >> 8) as u8; // H will be overwritten by memory read
+            cpu.l = (addr & 0xFF) as u8;
+            cpu.bus.borrow_mut().write_byte(addr, 0x99); // Value in memory
+            cpu.a = 0xFF; // Control
+            let initial_pc = cpu.pc;
+            let initial_l = cpu.l; // L should not change
+
+            cpu.ld_h_hl_mem();
+
+            assert_eq!(cpu.h, 0x99, "H should be loaded from memory[HL]");
+            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x99, "Memory should be unchanged");
+            assert_eq!(cpu.l, initial_l, "L should be unchanged");
+            assert_eq!(cpu.a, 0xFF, "A should be unchanged");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_flags!(cpu, false, false, false, false);
+        }
+
+        #[test]
+        fn test_ld_l_hl_mem() { // Tests L = (HL)
             let mut cpu = setup_cpu();
             let addr = 0xD345;
-            cpu.h = (addr >> 8) as u8;
-            cpu.l = (addr & 0xFF) as u8; // L will be overwritten
-            cpu.bus.borrow_mut().write_byte(addr, 0x22);
+            cpu.h = (addr >> 8) as u8; // H should not change
+            cpu.l = (addr & 0xFF) as u8; // L will be overwritten by memory read
+            cpu.bus.borrow_mut().write_byte(addr, 0x22); // Value in memory
             cpu.a = 0xEE; // Control
             let initial_pc = cpu.pc;
+            let initial_h = cpu.h; // H should not change
     
             cpu.ld_l_hl_mem();
     
             assert_eq!(cpu.l, 0x22, "L should be loaded from memory[HL]");
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x22, "Memory should be unchanged");
             assert_eq!(cpu.a, 0xEE, "A should be unchanged");
-            assert_eq!(cpu.h, (addr >> 8) as u8, "H should be unchanged"); // Ensure H is not touched
+            assert_eq!(cpu.h, initial_h, "H should be unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
             assert_flags!(cpu, false, false, false, false);
         }
@@ -4024,13 +4136,37 @@ mod tests {
         #[test]
         fn test_cpl() {
             let mut cpu = setup_cpu();
-            cpu.a = 0b1010_0101;
-            cpu.set_flag_z(true); cpu.set_flag_c(true); // Z and C should not be affected
+
+            // Scenario 1: Z and C initially true
+            cpu.a = 0b1010_0101; // Example value for A
+            let initial_a_scenario1 = cpu.a;
             cpu.pc = 0;
+            cpu.set_flag_z(true);
+            cpu.set_flag_n(false); // N will be set by CPL
+            cpu.set_flag_h(false); // H will be set by CPL
+            cpu.set_flag_c(true);
+
             cpu.cpl();
-            assert_eq!(cpu.a, 0b0101_1010);
-            assert_flags!(cpu, true, true, true, true); // Z unchanged, N=1, H=1, C unchanged
-            assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.a, !initial_a_scenario1, "Scenario 1: A should be complemented");
+            assert_flags!(cpu, true, true, true, true); // Z true (unchanged), N true (set), H true (set), C true (unchanged)
+            assert_eq!(cpu.pc, 1, "Scenario 1: PC should increment by 1");
+
+            // Scenario 2: Z and C initially false
+            cpu.a = 0b0011_1100; // Different example value for A
+            let initial_a_scenario2 = cpu.a;
+            cpu.pc = 0; // Reset PC for the new scenario
+            // Reset flags from setup or previous state for a clean test
+            cpu.f = 0; // Clears all flags (Z=0, N=0, H=0, C=0)
+            // If setup_cpu() doesn't guarantee zeroed flags, explicitly set them:
+            // cpu.set_flag_z(false);
+            // cpu.set_flag_n(false); // N will be set
+            // cpu.set_flag_h(false); // H will be set
+            // cpu.set_flag_c(false);
+
+            cpu.cpl();
+            assert_eq!(cpu.a, !initial_a_scenario2, "Scenario 2: A should be complemented");
+            assert_flags!(cpu, false, true, true, false); // Z false (unchanged), N true (set), H true (set), C false (unchanged)
+            assert_eq!(cpu.pc, 1, "Scenario 2: PC should increment by 1");
         }
 
         #[test]
