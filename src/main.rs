@@ -41,6 +41,7 @@ fn load_rom_file(path: &str) -> Result<Vec<u8>> {
 }
 
 // Function to convert PPU's RGB888 framebuffer to minifb's U32 (ARGB) buffer
+// Only used in non-headless mode
 fn convert_rgb_to_u32_buffer(rgb_buffer: &[u8], width: usize, height: usize) -> Vec<u32> {
     let mut u32_buffer = vec![0u32; width * height];
     for y in 0..height {
@@ -65,19 +66,40 @@ fn convert_rgb_to_u32_buffer(rgb_buffer: &[u8], width: usize, height: usize) -> 
 fn main() {
     println!("GBC Emulator starting...");
 
-    // Parse command-line arguments for ROM path
+    // --- Argument Parsing ---
     let args: Vec<String> = env::args().collect();
-    let default_rom_path = "roms/cpu_instrs.gb".to_string();
-    let rom_path = if args.len() > 1 {
-        args[1].clone()
-    } else {
-        println!("Usage: {} <path_to_rom>", args[0]);
-        println!("Defaulting to ROM: {}", default_rom_path);
-        // std::process::exit(1); // Optionally exit if no ROM is provided
-        default_rom_path
-    };
-    println!("Loading ROM from: {}", rom_path);
+    let is_headless = args.contains(&"--headless".to_string());
 
+    let mut rom_path = "roms/cpu_instrs.gb".to_string(); // Default ROM path
+    let mut rom_path_explicitly_set = false;
+
+    // Find ROM path: the first argument that isn't --headless and doesn't start with --
+    for arg in args.iter().skip(1) {
+        if arg != "--headless" && !arg.starts_with("--") {
+            rom_path = arg.clone();
+            rom_path_explicitly_set = true;
+            break;
+        }
+    }
+
+    if !rom_path_explicitly_set && args.len() > 1 && !is_headless {
+        // If there's an arg, it's not --headless, but we didn't identify it as ROM path,
+        // it might be an old way of passing ROM path as args[1] without other flags.
+        // This is a bit heuristic; a proper clap-based parser would be better.
+        if args.len() > 1 && !args[1].starts_with("--") {
+             rom_path = args[1].clone();
+             rom_path_explicitly_set = true;
+        }
+    }
+
+    if !rom_path_explicitly_set {
+        println!("Usage: {} [--headless] <path_to_rom>", args[0]);
+        println!("Defaulting to ROM: {}", rom_path);
+    }
+    println!("Loading ROM from: {}", rom_path);
+    if is_headless {
+        println!("Running in headless mode.");
+    }
 
     // Load the ROM data from the file
     let rom_data = match load_rom_file(&rom_path) {
@@ -110,32 +132,39 @@ fn main() {
 
     println!("Initial CPU state: PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}", cpu.pc, cpu.sp, cpu.a, cpu.f);
 
-    // Create minifb window
-    let mut window = Window::new(
-        "GBC Emulator - Press ESC to exit",
-        WINDOW_WIDTH,
-        WINDOW_HEIGHT,
-        WindowOptions::default(),
-    )
-    .unwrap_or_else(|e| {
-        panic!("{}", e);
-    });
+    // --- Conditional Window Initialization ---
+    let mut window: Option<minifb::Window> = if !is_headless {
+        Some(Window::new(
+            "GBC Emulator - Press ESC to exit",
+            WINDOW_WIDTH,
+            WINDOW_HEIGHT,
+            WindowOptions::default(),
+        ).unwrap_or_else(|e| {
+            panic!("Failed to create window: {}", e); // Panic remains for GUI mode if window fails
+        }))
+    } else {
+        None // No window in headless mode
+    };
 
-    // Limit window update rate (optional, minifb handles this reasonably well)
-    // window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Approx 60Hz
+    if let Some(w) = &mut window { // Only if window was created
+        // Limit window update rate (optional, minifb handles this reasonably well)
+        // w.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Approx 60Hz
+    }
 
     // General emulation settings
     const SERIAL_PRINT_INTERVAL: u64 = 500_000; // Print serial output every N steps
+    const MAX_STEPS_HEADLESS: u64 = 20_000_000; // Limit for headless mode
 
-    // Main emulation loop using minifb window
+    // Main emulation loop
     let mut emulation_steps: u64 = 0; // Total CPU steps executed
+    let mut running = true;
 
     // PPU timing: Game Boy PPU runs at a fixed speed.
     // Total PPU cycles per frame = Scanlines (154) * Cycles per scanline (456)
     const CYCLES_PER_FRAME: u32 = 456 * 154;
     let mut ppu_cycles_this_frame: u32 = 0;
 
-    while window.is_open() && !window.is_key_down(Key::Escape) {
+    while running {
         let m_cycles = cpu.step(); // Execute one CPU step and get M-cycles
 
         // PPU runs 4 times faster than CPU M-cycles (T-cycles = M-cycles * 4)
@@ -145,44 +174,60 @@ fn main() {
         for _ in 0..t_cycles_for_step {
             bus.borrow_mut().ppu.tick();
             // TODO: PPU could request VBlank/STAT interrupts here
-            // Example: if bus.borrow().ppu.vblank_interrupt_requested() {
-            //              bus.borrow_mut().request_interrupt(Interrupt::VBlank);
-            //          }
         }
         ppu_cycles_this_frame += t_cycles_for_step as u32;
 
-        // Frame rendering logic
+        // Frame rendering logic (GUI mode) or PPU cycle accounting (headless)
         if ppu_cycles_this_frame >= CYCLES_PER_FRAME {
-            ppu_cycles_this_frame -= CYCLES_PER_FRAME; // Reset for next frame, handling overflow
+            ppu_cycles_this_frame -= CYCLES_PER_FRAME; // Reset for next frame
 
-            let ppu_framebuffer = &bus.borrow().ppu.framebuffer; // This is Vec<u8> RGB
-            let display_buffer = convert_rgb_to_u32_buffer(
-                ppu_framebuffer,
-                WINDOW_WIDTH,
-                WINDOW_HEIGHT,
-            );
-            window.update_with_buffer(&display_buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
-                .unwrap_or_else(|e| panic!("Failed to update window buffer: {}", e));
+            if let Some(w) = window.as_mut() { // GUI mode rendering
+                let ppu_framebuffer = &bus.borrow().ppu.framebuffer;
+                let display_buffer = convert_rgb_to_u32_buffer(
+                    ppu_framebuffer,
+                    WINDOW_WIDTH,
+                    WINDOW_HEIGHT,
+                );
+                w.update_with_buffer(&display_buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
+                    .unwrap_or_else(|e| panic!("Failed to update window buffer: {}", e));
+            }
+            // In headless mode, we still account for frame timing for PPU events, but don't render.
         }
 
-        // Check for halt condition
+        // Check for exit conditions
+        if let Some(w) = window.as_ref() { // GUI mode exit conditions
+            if !w.is_open() || w.is_key_down(Key::Escape) {
+                running = false;
+            }
+        }
+
         if cpu.is_halted {
             println!("CPU Halted at step {}.", emulation_steps);
-            // Break the loop if CPU is halted. User can see final state and serial output.
-            break;
+            running = false;
         }
 
-        // Periodic logging
-        if emulation_steps % SERIAL_PRINT_INTERVAL == 0 {
+        if is_headless && emulation_steps >= MAX_STEPS_HEADLESS {
+            println!("Headless mode: Max steps ({}) reached.", MAX_STEPS_HEADLESS);
+            running = false;
+        }
+
+        // Periodic logging (common to both modes)
+        if emulation_steps % SERIAL_PRINT_INTERVAL == 0 || !running { // Also print on last step
             let serial_data = bus.borrow().get_serial_output_string();
             if !serial_data.is_empty() {
                 println!("Serial Output (step {}):\n{}", emulation_steps, serial_data);
             }
-            println!("Current CPU state (step {}): PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
-                     emulation_steps, cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
+            if emulation_steps % (SERIAL_PRINT_INTERVAL * 10) == 0 || !running { // Less frequent full state print unless exiting
+                 println!("Current CPU state (step {}): PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
+                         emulation_steps, cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
+            }
         }
 
         emulation_steps += 1;
+
+        if !running {
+            break; // Exit the while loop
+        }
     }
 
     // After loop actions
