@@ -74,32 +74,46 @@ fn main() {
     let mut rom_path_explicitly_set = false;
 
     // Find ROM path: the first argument that isn't --headless and doesn't start with --
-    for arg in args.iter().skip(1) {
-        if arg != "--headless" && !arg.starts_with("--") {
+    // This logic prioritizes the first non-flag argument as the ROM path.
+    for arg in args.iter().skip(1) { // Skip the program name itself
+        if arg == "--headless" {
+            // Already handled by is_headless
+            continue;
+        }
+        if !arg.starts_with("--") {
             rom_path = arg.clone();
             rom_path_explicitly_set = true;
-            break;
+            break; // Found the ROM path
         }
+        // Ignore other flags for now, or handle them if necessary (e.g., --steps)
     }
 
-    if !rom_path_explicitly_set && args.len() > 1 && !is_headless {
-        // If there's an arg, it's not --headless, but we didn't identify it as ROM path,
-        // it might be an old way of passing ROM path as args[1] without other flags.
-        // This is a bit heuristic; a proper clap-based parser would be better.
-        if args.len() > 1 && !args[1].starts_with("--") {
-             rom_path = args[1].clone();
-             rom_path_explicitly_set = true;
-        }
-    }
-
-    if !rom_path_explicitly_set {
-        println!("Usage: {} [--headless] <path_to_rom>", args[0]);
-        println!("Defaulting to ROM: {}", rom_path);
-    }
-    println!("Loading ROM from: {}", rom_path);
     if is_headless {
         println!("Running in headless mode.");
+        if !rom_path_explicitly_set {
+            rom_path = "roms/cpu_instrs.gb".to_string(); // Enforce default for headless if no ROM specified
+            println!("No ROM path provided for headless mode. Defaulting to: {}", rom_path);
+        }
+    } else {
+        // In non-headless mode, if no ROM path is set, print usage and default.
+        // This handles the case where only `--headless` might be passed, or no args.
+        if !rom_path_explicitly_set && args.len() > 1 {
+             // Check if the first argument (after program name) might be a ROM path (common use case)
+             // This is a simplified check. A robust CLI parser (e.g., clap) is better.
+             if !args[1].starts_with("--") {
+                rom_path = args[1].clone();
+                rom_path_explicitly_set = true;
+             }
+        }
+
+        if !rom_path_explicitly_set {
+            // If still no ROM path set explicitly for GUI mode, explain usage.
+            // The default rom_path is already "roms/cpu_instrs.gb", so this informs the user.
+            println!("Usage: {} <path_to_rom> [--headless]", args[0]);
+            println!("Defaulting to ROM: {}", rom_path);
+        }
     }
+    println!("Loading ROM from: {}", rom_path);
 
     // Load the ROM data from the file
     let rom_data = match load_rom_file(&rom_path) {
@@ -153,6 +167,7 @@ fn main() {
 
     // General emulation settings
     const SERIAL_PRINT_INTERVAL: u64 = 500_000; // Print serial output every N steps
+    // TODO: Make MAX_STEPS_HEADLESS configurable via command-line argument --steps <number>
     const MAX_STEPS_HEADLESS: u64 = 20_000_000; // Limit for headless mode
 
     // Main emulation loop
