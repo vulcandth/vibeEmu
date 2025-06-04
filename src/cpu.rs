@@ -1170,11 +1170,9 @@ impl Cpu {
     pub fn stop(&mut self) {
         // For now, treat as a 1-byte NOP-like instruction.
         // Full STOP mode implementation is more complex.
-        // Pandocs notes 0x10 0x00, but often the 0x00 is consumed as part of STOP's effect.
-        // If emulating as just advancing PC, it should be by 1 for the 0x10 opcode.
-        // If the hardware truly expects two bytes to be "consumed" by STOP even if it's a NOP,
-        // then PC should be +2. The prompt asked for +1 for simplicity.
-        self.pc = self.pc.wrapping_add(1); // Assuming 1-byte for now as per prompt simplification
+        // Pandocs notes 0x10 0x00. This instruction is 2 bytes long.
+        self.is_halted = true; // Simplified STOP, actual behavior is more complex.
+        self.pc = self.pc.wrapping_add(2); // Consume both 0x10 and the following 0x00 byte.
     }
 
     pub fn di(&mut self) {
@@ -1867,6 +1865,7 @@ impl Cpu {
                 self.ld_hl_nn(lo, hi);
             }
             0x22 => self.ldi_hl_mem_a(),
+            0x24 => self.inc_h(), // INC H
             0x26 => {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.ld_h_n(n);
@@ -1894,12 +1893,19 @@ impl Cpu {
             0x32 => self.ldd_hl_mem_a(),
             0x33 => self.inc_sp(), // INC SP
             0x34 => self.inc_hl_mem(), // INC (HL)
+            0x35 => self.dec_hl_mem(), // DEC (HL)
             0x36 => {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.ld_hl_mem_n(n);
             }
+            0x37 => self.scf(), // SCF
+            0x38 => { // JR C, e8
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.jr_c_e8(offset);
+            }
             0x39 => self.add_hl_sp(), // ADD HL, SP
             0x3A => self.ldd_a_hl_mem(),
+            0x3C => self.inc_a(), // INC A
             0x3D => self.dec_a(), // DEC A
             0x3E => {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
@@ -3197,6 +3203,115 @@ mod tests {
 
         // INC r8 Tests
         #[test]
+        fn test_inc_a() {
+            let mut cpu = setup_cpu();
+            // C flag is not affected by INC A
+
+            // Case 1: A = 0x00 -> A = 0x01, Z=0, N=0, H=0
+            cpu.a = 0x00; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_a();
+            assert_eq!(cpu.a, 0x01); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+
+            // Case 2: A = 0x0F -> A = 0x10, Z=0, N=0, H=1
+            cpu.a = 0x0F; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_a();
+            assert_eq!(cpu.a, 0x10); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+
+            // Case 3: A = 0xFF -> A = 0x00, Z=1, N=0, H=1
+            cpu.a = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_a();
+            assert_eq!(cpu.a, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+
+            // Case 4: A = 0x5A, C flag initially set (should not be affected)
+            cpu.a = 0x5A; cpu.set_flag_c(true); let c_flag_before = cpu.is_flag_c(); cpu.pc = 0;
+            // Clear other flags that are affected by INC A to ensure a clean test for those
+            cpu.set_flag_z(true); cpu.set_flag_n(true); cpu.set_flag_h(true);
+            cpu.inc_a();
+            assert_eq!(cpu.a, 0x5B); assert_flags!(cpu, false, false, false, c_flag_before); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_b() {
+            let mut cpu = setup_cpu();
+            // Test case: B = 0x00 -> B = 0x01, Z=0, N=0, H=0
+            cpu.b = 0x00; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_b();
+            assert_eq!(cpu.b, 0x01); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+
+            // Test case: B = 0x0F -> B = 0x10, Z=0, N=0, H=1
+            cpu.b = 0x0F; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_b();
+            assert_eq!(cpu.b, 0x10); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+
+            // Test case: B = 0xFF -> B = 0x00, Z=1, N=0, H=1
+            cpu.b = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_b();
+            assert_eq!(cpu.b, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_c() {
+            let mut cpu = setup_cpu();
+            // Test case: C = 0x00 -> C = 0x01, Z=0, N=0, H=0
+            cpu.c = 0x00; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_c();
+            assert_eq!(cpu.c, 0x01); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+
+            // Test case: C = 0x0F -> C = 0x10, Z=0, N=0, H=1
+            cpu.c = 0x0F; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_c();
+            assert_eq!(cpu.c, 0x10); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_d() {
+            let mut cpu = setup_cpu();
+            cpu.d = 0xAE; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_d();
+            assert_eq!(cpu.d, 0xAF); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+             // Test case: D = 0xFF -> D = 0x00, Z=1, N=0, H=1
+            cpu.d = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_d();
+            assert_eq!(cpu.d, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_e() {
+            let mut cpu = setup_cpu();
+            cpu.e = 0xEF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_e();
+            assert_eq!(cpu.e, 0xF0); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+            // Test case: E = 0xFF -> E = 0x00, Z=1, N=0, H=1
+            cpu.e = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_e();
+            assert_eq!(cpu.e, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_h() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x2F; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_h();
+            assert_eq!(cpu.h, 0x30); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+            // Test case: H = 0xFF -> H = 0x00, Z=1, N=0, H=1
+            cpu.h = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_h();
+            assert_eq!(cpu.h, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_l() {
+            let mut cpu = setup_cpu();
+            cpu.l = 0xFE; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_l();
+            assert_eq!(cpu.l, 0xFF); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+            // Test case: L = 0xFF -> L = 0x00, Z=1, N=0, H=1
+            cpu.l = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_l();
+            assert_eq!(cpu.l, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
         fn test_dec_b() {
             let mut cpu = setup_cpu();
             cpu.b = 0x06;
@@ -4063,11 +4178,36 @@ mod tests {
         #[test]
         fn test_scf() {
             let mut cpu = setup_cpu();
-            cpu.set_flag_z(true); // Z should not be affected
-            cpu.set_flag_c(false); // Ensure C is changed
+
+            // Scenario 1: Flags initially all clear
+            cpu.f = 0; // Z=0, N=0, H=0, C=0
             cpu.pc = 0;
             cpu.scf();
-            assert_flags!(cpu, true, false, false, true); // Z unchanged, N=0, H=0, C=1
+            assert_flags!(cpu, false, false, false, true); // Z unchanged (0), N=0, H=0, C=1
+            assert_eq!(cpu.pc, 1);
+
+            // Scenario 2: Z initially set, N and H set (should be cleared by SCF)
+            cpu.set_flag_z(true);
+            cpu.set_flag_n(true);
+            cpu.set_flag_h(true);
+            cpu.set_flag_c(false); // C will be set
+            let initial_z = cpu.is_flag_z(); // true
+            cpu.pc = 0;
+
+            cpu.scf();
+            assert_flags!(cpu, initial_z, false, false, true); // Z unchanged, N=0, H=0, C=1
+            assert_eq!(cpu.pc, 1);
+
+            // Scenario 3: C initially set (should remain set)
+            cpu.set_flag_z(false);
+            cpu.set_flag_n(true); // N will be cleared
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(true);
+            let initial_z_s3 = cpu.is_flag_z(); // false
+            cpu.pc = 0;
+
+            cpu.scf();
+            assert_flags!(cpu, initial_z_s3, false, false, true); // Z unchanged, N=0, H=0, C=1
             assert_eq!(cpu.pc, 1);
         }
 
