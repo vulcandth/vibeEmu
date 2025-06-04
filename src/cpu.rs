@@ -153,17 +153,42 @@ impl Cpu {
         self.bus.borrow_mut().write_byte(address, value);
     }
     pub fn ld_hl_mem_a(&mut self) { self.write_hl_mem(self.a); self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_hl_mem_b(&mut self) { self.write_hl_mem(self.b); self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_hl_mem_c(&mut self) { self.write_hl_mem(self.c); self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_hl_mem_d(&mut self) { self.write_hl_mem(self.d); self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_hl_mem_e(&mut self) { self.write_hl_mem(self.e); self.pc = self.pc.wrapping_add(1); }
+    // LD (HL), B
+    pub fn ld_hl_mem_b(&mut self) {
+        self.write_hl_mem(self.b);
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
+    // LD (HL), C
+    pub fn ld_hl_mem_c(&mut self) {
+        self.write_hl_mem(self.c);
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
+    // LD (HL), D
+    pub fn ld_hl_mem_d(&mut self) {
+        self.write_hl_mem(self.d);
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
+    // LD (HL), E
+    pub fn ld_hl_mem_e(&mut self) {
+        self.write_hl_mem(self.e);
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
     // LD (HL), H
     pub fn ld_hl_mem_h(&mut self) {
         self.write_hl_mem(self.h); // Use existing helper to write H to (HL)
         self.pc = self.pc.wrapping_add(1);
         // No flags are affected by this instruction.
     }
-    pub fn ld_hl_mem_l(&mut self) { self.write_hl_mem(self.l); self.pc = self.pc.wrapping_add(1); } // (HL) = L
+    // LD (HL), L
+    pub fn ld_hl_mem_l(&mut self) {
+        self.write_hl_mem(self.l);
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
     
     // LD (HL), n
     pub fn ld_hl_mem_n(&mut self, value: u8) {
@@ -1899,7 +1924,12 @@ impl Cpu {
             // Opcodes like 0x70 (LD (HL),B), 0x71 (LD (HL),C), 0x72 (LD (HL),D), 0x73 (LD (HL),E), 0x75 (LD (HL),L)
             // would go here if individually implemented in the step function.
             // Currently, their respective methods (e.g. ld_hl_mem_b) exist but are not directly mapped here.
+            0x70 => self.ld_hl_mem_b(), // LD (HL), B
+            0x71 => self.ld_hl_mem_c(), // LD (HL), C
+            0x72 => self.ld_hl_mem_d(), // LD (HL), D
+            0x73 => self.ld_hl_mem_e(), // LD (HL), E
             0x74 => self.ld_hl_mem_h(), // LD (HL), H
+            0x75 => self.ld_hl_mem_l(), // LD (HL), L
             // 0x76 is HALT
             0x77 => self.ld_hl_mem_a(), // LD (HL), A
             0x78 => self.ld_a_b(),
@@ -2317,24 +2347,127 @@ mod tests {
         }
 
         #[test]
+        fn test_ld_hl_mem_b() {
+            let mut cpu = setup_cpu();
+            let addr = 0x1234; // Example address
+            cpu.h = (addr >> 8) as u8;
+            cpu.l = (addr & 0xFF) as u8;
+            cpu.b = 0xAB; // Value to be written from B
+
+            cpu.bus.borrow_mut().write_byte(addr, 0xEE); // Set initial memory to a different value
+
+            cpu.a = 0xCD; // Control register, should not be affected
+            let initial_pc = cpu.pc;
+            // Assuming setup_cpu() results in all flags being false.
+            // If not, capture initial_f here and compare against it.
+
+            cpu.ld_hl_mem_b();
+
+            assert_eq!(cpu.bus.borrow().read_byte(addr), cpu.b, "memory[HL] should now contain the value of B");
+            assert_eq!(cpu.h, (addr >> 8) as u8, "H register itself should remain unchanged");
+            assert_eq!(cpu.l, (addr & 0xFF) as u8, "L register itself should remain unchanged");
+            assert_eq!(cpu.b, 0xAB, "B register itself should remain unchanged");
+            assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_flags!(cpu, false, false, false, false); // No flags should be affected
+        }
+
+        #[test]
         fn test_ld_hl_mem_c() {
             let mut cpu = setup_cpu();
             let addr = 0x8888;
             cpu.h = (addr >> 8) as u8;
             cpu.l = (addr & 0xFF) as u8;
-            cpu.c = 0x7C;
-            cpu.d = 0xDD; // Control
+            cpu.c = 0x7C; // Value to be written from C
+
+            cpu.bus.borrow_mut().write_byte(addr, 0xEE); // Set initial memory to a different value
+
+            cpu.d = 0xDD; // Control register, should not be affected
             let initial_pc = cpu.pc;
 
             cpu.ld_hl_mem_c();
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x7C, "memory[HL] should be loaded from C");
-            assert_eq!(cpu.c, 0x7C, "C should be unchanged");
-            assert_eq!(cpu.d, 0xDD, "D should be unchanged");
+            assert_eq!(cpu.bus.borrow().read_byte(addr), cpu.c, "memory[HL] should now contain the value of C");
+            assert_eq!(cpu.h, (addr >> 8) as u8, "H register should remain unchanged");
+            assert_eq!(cpu.l, (addr & 0xFF) as u8, "L register should remain unchanged");
+            assert_eq!(cpu.c, 0x7C, "C register itself should remain unchanged");
+            assert_eq!(cpu.d, 0xDD, "Control register D should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_flags!(cpu, false, false, false, false); // No flags should be affected
+        }
+
+        #[test]
+        fn test_ld_hl_mem_d() {
+            let mut cpu = setup_cpu();
+            let addr = 0x1235; // Example address
+            cpu.h = (addr >> 8) as u8;
+            cpu.l = (addr & 0xFF) as u8;
+            cpu.d = 0xDA; // Value to be written from D
+
+            cpu.bus.borrow_mut().write_byte(addr, 0xEE); // Set initial memory to a different value
+
+            cpu.a = 0xCD; // Control register, should not be affected
+            let initial_pc = cpu.pc;
+
+            cpu.ld_hl_mem_d();
+
+            assert_eq!(cpu.bus.borrow().read_byte(addr), cpu.d, "memory[HL] should now contain the value of D");
+            assert_eq!(cpu.h, (addr >> 8) as u8, "H register itself should remain unchanged");
+            assert_eq!(cpu.l, (addr & 0xFF) as u8, "L register itself should remain unchanged");
+            assert_eq!(cpu.d, 0xDA, "D register itself should remain unchanged");
+            assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_flags!(cpu, false, false, false, false); // No flags should be affected
+        }
+
+        #[test]
+        fn test_ld_hl_mem_e() {
+            let mut cpu = setup_cpu();
+            let addr = 0x1236; // Example address
+            cpu.h = (addr >> 8) as u8;
+            cpu.l = (addr & 0xFF) as u8;
+            cpu.e = 0xEA; // Value to be written from E
+
+            cpu.bus.borrow_mut().write_byte(addr, 0xEE); // Set initial memory to a different value
+
+            cpu.a = 0xCD; // Control register, should not be affected
+            let initial_pc = cpu.pc;
+
+            cpu.ld_hl_mem_e();
+
+            assert_eq!(cpu.bus.borrow().read_byte(addr), cpu.e, "memory[HL] should now contain the value of E");
+            assert_eq!(cpu.h, (addr >> 8) as u8, "H register itself should remain unchanged");
+            assert_eq!(cpu.l, (addr & 0xFF) as u8, "L register itself should remain unchanged");
+            assert_eq!(cpu.e, 0xEA, "E register itself should remain unchanged");
+            assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_flags!(cpu, false, false, false, false); // No flags should be affected
         }
         
+        #[test]
+        fn test_ld_hl_mem_l() {
+            let mut cpu = setup_cpu();
+            let addr = 0x1237; // Example address
+            cpu.h = (addr >> 8) as u8;
+            cpu.l = (addr & 0xFF) as u8; // This L value will be written
+            // cpu.l is the source register (0x37 in this case)
+
+            cpu.bus.borrow_mut().write_byte(addr, 0xEE); // Set initial memory to a different value
+
+            cpu.a = 0xCD; // Control register, should not be affected
+            let initial_pc = cpu.pc;
+            let initial_l = cpu.l; // Save initial L for assertion
+
+            cpu.ld_hl_mem_l();
+
+            assert_eq!(cpu.bus.borrow().read_byte(addr), initial_l, "memory[HL] should now contain the value of L");
+            assert_eq!(cpu.h, (addr >> 8) as u8, "H register itself should remain unchanged");
+            assert_eq!(cpu.l, initial_l, "L register itself should remain unchanged");
+            assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_flags!(cpu, false, false, false, false); // No flags should be affected
+        }
+
         #[test]
         fn test_ld_hl_mem_h() { // Tests LD (HL), H
             let mut cpu = setup_cpu();
