@@ -3,6 +3,26 @@ const SUBTRACT_FLAG_BYTE_POSITION: u8 = 6;
 const HALF_CARRY_FLAG_BYTE_POSITION: u8 = 5;
 const CARRY_FLAG_BYTE_POSITION: u8 = 4;
 
+const VBLANK_IRQ_BIT: u8 = 0;
+const LCD_STAT_IRQ_BIT: u8 = 1;
+const TIMER_IRQ_BIT: u8 = 2;
+const SERIAL_IRQ_BIT: u8 = 3;
+const JOYPAD_IRQ_BIT: u8 = 4;
+
+const VBLANK_HANDLER_ADDR: u16 = 0x0040;
+const LCD_STAT_HANDLER_ADDR: u16 = 0x0048;
+const TIMER_HANDLER_ADDR: u16 = 0x0050;
+const SERIAL_HANDLER_ADDR: u16 = 0x0058;
+const JOYPAD_HANDLER_ADDR: u16 = 0x0060;
+
+const INTERRUPT_FLAG_REGISTER_ADDR: u16 = 0xFF0F; // IF Register
+const INTERRUPT_ENABLE_REGISTER_ADDR: u16 = 0xFFFF; // IE Register
+
+const INTERRUPT_SERVICE_M_CYCLES: u32 = 5; // M-cycles for interrupt dispatch
+const HALTED_IDLE_M_CYCLES: u32 = 1;      // M-cycles when halted and no interrupt
+// Default M-cycles for a regular instruction if not specified otherwise (for this subtask's simplification)
+const DEFAULT_OPCODE_M_CYCLES: u32 = 4;
+
 use crate::bus::Bus;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -1170,11 +1190,9 @@ impl Cpu {
     pub fn stop(&mut self) {
         // For now, treat as a 1-byte NOP-like instruction.
         // Full STOP mode implementation is more complex.
-        // Pandocs notes 0x10 0x00, but often the 0x00 is consumed as part of STOP's effect.
-        // If emulating as just advancing PC, it should be by 1 for the 0x10 opcode.
-        // If the hardware truly expects two bytes to be "consumed" by STOP even if it's a NOP,
-        // then PC should be +2. The prompt asked for +1 for simplicity.
-        self.pc = self.pc.wrapping_add(1); // Assuming 1-byte for now as per prompt simplification
+        // Pandocs notes 0x10 0x00. This instruction is 2 bytes long.
+        self.is_halted = true; // Simplified STOP, actual behavior is more complex.
+        self.pc = self.pc.wrapping_add(2); // Consume both 0x10 and the following 0x00 byte.
     }
 
     pub fn di(&mut self) {
@@ -1807,19 +1825,90 @@ impl Cpu {
                     _ => unreachable!(),
                 };
             }
-            // Note: Removed the catch-all `_` case for now, assuming full coverage of 0x00-0xFF for CB.
-            // If adding more CB groups later and some are missing, this will need adjustment.
-            // For now, with BIT, RES, SET, and the earlier rotate/shifts, 0x00-0xFF for CB *should* be covered.
-            // Re-add if necessary: _ => { /* TODO: Handle undefined CB opcode */ }
-            // For now, assume all 0x00-0xFF are handled by the patterns above.
-            // If an opcode is truly unexpected here, it means there's a gap in the CB implementation.
-            _ => panic!("Unimplemented CB-prefixed opcode: {:#04X} after PC: {:#04X}", opcode, self.pc.wrapping_sub(1)), // PC is already advanced past CB opcode
+            _ => panic!("Unimplemented CB-prefixed opcode: {:#04X} after PC: {:#04X}", opcode, self.pc.wrapping_sub(1)),
         }
     }
 
+    fn service_interrupt(&mut self, interrupt_bit: u8, handler_addr: u16) {
+        self.ime = false;
+        if self.is_halted {
+            self.is_halted = false;
+            // Note: HALT bug behavior around PC increment is complex.
+            // Our current PC is likely HALT+1. Interrupt pushes this PC.
+        }
+
+        let if_val = self.bus.borrow().read_byte(INTERRUPT_FLAG_REGISTER_ADDR);
+        let new_if = if_val & !(1 << interrupt_bit);
+        self.bus.borrow_mut().write_byte(INTERRUPT_FLAG_REGISTER_ADDR, new_if);
+
+        self.sp = self.sp.wrapping_sub(1);
+        self.bus.borrow_mut().write_byte(self.sp, (self.pc >> 8) as u8); // Push PCH
+        self.sp = self.sp.wrapping_sub(1);
+        self.bus.borrow_mut().write_byte(self.sp, (self.pc & 0xFF) as u8); // Push PCL
+
+        self.pc = handler_addr;
+    }
+
+    fn check_and_handle_interrupts(&mut self) -> Option<u32> {
+        if !self.ime {
+            return None;
+        }
+
+        let ie_val = self.bus.borrow().read_byte(INTERRUPT_ENABLE_REGISTER_ADDR);
+        let if_val = self.bus.borrow().read_byte(INTERRUPT_FLAG_REGISTER_ADDR);
+        let pending_and_enabled = ie_val & if_val & 0x1F; // Mask for bottom 5 interrupt bits
+
+        if pending_and_enabled == 0 {
+            return None;
+        }
+
+        // Service interrupts in order of priority
+        if (pending_and_enabled & (1 << VBLANK_IRQ_BIT)) != 0 {
+            self.service_interrupt(VBLANK_IRQ_BIT, VBLANK_HANDLER_ADDR);
+            return Some(INTERRUPT_SERVICE_M_CYCLES);
+        }
+        if (pending_and_enabled & (1 << LCD_STAT_IRQ_BIT)) != 0 {
+            self.service_interrupt(LCD_STAT_IRQ_BIT, LCD_STAT_HANDLER_ADDR);
+            return Some(INTERRUPT_SERVICE_M_CYCLES);
+        }
+        if (pending_and_enabled & (1 << TIMER_IRQ_BIT)) != 0 {
+            self.service_interrupt(TIMER_IRQ_BIT, TIMER_HANDLER_ADDR);
+            return Some(INTERRUPT_SERVICE_M_CYCLES);
+        }
+        if (pending_and_enabled & (1 << SERIAL_IRQ_BIT)) != 0 {
+            self.service_interrupt(SERIAL_IRQ_BIT, SERIAL_HANDLER_ADDR);
+            return Some(INTERRUPT_SERVICE_M_CYCLES);
+        }
+        if (pending_and_enabled & (1 << JOYPAD_IRQ_BIT)) != 0 {
+            self.service_interrupt(JOYPAD_IRQ_BIT, JOYPAD_HANDLER_ADDR);
+            return Some(INTERRUPT_SERVICE_M_CYCLES);
+        }
+
+        None
+    }
+
+
     pub fn step(&mut self) -> u32 {
+        // Attempt to service interrupts first
+        if let Some(interrupt_m_cycles) = self.check_and_handle_interrupts() {
+            // If an interrupt was serviced, self.is_halted would have been cleared if true.
+            // PC is now at the interrupt handler.
+            return interrupt_m_cycles;
+        }
+
+        // If no interrupt was serviced, check if CPU is halted
+        if self.is_halted {
+            // Remain halted, consume minimal cycles.
+            // Interrupts will be checked again at the start of the next step.
+            return HALTED_IDLE_M_CYCLES;
+        }
+
+        // If not halted and no interrupt serviced at the start of this step,
+        // then fetch and execute the current instruction.
         let opcode = self.bus.borrow().read_byte(self.pc);
-        // println!("PC: {:#04X} Opcode: {:#02X}", self.pc, opcode); // Debug print
+
+        // Optional: Keep a debug print for development if useful
+        // println!("PC: {:#04X} Opcode: {:#02X} A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} IME:{}", self.pc, opcode, self.a, self.f, self.b, self.c, self.d, self.e, self.h, self.l, self.sp, self.ime);
 
         match opcode {
             0x00 => self.nop(),
@@ -1828,35 +1917,59 @@ impl Cpu {
                 let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
                 self.ld_bc_nn(lo, hi);
             }
+            0x02 => self.ld_bc_mem_a(),
+            0x03 => self.inc_bc(),
+            0x04 => self.inc_b(),
+            0x05 => self.dec_b(),
             0x06 => {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.ld_b_n(n);
             }
-            0x02 => self.ld_bc_mem_a(),
+            0x07 => self.rlca(),
+            0x08 => { // LD (a16), SP
+                let addr_lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let addr_hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_nn_mem_sp(addr_lo, addr_hi);
+            }
+            0x09 => self.add_hl_bc(),
             0x0A => self.ld_a_bc_mem(),
+            0x0B => self.dec_bc(),
+            0x0C => self.inc_c(),
+            0x0D => self.dec_c(),
             0x0E => {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.ld_c_n(n);
             }
+            0x0F => self.rrca(),
+            0x10 => self.stop(), // STOP
             0x11 => {
                 let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
                 self.ld_de_nn(lo, hi);
             }
             0x12 => self.ld_de_mem_a(),
+            0x13 => self.inc_de(),
+            0x14 => self.inc_d(),
+            0x15 => self.dec_d(),
             0x16 => {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.ld_d_n(n);
             }
-            0x1A => self.ld_a_de_mem(),
+            0x17 => self.rla(),
             0x18 => {
                 let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.jr_e8(offset);
             }
+            0x19 => self.add_hl_de(),
+            0x1A => self.ld_a_de_mem(),
+            0x1B => self.dec_de(),
+            0x1C => self.inc_e(),
+            0x1D => self.dec_e(),
             0x1E => {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.ld_e_n(n);
             }
+            0x1F => self.rra(),
             0x20 => {
                 let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.jr_nz_e8(offset);
@@ -1867,175 +1980,167 @@ impl Cpu {
                 self.ld_hl_nn(lo, hi);
             }
             0x22 => self.ldi_hl_mem_a(),
+            0x23 => self.inc_hl(),
+            0x24 => self.inc_h(), // Was missing from match
+            0x25 => self.dec_h(),
             0x26 => {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.ld_h_n(n);
             }
+            0x27 => self.daa(),
             0x28 => {
                 let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.jr_z_e8(offset);
             }
+            0x29 => self.add_hl_hl(),
             0x2A => self.ldi_a_hl_mem(),
-            0x2D => self.dec_l(), // DEC L
+            0x2B => self.dec_hl(),
+            0x2C => self.inc_l(),
+            0x2D => self.dec_l(),
             0x2E => {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.ld_l_n(n);
             }
-            0x2F => self.cpl(), // CPL
-            0x30 => { // JR NC, e8
+            0x2F => self.cpl(),
+            0x30 => {
                 let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.jr_nc_e8(offset);
-            },
+            }
             0x31 => {
                 let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
                 self.ld_sp_nn(lo, hi);
             }
             0x32 => self.ldd_hl_mem_a(),
-            0x33 => self.inc_sp(), // INC SP
-            0x34 => self.inc_hl_mem(), // INC (HL)
+            0x33 => self.inc_sp(),
+            0x34 => self.inc_hl_mem(),
+            0x35 => self.dec_hl_mem(), // Was missing from match
             0x36 => {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.ld_hl_mem_n(n);
             }
-            0x39 => self.add_hl_sp(), // ADD HL, SP
+            0x37 => self.scf(), // Was missing from match
+            0x38 => { // JR C, e8 - Was missing from match
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.jr_c_e8(offset);
+            }
+            0x39 => self.add_hl_sp(),
             0x3A => self.ldd_a_hl_mem(),
-            0x3D => self.dec_a(), // DEC A
+            0x3B => self.dec_sp(),
+            0x3C => self.inc_a(), // Was missing from match
+            0x3D => self.dec_a(),
             0x3E => {
                 let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
                 self.ld_a_n(n);
             }
-
-            // LD r, r' opcodes
-            0x40 => self.ld_b_b(),
-            0x41 => self.ld_b_c(),
-            0x42 => self.ld_b_d(),
-            0x43 => self.ld_b_e(),
-            0x44 => self.ld_b_h(),
-            0x45 => self.ld_b_l(),
-            0x46 => self.ld_b_hl_mem(), // LD B,(HL)
-            0x47 => self.ld_b_a(),
-            0x48 => self.ld_c_b(),
-            0x49 => self.ld_c_c(),
-            0x4A => self.ld_c_d(),
-            0x4B => self.ld_c_e(),
-            0x4C => self.ld_c_h(),
-            0x4D => self.ld_c_l(),
-            0x4E => self.ld_c_hl_mem(), // LD C,(HL)
-            0x4F => self.ld_c_a(),
-            0x50 => self.ld_d_b(),
-            0x51 => self.ld_d_c(),
-            0x52 => self.ld_d_d(),
-            0x53 => self.ld_d_e(),
-            0x54 => self.ld_d_h(),
-            0x55 => self.ld_d_l(),
-            0x56 => self.ld_d_hl_mem(), // LD D,(HL)
-            0x57 => self.ld_d_a(),
-            0x58 => self.ld_e_b(),
-            0x59 => self.ld_e_c(),
-            0x5A => self.ld_e_d(),
-            0x5B => self.ld_e_e(),
-            0x5C => self.ld_e_h(),
-            0x5D => self.ld_e_l(),
-            0x5E => self.ld_e_hl_mem(), // LD E,(HL)
-            0x5F => self.ld_e_a(),
-            0x60 => self.ld_h_b(),
-            0x61 => self.ld_h_c(),
-            0x62 => self.ld_h_d(),
-            0x63 => self.ld_h_e(),
-            0x64 => self.ld_h_h(),
-            0x65 => self.ld_h_l(),
-            0x66 => self.ld_h_hl_mem(), // LD H,(HL)
-            0x67 => self.ld_h_a(),
-            0x68 => self.ld_l_b(),
-            0x69 => self.ld_l_c(),
-            0x6A => self.ld_l_d(),
-            0x6B => self.ld_l_e(),
-            0x6C => self.ld_l_h(),
-            0x6D => self.ld_l_l(),
-            0x6E => self.ld_l_hl_mem(), // LD L,(HL)
-            0x6F => self.ld_l_a(),
-
-            0x70 => self.ld_hl_mem_b(), // LD (HL), B
-            0x71 => self.ld_hl_mem_c(), // LD (HL), C
-            0x72 => self.ld_hl_mem_d(), // LD (HL), D
-            0x73 => self.ld_hl_mem_e(), // LD (HL), E
-            0x74 => self.ld_hl_mem_h(), // LD (HL), H
-            0x75 => self.ld_hl_mem_l(), // LD (HL), L
-            // 0x76 is HALT
-            0x77 => self.ld_hl_mem_a(), // LD (HL), A
-            0x78 => self.ld_a_b(),
-            0x79 => self.ld_a_c(),
-            0x7A => self.ld_a_d(),
-            0x7B => self.ld_a_e(),
-            0x7C => self.ld_a_h(),
-            0x7D => self.ld_a_l(),
-            0x7E => self.ld_a_hl_mem(), // LD A,(HL)
-            0x7F => self.ld_a_a(),
-
-            0xAF => self.xor_a_a(),
-
+            0x3F => self.ccf(),
+            // LD r, r' (0x40 - 0x7F, excluding 0x76 HALT)
+            0x40 => self.ld_b_b(), 0x41 => self.ld_b_c(), 0x42 => self.ld_b_d(), 0x43 => self.ld_b_e(),
+            0x44 => self.ld_b_h(), 0x45 => self.ld_b_l(), 0x46 => self.ld_b_hl_mem(), 0x47 => self.ld_b_a(),
+            0x48 => self.ld_c_b(), 0x49 => self.ld_c_c(), 0x4A => self.ld_c_d(), 0x4B => self.ld_c_e(),
+            0x4C => self.ld_c_h(), 0x4D => self.ld_c_l(), 0x4E => self.ld_c_hl_mem(), 0x4F => self.ld_c_a(),
+            0x50 => self.ld_d_b(), 0x51 => self.ld_d_c(), 0x52 => self.ld_d_d(), 0x53 => self.ld_d_e(),
+            0x54 => self.ld_d_h(), 0x55 => self.ld_d_l(), 0x56 => self.ld_d_hl_mem(), 0x57 => self.ld_d_a(),
+            0x58 => self.ld_e_b(), 0x59 => self.ld_e_c(), 0x5A => self.ld_e_d(), 0x5B => self.ld_e_e(),
+            0x5C => self.ld_e_h(), 0x5D => self.ld_e_l(), 0x5E => self.ld_e_hl_mem(), 0x5F => self.ld_e_a(),
+            0x60 => self.ld_h_b(), 0x61 => self.ld_h_c(), 0x62 => self.ld_h_d(), 0x63 => self.ld_h_e(),
+            0x64 => self.ld_h_h(), 0x65 => self.ld_h_l(), 0x66 => self.ld_h_hl_mem(), 0x67 => self.ld_h_a(),
+            0x68 => self.ld_l_b(), 0x69 => self.ld_l_c(), 0x6A => self.ld_l_d(), 0x6B => self.ld_l_e(),
+            0x6C => self.ld_l_h(), 0x6D => self.ld_l_l(), 0x6E => self.ld_l_hl_mem(), 0x6F => self.ld_l_a(),
+            0x70 => self.ld_hl_mem_b(), 0x71 => self.ld_hl_mem_c(), 0x72 => self.ld_hl_mem_d(), 0x73 => self.ld_hl_mem_e(),
+            0x74 => self.ld_hl_mem_h(), 0x75 => self.ld_hl_mem_l(), /* 0x76 is HALT */ 0x77 => self.ld_hl_mem_a(),
+            0x78 => self.ld_a_b(), 0x79 => self.ld_a_c(), 0x7A => self.ld_a_d(), 0x7B => self.ld_a_e(),
+            0x7C => self.ld_a_h(), 0x7D => self.ld_a_l(), 0x7E => self.ld_a_hl_mem(), 0x7F => self.ld_a_a(),
+            0x76 => self.halt(), // HALT
+            // ALU (0x80 - 0xBF)
+            0x80 => self.add_a_b(), 0x81 => self.add_a_c(), 0x82 => self.add_a_d(), 0x83 => self.add_a_e(),
+            0x84 => self.add_a_h(), 0x85 => self.add_a_l(), 0x86 => self.add_a_hl_mem(), 0x87 => self.add_a_a(),
+            0x88 => self.adc_a_b(), 0x89 => self.adc_a_c(), 0x8A => self.adc_a_d(), 0x8B => self.adc_a_e(),
+            0x8C => self.adc_a_h(), 0x8D => self.adc_a_l(), 0x8E => self.adc_a_hl_mem(), 0x8F => self.adc_a_a(),
+            0x90 => self.sub_a_b(), 0x91 => self.sub_a_c(), 0x92 => self.sub_a_d(), 0x93 => self.sub_a_e(),
+            0x94 => self.sub_a_h(), 0x95 => self.sub_a_l(), 0x96 => self.sub_a_hl_mem(), 0x97 => self.sub_a_a(),
+            0x98 => self.sbc_a_b(), 0x99 => self.sbc_a_c(), 0x9A => self.sbc_a_d(), 0x9B => self.sbc_a_e(),
+            0x9C => self.sbc_a_h(), 0x9D => self.sbc_a_l(), 0x9E => self.sbc_a_hl_mem(), 0x9F => self.sbc_a_a(),
+            0xA0 => self.and_a_b(), 0xA1 => self.and_a_c(), 0xA2 => self.and_a_d(), 0xA3 => self.and_a_e(),
+            0xA4 => self.and_a_h(), 0xA5 => self.and_a_l(), 0xA6 => self.and_a_hl_mem(), 0xA7 => self.and_a_a(),
+            0xA8 => self.xor_a_b(), 0xA9 => self.xor_a_c(), 0xAA => self.xor_a_d(), 0xAB => self.xor_a_e(),
+            0xAC => self.xor_a_h(), 0xAD => self.xor_a_l(), 0xAE => self.xor_a_hl_mem(), 0xAF => self.xor_a_a(),
+            0xB0 => self.or_a_b(), 0xB1 => self.or_a_c(), 0xB2 => self.or_a_d(), 0xB3 => self.or_a_e(),
+            0xB4 => self.or_a_h(), 0xB5 => self.or_a_l(), 0xB6 => self.or_a_hl_mem(), 0xB7 => self.or_a_a(),
+            0xB8 => self.cp_a_b(), 0xB9 => self.cp_a_c(), 0xBA => self.cp_a_d(), 0xBB => self.cp_a_e(),
+            0xBC => self.cp_a_h(), 0xBD => self.cp_a_l(), 0xBE => self.cp_a_hl_mem(), 0xBF => self.cp_a_a(),
+            // Jumps, Calls, Returns, RST (0xC0 - 0xFF)
+            0xC0 => self.ret_nz(),
             0xC1 => self.pop_bc(),
-            0xC3 => {
-                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-                self.jp_nn(lo, hi);
-            }
+            0xC2 => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.jp_nz_nn(lo, hi); },
+            0xC3 => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.jp_nn(lo, hi); },
+            0xC4 => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.call_nz_nn(lo, hi); },
             0xC5 => self.push_bc(),
+            0xC6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.add_a_n(val); },
+            0xC7 => self.rst_00h(),
+            0xC8 => self.ret_z(),
             0xC9 => self.ret(),
-            0xCD => {
-                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-                self.call_nn(lo, hi);
-            }
-            0xD1 => self.pop_de(),
-            0xD5 => self.push_de(),
-            0xE0 => {
-                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-                self.ldh_n_offset_mem_a(offset);
-            }
-            0xE1 => self.pop_hl(),
-            0xE5 => self.push_hl(),
-            0xEA => {
-                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-                self.ld_nn_mem_a(lo, hi);
-            }
-            0xF0 => {
-                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-                self.ldh_a_n_offset_mem(offset);
-            }
-            0xF1 => self.pop_af(),
-            0xF5 => self.push_af(),
-            0xFA => {
-                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-                self.ld_a_nn_mem(lo, hi);
-            }
-            0xFE => {
-                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-                self.cp_a_n(n);
-            }
-
-            0xCB => {
-                // For CB-prefixed opcodes, PC is currently at the CB opcode.
-                // We need to read the next byte (the actual CB opcode) at PC+1.
-                // The execute_cb_prefixed method does *not* handle PC increment for the CB prefix itself or its operand.
-                // So, we must advance PC past CB and past the cb_opcode.
+            0xCA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.jp_z_nn(lo, hi); },
+            0xCB => { // CB Prefix
                 let cb_opcode = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-                self.pc = self.pc.wrapping_add(2); // Increment PC by 2 (for 0xCB and cb_opcode)
+                self.pc = self.pc.wrapping_add(2);
                 self.execute_cb_prefixed(cb_opcode);
-                // execute_cb_prefixed itself does not increment PC further.
             }
-            0x76 => self.halt(),
-            // Note: Any duplicated match arms for opcodes like 0x0E, 0x11 etc.,
-            // were already removed by ensuring each opcode appears only once with its implementation.
-            // The comments indicating duplicates have been removed.
-            _ => panic!("Unimplemented opcode: {:#04X} at PC: {:#04X}", opcode, self.pc),
-        }
+            0xCC => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.call_z_nn(lo, hi); },
+            0xCD => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.call_nn(lo, hi); },
+            0xCE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.adc_a_n(val); },
+            0xCF => self.rst_08h(),
+            0xD0 => self.ret_nc(),
+            0xD1 => self.pop_de(),
+            0xD2 => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.jp_nc_nn(lo, hi); },
+            // 0xD3 is an illegal/undocumented opcode
+            0xD4 => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.call_nc_nn(lo, hi); },
+            0xD5 => self.push_de(),
+            0xD6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.sub_a_n(val); },
+            0xD7 => self.rst_10h(),
+            0xD8 => self.ret_c(),
+            0xD9 => self.reti(),
+            0xDA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.jp_c_nn(lo, hi); },
+            // 0xDB is an illegal/undocumented opcode
+            0xDC => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.call_c_nn(lo, hi); },
+            // 0xDD is an illegal/undocumented opcode
+            0xDE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.sbc_a_n(val); },
+            0xDF => self.rst_18h(),
+            0xE0 => { let offset=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ldh_n_offset_mem_a(offset); },
+            0xE1 => self.pop_hl(),
+            0xE2 => self.ldh_c_offset_mem_a(), // LDH (C), A  (same as ldh ($FF00+C), A)
+            // 0xE3, 0xE4 are illegal/undocumented opcodes
+            0xE5 => self.push_hl(),
+            0xE6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.and_a_n(val); },
+            0xE7 => self.rst_20h(),
+            0xE8 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.add_sp_e8(val); },
+            0xE9 => self.jp_hl(),
+            0xEA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.ld_nn_mem_a(lo, hi); },
+            // 0xEB, 0xEC, 0xED are illegal/undocumented opcodes
+            0xEE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.xor_a_n(val); },
+            0xEF => self.rst_28h(),
+            0xF0 => { let offset=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ldh_a_n_offset_mem(offset); },
+            0xF1 => self.pop_af(),
+            0xF2 => self.ldh_a_c_offset_mem(), // LDH A, (C) (same as ldh A, ($FF00+C))
+            0xF3 => self.di(),
+            // 0xF4 is an illegal/undocumented opcode
+            0xF5 => self.push_af(),
+            0xF6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.or_a_n(val); },
+            0xF7 => self.rst_30h(),
+            0xF8 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ld_hl_sp_plus_e8(val); },
+            0xF9 => self.ld_sp_hl(),
+            0xFA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.ld_a_nn_mem(lo, hi); },
+            0xFB => self.ei(),
+            // 0xFC, 0xFD are illegal/undocumented opcodes
+            0xFE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.cp_a_n(val); },
+            0xFF => self.rst_38h(),
+            // Default panic for any truly unhandled opcodes (e.g., D3, DB, DD, E3, E4, EB, EC, ED, F4, FC, FD)
+             _ => panic!("Unimplemented or illegal opcode: {:#04X} at PC: {:#04X}", opcode, self.pc),
+        };
 
-        // Placeholder cycle count
-        4
+        // Return default M-cycles for an executed instruction if specific cycle counts aren't implemented per opcode yet.
+        // This is a simplification for this subtask. Proper cycle counting per instruction is a larger task.
+        return DEFAULT_OPCODE_M_CYCLES;
     }
 }
 
@@ -3197,6 +3302,115 @@ mod tests {
 
         // INC r8 Tests
         #[test]
+        fn test_inc_a() {
+            let mut cpu = setup_cpu();
+            // C flag is not affected by INC A
+
+            // Case 1: A = 0x00 -> A = 0x01, Z=0, N=0, H=0
+            cpu.a = 0x00; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_a();
+            assert_eq!(cpu.a, 0x01); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+
+            // Case 2: A = 0x0F -> A = 0x10, Z=0, N=0, H=1
+            cpu.a = 0x0F; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_a();
+            assert_eq!(cpu.a, 0x10); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+
+            // Case 3: A = 0xFF -> A = 0x00, Z=1, N=0, H=1
+            cpu.a = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_a();
+            assert_eq!(cpu.a, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+
+            // Case 4: A = 0x5A, C flag initially set (should not be affected)
+            cpu.a = 0x5A; cpu.set_flag_c(true); let c_flag_before = cpu.is_flag_c(); cpu.pc = 0;
+            // Clear other flags that are affected by INC A to ensure a clean test for those
+            cpu.set_flag_z(true); cpu.set_flag_n(true); cpu.set_flag_h(true);
+            cpu.inc_a();
+            assert_eq!(cpu.a, 0x5B); assert_flags!(cpu, false, false, false, c_flag_before); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_b() {
+            let mut cpu = setup_cpu();
+            // Test case: B = 0x00 -> B = 0x01, Z=0, N=0, H=0
+            cpu.b = 0x00; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_b();
+            assert_eq!(cpu.b, 0x01); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+
+            // Test case: B = 0x0F -> B = 0x10, Z=0, N=0, H=1
+            cpu.b = 0x0F; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_b();
+            assert_eq!(cpu.b, 0x10); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+
+            // Test case: B = 0xFF -> B = 0x00, Z=1, N=0, H=1
+            cpu.b = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_b();
+            assert_eq!(cpu.b, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_c() {
+            let mut cpu = setup_cpu();
+            // Test case: C = 0x00 -> C = 0x01, Z=0, N=0, H=0
+            cpu.c = 0x00; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_c();
+            assert_eq!(cpu.c, 0x01); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+
+            // Test case: C = 0x0F -> C = 0x10, Z=0, N=0, H=1
+            cpu.c = 0x0F; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_c();
+            assert_eq!(cpu.c, 0x10); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_d() {
+            let mut cpu = setup_cpu();
+            cpu.d = 0xAE; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_d();
+            assert_eq!(cpu.d, 0xAF); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+             // Test case: D = 0xFF -> D = 0x00, Z=1, N=0, H=1
+            cpu.d = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_d();
+            assert_eq!(cpu.d, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_e() {
+            let mut cpu = setup_cpu();
+            cpu.e = 0xEF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_e();
+            assert_eq!(cpu.e, 0xF0); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+            // Test case: E = 0xFF -> E = 0x00, Z=1, N=0, H=1
+            cpu.e = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_e();
+            assert_eq!(cpu.e, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_h() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x2F; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_h();
+            assert_eq!(cpu.h, 0x30); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+            // Test case: H = 0xFF -> H = 0x00, Z=1, N=0, H=1
+            cpu.h = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_h();
+            assert_eq!(cpu.h, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
+        fn test_inc_l() {
+            let mut cpu = setup_cpu();
+            cpu.l = 0xFE; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_l();
+            assert_eq!(cpu.l, 0xFF); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+            // Test case: L = 0xFF -> L = 0x00, Z=1, N=0, H=1
+            cpu.l = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.inc_l();
+            assert_eq!(cpu.l, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+        }
+
+        #[test]
         fn test_dec_b() {
             let mut cpu = setup_cpu();
             cpu.b = 0x06;
@@ -4063,11 +4277,36 @@ mod tests {
         #[test]
         fn test_scf() {
             let mut cpu = setup_cpu();
-            cpu.set_flag_z(true); // Z should not be affected
-            cpu.set_flag_c(false); // Ensure C is changed
+
+            // Scenario 1: Flags initially all clear
+            cpu.f = 0; // Z=0, N=0, H=0, C=0
             cpu.pc = 0;
             cpu.scf();
-            assert_flags!(cpu, true, false, false, true); // Z unchanged, N=0, H=0, C=1
+            assert_flags!(cpu, false, false, false, true); // Z unchanged (0), N=0, H=0, C=1
+            assert_eq!(cpu.pc, 1);
+
+            // Scenario 2: Z initially set, N and H set (should be cleared by SCF)
+            cpu.set_flag_z(true);
+            cpu.set_flag_n(true);
+            cpu.set_flag_h(true);
+            cpu.set_flag_c(false); // C will be set
+            let initial_z = cpu.is_flag_z(); // true
+            cpu.pc = 0;
+
+            cpu.scf();
+            assert_flags!(cpu, initial_z, false, false, true); // Z unchanged, N=0, H=0, C=1
+            assert_eq!(cpu.pc, 1);
+
+            // Scenario 3: C initially set (should remain set)
+            cpu.set_flag_z(false);
+            cpu.set_flag_n(true); // N will be cleared
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(true);
+            let initial_z_s3 = cpu.is_flag_z(); // false
+            cpu.pc = 0;
+
+            cpu.scf();
+            assert_flags!(cpu, initial_z_s3, false, false, true); // Z unchanged, N=0, H=0, C=1
             assert_eq!(cpu.pc, 1);
         }
 

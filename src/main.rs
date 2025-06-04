@@ -17,6 +17,7 @@ use std::env; // For command-line arguments
 use std::fs::File; // Added for file operations
 use std::io::{Read, Result}; // Added for file operations and Result type
 use std::path::Path; // For path manipulation
+use std::time::Instant; // Added for time tracking
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -68,48 +69,63 @@ fn main() {
 
     // --- Argument Parsing ---
     let args: Vec<String> = env::args().collect();
-    let is_headless = args.contains(&"--headless".to_string());
-
+    let mut is_headless = false;
+    let mut halt_duration_seconds: Option<u64> = None;
     let mut rom_path = "roms/cpu_instrs.gb".to_string(); // Default ROM path
     let mut rom_path_explicitly_set = false;
 
-    // Find ROM path: the first argument that isn't --headless and doesn't start with --
-    // This logic prioritizes the first non-flag argument as the ROM path.
-    for arg in args.iter().skip(1) { // Skip the program name itself
-        if arg == "--headless" {
-            // Already handled by is_headless
-            continue;
+    // Manual argument parsing
+    let mut i = 1; // Start after program name
+    while i < args.len() {
+        let arg = &args[i];
+        match arg.as_str() {
+            "--headless" => {
+                is_headless = true;
+            }
+            "--halt-time" => {
+                if i + 1 < args.len() {
+                    match args[i + 1].parse::<u64>() {
+                        Ok(seconds) => halt_duration_seconds = Some(seconds),
+                        Err(_) => {
+                            eprintln!("Error: Invalid value for --halt-time. Expected a number of seconds.");
+                            // std::process::exit(1); // Or simply proceed without time limit
+                        }
+                    }
+                    i += 1; // Consume the value argument
+                } else {
+                    eprintln!("Error: --halt-time requires a value (seconds).");
+                    // std::process::exit(1); // Or simply proceed without time limit
+                }
+            }
+            _ => {
+                // If it's not a known flag, and ROM path hasn't been set yet, assume it's the ROM path.
+                if !arg.starts_with("--") && !rom_path_explicitly_set {
+                    rom_path = arg.clone();
+                    rom_path_explicitly_set = true;
+                } else if !arg.starts_with("--") && rom_path_explicitly_set {
+                    // If ROM path is already set and we encounter another non-flag argument.
+                    println!("Warning: Multiple ROM paths? Using first one: {}", rom_path);
+                }
+                // Silently ignore unknown flags like --steps for now or print a warning.
+            }
         }
-        if !arg.starts_with("--") {
-            rom_path = arg.clone();
-            rom_path_explicitly_set = true;
-            break; // Found the ROM path
-        }
-        // Ignore other flags for now, or handle them if necessary (e.g., --steps)
+        i += 1;
     }
 
     if is_headless {
         println!("Running in headless mode.");
+        if let Some(duration) = halt_duration_seconds {
+            println!("Halt time set to {} seconds.", duration);
+        }
         if !rom_path_explicitly_set {
-            rom_path = "roms/cpu_instrs.gb".to_string(); // Enforce default for headless if no ROM specified
+            // Default ROM for headless if not specified is fine.
             println!("No ROM path provided for headless mode. Defaulting to: {}", rom_path);
         }
-    } else {
-        // In non-headless mode, if no ROM path is set, print usage and default.
-        // This handles the case where only `--headless` might be passed, or no args.
-        if !rom_path_explicitly_set && args.len() > 1 {
-             // Check if the first argument (after program name) might be a ROM path (common use case)
-             // This is a simplified check. A robust CLI parser (e.g., clap) is better.
-             if !args[1].starts_with("--") {
-                rom_path = args[1].clone();
-                rom_path_explicitly_set = true;
-             }
-        }
-
+    } else { // GUI Mode
         if !rom_path_explicitly_set {
-            // If still no ROM path set explicitly for GUI mode, explain usage.
+            // If no ROM path is set explicitly for GUI mode, explain usage.
             // The default rom_path is already "roms/cpu_instrs.gb", so this informs the user.
-            println!("Usage: {} <path_to_rom> [--headless]", args[0]);
+            println!("Usage: {} <path_to_rom> [--headless] [--halt-time <seconds>]", args[0]);
             println!("Defaulting to ROM: {}", rom_path);
         }
     }
@@ -173,6 +189,8 @@ fn main() {
     // Main emulation loop
     let mut emulation_steps: u64 = 0; // Total CPU steps executed
     let mut running = true;
+    let start_time = Instant::now(); // Record start time, used if halt_duration_seconds is Some
+    let mut has_printed_halt_message = false;
 
     // PPU timing: Game Boy PPU runs at a fixed speed.
     // Total PPU cycles per frame = Scanlines (154) * Cycles per scanline (456)
@@ -217,16 +235,18 @@ fn main() {
         }
 
         if cpu.is_halted {
-            println!("CPU Halted at step {}.", emulation_steps);
-            running = false;
+            if !has_printed_halt_message {
+                println!("CPU Halted at step {}. PC=0x{:04X}", emulation_steps, cpu.pc); // Added PC for context
+                has_printed_halt_message = true;
+            }
+        } else {
+            if has_printed_halt_message { // Reset if CPU is no longer halted
+                println!("CPU resumed from HALT at step {}.", emulation_steps);
+                has_printed_halt_message = false;
+            }
         }
 
-        if is_headless && emulation_steps >= MAX_STEPS_HEADLESS {
-            println!("Headless mode: Max steps ({}) reached.", MAX_STEPS_HEADLESS);
-            running = false;
-        }
-
-        // Periodic logging (common to both modes)
+        // Periodic logging and headless checks (common to both modes, but some actions are headless-specific)
         if emulation_steps % SERIAL_PRINT_INTERVAL == 0 || !running { // Also print on last step
             let serial_data = bus.borrow().get_serial_output_string();
             if !serial_data.is_empty() {
@@ -235,6 +255,20 @@ fn main() {
             if emulation_steps % (SERIAL_PRINT_INTERVAL * 10) == 0 || !running { // Less frequent full state print unless exiting
                  println!("Current CPU state (step {}): PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
                          emulation_steps, cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
+            }
+
+            if is_headless {
+                if emulation_steps >= MAX_STEPS_HEADLESS {
+                    println!("Headless mode: Max steps ({}) reached.", MAX_STEPS_HEADLESS);
+                    running = false;
+                }
+                if let Some(duration_limit_secs) = halt_duration_seconds {
+                    let elapsed = start_time.elapsed();
+                    if elapsed.as_secs() >= duration_limit_secs {
+                        println!("Headless mode: Time limit of {} seconds reached. (Elapsed: {}s)", duration_limit_secs, elapsed.as_secs());
+                        running = false;
+                    }
+                }
             }
         }
 
@@ -247,6 +281,12 @@ fn main() {
 
     // After loop actions
     println!("\n--- Emulation Loop Ended ---");
+    println!("Total emulation steps: {}", emulation_steps);
+    if is_headless {
+        let elapsed_total = start_time.elapsed();
+        println!("Total execution time (headless): {:.3}s", elapsed_total.as_secs_f64());
+    }
+
 
     // Final serial output check
     let serial_data = bus.borrow().get_serial_output_string();
