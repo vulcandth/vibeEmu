@@ -157,7 +157,12 @@ impl Cpu {
     pub fn ld_hl_mem_c(&mut self) { self.write_hl_mem(self.c); self.pc = self.pc.wrapping_add(1); }
     pub fn ld_hl_mem_d(&mut self) { self.write_hl_mem(self.d); self.pc = self.pc.wrapping_add(1); }
     pub fn ld_hl_mem_e(&mut self) { self.write_hl_mem(self.e); self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_hl_mem_h(&mut self) { self.write_hl_mem(self.h); self.pc = self.pc.wrapping_add(1); } // (HL) = H
+    // LD (HL), H
+    pub fn ld_hl_mem_h(&mut self) {
+        self.write_hl_mem(self.h); // Use existing helper to write H to (HL)
+        self.pc = self.pc.wrapping_add(1);
+        // No flags are affected by this instruction.
+    }
     pub fn ld_hl_mem_l(&mut self) { self.write_hl_mem(self.l); self.pc = self.pc.wrapping_add(1); } // (HL) = L
     
     // LD (HL), n
@@ -1891,6 +1896,10 @@ impl Cpu {
             // 0x6E => ld_l_hl_mem
             0x6F => self.ld_l_a(),
             // 0x70-0x75 LD (HL),r - these write to memory, not just register to register
+            // Opcodes like 0x70 (LD (HL),B), 0x71 (LD (HL),C), 0x72 (LD (HL),D), 0x73 (LD (HL),E), 0x75 (LD (HL),L)
+            // would go here if individually implemented in the step function.
+            // Currently, their respective methods (e.g. ld_hl_mem_b) exist but are not directly mapped here.
+            0x74 => self.ld_hl_mem_h(), // LD (HL), H
             // 0x76 is HALT
             0x77 => self.ld_hl_mem_a(), // LD (HL), A
             0x78 => self.ld_a_b(),
@@ -2330,20 +2339,26 @@ mod tests {
         fn test_ld_hl_mem_h() { // Tests LD (HL), H
             let mut cpu = setup_cpu();
             let addr = 0x1F0A;
-            cpu.h = (addr >> 8) as u8; // H is 0x1F
-            cpu.l = (addr & 0xFF) as u8; // L is 0x0A
-            // Value to store is cpu.h (0x1F)
-            cpu.a = 0xBD; // Control
+            cpu.h = 0x1F;      // H value to be written (high byte of addr for this example)
+            cpu.l = 0x0A;      // L value (low byte of addr for this example)
+                               // So HL = 0x1F0A
+
+            // Explicitly set memory at (HL) to a value different from cpu.h
+            cpu.bus.borrow_mut().write_byte(addr, 0xEE);
+
+            cpu.a = 0xBD; // Control register, should not be affected
             let initial_pc = cpu.pc;
+            // Assuming setup_cpu() results in all flags being false (ZNHC = 0000).
+            // If flags could be different, capture initial_f: let initial_f = cpu.f;
 
-            cpu.ld_hl_mem_h();
+            cpu.ld_hl_mem_h(); // Execute the instruction
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), cpu.h, "memory[HL] should be loaded from H");
-            assert_eq!(cpu.h, (addr >> 8) as u8, "H should be unchanged");
-            assert_eq!(cpu.l, (addr & 0xFF) as u8, "L should be unchanged");
-            assert_eq!(cpu.a, 0xBD, "A should be unchanged");
+            assert_eq!(cpu.bus.borrow().read_byte(addr), cpu.h, "memory[HL] should now contain the value of H (which is 0x1F)");
+            assert_eq!(cpu.h, 0x1F, "H register itself should remain unchanged");
+            assert_eq!(cpu.l, 0x0A, "L register itself should remain unchanged");
+            assert_eq!(cpu.a, 0xBD, "Control register A should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_flags!(cpu, false, false, false, false); // No flags should be affected by LD (HL),H
         }
 
         #[test]
