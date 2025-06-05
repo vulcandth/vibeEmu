@@ -5,7 +5,7 @@ pub const TIMER_IRQ_BIT: u8 = 2;
 pub const SERIAL_IRQ_BIT: u8 = 3;
 pub const JOYPAD_IRQ_BIT: u8 = 4;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)] // Added PartialEq, Eq
 pub enum InterruptType {
     VBlank,
     LcdStat,

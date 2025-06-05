@@ -1825,7 +1825,8 @@ impl Cpu {
                     _ => unreachable!(),
                 };
             }
-            _ => panic!("Unimplemented CB-prefixed opcode: {:#04X} after PC: {:#04X}", opcode, self.pc.wrapping_sub(1)),
+            // All 0x00-0xFF are covered by the patterns above for CB-prefixed opcodes.
+            _ => unreachable!("Unimplemented CB-prefixed opcode: {:#04X}. This should not be reached if all opcodes are covered.", opcode),
         }
     }
 

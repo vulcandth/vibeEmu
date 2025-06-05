@@ -1,5 +1,5 @@
 // src/ppu.rs
-use image::{ImageBuffer, ImageError, RgbImage};
+use image::{ImageBuffer, ImageError};
 use crate::interrupts::InterruptType; // Added for returning interrupt type
 
 // DMG Palette Colors (RGB)
@@ -129,7 +129,7 @@ impl Ppu {
     fn check_lyc_ly(&mut self) -> Option<InterruptType> {
         let mut lyc_interrupt_to_request: Option<InterruptType> = None;
         if self.ly == self.lyc {
-            self.stat |= (1 << 2); // Set LYC=LY flag (Bit 2)
+            self.stat |= 1 << 2; // Set LYC=LY flag (Bit 2)
             if (self.stat & (1 << 6)) != 0 { // LYC=LY Interrupt Enable
                 lyc_interrupt_to_request = Some(InterruptType::LcdStat);
             }

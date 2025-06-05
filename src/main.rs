@@ -16,7 +16,6 @@ mod timer;
 use std::env; // For command-line arguments
 use std::fs::File; // Added for file operations
 use std::io::{Read, Result}; // Added for file operations and Result type
-use std::path::Path; // For path manipulation
 use std::time::Instant; // Added for time tracking
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -27,7 +26,6 @@ use minifb::{Key, Window, WindowOptions}; // Added for minifb
 // If main.rs is part of the library itself (e.g. src/main.rs in a binary crate),
 // then `crate::` is appropriate.
 use crate::cpu::Cpu;
-use crate::interrupts::InterruptType; // Added (ensure it's there)
 use crate::bus::Bus;
 
 // Define window dimensions
