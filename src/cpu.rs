@@ -46,18 +46,18 @@ pub struct Cpu {
 impl Cpu {
     pub fn new(bus: Rc<RefCell<Bus>>) -> Self {
         Cpu {
-            a: 0x00,
-            f: 0x00,
+            a: 0x11,
+            f: 0x80, // Z=1, N=0, H=0, C=0
             b: 0x00,
             c: 0x00,
-            d: 0x00,
-            e: 0x00,
+            d: 0xFF,
+            e: 0x56,
             h: 0x00,
-            l: 0x00,
-            pc: 0x0000,
-            sp: 0x0000,
+            l: 0x0D,
+            pc: 0x0100,
+            sp: 0xFFFE,
             bus,
-            ime: true, // Typically true after BIOS runs
+            ime: true, // Typically true after BIOS runs. Some sources say false if no boot ROM.
             is_halted: false,
         }
     }
@@ -2173,9 +2173,36 @@ mod tests {
         #[test]
         fn test_nop() {
             let mut cpu = setup_cpu();
-            let initial_pc = cpu.pc;
+            // NOP only affects PC, other registers and flags should hold initial values.
+            // We capture initial PC before it's changed by NOP.
+            let initial_pc_for_nop_test = cpu.pc;
             cpu.nop();
-            assert_eq!(cpu.pc, initial_pc + 1, "PC should increment by 1 for NOP");
+            assert_eq!(cpu.pc, initial_pc_for_nop_test + 1, "PC should increment by 1 for NOP");
+        }
+
+        #[test]
+        fn test_initial_register_values() {
+            let cpu = setup_cpu(); // This will call Cpu::new
+
+            assert_eq!(cpu.a, 0x11, "Initial A register value incorrect");
+            assert_eq!(cpu.f, 0x80, "Initial F register value incorrect");
+            assert_eq!(cpu.b, 0x00, "Initial B register value incorrect");
+            assert_eq!(cpu.c, 0x00, "Initial C register value incorrect");
+            assert_eq!(cpu.d, 0xFF, "Initial D register value incorrect");
+            assert_eq!(cpu.e, 0x56, "Initial E register value incorrect");
+            assert_eq!(cpu.h, 0x00, "Initial H register value incorrect");
+            assert_eq!(cpu.l, 0x0D, "Initial L register value incorrect");
+            assert_eq!(cpu.pc, 0x0100, "Initial PC register value incorrect");
+            assert_eq!(cpu.sp, 0xFFFE, "Initial SP register value incorrect");
+
+            // Assert individual flags for F = 0x80 (Z=1, N=0, H=0, C=0)
+            // Z = bit 7, N = bit 6, H = bit 5, C = bit 4
+            // 0x80 = 1000_0000
+            assert_flags!(cpu, true, false, false, false);
+
+            // Also check IME and is_halted default states if they are part of the new() initialization
+            assert_eq!(cpu.ime, true, "Initial IME value incorrect");
+            assert_eq!(cpu.is_halted, false, "Initial is_halted value incorrect");
         }
     }
 
