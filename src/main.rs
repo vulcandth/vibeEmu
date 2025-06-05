@@ -16,7 +16,6 @@ mod timer;
 use std::env; // For command-line arguments
 use std::fs::File; // Added for file operations
 use std::io::{Read, Result}; // Added for file operations and Result type
-use std::path::Path; // For path manipulation
 use std::time::Instant; // Added for time tracking
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -27,6 +26,7 @@ use minifb::{Key, Window, WindowOptions}; // Added for minifb
 // If main.rs is part of the library itself (e.g. src/main.rs in a binary crate),
 // then `crate::` is appropriate.
 use crate::cpu::Cpu;
+use crate::interrupts::InterruptType; // Added back as it's used by ppu_interrupt_request_type
 use crate::bus::Bus;
 
 // Define window dimensions
@@ -205,8 +205,12 @@ fn main() {
         let t_cycles_for_step = m_cycles * 4; // These are PPU T-cycles
 
         for _ in 0..t_cycles_for_step {
-            bus.borrow_mut().ppu.tick();
-            // TODO: PPU could request VBlank/STAT interrupts here
+            // First, call ppu.tick() and release the borrow on bus
+            let ppu_interrupt_request_type: Option<crate::interrupts::InterruptType> = bus.borrow_mut().ppu.tick();
+            // Then, if an interrupt was requested, borrow bus again to set the flag
+            if let Some(irq_type) = ppu_interrupt_request_type {
+                bus.borrow_mut().request_interrupt(irq_type);
+            }
         }
         ppu_cycles_this_frame += t_cycles_for_step as u32;
 

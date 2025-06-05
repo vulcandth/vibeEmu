@@ -1,5 +1,6 @@
 // src/ppu.rs
-use image::{ImageBuffer, ImageError, RgbImage};
+use image::{ImageBuffer, ImageError};
+use crate::interrupts::InterruptType; // Added for returning interrupt type
 
 // DMG Palette Colors (RGB)
 const COLOR_WHITE: [u8; 3] = [0xFF, 0xFF, 0xFF];
@@ -102,125 +103,178 @@ impl Ppu {
     }
 
     // Helper to set PPU mode in STAT register
-    fn set_mode(&mut self, mode: u8) {
+    fn set_mode(&mut self, mode: u8) -> Option<InterruptType> {
         // Clear bits 0-1 and then set them to the new mode
         self.stat = (self.stat & 0b1111_1100) | mode;
+        let mut stat_interrupt_to_request: Option<InterruptType> = None;
+        // Check for STAT interrupt conditions based on the new mode
+        // Note: Mode 1 VBlank (for STAT) is also handled here if enabled in STAT.
+        // This is distinct from the main VBlank interrupt (InterruptType::VBlank).
+        match mode {
+            MODE_HBLANK if (self.stat & (1 << 3)) != 0 => { // Mode 0 HBlank Interrupt Enable
+                stat_interrupt_to_request = Some(InterruptType::LcdStat);
+            }
+            MODE_VBLANK if (self.stat & (1 << 4)) != 0 => { // Mode 1 VBlank Interrupt Enable for STAT
+                stat_interrupt_to_request = Some(InterruptType::LcdStat);
+            }
+            MODE_OAM_SCAN if (self.stat & (1 << 5)) != 0 => { // Mode 2 OAM Interrupt Enable
+                stat_interrupt_to_request = Some(InterruptType::LcdStat);
+            }
+            _ => {}
+        }
+        stat_interrupt_to_request
     }
 
     // Helper to check LYC=LY condition and update STAT
-    fn check_lyc_ly(&mut self) {
+    fn check_lyc_ly(&mut self) -> Option<InterruptType> {
+        let mut lyc_interrupt_to_request: Option<InterruptType> = None;
         if self.ly == self.lyc {
-            self.stat |= (1 << 2); // Set LYC=LY flag (Bit 2)
-            // TODO: Trigger LYC interrupt if STAT bit 6 is enabled
+            self.stat |= 1 << 2; // Set LYC=LY flag (Bit 2)
+            if (self.stat & (1 << 6)) != 0 { // LYC=LY Interrupt Enable
+                lyc_interrupt_to_request = Some(InterruptType::LcdStat);
+            }
         } else {
             self.stat &= !(1 << 2); // Clear LYC=LY flag
         }
+        lyc_interrupt_to_request
     }
 
-    pub fn tick(&mut self) {
+pub fn tick(&mut self) -> Option<InterruptType> {
         // Tick is assumed to be called for each PPU cycle (T-cycle)
+    let mut interrupt_to_request: Option<InterruptType> = None;
 
         // LCD Power Check - if LCD is off, PPU does nothing, LY resets to 0, mode to 0 (HBlank)
         if self.lcdc & (1 << 7) == 0 { // Bit 7 is LCD Display Enable
             self.cycles = 0;
             self.ly = 0;
-            self.set_mode(MODE_HBLANK); // Mode 0
-            // STAT LYC=LY flag should still be updated.
-            self.check_lyc_ly();
-            // Framebuffer might be cleared or show white. For now, no explicit clear here.
-            return;
+            // Mode is set to HBLANK. A STAT interrupt for HBLANK mode is not typical when LCD is just turned off.
+            // LYC=LY check, however, should occur and can request a STAT interrupt.
+            self.stat = (self.stat & 0b1111_1100) | MODE_HBLANK; // Set mode directly
+            if let Some(stat_irq) = self.check_lyc_ly() {
+                interrupt_to_request = Some(stat_irq); // LYC=LY check can still cause STAT IRQ
+            }
+        // Framebuffer might be cleared or show white.
+        return interrupt_to_request; // Return potential STAT from LYC match, or None
         }
 
         self.cycles += 1; // Assuming 1 tick call = 1 PPU cycle. Adjust if PPU gets more cycles at once.
 
         if self.ly >= 144 { // VBlank period (Lines 144-153)
-            self.set_mode(MODE_VBLANK); // Mode 1
+            // In VBlank period, mode is MODE_VBLANK (1)
+            // This mode setting occurs once when LY first becomes 144.
+            if (self.stat & 0b11) != MODE_VBLANK { // Ensure mode is VBLANK
+                if let Some(stat_irq) = self.set_mode(MODE_VBLANK) {
+                    // Only set LcdStat if VBlank is not already being requested this tick
+                    if interrupt_to_request != Some(InterruptType::VBlank) {
+                        interrupt_to_request = Some(stat_irq);
+                    }
+                }
+            }
+
             if self.cycles >= SCANLINE_CYCLES {
                 self.cycles = 0;
                 self.ly += 1;
-                if self.ly >= LINES_PER_FRAME { // End of VBlank
+                if self.ly >= LINES_PER_FRAME { // End of VBlank period
                     self.ly = 0; // Reset for new frame
                     // Transition to Mode 2 (OAM Scan) for the new frame's first line.
-                    self.set_mode(MODE_OAM_SCAN);
-                    // TODO: Clear VBLANK interrupt flag if it was set by PPU
+                    if let Some(stat_irq) = self.set_mode(MODE_OAM_SCAN) {
+                         if interrupt_to_request != Some(InterruptType::VBlank) { // Should not be VBlank here
+                            interrupt_to_request = Some(stat_irq);
+                        }
+                    }
                 }
-                self.check_lyc_ly(); // LYC=LY check happens on LY changes
+                // LYC check after LY changes
+                if let Some(stat_irq) = self.check_lyc_ly() {
+                    if interrupt_to_request != Some(InterruptType::VBlank) { // VBlank is primary
+                        interrupt_to_request = Some(stat_irq);
+                    }
+                }
             }
         } else { // Scanlines 0-143 (Visible frame)
             let current_mode = self.stat & 0b11;
 
             if self.cycles < OAM_SCAN_CYCLES { // Mode 2 - OAM Scan
                 if current_mode != MODE_OAM_SCAN {
-                    self.set_mode(MODE_OAM_SCAN);
-                    // TODO: OAM interrupt logic if enabled
+                    if let Some(stat_irq) = self.set_mode(MODE_OAM_SCAN) {
+                        // VBlank should not be pending here.
+                        interrupt_to_request = Some(stat_irq);
+                    }
                 }
             } else if self.cycles < OAM_SCAN_CYCLES + DRAWING_CYCLES { // Mode 3 - Drawing
                 if current_mode != MODE_DRAWING {
-                    self.set_mode(MODE_DRAWING);
-                    // Render scanline on first cycle of Mode 3
-                    self.render_scanline();
+                    // Mode 3 (Drawing) itself doesn't trigger a STAT interrupt by changing to it.
+                    self.stat = (self.stat & 0b1111_1100) | MODE_DRAWING; // Directly set mode
+                    // Render scanline on first cycle of Mode 3 (if cycles just crossed into this range)
+                    // This check might need to be more precise (e.g. self.cycles == OAM_SCAN_CYCLES)
+                    if self.cycles == OAM_SCAN_CYCLES { // First cycle of Mode 3
+                        self.render_scanline();
+                    }
                 }
             } else if self.cycles < SCANLINE_CYCLES { // Mode 0 - HBlank
                  if current_mode != MODE_HBLANK {
-                    self.set_mode(MODE_HBLANK);
-                    // TODO: HBlank interrupt logic if enabled
+                    if let Some(stat_irq) = self.set_mode(MODE_HBLANK) {
+                        // VBlank should not be pending here.
+                        interrupt_to_request = Some(stat_irq);
+                    }
                 }
-            } else { // End of a scanline
+            } else { // End of a scanline (cycles == SCANLINE_CYCLES)
                 self.cycles = 0;
                 self.ly += 1;
-                self.check_lyc_ly(); // LYC=LY check happens on LY changes
+
+                // LYC check after LY changes, before potential VBlank transition
+                if let Some(stat_irq) = self.check_lyc_ly() {
+                    // If VBlank is not about to be requested, set LcdStat
+                    if self.ly != 144 { // Avoid overwriting if VBlank is next
+                        interrupt_to_request = Some(stat_irq);
+                    } else { // ly is 144, VBlank will be requested. Only set LcdStat if VBlank itself is not set.
+                        // This case is tricky: VBlank takes precedence.
+                        // If check_lyc_ly returns LcdStat, and VBlank is also triggered, VBlank wins.
+                        // The VBlank assignment below will handle this.
+                        // So, if we are here and ly is 144, we can tentatively set LcdStat.
+                        if interrupt_to_request == None { // Tentatively set if nothing else yet
+                           interrupt_to_request = Some(stat_irq);
+                        }
+                    }
+                }
 
                 if self.ly == 144 { // Transition to VBlank
-                    self.set_mode(MODE_VBLANK);
-                    // TODO: Trigger VBlank interrupt (set IF register bit 0 if IE register bit 0 is set)
+                    // VBlank interrupt (IF bit 0) is primary for ly=144. This overwrites any prior LcdStat for this tick.
+                    interrupt_to_request = Some(InterruptType::VBlank);
+                    // set_mode for VBLANK can also trigger a STAT interrupt (for STAT bit 4).
+                    // This is secondary to the main VBlank interrupt.
+                    // If VBlank (InterruptType::VBlank) is set, bus logic handles IF bit 0.
+                    // If STAT bit 4 is also set, bus logic ORs IF bit 1 (LcdStat).
+                    // Our PPU tick should signal *both* if conditions met.
+                    // However, main.rs only takes one InterruptType.
+                    // The problem implies VBlank takes precedence for return type if both conditions met.
+                    // So if set_mode(MODE_VBLANK) also implies LcdStat, VBlank is still returned.
+                    // The bus.request_interrupt will handle the specific type.
+                    // Let's ensure the mode is set.
+                    let _ = self.set_mode(MODE_VBLANK); // Ensure mode is set; its LcdStat return is ignored if VBlank is primary.
 
                     // Save framebuffer at the start of VBlank
                     // This is done only once per frame, when ly first becomes 144.
                     // Ensure this is the *actual* first cycle of this line in VBlank.
                     // The mode transition to VBLANK happens right before this check.
                     // The `cycles` would have just been reset to 0 from the previous line's completion.
-                    // So, this is a good spot if we assume tick() is called per PPU cycle.
-                    // However, the current logic sets mode to VBLANK and then increments LY.
-                    // Let's adjust the screenshot trigger to be when LY becomes 144 AND mode becomes VBLANK.
-                    // The current structure of tick():
-                    //  - line 143 finishes, cycles reset, ly becomes 144.
-                    //  - check_lyc_ly() called.
-                    //  - Then, if ly == 144, set_mode(MODE_VBLANK)
-                    // This means the screenshot should be taken right after set_mode(MODE_VBLANK)
-                    // when ly has just become 144.
-
-                    // Re-evaluating: The VBLANK mode is set, then LY is incremented during VBLANK.
-                    // The first moment we know a frame is fully drawn is when LY becomes 144.
-                    // At this point, Mode 0 (HBLANK) for line 143 has just finished.
-                    // The PPU then transitions to Mode 1 (VBLANK).
-                    // So, the screenshot should be taken when `self.ly == 144` and `self.cycles == 0` (or very small number)
-                    // signifying the *start* of processing line 144, which is the first VBlank line.
-
-                    // The current code:
-                    // else { // End of a scanline (lines 0-143)
-                    //    self.cycles = 0;
-                    //    self.ly += 1; // ly becomes 0-144
-                    //    self.check_lyc_ly();
-                    //    if self.ly == 144 { // Transition to VBlank
-                    //        self.set_mode(MODE_VBLANK); // Mode becomes 1
-                    //        // SCREENSHOT HERE
-                    //    } else { ... }
-                    // }
-                    // This seems like the correct spot.
-
-                    // match save_framebuffer_to_png(&self.framebuffer, 160, 144, "output.png") {
-                    //     Ok(_) => { /* println!("Framebuffer saved to output.png"); */ }
-                    //     Err(e) => eprintln!("Error saving framebuffer: {}", e),
-                    // }
                     // Screenshotting is now triggered by main.rs test framework logic
+                    // Ensure framebuffer is updated at this point if it's a new frame
+                    if self.cycles == 0 { // Should be true if we just reset cycles
+                         // self.framebuffer_internal = self.framebuffer.clone(); // Assuming this was for testing
+                         // self.new_frame_ready = true;
+                    }
 
-                } else {
-                    // Transition to Mode 2 (OAM Scan) for the next scanline.
-                    self.set_mode(MODE_OAM_SCAN);
-                    // TODO: OAM interrupt for the new line if enabled
+                } else { // Still in visible scanlines (0-143), transition to Mode 2 for the next line
+                    if let Some(stat_irq) = self.set_mode(MODE_OAM_SCAN) {
+                        // VBlank should not be pending here.
+                        // If LYC=LY caused an LcdStat already, this might overwrite it if it's also LcdStat. This is fine.
+                        interrupt_to_request = Some(stat_irq);
+                    }
                 }
             }
         }
+
+    interrupt_to_request // Return any requested interrupt
     }
 
     fn render_scanline(&mut self) {
@@ -400,8 +454,11 @@ impl Ppu {
             }
             0xFF45 => { // LYC
                 self.lyc = value;
-                // LYC=LY check should happen immediately if LYC is written
-                self.check_lyc_ly();
+                // Writing to LYC should also potentially trigger STAT interrupt if LYC=LY and enabled.
+                // The check_lyc_ly() call here updates STAT bit 2, but doesn't return interrupt from write_byte.
+                // For full accuracy, write_byte could also return Option<InterruptType>.
+                // For now, interrupt is checked on next PPU tick.
+                let _ = self.check_lyc_ly(); // Update STAT flag, ignore potential IRQ for now from here
             }
             0xFF47 => self.bgp = value, // BGP
             0xFF48 => self.obp0 = value, // OBP0

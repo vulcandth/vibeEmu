@@ -1825,7 +1825,8 @@ impl Cpu {
                     _ => unreachable!(),
                 };
             }
-            _ => panic!("Unimplemented CB-prefixed opcode: {:#04X} after PC: {:#04X}", opcode, self.pc.wrapping_sub(1)),
+            // All 0x00-0xFF are covered by the patterns above for CB-prefixed opcodes.
+            _ => unreachable!("Unimplemented CB-prefixed opcode: {:#04X}. This should not be reached if all opcodes are covered.", opcode),
         }
     }
 
@@ -1837,9 +1838,9 @@ impl Cpu {
             // Our current PC is likely HALT+1. Interrupt pushes this PC.
         }
 
-        let if_val = self.bus.borrow().read_byte(INTERRUPT_FLAG_REGISTER_ADDR);
-        let new_if = if_val & !(1 << interrupt_bit);
-        self.bus.borrow_mut().write_byte(INTERRUPT_FLAG_REGISTER_ADDR, new_if);
+        // The IF bit is cleared by the CPU when it starts servicing the interrupt.
+        // This is now handled by Bus::clear_interrupt_flag.
+        self.bus.borrow_mut().clear_interrupt_flag(interrupt_bit);
 
         self.sp = self.sp.wrapping_sub(1);
         self.bus.borrow_mut().write_byte(self.sp, (self.pc >> 8) as u8); // Push PCH
