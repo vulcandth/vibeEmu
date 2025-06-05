@@ -4904,7 +4904,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn test_call_nn() {
+        fn test_call_nn_basic() {
             let mut cpu = setup_cpu();
             cpu.pc = 0x0100;    // Initial PC
             cpu.sp = 0xFFFE;    // Initial SP
@@ -4919,13 +4919,9 @@ mod tests {
 
             cpu.call_nn(addr_lo, addr_hi);
 
-            // Check PC
             assert_eq!(cpu.pc, 0x1234, "PC should be updated to the call address 0x1234");
-
-            // Check SP
             assert_eq!(cpu.sp, initial_sp.wrapping_sub(2), "SP should be decremented by 2");
 
-            // Check stack content (return address)
             let pushed_pc_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_pc_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
             let pushed_return_addr = ((pushed_pc_hi as u16) << 8) | (pushed_pc_lo as u16);
@@ -4933,48 +4929,55 @@ mod tests {
             assert_eq!(pushed_return_addr, expected_return_addr, "Return address pushed onto stack is incorrect");
             assert_eq!(pushed_pc_lo, (expected_return_addr & 0xFF) as u8, "Pushed PC lo byte is incorrect");
             assert_eq!(pushed_pc_hi, (expected_return_addr >> 8) as u8, "Pushed PC hi byte is incorrect");
-
-            // Check flags
             assert_eq!(cpu.f, flags_before_call, "Flags should not be affected by CALL nn");
+        }
 
-            // Test CALL to 0x0000
+        #[test]
+        fn test_call_nn_to_zero() {
+            let mut cpu = setup_cpu();
             cpu.pc = 0x0250;
-            cpu.sp = 0x8000;
+            cpu.sp = 0xDFFF; // Changed SP to 0xDFFF
             cpu.f = 0x00; // Clear flags
-            let flags_before_call_2 = cpu.f;
-            let initial_sp_2 = cpu.sp;
-            let expected_return_addr_2 = cpu.pc.wrapping_add(3); // 0x0253
+            let flags_before_call_2 = cpu.f; // Capture flags before call
+            let initial_sp_2 = cpu.sp; // Will be 0xDFFF
+            let expected_return_addr_2 = cpu.pc.wrapping_add(3); // Still 0x0253
 
-            cpu.call_nn(0x00, 0x00);
-            assert_eq!(cpu.pc, 0x0000);
-            assert_eq!(cpu.sp, initial_sp_2.wrapping_sub(2));
-            let pushed_pc_lo_2 = cpu.bus.borrow().read_byte(cpu.sp);
-            let pushed_pc_hi_2 = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
-            assert_eq!(((pushed_pc_hi_2 as u16) << 8) | (pushed_pc_lo_2 as u16), expected_return_addr_2);
-            assert_eq!(cpu.f, flags_before_call_2);
+            cpu.call_nn(0x00, 0x00); // Call 0x0000
 
+            let expected_sp_val = initial_sp_2.wrapping_sub(2); // Now 0xDFFD
 
-            // Test SP wrapping
+            assert_eq!(cpu.pc, 0x0000, "PC after CALL 0x0000 should be 0x0000");
+            assert_eq!(cpu.sp, expected_sp_val, "SP after CALL 0x0000 should be 0xDFFD");
+
+            let pushed_pc_lo_2 = cpu.bus.borrow().read_byte(cpu.sp); // Reads from 0xDFFD
+            let pushed_pc_hi_2 = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1)); // Reads from 0xDFFE
+
+            assert_eq!(((pushed_pc_hi_2 as u16) << 8) | (pushed_pc_lo_2 as u16), expected_return_addr_2, "Return address pushed to stack incorrect");
+            assert_eq!(pushed_pc_lo_2, (expected_return_addr_2 & 0xFF) as u8, "Pushed PCL incorrect");
+            assert_eq!(pushed_pc_hi_2, (expected_return_addr_2 >> 8) as u8, "Pushed PCH incorrect");
+            assert_eq!(cpu.f, flags_before_call_2, "Flags affected by CALL nn (to zero)");
+        }
+
+        #[test]
+        fn test_call_nn_sp_wrap() {
+            let mut cpu = setup_cpu();
             cpu.pc = 0x0300;
             cpu.sp = 0x0001; // SP will wrap around (0x0001 -> 0x0000 -> 0xFFFF)
             cpu.f = 0xF0; // Set all flags
+
             let flags_before_call_3 = cpu.f;
-            let _initial_sp_3 = cpu.sp; // 0x0001
+            let initial_sp_3_val = cpu.sp;
             let expected_return_addr_3 = cpu.pc.wrapping_add(3); // 0x0303
 
             cpu.call_nn(0xFF, 0xEE); // Call 0xEEFF
-            assert!(cpu.sp == 0xFFFF, "SP immediately after call_nn should be 0xFFFF. Actual: {:#04X}", cpu.sp);
-            assert_eq!(cpu.pc, 0xEEFF);
-            // Original assertion: assert_eq!(cpu.sp, initial_sp_3.wrapping_sub(2)); // 0xFFFF
-            // cpu.sp is correctly calculated as 0xFFFF by call_nn.
-            // The panic message "left: 65535 right: 595" was likely misleading due to test macro internals.
-            // We assert directly against 0xFFFF to confirm cpu.sp's value.
-            // Using assert! to avoid potential assert_eq! macro reporting quirks.
-            assert!(cpu.sp == 0xFFFF, "SP should be 0xFFFF after wrapping CALL. Actual: {:#04X}", cpu.sp);
-            let pushed_pc_lo_3 = cpu.bus.borrow().read_byte(cpu.sp); // memory[0xFFFF]
-            let pushed_pc_hi_3 = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1)); // memory[0x0000]
-            assert_eq!(((pushed_pc_hi_3 as u16) << 8) | (pushed_pc_lo_3 as u16), expected_return_addr_3);
-            assert_eq!(cpu.f, flags_before_call_3);
+
+            assert_eq!(cpu.pc, 0xEEFF, "SP Wrap Test: PC after call failed");
+            assert_eq!(cpu.sp, initial_sp_3_val.wrapping_sub(2), "SP Wrap Test: SP after call failed. Expected {:#06X}, got {:#06X}", initial_sp_3_val.wrapping_sub(2), cpu.sp);
+
+            let pushed_pc_lo_3 = cpu.bus.borrow().read_byte(cpu.sp);
+            let pushed_pc_hi_3 = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
+            assert_eq!(((pushed_pc_hi_3 as u16) << 8) | (pushed_pc_lo_3 as u16), expected_return_addr_3, "SP Wrap Test: Return address on stack incorrect");
+            assert_eq!(cpu.f, flags_before_call_3, "SP Wrap Test: Flags changed");
         }
 
         #[test]
@@ -5334,6 +5337,29 @@ mod tests {
             assert_eq!(cpu.sp, initial_sp_2.wrapping_add(2), "RETI: SP should wrap from 0xFFFE to 0x0000");
             assert_eq!(cpu.ime, true, "RETI: IME should be set after SP wrap");
             assert_eq!(cpu.f, flags_before_reti_2, "RETI: Other flags should not be affected after SP wrap");
+        }
+
+        #[test]
+        fn test_bus_write_corruption_check() {
+            let mut cpu = setup_cpu();
+            let control_value: u16 = 0xAAAA;
+            cpu.b = 0xBB;
+
+            let wram_addr1 = 0xC100u16;
+            let wram_addr2 = 0xC101u16;
+            let val1 = 0x53u8;
+            let val2 = 0x02u8;
+
+            cpu.bus.borrow_mut().write_byte(wram_addr1, val1);
+            cpu.bus.borrow_mut().write_byte(wram_addr2, val2);
+
+            let read_val1 = cpu.bus.borrow().read_byte(wram_addr1);
+            let read_val2 = cpu.bus.borrow().read_byte(wram_addr2);
+
+            assert_eq!(read_val1, val1, "Value at {:#06X} incorrect after write.", wram_addr1);
+            assert_eq!(read_val2, val2, "Value at {:#06X} incorrect after write.", wram_addr2);
+            assert_eq!(cpu.b, 0xBB, "cpu.b corrupted!");
+            assert_eq!(control_value, 0xAAAA, "Local control_value corrupted!");
         }
     }
 
