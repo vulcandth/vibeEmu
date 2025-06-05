@@ -23,7 +23,7 @@ const HALTED_IDLE_M_CYCLES: u32 = 1;      // M-cycles when halted and no interru
 // Default M-cycles for a regular instruction if not specified otherwise (for this subtask's simplification)
 const DEFAULT_OPCODE_M_CYCLES: u32 = 4;
 
-use crate::bus::Bus;
+use crate::bus::{Bus, SystemMode}; // Added SystemMode
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -41,24 +41,32 @@ pub struct Cpu {
     bus: Rc<RefCell<Bus>>,
     pub ime: bool,      // Interrupt Master Enable flag
     pub is_halted: bool, // CPU is halted
+    pub in_stop_mode: bool, // Added for STOP mode distinction
 }
 
 impl Cpu {
     pub fn new(bus: Rc<RefCell<Bus>>) -> Self {
+        let system_mode = bus.borrow().get_system_mode();
+        let (a, f, b, c, d, e, h, l) = match system_mode {
+            SystemMode::DMG => (0x01, 0xB0, 0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D),
+            SystemMode::CGB => (0x11, 0x80, 0x00, 0x00, 0xFF, 0x56, 0x00, 0x0D),
+        };
+
         Cpu {
-            a: 0x11,
-            f: 0x80, // Z=1, N=0, H=0, C=0
-            b: 0x00,
-            c: 0x00,
-            d: 0xFF,
-            e: 0x56,
-            h: 0x00,
-            l: 0x0D,
+            a,
+            f,
+            b,
+            c,
+            d,
+            e,
+            h,
+            l,
             pc: 0x0100,
             sp: 0xFFFE,
             bus,
             ime: true, // Typically true after BIOS runs. Some sources say false if no boot ROM.
             is_halted: false,
+            in_stop_mode: false, // Initialize in_stop_mode
         }
     }
 
@@ -1198,6 +1206,7 @@ impl Cpu {
         } else {
             // Normal halt behavior:
             self.is_halted = true;
+            self.in_stop_mode = false; // HALT is not STOP
             // The HALT instruction is 1 byte long. PC should advance past it.
             self.pc = self.pc.wrapping_add(1);
         }
@@ -1217,8 +1226,22 @@ pub fn stop(&mut self) {
     // - Consumes the 2 bytes for the instruction (0x10 and the following 0x00).
     // This is a placeholder and does not implement CGB speed switching or
     // specific DMG STOP mode details.
-    self.is_halted = true;
-    self.pc = self.pc.wrapping_add(2); // Consume opcode 0x10 and operand 0x00
+    let system_mode = self.bus.borrow().get_system_mode();
+    let key1_prepared = self.bus.borrow().get_key1_prepare_speed_switch();
+
+    if system_mode == SystemMode::CGB && key1_prepared {
+        self.bus.borrow_mut().toggle_speed_mode();
+        self.bus.borrow_mut().set_key1_prepare_speed_switch(false);
+        // For CGB speed switch, CPU does not halt.
+        self.is_halted = false;
+        self.in_stop_mode = false;
+    } else {
+        // For DMG STOP, or CGB STOP without speed switch prepare, CPU halts.
+        self.is_halted = true;
+        self.in_stop_mode = true;
+    }
+    // STOP is a 2-byte instruction (0x10 0x00). PC must advance by 2.
+    self.pc = self.pc.wrapping_add(2);
 }
 
     pub fn di(&mut self) {
@@ -1857,12 +1880,16 @@ pub fn stop(&mut self) {
     }
 
     fn service_interrupt(&mut self, interrupt_bit: u8, handler_addr: u16) {
-        self.ime = false;
         if self.is_halted {
-            self.is_halted = false;
-            // Note: HALT bug behavior around PC increment is complex.
-            // Our current PC is likely HALT+1. Interrupt pushes this PC.
+            self.is_halted = false; // Wake up from HALT/STOP
+            if self.in_stop_mode {
+                // If woken from STOP mode by any enabled interrupt, clear in_stop_mode.
+                self.in_stop_mode = false;
+            }
         }
+        self.ime = false;
+        // Note: HALT bug behavior around PC increment is complex.
+        // Our current PC is likely HALT+1 if woken from HALT. If woken from STOP, PC is already advanced.
 
         // The IF bit is cleared by the CPU when it starts servicing the interrupt.
         // This is now handled by Bus::clear_interrupt_flag.
@@ -2187,12 +2214,20 @@ mod tests {
         };
     }
 
-    fn setup_cpu() -> Cpu {
-        // Provide dummy ROM data for Bus creation in CPU tests
-        let rom_data = vec![0; 0x100]; // Example: 256 bytes of ROM
+    fn setup_cpu_with_mode(mode: SystemMode) -> Cpu {
+        // Provide dummy ROM data. For CGB, set the CGB flag.
+        let mut rom_data = vec![0; 0x150]; // Ensure enough size for header
+        if mode == SystemMode::CGB {
+            rom_data[0x0143] = 0x80; // CGB supported/required
+        }
         let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
-        Cpu::new(bus) // Initializes PC and SP to 0x0000, memory to 0s via bus.
+        Cpu::new(bus)
     }
+
+    fn setup_cpu() -> Cpu { // Default to CGB for existing tests, or adjust as needed
+        setup_cpu_with_mode(SystemMode::CGB)
+    }
+
 
     mod initial_tests {
         use super::*;
@@ -2208,28 +2243,41 @@ mod tests {
         }
 
         #[test]
-        fn test_initial_register_values() {
-            let cpu = setup_cpu(); // This will call Cpu::new
+        fn test_initial_register_values_cgb() {
+            let cpu = setup_cpu_with_mode(SystemMode::CGB);
 
-            assert_eq!(cpu.a, 0x11, "Initial A register value incorrect");
-            assert_eq!(cpu.f, 0x80, "Initial F register value incorrect");
-            assert_eq!(cpu.b, 0x00, "Initial B register value incorrect");
-            assert_eq!(cpu.c, 0x00, "Initial C register value incorrect");
-            assert_eq!(cpu.d, 0xFF, "Initial D register value incorrect");
-            assert_eq!(cpu.e, 0x56, "Initial E register value incorrect");
-            assert_eq!(cpu.h, 0x00, "Initial H register value incorrect");
-            assert_eq!(cpu.l, 0x0D, "Initial L register value incorrect");
-            assert_eq!(cpu.pc, 0x0100, "Initial PC register value incorrect");
-            assert_eq!(cpu.sp, 0xFFFE, "Initial SP register value incorrect");
+            assert_eq!(cpu.a, 0x11, "CGB Initial A register value incorrect");
+            assert_eq!(cpu.f, 0x80, "CGB Initial F register value incorrect"); // Z=1,N=0,H=0,C=0
+            assert_eq!(cpu.b, 0x00, "CGB Initial B register value incorrect");
+            assert_eq!(cpu.c, 0x00, "CGB Initial C register value incorrect");
+            assert_eq!(cpu.d, 0xFF, "CGB Initial D register value incorrect");
+            assert_eq!(cpu.e, 0x56, "CGB Initial E register value incorrect");
+            assert_eq!(cpu.h, 0x00, "CGB Initial H register value incorrect");
+            assert_eq!(cpu.l, 0x0D, "CGB Initial L register value incorrect");
+            assert_eq!(cpu.pc, 0x0100, "CGB Initial PC register value incorrect");
+            assert_eq!(cpu.sp, 0xFFFE, "CGB Initial SP register value incorrect");
+            assert_flags!(cpu, true, false, false, false); // For F=0x80
+            assert_eq!(cpu.ime, true, "CGB Initial IME value incorrect");
+            assert_eq!(cpu.is_halted, false, "CGB Initial is_halted value incorrect");
+        }
 
-            // Assert individual flags for F = 0x80 (Z=1, N=0, H=0, C=0)
-            // Z = bit 7, N = bit 6, H = bit 5, C = bit 4
-            // 0x80 = 1000_0000
-            assert_flags!(cpu, true, false, false, false);
+        #[test]
+        fn test_initial_register_values_dmg() {
+            let cpu = setup_cpu_with_mode(SystemMode::DMG);
 
-            // Also check IME and is_halted default states if they are part of the new() initialization
-            assert_eq!(cpu.ime, true, "Initial IME value incorrect");
-            assert_eq!(cpu.is_halted, false, "Initial is_halted value incorrect");
+            assert_eq!(cpu.a, 0x01, "DMG Initial A register value incorrect");
+            assert_eq!(cpu.f, 0xB0, "DMG Initial F register value incorrect"); // Z=1,N=0,H=1,C=1
+            assert_eq!(cpu.b, 0x00, "DMG Initial B register value incorrect");
+            assert_eq!(cpu.c, 0x13, "DMG Initial C register value incorrect");
+            assert_eq!(cpu.d, 0x00, "DMG Initial D register value incorrect");
+            assert_eq!(cpu.e, 0xD8, "DMG Initial E register value incorrect");
+            assert_eq!(cpu.h, 0x01, "DMG Initial H register value incorrect");
+            assert_eq!(cpu.l, 0x4D, "DMG Initial L register value incorrect");
+            assert_eq!(cpu.pc, 0x0100, "DMG Initial PC register value incorrect");
+            assert_eq!(cpu.sp, 0xFFFE, "DMG Initial SP register value incorrect");
+            assert_flags!(cpu, true, false, true, true); // For F=0xB0
+            assert_eq!(cpu.ime, true, "DMG Initial IME value incorrect");
+            assert_eq!(cpu.is_halted, false, "DMG Initial is_halted value incorrect");
         }
     }
 
@@ -5700,5 +5748,93 @@ mod tests {
         // 4. Interrupt flag in IF should remain set (not cleared because not serviced)
         let if_val_after = bus.borrow().read_byte(INTERRUPT_FLAG_REGISTER_ADDR);
         assert_ne!((if_val_after & (1 << VBLANK_IRQ_BIT)), 0, "IF VBlank flag should remain set");
+    }
+
+    mod stop_instruction_tests {
+        use super::*;
+        use crate::joypad::JoypadButton; // For simulating joypad interrupt
+
+        #[test]
+        fn test_stop_dmg_mode() {
+            let mut cpu = setup_cpu_with_mode(SystemMode::DMG);
+            let initial_pc = cpu.pc;
+            cpu.bus.borrow_mut().write_byte(cpu.pc, 0x10); // STOP opcode
+            cpu.bus.borrow_mut().write_byte(cpu.pc.wrapping_add(1), 0x00); // STOP's second byte
+
+            cpu.step(); // Execute STOP
+
+            assert!(cpu.is_halted, "DMG STOP: CPU should be halted");
+            assert!(cpu.in_stop_mode, "DMG STOP: CPU should be in_stop_mode");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "DMG STOP: PC should advance by 2");
+
+            // Simulate Joypad interrupt to wake from STOP
+            // Enable Joypad interrupt
+            cpu.bus.borrow_mut().write_byte(INTERRUPT_ENABLE_REGISTER_ADDR, 1 << JOYPAD_IRQ_BIT);
+            // Request Joypad interrupt
+            cpu.bus.borrow_mut().request_interrupt(InterruptType::Joypad);
+
+            // IME is true by default in setup_cpu_with_mode
+            // The step function should detect the interrupt and call service_interrupt
+            let _m_cycles = cpu.step(); // This step should process the interrupt
+
+            assert!(!cpu.is_halted, "DMG STOP: CPU should not be halted after joypad interrupt");
+            assert!(!cpu.in_stop_mode, "DMG STOP: CPU should not be in_stop_mode after joypad interrupt");
+            assert_eq!(cpu.pc, JOYPAD_HANDLER_ADDR, "DMG STOP: PC should be at Joypad IRQ handler address");
+        }
+
+        #[test]
+        fn test_stop_cgb_mode_no_speed_switch() {
+            let mut cpu = setup_cpu_with_mode(SystemMode::CGB);
+            cpu.bus.borrow_mut().set_key1_prepare_speed_switch(false); // Ensure no speed switch
+            let initial_pc = cpu.pc;
+            cpu.bus.borrow_mut().write_byte(cpu.pc, 0x10);
+            cpu.bus.borrow_mut().write_byte(cpu.pc.wrapping_add(1), 0x00);
+
+            cpu.step(); // Execute STOP
+
+            assert!(cpu.is_halted, "CGB STOP (no switch): CPU should be halted");
+            assert!(cpu.in_stop_mode, "CGB STOP (no switch): CPU should be in_stop_mode");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "CGB STOP (no switch): PC should advance by 2");
+        }
+
+        #[test]
+        fn test_stop_cgb_mode_speed_switch_to_double() {
+            let mut cpu = setup_cpu_with_mode(SystemMode::CGB);
+            // Ensure bus is in normal speed initially and switch is prepared
+            cpu.bus.borrow_mut().is_double_speed = false;
+            cpu.bus.borrow_mut().set_key1_prepare_speed_switch(true);
+
+            let initial_pc = cpu.pc;
+            cpu.bus.borrow_mut().write_byte(cpu.pc, 0x10);
+            cpu.bus.borrow_mut().write_byte(cpu.pc.wrapping_add(1), 0x00);
+
+            cpu.step(); // Execute STOP for speed switch
+
+            assert!(!cpu.is_halted, "CGB STOP (speed switch): CPU should NOT be halted");
+            assert!(!cpu.in_stop_mode, "CGB STOP (speed switch): CPU should NOT be in_stop_mode");
+            assert!(cpu.bus.borrow().get_is_double_speed(), "CGB STOP (speed switch): Bus should be in double speed mode");
+            assert!(!cpu.bus.borrow().get_key1_prepare_speed_switch(), "CGB STOP (speed switch): KEY1 prepare bit should be cleared");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "CGB STOP (speed switch): PC should advance by 2");
+        }
+
+        #[test]
+        fn test_stop_cgb_mode_speed_switch_to_normal() {
+            let mut cpu = setup_cpu_with_mode(SystemMode::CGB);
+            // Ensure bus is in double speed initially and switch is prepared
+            cpu.bus.borrow_mut().is_double_speed = true;
+            cpu.bus.borrow_mut().set_key1_prepare_speed_switch(true);
+
+            let initial_pc = cpu.pc;
+            cpu.bus.borrow_mut().write_byte(cpu.pc, 0x10);
+            cpu.bus.borrow_mut().write_byte(cpu.pc.wrapping_add(1), 0x00);
+
+            cpu.step(); // Execute STOP for speed switch
+
+            assert!(!cpu.is_halted, "CGB STOP (switch to normal): CPU should NOT be halted");
+            assert!(!cpu.in_stop_mode, "CGB STOP (switch to normal): CPU should NOT be in_stop_mode");
+            assert!(!cpu.bus.borrow().get_is_double_speed(), "CGB STOP (switch to normal): Bus should be in normal speed mode");
+            assert!(!cpu.bus.borrow().get_key1_prepare_speed_switch(), "CGB STOP (switch to normal): KEY1 prepare bit should be cleared");
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "CGB STOP (switch to normal): PC should advance by 2");
+        }
     }
 }
