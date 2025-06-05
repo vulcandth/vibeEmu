@@ -24,7 +24,7 @@ const HALTED_IDLE_M_CYCLES: u32 = 1;      // M-cycles when halted and no interru
 const DEFAULT_OPCODE_M_CYCLES: u32 = 4;
 
 use crate::bus::{Bus, SystemMode}; // Added SystemMode
-use crate::interrupts::InterruptType; // Added to resolve compilation error
+// Removed: use crate::interrupts::InterruptType; // Will be moved into test module
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -1740,6 +1740,7 @@ pub fn stop(&mut self) {
     pub fn execute_cb_prefixed(&mut self, opcode: u8) {
         // PC has already been incremented for the CB prefix and this opcode.
         // So, no PC incrementing in these functions.
+        #[allow(unreachable_patterns)]
         match opcode {
             0x00 => self.rlc_b_cb(),
             0x01 => self.rlc_c_cb(),
@@ -2206,7 +2207,7 @@ pub fn step(&mut self) -> u32 {
 mod tests {
     use super::*; // Imports Cpu, flag constants, etc.
     use crate::bus::Bus; // Required for Bus::new()
-    // No longer need InterruptType import here as it's at the top-level
+    use crate::interrupts::InterruptType; // Moved import here for test usage
     use std::cell::RefCell;
     use std::rc::Rc;
 
