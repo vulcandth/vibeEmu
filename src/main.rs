@@ -178,7 +178,7 @@ fn main() {
         None // No window in headless mode
     };
 
-    if let Some(w) = &mut window { // Only if window was created
+    if let Some(_w) = &mut window { // Only if window was created
         // Limit window update rate (optional, minifb handles this reasonably well)
         // w.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Approx 60Hz
     }

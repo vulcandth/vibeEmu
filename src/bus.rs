@@ -55,6 +55,7 @@ impl Bus {
         self.system_mode
     }
 
+    #[allow(dead_code)] // Added to address unused method warning
     pub fn get_is_double_speed(&self) -> bool {
         self.is_double_speed
     }
@@ -426,7 +427,7 @@ mod tests {
         // The previous rom_data[0xFF] = 0xBB was a bit confusing as it mixed setup_test_env's ROM
         // with this test's specific ROM.
         // Let's make it clear:
-        let specific_addr_ff = 0x00FF;
+        let _specific_addr_ff = 0x00FF;
         // Ensure test_rom_data has a value at 0x00FF if we are to test it.
         // The current test_rom_data is initialized with 0s, then specific values.
         // So test_rom_data[0x00FF] would be 0 unless we set it.

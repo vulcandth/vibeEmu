@@ -24,6 +24,7 @@ const HALTED_IDLE_M_CYCLES: u32 = 1;      // M-cycles when halted and no interru
 const DEFAULT_OPCODE_M_CYCLES: u32 = 4;
 
 use crate::bus::{Bus, SystemMode}; // Added SystemMode
+use crate::interrupts::InterruptType; // Added to resolve compilation error
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -2202,6 +2203,7 @@ pub fn step(&mut self) -> u32 {
 mod tests {
     use super::*; // Imports Cpu, flag constants, etc.
     use crate::bus::Bus; // Required for Bus::new()
+    // No longer need InterruptType import here as it's at the top-level
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -2515,6 +2517,7 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(addr, 0xAB);
             cpu.b = 0xCD; // Control
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
     
             cpu.ld_a_hl_mem();
     
@@ -2522,7 +2525,7 @@ mod tests {
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0xAB, "Memory should be unchanged");
             assert_eq!(cpu.b, 0xCD, "B should be unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD A, (HL)");
         }
 
         #[test]
@@ -2534,6 +2537,7 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(addr, 0x55);
             cpu.a = 0xFF; // Control
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_b_hl_mem();
 
@@ -2541,7 +2545,7 @@ mod tests {
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x55, "Memory should be unchanged");
             assert_eq!(cpu.a, 0xFF, "A should be unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD B, (HL)");
         }
 
         #[test]
@@ -2553,6 +2557,7 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(addr, 0x66);
             cpu.a = 0xFF; // Control
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_c_hl_mem();
 
@@ -2560,7 +2565,7 @@ mod tests {
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x66, "Memory should be unchanged");
             assert_eq!(cpu.a, 0xFF, "A should be unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD C, (HL)");
         }
 
         #[test]
@@ -2572,6 +2577,7 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(addr, 0x77);
             cpu.a = 0xFF; // Control
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_d_hl_mem();
 
@@ -2579,7 +2585,7 @@ mod tests {
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x77, "Memory should be unchanged");
             assert_eq!(cpu.a, 0xFF, "A should be unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD D, (HL)");
         }
 
         #[test]
@@ -2591,6 +2597,7 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(addr, 0x88);
             cpu.a = 0xFF; // Control
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_e_hl_mem();
 
@@ -2598,7 +2605,7 @@ mod tests {
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x88, "Memory should be unchanged");
             assert_eq!(cpu.a, 0xFF, "A should be unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD E, (HL)");
         }
 
         #[test]
@@ -2611,6 +2618,7 @@ mod tests {
             cpu.a = 0xFF; // Control
             let initial_pc = cpu.pc;
             let initial_l = cpu.l; // L should not change
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_h_hl_mem();
 
@@ -2619,7 +2627,7 @@ mod tests {
             assert_eq!(cpu.l, initial_l, "L should be unchanged");
             assert_eq!(cpu.a, 0xFF, "A should be unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD H, (HL)");
         }
 
         #[test]
@@ -2632,6 +2640,7 @@ mod tests {
             cpu.a = 0xEE; // Control
             let initial_pc = cpu.pc;
             let initial_h = cpu.h; // H should not change
+            let initial_f = cpu.f; // Capture flags
     
             cpu.ld_l_hl_mem();
     
@@ -2640,7 +2649,7 @@ mod tests {
             assert_eq!(cpu.a, 0xEE, "A should be unchanged");
             assert_eq!(cpu.h, initial_h, "H should be unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD L, (HL)");
         }
 
         #[test]
@@ -2652,6 +2661,7 @@ mod tests {
             cpu.a = 0xEF;
             cpu.b = 0x12; // Control
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
     
             cpu.ld_hl_mem_a();
     
@@ -2659,7 +2669,7 @@ mod tests {
             assert_eq!(cpu.a, 0xEF, "A should be unchanged");
             assert_eq!(cpu.b, 0x12, "B should be unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), A");
         }
 
         #[test]
@@ -2674,8 +2684,7 @@ mod tests {
 
             cpu.a = 0xCD; // Control register, should not be affected
             let initial_pc = cpu.pc;
-            // Assuming setup_cpu() results in all flags being false.
-            // If not, capture initial_f here and compare against it.
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_hl_mem_b();
 
@@ -2685,7 +2694,7 @@ mod tests {
             assert_eq!(cpu.b, 0xAB, "B register itself should remain unchanged");
             assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false); // No flags should be affected
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), B");
         }
 
         #[test]
@@ -2700,6 +2709,7 @@ mod tests {
 
             cpu.d = 0xDD; // Control register, should not be affected
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_hl_mem_c();
 
@@ -2709,7 +2719,7 @@ mod tests {
             assert_eq!(cpu.c, 0x7C, "C register itself should remain unchanged");
             assert_eq!(cpu.d, 0xDD, "Control register D should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false); // No flags should be affected
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), C");
         }
 
         #[test]
@@ -2724,6 +2734,7 @@ mod tests {
 
             cpu.a = 0xCD; // Control register, should not be affected
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_hl_mem_d();
 
@@ -2733,7 +2744,7 @@ mod tests {
             assert_eq!(cpu.d, 0xDA, "D register itself should remain unchanged");
             assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false); // No flags should be affected
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), D");
         }
 
         #[test]
@@ -2748,6 +2759,7 @@ mod tests {
 
             cpu.a = 0xCD; // Control register, should not be affected
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_hl_mem_e();
 
@@ -2757,7 +2769,7 @@ mod tests {
             assert_eq!(cpu.e, 0xEA, "E register itself should remain unchanged");
             assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false); // No flags should be affected
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), E");
         }
         
         #[test]
@@ -2772,6 +2784,7 @@ mod tests {
             cpu.a = 0xCD; // Control register, should not be affected
             let initial_pc = cpu.pc;
             let initial_l = cpu.l; // Save initial L for assertion
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_hl_mem_l();
 
@@ -2780,7 +2793,7 @@ mod tests {
             assert_eq!(cpu.l, initial_l, "L register itself should remain unchanged");
             assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false); // No flags should be affected
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), L");
         }
 
         #[test]
@@ -2795,8 +2808,7 @@ mod tests {
 
             cpu.a = 0xBD; // Control register, should not be affected
             let initial_pc = cpu.pc;
-            // Assuming setup_cpu() results in all flags being false (ZNHC = 0000).
-            // If flags could be different, capture initial_f: let initial_f = cpu.f;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_hl_mem_h(); // Execute the instruction. (HL) = H. So, Memory[0xC129] = H (which was 0xC1).
 
@@ -2808,7 +2820,7 @@ mod tests {
             assert_eq!(cpu.l, l_val_at_setup, "L register itself should remain unchanged");
             assert_eq!(cpu.a, 0xBD, "Control register A should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false); // No flags should be affected by LD (HL),H
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), H");
         }
 
         #[test]
@@ -2820,13 +2832,14 @@ mod tests {
             let val_n = 0x66;
             cpu.a = 0x12; // Control
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
     
             cpu.ld_hl_mem_n(val_n);
     
             assert_eq!(cpu.bus.borrow().read_byte(addr), val_n, "memory[HL] should be loaded with n");
             assert_eq!(cpu.a, 0x12, "A should be unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), n");
         }
     }
     mod loads_8bit_indexed_and_indirect { 
@@ -2835,18 +2848,19 @@ mod tests {
         #[test]
         fn test_ld_bc_mem_a() {
             let mut cpu = setup_cpu();
-            // cpu.pc is already 0 from setup_cpu()
+            cpu.pc = 0; // Reset PC for consistent testing environment
             cpu.a = 0xAB; // Value to store
             let target_addr = 0xC130; // Use WRAM
             cpu.b = (target_addr >> 8) as u8;
             cpu.c = (target_addr & 0xFF) as u8;
+            let initial_f = cpu.f; // Capture flags
     
             cpu.ld_bc_mem_a();
     
             assert_eq!(cpu.bus.borrow().read_byte(target_addr), cpu.a, "Memory at (BC) should be loaded with value of A");
             assert_eq!(cpu.pc, 1, "PC should increment by 1 for LD (BC), A");
             assert_eq!(cpu.a, 0xAB, "Register A should not change for LD (BC), A");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (BC), A");
         }
 
         #[test]
@@ -2857,12 +2871,13 @@ mod tests {
             cpu.c = (addr & 0xFF) as u8;
             cpu.bus.borrow_mut().write_byte(addr, 0xAB);
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_a_bc_mem();
 
             assert_eq!(cpu.a, 0xAB, "A should be loaded from memory[BC]");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD A, (BC)");
         }
 
         #[test]
@@ -2873,12 +2888,13 @@ mod tests {
             cpu.e = (addr & 0xFF) as u8;
             cpu.bus.borrow_mut().write_byte(addr, 0xCD);
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_a_de_mem();
 
             assert_eq!(cpu.a, 0xCD, "A should be loaded from memory[DE]");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD A, (DE)");
         }
 
         #[test]
@@ -2889,12 +2905,13 @@ mod tests {
             let addr_hi = (addr >> 8) as u8;
             cpu.bus.borrow_mut().write_byte(addr, 0xEF);
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_a_nn_mem(addr_lo, addr_hi);
 
             assert_eq!(cpu.a, 0xEF, "A should be loaded from memory[nn]");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD A, (nn)");
         }
 
         #[test]
@@ -2905,13 +2922,14 @@ mod tests {
             cpu.e = (addr & 0xFF) as u8;
             cpu.a = 0xFA;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_de_mem_a();
 
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0xFA, "memory[DE] should be loaded from A");
             assert_eq!(cpu.a, 0xFA, "A should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (DE), A");
         }
 
         #[test]
@@ -2922,13 +2940,14 @@ mod tests {
             let addr_hi = (addr >> 8) as u8;
             cpu.a = 0x99;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_nn_mem_a(addr_lo, addr_hi);
 
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x99, "memory[nn] should be loaded from A");
             assert_eq!(cpu.a, 0x99, "A should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (nn), A");
         }
     }
     mod loads_8bit_high_ram { 
@@ -2941,12 +2960,13 @@ mod tests {
             let addr = 0xFF00 + cpu.c as u16; // 0xFF80
             cpu.bus.borrow_mut().write_byte(addr, 0xAB);
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags before operation
 
             cpu.ldh_a_c_offset_mem();
 
             assert_eq!(cpu.a, 0xAB, "A should be loaded from memory[0xFF00+C]");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDH A, (C)");
         }
 
         #[test]
@@ -2956,13 +2976,14 @@ mod tests {
             cpu.a = 0xCD;
             let addr = 0xFF00 + cpu.c as u16; // 0xFF85
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags before operation
 
             cpu.ldh_c_offset_mem_a();
 
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0xCD, "memory[0xFF00+C] should be loaded from A");
             assert_eq!(cpu.a, 0xCD, "A should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDH (C), A");
         }
 
         #[test]
@@ -2972,12 +2993,13 @@ mod tests {
             let addr = 0xFF00 + offset_n as u16; // 0xFF90
             cpu.bus.borrow_mut().write_byte(addr, 0xEF);
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags before operation
 
             cpu.ldh_a_n_offset_mem(offset_n);
 
             assert_eq!(cpu.a, 0xEF, "A should be loaded from memory[0xFF00+n]");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDH A, (n)");
         }
 
         #[test]
@@ -2987,13 +3009,14 @@ mod tests {
             cpu.a = 0x55;
             let addr = 0xFF00 + offset_n as u16; // 0xFF95
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags before operation
             
             cpu.ldh_n_offset_mem_a(offset_n);
 
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x55, "memory[0xFF00+n] should be loaded from A");
             assert_eq!(cpu.a, 0x55, "A should remain unchanged");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDH (n), A");
         }
     }
     mod loads_8bit_inc_dec_hl { 
@@ -3007,6 +3030,7 @@ mod tests {
             cpu.l = (initial_addr & 0xFF) as u8;
             cpu.a = 0xAB;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
         
             cpu.ldi_hl_mem_a();
         
@@ -3014,7 +3038,7 @@ mod tests {
             let expected_hl = initial_addr.wrapping_add(1);
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, expected_hl, "HL should increment");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDI (HL), A");
         }
 
         #[test]
@@ -3025,6 +3049,7 @@ mod tests {
             cpu.l = (initial_addr & 0xFF) as u8;
             cpu.bus.borrow_mut().write_byte(initial_addr, 0xCD);
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ldi_a_hl_mem();
 
@@ -3032,7 +3057,7 @@ mod tests {
             let expected_hl = initial_addr.wrapping_add(1);
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, expected_hl, "HL should increment");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDI A, (HL)");
         }
 
         #[test]
@@ -3043,6 +3068,7 @@ mod tests {
             cpu.l = (initial_addr & 0xFF) as u8;
             cpu.a = 0xEF;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ldd_hl_mem_a();
 
@@ -3050,7 +3076,7 @@ mod tests {
             let expected_hl = initial_addr.wrapping_sub(1);
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, expected_hl, "HL should decrement");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDD (HL), A");
         }
 
         #[test]
@@ -3061,6 +3087,7 @@ mod tests {
             cpu.l = (initial_addr & 0xFF) as u8;
             cpu.bus.borrow_mut().write_byte(initial_addr, 0xFA);
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ldd_a_hl_mem();
 
@@ -3068,7 +3095,7 @@ mod tests {
             let expected_hl = initial_addr.wrapping_sub(1);
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, expected_hl, "HL should decrement");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDD A, (HL)");
         }
 
         #[test]
@@ -3079,13 +3106,14 @@ mod tests {
             cpu.l = (initial_addr & 0xFF) as u8;
             cpu.a = 0xAB;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ldi_hl_mem_a();
 
             assert_eq!(cpu.bus.borrow().read_byte(initial_addr), 0xAB);
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0000, "HL should wrap to 0x0000");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDI (HL), A wrap");
         }
 
         #[test]
@@ -3096,13 +3124,14 @@ mod tests {
             cpu.l = (initial_addr & 0xFF) as u8;
             cpu.bus.borrow_mut().write_byte(initial_addr, 0xCD);
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ldd_a_hl_mem();
             
             assert_eq!(cpu.a, 0xCD);
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0xFFFF, "HL should wrap to 0xFFFF");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDD A, (HL) wrap");
         }
     }
 
@@ -3114,12 +3143,13 @@ mod tests {
             let mut cpu = setup_cpu();
             let val_lo = 0x34;
             let val_hi = 0x12;
-            let initial_pc = cpu.pc; // Should be 0
+            let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.ld_bc_nn(val_lo, val_hi);
             assert_eq!(cpu.b, val_hi, "Register B should be loaded with high byte");
             assert_eq!(cpu.c, val_lo, "Register C should be loaded with low byte");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD BC, nn");
         }
 
         #[test]
@@ -3128,11 +3158,12 @@ mod tests {
             let val_lo = 0x78;
             let val_hi = 0x56;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.ld_de_nn(val_lo, val_hi);
             assert_eq!(cpu.d, val_hi, "Register D should be loaded with high byte");
             assert_eq!(cpu.e, val_lo, "Register E should be loaded with low byte");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD DE, nn");
         }
 
         #[test]
@@ -3141,11 +3172,12 @@ mod tests {
             let val_lo = 0xBC;
             let val_hi = 0x9A;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.ld_hl_nn(val_lo, val_hi);
             assert_eq!(cpu.h, val_hi, "Register H should be loaded with high byte");
             assert_eq!(cpu.l, val_lo, "Register L should be loaded with low byte");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD HL, nn");
         }
 
         #[test]
@@ -3154,10 +3186,11 @@ mod tests {
             let val_lo = 0xFE;
             let val_hi = 0xFF; // SP often initialized to 0xFFFE
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.ld_sp_nn(val_lo, val_hi);
             assert_eq!(cpu.sp, 0xFFFE, "SP should be loaded with 0xFFFE");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD SP, nn");
         }
 
         #[test]
@@ -3167,12 +3200,13 @@ mod tests {
             cpu.l = 0x12;
             let initial_hl_val = 0x8C12u16;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             
             cpu.ld_sp_hl();
 
             assert_eq!(cpu.sp, initial_hl_val, "SP should be loaded with value from HL");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD SP, HL");
         }
 
         #[test]
@@ -3184,13 +3218,14 @@ mod tests {
             let addr_lo = (target_addr & 0xFF) as u8;
             let addr_hi = (target_addr >> 8) as u8;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.ld_nn_mem_sp(addr_lo, addr_hi);
 
             assert_eq!(cpu.bus.borrow().read_byte(target_addr), (cpu.sp & 0xFF) as u8, "Memory at nn should store SP low byte");
             assert_eq!(cpu.bus.borrow().read_byte(target_addr.wrapping_add(1)), (cpu.sp >> 8) as u8, "Memory at nn+1 should store SP high byte");
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (nn), SP");
         }
     }
     mod stack_ops { 
@@ -3397,7 +3432,7 @@ mod tests {
     }
     
     mod arithmetic_logical_8bit {
-        use super::*;
+
         // Tests for ADD, ADC, SUB, SBC, AND, OR, XOR, CP will go here or in submodules.
     }
 
@@ -3517,6 +3552,7 @@ mod tests {
         #[test]
         fn test_dec_b() {
             let mut cpu = setup_cpu();
+            cpu.pc = 0; // Reset PC for consistent testing environment
             cpu.b = 0x06;
             cpu.dec_b();
             assert_eq!(cpu.b, 0x05);
@@ -3541,6 +3577,7 @@ mod tests {
         #[test]
         fn test_dec_c() {
             let mut cpu = setup_cpu();
+            cpu.pc = 0; // Reset PC for consistent testing environment
             cpu.c = 0x1B;
             cpu.dec_c();
             assert_eq!(cpu.c, 0x1A);
@@ -3565,6 +3602,7 @@ mod tests {
         #[test]
         fn test_dec_d() {
             let mut cpu = setup_cpu();
+            cpu.pc = 0; // Reset PC for consistent testing environment
             cpu.d = 0x34;
             cpu.dec_d();
             assert_eq!(cpu.d, 0x33);
@@ -3589,6 +3627,7 @@ mod tests {
         #[test]
         fn test_dec_e() {
             let mut cpu = setup_cpu();
+            cpu.pc = 0; // Reset PC for consistent testing environment
             cpu.e = 0x56;
             cpu.dec_e();
             assert_eq!(cpu.e, 0x55);
@@ -3613,6 +3652,7 @@ mod tests {
         #[test]
         fn test_dec_h() {
             let mut cpu = setup_cpu();
+            cpu.pc = 0; // Reset PC for consistent testing environment
             cpu.h = 0x78;
             cpu.dec_h();
             assert_eq!(cpu.h, 0x77);
@@ -3772,7 +3812,7 @@ mod tests {
         #[test]
         fn test_dec_a() {
             let mut cpu = setup_cpu();
-            let initial_c_flag = cpu.is_flag_c(); // C flag should not be affected
+            let _initial_c_flag = cpu.is_flag_c(); // C flag should not be affected
 
             // Case 1: A = 0x01 -> A = 0x00, Z=1, N=1, H=0
             cpu.a = 0x01;
@@ -3828,12 +3868,13 @@ mod tests {
             cpu.set_flag_h(true);
             cpu.set_flag_c(true);
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags before operation
 
             cpu.inc_bc();
 
             assert_eq!(((cpu.b as u16) << 8) | cpu.c as u16, 0x1235);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, true, false, true, true); // Flags should be unchanged
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC BC");
         }
 
         #[test]
@@ -3844,12 +3885,13 @@ mod tests {
             cpu.set_flag_z(false);
             cpu.set_flag_n(true); // Set N to true to ensure it's not reset by INC
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.inc_bc();
 
             assert_eq!(((cpu.b as u16) << 8) | cpu.c as u16, 0x0000);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, true, false, false); // Flags should be unchanged (N stays true)
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC BC (wrap)");
         }
 
         #[test]
@@ -3858,11 +3900,11 @@ mod tests {
             cpu.d = 0x56;
             cpu.e = 0x78;
             let initial_pc = cpu.pc;
-            // Flags are all false by default from setup_cpu()
+            let initial_f = cpu.f; // Capture flags
             cpu.inc_de();
             assert_eq!(((cpu.d as u16) << 8) | cpu.e as u16, 0x5679);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC DE");
         }
 
         #[test]
@@ -3871,10 +3913,11 @@ mod tests {
             cpu.d = 0xFF;
             cpu.e = 0xFF;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.inc_de();
             assert_eq!(((cpu.d as u16) << 8) | cpu.e as u16, 0x0000);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC DE (wrap)");
         }
 
         #[test]
@@ -3883,10 +3926,11 @@ mod tests {
             cpu.h = 0x9A;
             cpu.l = 0xBC;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.inc_hl();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x9ABD);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC HL");
         }
 
         #[test]
@@ -3895,10 +3939,11 @@ mod tests {
             cpu.h = 0xFF;
             cpu.l = 0xFF;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.inc_hl();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0000);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC HL (wrap)");
         }
 
         #[test]
@@ -3906,10 +3951,11 @@ mod tests {
             let mut cpu = setup_cpu();
             cpu.sp = 0x1234;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.inc_sp();
             assert_eq!(cpu.sp, 0x1235);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC SP");
         }
 
         #[test]
@@ -3917,10 +3963,11 @@ mod tests {
             let mut cpu = setup_cpu();
             cpu.sp = 0xFFFF;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.inc_sp();
             assert_eq!(cpu.sp, 0x0000);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC SP (wrap)");
         }
 
         // DEC rr Tests
@@ -3929,15 +3976,14 @@ mod tests {
             let mut cpu = setup_cpu();
             cpu.b = 0x12;
             cpu.c = 0x35;
-            cpu.set_flag_z(true);
-            cpu.set_flag_c(true);
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.dec_bc();
 
             assert_eq!(((cpu.b as u16) << 8) | cpu.c as u16, 0x1234);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, true, false, false, true); // Flags unchanged
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC BC");
         }
 
         #[test]
@@ -3945,14 +3991,14 @@ mod tests {
             let mut cpu = setup_cpu();
             cpu.b = 0x00;
             cpu.c = 0x00;
-            cpu.set_flag_n(true); // N should not be affected
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
 
             cpu.dec_bc();
 
             assert_eq!(((cpu.b as u16) << 8) | cpu.c as u16, 0xFFFF);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, true, false, false); // Flags unchanged
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC BC (wrap)");
         }
 
         #[test]
@@ -3961,10 +4007,11 @@ mod tests {
             cpu.d = 0x56;
             cpu.e = 0x79;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.dec_de();
             assert_eq!(((cpu.d as u16) << 8) | cpu.e as u16, 0x5678);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC DE");
         }
 
         #[test]
@@ -3973,10 +4020,11 @@ mod tests {
             cpu.d = 0x00;
             cpu.e = 0x00;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.dec_de();
             assert_eq!(((cpu.d as u16) << 8) | cpu.e as u16, 0xFFFF);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC DE (wrap)");
         }
 
         #[test]
@@ -3985,10 +4033,11 @@ mod tests {
             cpu.h = 0x9A;
             cpu.l = 0xBD;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.dec_hl();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x9ABC);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC HL");
         }
 
         #[test]
@@ -3997,10 +4046,11 @@ mod tests {
             cpu.h = 0x00;
             cpu.l = 0x00;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.dec_hl();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0xFFFF);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC HL (wrap)");
         }
 
         #[test]
@@ -4008,10 +4058,11 @@ mod tests {
             let mut cpu = setup_cpu();
             cpu.sp = 0x1235;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.dec_sp();
             assert_eq!(cpu.sp, 0x1234);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC SP");
         }
 
         #[test]
@@ -4019,10 +4070,11 @@ mod tests {
             let mut cpu = setup_cpu();
             cpu.sp = 0x0000;
             let initial_pc = cpu.pc;
+            let initial_f = cpu.f; // Capture flags
             cpu.dec_sp();
             assert_eq!(cpu.sp, 0xFFFF);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC SP (wrap)");
         }
 
         #[test]
@@ -4077,77 +4129,92 @@ mod tests {
             let mut cpu = setup_cpu();
             cpu.h = 0x12; cpu.l = 0x34; // HL = 0x1234
             cpu.b = 0x01; cpu.c = 0x02; // BC = 0x0102
+            let initial_pc = cpu.pc;
             let initial_f_z = cpu.is_flag_z();
             cpu.add_hl_bc(); // HL = 0x1234 + 0x0102 = 0x1336
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1336);
             assert_flags!(cpu, initial_f_z, false, false, false); // Z not affected, N=0, H=0, C=0
-            assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
 
             // Test H flag
+            cpu.pc = 0; // Reset PC for sub-test consistency if needed, or use initial_pc from outer scope
+            let initial_pc_h_test = cpu.pc;
             cpu.h = 0x0F; cpu.l = 0x00; // HL = 0x0F00
             cpu.b = 0x01; cpu.c = 0x00; // BC = 0x0100
             // HL + BC = 0x0F00 + 0x0100 = 0x1000. (HL & 0xFFF) = 0xF00. (BC & 0xFFF) = 0x100. Sum = 0x1000. H set.
-            let initial_f_z = cpu.is_flag_z();
+            let _initial_f_z = cpu.is_flag_z();
             cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
             cpu.add_hl_bc();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000);
             assert_flags!(cpu, false, false, true, false); // Z is false due to clearing, N=0, H=1, C=0
+            assert_eq!(cpu.pc, initial_pc_h_test.wrapping_add(1));
 
             // Test C flag
+            cpu.pc = 0; // Reset PC
+            let initial_pc_c_test = cpu.pc;
             cpu.h = 0xF0; cpu.l = 0x00; // HL = 0xF000
             cpu.b = 0x10; cpu.c = 0x00; // BC = 0x1000
             // HL + BC = 0xF000 + 0x1000 = 0x0000 (carry). C set.
-            let initial_f_z = cpu.is_flag_z(); // This will be false from previous clear
+            let _initial_f_z = cpu.is_flag_z(); // This will be false from previous clear
             cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
             cpu.add_hl_bc();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0000);
             assert_flags!(cpu, false, false, false, true); // Z is false, N=0, H=0, C=1
+            assert_eq!(cpu.pc, initial_pc_c_test.wrapping_add(1));
 
             // Test H and C flag
+            cpu.pc = 0; // Reset PC
+            let initial_pc_hc_test = cpu.pc;
             cpu.h = 0x8F; cpu.l = 0xFF; // HL = 0x8FFF
             cpu.b = 0x80; cpu.c = 0x01; // BC = 0x8001
             // HL + BC = 0x8FFF + 0x8001 = 0x1000 (H set, C set)
             // H: (0x8FFF & 0xFFF) = 0xFFF. (0x8001 & 0xFFF) = 1. Sum = 0x1000. H set.
             // C: 0x8FFF + 0x8001 = 0x11000. C set.
-            let initial_f_z = cpu.is_flag_z(); // This will be false
+            let _initial_f_z = cpu.is_flag_z(); // This will be false
             cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
             cpu.add_hl_bc();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000);
             assert_flags!(cpu, false, false, true, true); // Z is false, N=0, H=1, C=1
+            assert_eq!(cpu.pc, initial_pc_hc_test.wrapping_add(1));
         }
 
         #[test]
         fn test_add_hl_de() {
             let mut cpu = setup_cpu();
+            let initial_pc = cpu.pc;
             cpu.h = 0x23; cpu.l = 0x45; // HL = 0x2345
             cpu.d = 0x01; cpu.e = 0x02; // DE = 0x0102
             let initial_f_z = cpu.is_flag_z();
             cpu.add_hl_de(); // HL = 0x2345 + 0x0102 = 0x2447
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x2447);
             assert_flags!(cpu, initial_f_z, false, false, false);
-            assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
         }
 
         #[test]
         fn test_add_hl_hl() {
             let mut cpu = setup_cpu();
+            let initial_pc = cpu.pc;
             cpu.h = 0x01; cpu.l = 0x02; // HL = 0x0102
             let initial_f_z = cpu.is_flag_z();
             cpu.add_hl_hl(); // HL = 0x0102 + 0x0102 = 0x0204
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0204);
             assert_flags!(cpu, initial_f_z, false, false, false);
-            assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
 
             // Test C and H flag for ADD HL, HL
+            cpu.pc = 0; // Reset PC
+            let initial_pc_ch_test = cpu.pc;
             cpu.h = 0x8F; cpu.l = 0x00; // HL = 0x8F00
             // HL + HL = 0x8F00 + 0x8F00 = 0x1E00. H should set. C should set.
             // H: (0x8F00 & 0xFFF) = 0xF00. 0xF00 + 0xF00 = 0x1E00. H set.
             // C: 0x8F00 + 0x8F00 = 0x11E00. C set.
-            let initial_f_z = cpu.is_flag_z(); // Will be false from previous operations if tests run sequentially in one instance
+            let _initial_f_z = cpu.is_flag_z(); // Will be false from previous operations if tests run sequentially in one instance
             cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
             cpu.add_hl_hl();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1E00);
             assert_flags!(cpu, false, false, true, true); // Z is false
+            assert_eq!(cpu.pc, initial_pc_ch_test.wrapping_add(1));
         }
 
         #[test]
@@ -4155,59 +4222,64 @@ mod tests {
             let mut cpu = setup_cpu();
 
             // Case 1: HL=0x0100, SP=0x0200 -> HL=0x0300, N=0, H=0, C=0
+            let initial_pc_case1 = cpu.pc;
             cpu.h = 0x01; cpu.l = 0x00; // HL = 0x0100
             cpu.sp = 0x0200;
             cpu.set_flag_z(true); // Z should not be affected, set it to true to check
             let initial_z_case1 = cpu.is_flag_z();
-            cpu.pc = 0;
+            // cpu.pc = 0; // Not resetting pc here, using outer scope's initial_pc
             cpu.add_hl_sp();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0300, "Case 1: HL result");
             assert_flags!(cpu, initial_z_case1, false, false, false); // N=0, H=0, C=0
-            assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.pc, initial_pc_case1.wrapping_add(1));
 
             // Case 2: HL=0x0F00, SP=0x0100 -> HL=0x1000, N=0, H=1, C=0
+            let initial_pc_case2 = cpu.pc;
             cpu.h = 0x0F; cpu.l = 0x00; // HL = 0x0F00
             cpu.sp = 0x0100;
             cpu.set_flag_z(false); // Z should not be affected
             let initial_z_case2 = cpu.is_flag_z();
-            cpu.pc = 0;
+            // cpu.pc = 0;
             cpu.add_hl_sp();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000, "Case 2: HL result");
             assert_flags!(cpu, initial_z_case2, false, true, false); // N=0, H=1, C=0
-            assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.pc, initial_pc_case2.wrapping_add(1));
 
             // Case 3: HL=0x8000, SP=0x8000 -> HL=0x0000, N=0, H=0, C=1
+            let initial_pc_case3 = cpu.pc;
             cpu.h = 0x80; cpu.l = 0x00; // HL = 0x8000
             cpu.sp = 0x8000;
             cpu.set_flag_z(true); // Z should not be affected
             let initial_z_case3 = cpu.is_flag_z();
-            cpu.pc = 0;
+            // cpu.pc = 0;
             cpu.add_hl_sp();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0000, "Case 3: HL result");
             assert_flags!(cpu, initial_z_case3, false, false, true); // N=0, H=0, C=1
-            assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.pc, initial_pc_case3.wrapping_add(1));
 
             // Case 4: HL=0x0FFF, SP=0x0001 -> HL=0x1000, N=0, H=1, C=0
+            let initial_pc_case4 = cpu.pc;
             cpu.h = 0x0F; cpu.l = 0xFF; // HL = 0x0FFF
             cpu.sp = 0x0001;
             cpu.set_flag_z(false);
             let initial_z_case4 = cpu.is_flag_z();
-            cpu.pc = 0;
+            // cpu.pc = 0;
             cpu.add_hl_sp();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000, "Case 4: HL result");
             assert_flags!(cpu, initial_z_case4, false, true, false); // N=0, H=1, C=0
-            assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.pc, initial_pc_case4.wrapping_add(1));
 
             // Case 5: HL=0x8FFF, SP=0x8001 -> HL=0x1000, N=0, H=1, C=1
+            let initial_pc_case5 = cpu.pc;
             cpu.h = 0x8F; cpu.l = 0xFF; // HL = 0x8FFF
             cpu.sp = 0x8001;
             cpu.set_flag_z(true);
             let initial_z_case5 = cpu.is_flag_z();
-            cpu.pc = 0;
+            // cpu.pc = 0;
             cpu.add_hl_sp();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000, "Case 5: HL result");
             assert_flags!(cpu, initial_z_case5, false, true, true); // N=0, H=1, C=1
-            assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.pc, initial_pc_case5.wrapping_add(1));
         }
     }
 
@@ -4706,7 +4778,7 @@ mod tests {
 
 
             // Case 2: NZ is false (Z=1), jump not taken
-            cpu.pc = initial_pc; cpu.set_flag_z(true); cpu.f = (1 << ZERO_FLAG_BYTE_POSITION); let flags_no_jump = cpu.f;
+            cpu.pc = initial_pc; cpu.set_flag_z(true); cpu.f = 1 << ZERO_FLAG_BYTE_POSITION; let flags_no_jump = cpu.f;
             cpu.jr_nz_e8(offset_fwd);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "JR NZ fwd (Z=1) no jump failed");
             assert_eq!(cpu.f, flags_no_jump, "JR NZ fwd (Z=1) no jump flags changed");
@@ -4719,7 +4791,7 @@ mod tests {
             let offset = 0x0A;
 
             // Case 1: Z is true, jump taken
-            cpu.pc = initial_pc; cpu.set_flag_z(true); cpu.f = (1 << ZERO_FLAG_BYTE_POSITION); let flags = cpu.f;
+            cpu.pc = initial_pc; cpu.set_flag_z(true); cpu.f = 1 << ZERO_FLAG_BYTE_POSITION; let flags = cpu.f;
             cpu.jr_z_e8(offset);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset as i8 as i16 as u16));
             assert_eq!(cpu.f, flags);
@@ -4738,7 +4810,7 @@ mod tests {
             let offset = 0x05;
 
             // Case 1: C is true, jump taken
-            cpu.pc = initial_pc; cpu.set_flag_c(true); cpu.f = (1 << CARRY_FLAG_BYTE_POSITION); let flags = cpu.f;
+            cpu.pc = initial_pc; cpu.set_flag_c(true); cpu.f = 1 << CARRY_FLAG_BYTE_POSITION; let flags = cpu.f;
             cpu.jr_c_e8(offset);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset as i8 as i16 as u16));
             assert_eq!(cpu.f, flags);
@@ -4861,7 +4933,7 @@ mod tests {
             cpu.sp = 0x0001; // SP will wrap around (0x0001 -> 0x0000 -> 0xFFFF)
             cpu.f = 0xF0; // Set all flags
             let flags_before_call_3 = cpu.f;
-            let initial_sp_3 = cpu.sp;
+            let _initial_sp_3 = cpu.sp;
             let expected_return_addr_3 = cpu.pc.wrapping_add(3); // 0x0303
 
             cpu.call_nn(0xFF, 0xEE); // Call 0xEEFF
@@ -5752,7 +5824,7 @@ mod tests {
 
     mod stop_instruction_tests {
         use super::*;
-        use crate::joypad::JoypadButton; // For simulating joypad interrupt
+         // For simulating joypad interrupt
 
         #[test]
         fn test_stop_dmg_mode() {

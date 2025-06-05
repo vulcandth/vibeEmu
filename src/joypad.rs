@@ -44,16 +44,16 @@ impl Joypad {
     // Helper to get current P1 lower nibble based on selection
     // This reflects what the CPU would read from bits 0-3 of P1 register.
     fn get_p1_lower_nibble(&self) -> u8 {
-        let mut MASK_value = 0x0F; // Default to all lines high (1) - if neither line selected
+        let mut mask_value = 0x0F; // Default to all lines high (1) - if neither line selected
         if self.select_direction_buttons {
-            MASK_value &= self.direction_buttons;
+            mask_value &= self.direction_buttons;
         }
         if self.select_action_buttons {
-            // If only action is selected, MASK_value was 0x0F, so it becomes action_buttons.
-            // If direction was also selected, MASK_value is already direction_buttons, so it becomes (dir & act).
-            MASK_value &= self.action_buttons;
+            // If only action is selected, mask_value was 0x0F, so it becomes action_buttons.
+            // If direction was also selected, mask_value is already direction_buttons, so it becomes (dir & act).
+            mask_value &= self.action_buttons;
         }
-        MASK_value
+        mask_value
     }
 
     pub fn read_p1(&self) -> u8 {
@@ -113,13 +113,13 @@ impl Joypad {
             if pressed {
                 self.action_buttons &= !(1 << bit_index);
             } else {
-                self.action_buttons |= (1 << bit_index);
+                self.action_buttons |= 1 << bit_index;
             }
         } else { // Direction button
             if pressed {
                 self.direction_buttons &= !(1 << bit_index);
             } else {
-                self.direction_buttons |= (1 << bit_index);
+                self.direction_buttons |= 1 << bit_index;
             }
         }
 
