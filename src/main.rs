@@ -26,6 +26,7 @@ use minifb::{Key, Window, WindowOptions}; // Added for minifb
 // If main.rs is part of the library itself (e.g. src/main.rs in a binary crate),
 // then `crate::` is appropriate.
 use crate::cpu::Cpu;
+use crate::interrupts::InterruptType; // Added back as it's used by ppu_interrupt_request_type
 use crate::bus::Bus;
 
 // Define window dimensions
@@ -204,7 +205,10 @@ fn main() {
         let t_cycles_for_step = m_cycles * 4; // These are PPU T-cycles
 
         for _ in 0..t_cycles_for_step {
-            if let Some(irq_type) = bus.borrow_mut().ppu.tick() {
+            // First, call ppu.tick() and release the borrow on bus
+            let ppu_interrupt_request_type: Option<crate::interrupts::InterruptType> = bus.borrow_mut().ppu.tick();
+            // Then, if an interrupt was requested, borrow bus again to set the flag
+            if let Some(irq_type) = ppu_interrupt_request_type {
                 bus.borrow_mut().request_interrupt(irq_type);
             }
         }
