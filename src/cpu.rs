@@ -1837,9 +1837,9 @@ impl Cpu {
             // Our current PC is likely HALT+1. Interrupt pushes this PC.
         }
 
-        let if_val = self.bus.borrow().read_byte(INTERRUPT_FLAG_REGISTER_ADDR);
-        let new_if = if_val & !(1 << interrupt_bit);
-        self.bus.borrow_mut().write_byte(INTERRUPT_FLAG_REGISTER_ADDR, new_if);
+        // The IF bit is cleared by the CPU when it starts servicing the interrupt.
+        // This is now handled by Bus::clear_interrupt_flag.
+        self.bus.borrow_mut().clear_interrupt_flag(interrupt_bit);
 
         self.sp = self.sp.wrapping_sub(1);
         self.bus.borrow_mut().write_byte(self.sp, (self.pc >> 8) as u8); // Push PCH

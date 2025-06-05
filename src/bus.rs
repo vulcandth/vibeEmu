@@ -3,6 +3,7 @@
 use crate::apu::Apu;
 use crate::memory::Memory;
 use crate::ppu::Ppu;
+use crate::interrupts::InterruptType;
 
 pub struct Bus {
     pub memory: Memory,
@@ -11,8 +12,7 @@ pub struct Bus {
     pub rom_data: Vec<u8>, // Added ROM data field
     pub serial_output: Vec<u8>, // Added for serial output capture
     pub interrupt_enable_register: u8, // IE Register (0xFFFF)
-    // TODO: Add interrupt flag (IF) registers here later (0xFF0F)
-    // pub interrupt_flag: u8,
+    pub if_register: u8, // Interrupt Flag Register (0xFF0F)
 }
 
 impl Bus {
@@ -24,7 +24,7 @@ impl Bus {
             rom_data, // Initialize rom_data
             serial_output: Vec::new(), // Initialize serial_output
             interrupt_enable_register: 0, // Default value for IE
-            // interrupt_flag: 0,            // Default value
+            if_register: 0x00, // Default value for IF
         }
     }
 
@@ -74,8 +74,7 @@ impl Bus {
                         // Timer - Placeholder
                         0xFF
                     }
-                    // 0xFF0F => self.interrupt_flag, // IF (Interrupt Flag) - Placeholder
-                    0xFF0F => 0xFF, // IF (Interrupt Flag) - Placeholder // TODO: Implement self.interrupt_flag
+                    0xFF0F => self.if_register | 0xE0, // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.read_byte(addr), // APU registers
                     0xFF40..=0xFF4F => self.ppu.read_byte(addr), // PPU registers
                     // Other I/O registers - Placeholder
@@ -143,8 +142,7 @@ impl Bus {
                     0xFF04..=0xFF07 => {
                         // Timer - Placeholder
                     }
-                    // 0xFF0F => self.interrupt_flag = value, // IF (Interrupt Flag) // TODO: Implement self.interrupt_flag
-                    0xFF0F => {} // IF (Interrupt Flag) - Placeholder
+                    0xFF0F => { self.if_register = value & 0x1F; }, // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.write_byte(addr, value), // APU registers
                     0xFF40..=0xFF4F => self.ppu.write_byte(addr, value), // PPU registers
                     // Other I/O registers - Placeholder
@@ -163,6 +161,15 @@ impl Bus {
     // Method to get the captured serial output as a String
     pub fn get_serial_output_string(&self) -> String {
         String::from_utf8_lossy(&self.serial_output).into_owned()
+    }
+
+    pub fn request_interrupt(&mut self, interrupt: InterruptType) {
+        self.if_register |= 1 << interrupt.bit();
+    }
+
+    // This might be called by the CPU when an interrupt is serviced
+    pub fn clear_interrupt_flag(&mut self, interrupt_bit: u8) {
+        self.if_register &= !(1 << interrupt_bit);
     }
 } // This closes the `impl Bus` block. The test module should be outside.
 
