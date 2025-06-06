@@ -121,9 +121,18 @@ impl Bus {
 
     pub fn tick_components(&mut self, m_cycles: u32) {
         let t_cycles = m_cycles * 4; // Convert M-cycles to T-cycles
+
+        // Tick PPU and handle interrupt request
+        if let Some(interrupt_type) = self.ppu.tick(t_cycles) {
+            self.request_interrupt(interrupt_type);
+        }
+
+        // Tick Timer
         self.timer.tick(t_cycles, &mut self.if_register);
-        // self.ppu.tick(t_cycles); // Future PPU ticking
-        // self.apu.tick(t_cycles); // Future APU ticking
+
+        // TODO: Tick APU
+        // self.apu.tick(t_cycles); // Future APU ticking - APU might also need to request interrupts
+                                  // or interact with if_register, so its signature might change.
     }
 
     pub fn get_system_mode(&self) -> SystemMode {
