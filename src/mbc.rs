@@ -572,7 +572,7 @@ impl MemoryBankController for MBC2 {
             // selected_rom_bank is 1-15. Mask with num_rom_banks.
             // num_rom_banks for MBC2 can be up to 16 (for 256KB ROMs).
             // If selected_rom_bank is 1, it's the bank at rom_data offset 1 * 16KB.
-            let current_bank = if self.num_rom_banks > 0 {
+            let _current_bank = if self.num_rom_banks > 0 { // Marked as unused
                 self.selected_rom_bank % self.num_rom_banks
             } else {
                 0 // Should not occur
@@ -591,7 +591,7 @@ impl MemoryBankController for MBC2 {
             // So, aliasing by modulo is generally how it's handled.
             // Let's use `self.selected_rom_bank` directly as it's 1-15, and it should map to bank 1 to 15.
             // Bank 0 is fixed. So selected_rom_bank N maps to Nth 16KB block.
-            let actual_bank_idx = self.selected_rom_bank; // This is 1-15 (or 0 if num_rom_banks is 1 and selected is 1%1=0?)
+            let _actual_bank_idx = self.selected_rom_bank; // Marked as unused. This is 1-15 (or 0 if num_rom_banks is 1 and selected is 1%1=0?)
                                                         // No, selected_rom_bank is 1-15.
                                                         // If selected_rom_bank is 1, it's bank 1.
                                                         // If num_rom_banks = 1, then 1 % 1 = 0. This would map to bank 0.
@@ -605,7 +605,7 @@ impl MemoryBankController for MBC2 {
             // This is not typical; usually bank 0 is fixed and switchable banks are from bank 1 upwards.
             // For MBC2, the selected_rom_bank (1-15) directly chooses the bank. Max 16 banks.
             // So, bank N means Nth 16KB block.
-            let bank_to_use = self.selected_rom_bank; // This is 1-15.
+            let _bank_to_use = self.selected_rom_bank; // Marked as unused. This is 1-15.
             // Ensure it doesn't exceed available banks. Max 16 banks total (0-15).
             // If num_rom_banks is, say, 8 (128KB ROM), and bank_to_use is 10, it should wrap.
             // bank_to_use = bank_to_use % self.num_rom_banks; // This makes it 0-indexed.
@@ -614,7 +614,7 @@ impl MemoryBankController for MBC2 {
             // But if bank_to_use is 8, num_rom_banks is 8. 8 % 8 = 0. This would map to bank 0.
             // This seems to be a common behavior: bank numbers on MBCs often alias with modulo.
 
-            let effective_bank_idx = self.selected_rom_bank % self.num_rom_banks;
+            let _effective_bank_idx = self.selected_rom_bank % self.num_rom_banks; // Marked as unused
             // However, if `self.selected_rom_bank` is, say, 16 (not possible with 4 bits, max 15),
             // and `num_rom_banks` is 16, `16 % 16 = 0`. This would map to bank 0.
             // Let's use the simpler direct mapping if value is within bounds.
@@ -931,6 +931,7 @@ mod tests {
 
     // Helper function to create RAM data vector with a predictable pattern
     // Renamed from create_ram to avoid conflict if we were to create an MBC with RAM directly
+    #[allow(dead_code)]
     fn create_ram_data(size_kb: usize, start_value: u8) -> Vec<u8> {
         if size_kb == 0 {
             return Vec::new();
@@ -944,6 +945,7 @@ mod tests {
     }
 
     // Helper to calculate number of banks
+    #[allow(dead_code)]
     fn get_num_banks(total_size_bytes: usize, bank_size_bytes: usize) -> usize {
         if total_size_bytes == 0 || bank_size_bytes == 0 {
             return 0;

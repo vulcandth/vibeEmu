@@ -159,14 +159,7 @@ impl Bus {
                 let mirrored_addr = addr - 0x2000;
                 self.memory.read_byte(mirrored_addr)
             }
-            0xC000..=0xDFFF => self.memory.read_byte(addr), // WRAM
-            0xE000..=0xFDFF => {
-                // Echo RAM (mirror of 0xC000 - 0xDDFF)
-                // The last 0x200 bytes of this range (0xFE00 - 0xFDFF) actually mirror 0xC000-0xDFFF
-                // So 0xFDFF mirrors 0xDDFF
-                let mirrored_addr = addr - 0x2000;
-                self.memory.read_byte(mirrored_addr)
-            }
+            // REMOVED DUPLICATE 0xC000..=0xDFFF and 0xE000..=0xFDFF
             0xFE00..=0xFE9F => self.ppu.read_byte(addr), // OAM
             0xFEA0..=0xFEFF => {
                 // Unusable memory
@@ -226,12 +219,7 @@ impl Bus {
                 let mirrored_addr = addr - 0x2000;
                 self.memory.write_byte(mirrored_addr, value)
             }
-            0xC000..=0xDFFF => self.memory.write_byte(addr, value), // WRAM
-            0xE000..=0xFDFF => {
-                // Echo RAM (mirror of 0xC000 - 0xDDFF)
-                let mirrored_addr = addr - 0x2000;
-                self.memory.write_byte(mirrored_addr, value)
-            }
+            // REMOVED DUPLICATE 0xC000..=0xDFFF and 0xE000..=0xFDFF
             0xFE00..=0xFE9F => self.ppu.write_byte(addr, value), // OAM
             0xFEA0..=0xFEFF => {
                 // Unusable memory - Do nothing
