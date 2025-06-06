@@ -3294,7 +3294,7 @@ mod tests {
 
             assert_eq!(cpu.b, 0xAB, "B should be popped from stack");
             assert_eq!(cpu.c, 0xCD, "C should be popped from stack");
-            assert_eq!(cpu.sp, 0x0100, "SP should increment by 2");
+            assert_eq!(cpu.sp, 0xDFFE, "SP should increment by 2"); // 0xDFFC + 2 = 0xDFFE
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by POP BC");
         }
@@ -3330,7 +3330,7 @@ mod tests {
 
             assert_eq!(cpu.d, 0x56, "D should be popped from stack");
             assert_eq!(cpu.e, 0x78, "E should be popped from stack");
-            assert_eq!(cpu.sp, 0x0100, "SP should increment by 2");
+            assert_eq!(cpu.sp, 0xDFFE, "SP should increment by 2"); // 0xDFFC + 2 = 0xDFFE
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by POP DE");
         }
@@ -3366,7 +3366,7 @@ mod tests {
 
             assert_eq!(cpu.h, 0x9A, "H should be popped from stack");
             assert_eq!(cpu.l, 0xBC, "L should be popped from stack");
-            assert_eq!(cpu.sp, 0x0100, "SP should increment by 2");
+            assert_eq!(cpu.sp, 0xDFFE, "SP should increment by 2"); // 0xDFFC + 2 = 0xDFFE
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by POP HL");
         }
@@ -5170,36 +5170,49 @@ mod tests {
             assert_eq!(cpu.sp, initial_sp.wrapping_add(2), "SP should be incremented by 2");
             assert_eq!(cpu.f, flags_before_ret, "Flags should not be affected by RET");
 
-            // Test RET with SP wrapping from 0xFFFE
+            // Test RET with SP wrapping from 0xFFFE (stack in HRAM/IE)
             let return_addr_2 = 0xABCD;
             cpu.sp = 0xFFFE;
-            cpu.bus.borrow_mut().write_byte(cpu.sp, (return_addr_2 & 0xFF) as u8); // Lo at 0xFFFE
-            cpu.bus.borrow_mut().write_byte(cpu.sp.wrapping_add(1), (return_addr_2 >> 8) as u8); // Hi at 0xFFFF
-            cpu.pc = 0x0010;
-            cpu.f = 0x00;
+            // cpu.bus is the same bus from the setup_cpu()
+            cpu.bus.borrow_mut().write_byte(0xFFFE, (return_addr_2 & 0xFF) as u8); // Lo byte to 0xFFFE (HRAM)
+            cpu.bus.borrow_mut().write_byte(0xFFFF, (return_addr_2 >> 8) as u8);   // Hi byte to 0xFFFF (IE Register)
+            cpu.pc = 0x0010; // Dummy PC
+            cpu.f = 0x00;    // Clear flags
             let flags_before_ret_2 = cpu.f;
             let initial_sp_2 = cpu.sp;
 
             cpu.ret();
-            assert_eq!(cpu.pc, return_addr_2, "PC should be 0xABCD after RET with SP wrap");
-            assert_eq!(cpu.sp, initial_sp_2.wrapping_add(2), "SP should wrap from 0xFFFE to 0x0000"); // 0xFFFE + 2 = 0x0000
-            assert_eq!(cpu.f, flags_before_ret_2, "Flags should not be affected by RET with SP wrap");
+            assert_eq!(cpu.pc, return_addr_2, "PC should be 0xABCD after RET with SP starting at 0xFFFE");
+            assert_eq!(cpu.sp, initial_sp_2.wrapping_add(2), "SP should wrap from 0xFFFE to 0x0000");
+            assert_eq!(cpu.f, flags_before_ret_2, "Flags should not be affected by RET with SP at 0xFFFE");
 
-            // Test RET with SP wrapping from 0xFFFF
+            // Test RET with SP wrapping from 0xFFFF (causes read from 0xFFFF and 0x0000)
+            // This needs a custom ROM where 0x0000 can be pre-set.
             let return_addr_3 = 0x55AA;
-            cpu.sp = 0xFFFF;
-            cpu.bus.borrow_mut().write_byte(cpu.sp, (return_addr_3 & 0xFF) as u8); // Lo at 0xFFFF
-            // For this to work, memory[0x0000] must exist for the high byte
-            cpu.bus.borrow_mut().write_byte(0x0000 as u16, (return_addr_3 >> 8) as u8); // Hi at 0x0000
-            cpu.pc = 0x0020;
-            cpu.f = 0xF0;
-            let flags_before_ret_3 = cpu.f;
-            let initial_sp_3 = cpu.sp;
 
-            cpu.ret();
-            assert_eq!(cpu.pc, return_addr_3, "PC should be 0x55AA after RET with SP wrap from 0xFFFF");
-            assert_eq!(cpu.sp, initial_sp_3.wrapping_add(2), "SP should wrap from 0xFFFF to 0x0001"); // 0xFFFF + 2 = 0x0001
-            assert_eq!(cpu.f, flags_before_ret_3, "Flags should not be affected by RET with SP wrap from 0xFFFF");
+            let mut rom_data_ret_wrap = vec![0; 0x8000];
+            rom_data_ret_wrap[0x0147] = 0x00; // NoMBC
+            rom_data_ret_wrap[0x0149] = 0x02; // 8KB RAM
+            rom_data_ret_wrap[0x0143] = if cpu.bus.borrow().get_system_mode() == SystemMode::CGB { 0x80 } else { 0x00 };
+            rom_data_ret_wrap[0x0000] = (return_addr_3 >> 8) as u8; // Pre-set PCH in ROM[0x0000]
+
+            let bus_ret_wrap = Rc::new(RefCell::new(Bus::new(rom_data_ret_wrap)));
+            let mut cpu_ret_wrap = Cpu::new(Rc::clone(&bus_ret_wrap));
+
+            cpu_ret_wrap.sp = 0xFFFF;
+            // Lo byte (0xAA) is written to IE register (0xFFFF), which is writable
+            bus_ret_wrap.borrow_mut().write_byte(0xFFFF, (return_addr_3 & 0xFF) as u8);
+            // Hi byte (0x55) is "read" from ROM[0x0000] which was pre-set
+
+            cpu_ret_wrap.pc = 0x0020; // Dummy PC
+            cpu_ret_wrap.f = 0xF0;   // Example flags
+            let flags_before_ret_3 = cpu_ret_wrap.f;
+            let initial_sp_3 = cpu_ret_wrap.sp;
+
+            cpu_ret_wrap.ret();
+            assert_eq!(cpu_ret_wrap.pc, return_addr_3, "PC should be 0x55AA after RET with SP wrap from 0xFFFF");
+            assert_eq!(cpu_ret_wrap.sp, initial_sp_3.wrapping_add(2), "SP should wrap from 0xFFFF to 0x0001");
+            assert_eq!(cpu_ret_wrap.f, flags_before_ret_3, "Flags should not be affected by RET with SP wrap from 0xFFFF");
         }
 
         #[test]
@@ -5908,7 +5921,7 @@ mod tests {
 
         #[test]
         fn test_stop_dmg_mode() {
-            let initial_pc = 0x0100;
+            let initial_pc: u16 = 0x0100;
             let mut rom_data = vec![0; 0x8000];
             rom_data[0x0143] = 0x00; // DMG Mode
             rom_data[0x0147] = 0x00; // NoMBC
@@ -5946,7 +5959,7 @@ mod tests {
 
         #[test]
         fn test_stop_cgb_mode_no_speed_switch() {
-            let initial_pc = 0x0100;
+            let initial_pc: u16 = 0x0100;
             let mut rom_data = vec![0; 0x8000];
             rom_data[0x0143] = 0x80; // CGB Mode
             rom_data[0x0147] = 0x00; // NoMBC
@@ -5970,7 +5983,7 @@ mod tests {
 
         #[test]
         fn test_stop_cgb_mode_speed_switch_to_double() {
-            let initial_pc = 0x0100;
+            let initial_pc: u16 = 0x0100;
             let mut rom_data = vec![0; 0x8000];
             rom_data[0x0143] = 0x80; // CGB Only
             rom_data[0x0147] = 0x00; // NoMBC
@@ -5998,7 +6011,7 @@ mod tests {
 
         #[test]
         fn test_stop_cgb_mode_speed_switch_to_normal() {
-            let initial_pc = 0x0100;
+            let initial_pc: u16 = 0x0100;
             let mut rom_data = vec![0; 0x8000];
             rom_data[0x0143] = 0x80; // CGB Only
             rom_data[0x0147] = 0x00; // NoMBC
