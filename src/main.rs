@@ -23,7 +23,7 @@ use std::cell::RefCell;
 
 use minifb::{Key, Window, WindowOptions}; // Added for minifb
 
-// Use crate:: if gbc_emulator is a library and main.rs is an example or bin.
+// Use crate:: if VibeEmu is a library and main.rs is an example or bin.
 // If main.rs is part of the library itself (e.g. src/main.rs in a binary crate),
 // then `crate::` is appropriate.
 use crate::cpu::Cpu;
@@ -74,7 +74,7 @@ fn parse_args(args_vec: &[String]) -> (bool, Option<u64>, Option<u64>, String, b
     let mut halt_cycles_count: Option<u64> = None;
     let mut rom_path = "roms/blargg/cpu_instrs/cpu_instrs.gb".to_string(); // Default ROM path
     let mut rom_path_explicitly_set = false;
-    let program_name = args_vec.get(0).cloned().unwrap_or_else(|| "gbc_emulator".to_string());
+    let program_name = args_vec.get(0).cloned().unwrap_or_else(|| "VibeEmu".to_string());
 
 
     let mut i = 1; // Start after program name
@@ -131,7 +131,7 @@ fn parse_args(args_vec: &[String]) -> (bool, Option<u64>, Option<u64>, String, b
 }
 
 fn main() {
-    println!("GBC Emulator starting...");
+    println!("VibeEmu starting...");
 
     let args_vec: Vec<String> = env::args().collect();
     let (
@@ -188,7 +188,7 @@ fn main() {
 
     if !is_headless {
         match Window::new(
-            "GBC Emulator - Press ESC to exit",
+            "VibeEmu - Press ESC to exit",
             WINDOW_WIDTH,
             WINDOW_HEIGHT,
             WindowOptions::default(),
@@ -427,7 +427,7 @@ fn main() {
     println!("\nFinal CPU state: PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
              cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
     println!("CPU is_halted: {}", cpu.is_halted);
-    println!("GBC Emulator finished.");
+    println!("VibeEmu finished.");
 }
 
 #[cfg(test)]
