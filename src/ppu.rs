@@ -472,6 +472,7 @@ pub fn tick(&mut self) -> Option<InterruptType> {
     }
 }
 
+#[allow(dead_code)] // Added to address unused function warning
 pub fn save_framebuffer_to_png(
     framebuffer: &[u8],
     width: u32,

@@ -26,8 +26,9 @@ use minifb::{Key, Window, WindowOptions}; // Added for minifb
 // If main.rs is part of the library itself (e.g. src/main.rs in a binary crate),
 // then `crate::` is appropriate.
 use crate::cpu::Cpu;
-use crate::interrupts::InterruptType; // Added back as it's used by ppu_interrupt_request_type
+use crate::interrupts::InterruptType;
 use crate::bus::Bus;
+use crate::joypad::JoypadButton; // Added for joypad input
 
 // Define window dimensions
 const WINDOW_WIDTH: usize = 160;
@@ -145,6 +146,7 @@ fn main() {
 
     // Create the Bus, wrapped in Rc and RefCell for shared mutable access
     let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+    println!("Determined System Mode: {:?}", bus.borrow().get_system_mode()); // Added logging
 
     // Create the Cpu, passing a clone of the Rc-wrapped bus
     let mut cpu = Cpu::new(bus.clone());
@@ -176,7 +178,7 @@ fn main() {
         None // No window in headless mode
     };
 
-    if let Some(w) = &mut window { // Only if window was created
+    if let Some(_w) = &mut window { // Only if window was created
         // Limit window update rate (optional, minifb handles this reasonably well)
         // w.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Approx 60Hz
     }
@@ -204,39 +206,92 @@ fn main() {
         // Each CPU M-cycle corresponds to 4 PPU T-cycles.
         let t_cycles_for_step = m_cycles * 4; // These are PPU T-cycles
 
-        for _ in 0..t_cycles_for_step {
-            // First, call ppu.tick() and release the borrow on bus
-            let ppu_interrupt_request_type: Option<crate::interrupts::InterruptType> = bus.borrow_mut().ppu.tick();
-            // Then, if an interrupt was requested, borrow bus again to set the flag
-            if let Some(irq_type) = ppu_interrupt_request_type {
-                bus.borrow_mut().request_interrupt(irq_type);
+        if !(cpu.is_halted && cpu.in_stop_mode) {
+            for _ in 0..t_cycles_for_step {
+                // First, call ppu.tick() and release the borrow on bus
+                let ppu_interrupt_request_type: Option<crate::interrupts::InterruptType> = bus.borrow_mut().ppu.tick();
+                // Then, if an interrupt was requested, borrow bus again to set the flag
+                if let Some(irq_type) = ppu_interrupt_request_type {
+                    bus.borrow_mut().request_interrupt(irq_type);
+                }
+                // TODO: Add bus.borrow_mut().timer.tick() and bus.borrow_mut().apu.tick() here as well
+            }
+            ppu_cycles_this_frame += t_cycles_for_step as u32;
+
+            // Frame rendering logic (GUI mode) or PPU cycle accounting (headless)
+            if ppu_cycles_this_frame >= CYCLES_PER_FRAME {
+                ppu_cycles_this_frame -= CYCLES_PER_FRAME; // Reset for next frame
+
+                if let Some(w) = window.as_mut() { // GUI mode rendering
+                    let ppu_framebuffer = &bus.borrow().ppu.framebuffer;
+                    let display_buffer = convert_rgb_to_u32_buffer(
+                        ppu_framebuffer,
+                        WINDOW_WIDTH,
+                        WINDOW_HEIGHT,
+                    );
+                    w.update_with_buffer(&display_buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
+                        .unwrap_or_else(|e| panic!("Failed to update window buffer: {}", e));
+                }
+                // In headless mode, we still account for frame timing for PPU events, but don't render.
+            }
+        } else {
+            // In STOP mode, peripherals (PPU, APU, Timer) do not tick.
+            // Minimal PPU cycle update might be needed if STOP has specific PPU interactions,
+            // but Pandocs implies system clock is off. Joypad input is still handled below.
+            // If headless, ppu_cycles_this_frame won't advance, which is correct.
+            // To prevent busy-looping in headless STOP mode without a timer/interrupt to wake it,
+            // a short sleep could be added here, but active polling for joypad/interrupts is typical.
+            // For now, just ensure ppu_cycles_this_frame doesn't accumulate if we're not ticking PPU.
+            // If an interrupt occurs, cpu.step() will handle un-halting.
+            // We still need to check if window is closed or ESC is pressed in STOP mode for GUI.
+            if let Some(w) = window.as_ref() {
+                 if !w.is_open() || w.is_key_down(Key::Escape) {
+                    running = false;
+                }
             }
         }
-        ppu_cycles_this_frame += t_cycles_for_step as u32;
 
-        // Frame rendering logic (GUI mode) or PPU cycle accounting (headless)
-        if ppu_cycles_this_frame >= CYCLES_PER_FRAME {
-            ppu_cycles_this_frame -= CYCLES_PER_FRAME; // Reset for next frame
-
-            if let Some(w) = window.as_mut() { // GUI mode rendering
-                let ppu_framebuffer = &bus.borrow().ppu.framebuffer;
-                let display_buffer = convert_rgb_to_u32_buffer(
-                    ppu_framebuffer,
-                    WINDOW_WIDTH,
-                    WINDOW_HEIGHT,
-                );
-                w.update_with_buffer(&display_buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
-                    .unwrap_or_else(|e| panic!("Failed to update window buffer: {}", e));
+        // Check for exit conditions and handle input if window exists
+        // This block handles input regardless of STOP mode, allowing Joypad to wake the CPU.
+        if let Some(w) = window.as_mut() { // GUI mode exit conditions and input handling
+            if !w.is_open() || w.is_key_down(Key::Escape) { // This check is duplicated if !is_halted && !in_stop_mode
+                running = false;                           // but harmless. Can be refactored if needed.
             }
-            // In headless mode, we still account for frame timing for PPU events, but don't render.
+
+            // Handle Joypad Input
+            let mut bus_mut = bus.borrow_mut();
+            let key_mappings = [
+                (Key::Right, JoypadButton::Right),
+                (Key::Left, JoypadButton::Left),
+                (Key::Up, JoypadButton::Up),
+                (Key::Down, JoypadButton::Down),
+                (Key::Z, JoypadButton::A), // 'Z' for A
+                (Key::X, JoypadButton::B), // 'X' for B
+                (Key::Enter, JoypadButton::Start),
+                (Key::RightShift, JoypadButton::Select),
+                // (Key::LeftShift, JoypadButton::Select), // Alternative for Select
+            ];
+
+            for (key, button) in key_mappings.iter() {
+                let pressed = w.is_key_down(*key);
+                if bus_mut.joypad.button_event(*button, pressed) {
+                    bus_mut.request_interrupt(InterruptType::Joypad);
+                }
+            }
+            // Also handle LeftShift for select if desired, ensuring it doesn't double-trigger if both are pressed
+            // For simplicity, this example uses only RightShift. If LeftShift is also needed,
+            // ensure only one event is processed for "Select" if both shifts are pressed.
+            // One way:
+            let left_shift_pressed = w.is_key_down(Key::LeftShift);
+            if bus_mut.joypad.button_event(JoypadButton::Select, w.is_key_down(Key::RightShift) || left_shift_pressed) {
+                 bus_mut.request_interrupt(InterruptType::Joypad);
+            }
+
+
+        } else if is_headless { // Headless mode specific checks (no input handling from minifb)
+            // (Headless specific checks like MAX_STEPS_HEADLESS or halt_duration_seconds are handled later)
         }
 
-        // Check for exit conditions
-        if let Some(w) = window.as_ref() { // GUI mode exit conditions
-            if !w.is_open() || w.is_key_down(Key::Escape) {
-                running = false;
-            }
-        }
 
         if cpu.is_halted {
             if !has_printed_halt_message {

@@ -1,14 +1,25 @@
 // src/bus.rs
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemMode {
+    DMG,
+    CGB,
+}
+
 use crate::apu::Apu;
 use crate::memory::Memory;
 use crate::ppu::Ppu;
 use crate::interrupts::InterruptType;
+use crate::joypad::Joypad; // Added Joypad
 
 pub struct Bus {
     pub memory: Memory,
     pub ppu: Ppu,
     pub apu: Apu,
+    pub joypad: Joypad, // Added joypad field
+    pub system_mode: SystemMode, // Added system_mode field
+    pub is_double_speed: bool,
+    pub key1_prepare_speed_switch: bool,
     pub rom_data: Vec<u8>, // Added ROM data field
     pub serial_output: Vec<u8>, // Added for serial output capture
     pub interrupt_enable_register: u8, // IE Register (0xFFFF)
@@ -17,15 +28,48 @@ pub struct Bus {
 
 impl Bus {
     pub fn new(rom_data: Vec<u8>) -> Self { // Added rom_data parameter
+        let mut determined_mode = SystemMode::DMG;
+        if rom_data.len() >= 0x0144 {
+            let cgb_flag = rom_data[0x0143];
+            if cgb_flag == 0x80 || cgb_flag == 0xC0 {
+                determined_mode = SystemMode::CGB;
+            }
+        }
+
         Self {
             memory: Memory::new(),
             ppu: Ppu::new(),
             apu: Apu::new(),
+            joypad: Joypad::new(), // Initialize joypad
+            system_mode: determined_mode,
+            is_double_speed: false,
+            key1_prepare_speed_switch: false,
             rom_data, // Initialize rom_data
             serial_output: Vec::new(), // Initialize serial_output
             interrupt_enable_register: 0, // Default value for IE
             if_register: 0x00, // Default value for IF
         }
+    }
+
+    pub fn get_system_mode(&self) -> SystemMode {
+        self.system_mode
+    }
+
+    #[allow(dead_code)] // Added to address unused method warning
+    pub fn get_is_double_speed(&self) -> bool {
+        self.is_double_speed
+    }
+
+    pub fn toggle_speed_mode(&mut self) {
+        self.is_double_speed = !self.is_double_speed;
+    }
+
+    pub fn get_key1_prepare_speed_switch(&self) -> bool {
+        self.key1_prepare_speed_switch
+    }
+
+    pub fn set_key1_prepare_speed_switch(&mut self, prepared: bool) {
+        self.key1_prepare_speed_switch = prepared;
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
@@ -62,10 +106,7 @@ impl Bus {
             0xFF00..=0xFF7F => {
                 // I/O Registers
                 match addr {
-                    0xFF00 => {
-                        // Joypad - Placeholder
-                        0xFF
-                    }
+                    0xFF00 => self.joypad.read_p1(), // Joypad read
                     0xFF01..=0xFF02 => {
                         // Serial - Placeholder
                         0xFF
@@ -76,9 +117,25 @@ impl Bus {
                     }
                     0xFF0F => self.if_register | 0xE0, // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.read_byte(addr), // APU registers
-                    0xFF40..=0xFF4F => self.ppu.read_byte(addr), // PPU registers
-                    // Other I/O registers - Placeholder
-                    _ => 0xFF,
+                    0xFF40..=0xFF4B => self.ppu.read_byte(addr), // PPU registers (0xFF4C is not used by PPU)
+                    0xFF4D => { // KEY1 - CGB Speed Switch
+                        let speed_bit = if self.is_double_speed { 0x80 } else { 0x00 };
+                        let prepare_bit = if self.key1_prepare_speed_switch { 0x01 } else { 0x00 };
+                        speed_bit | prepare_bit | 0x7E // Other bits are 1
+                    }
+                    0xFF4C | 0xFF4E..=0xFF4F => 0xFF, // Unmapped PPU related, or general unmapped
+                    // Other I/O registers - Placeholder for FF50-FF7F range not explicitly handled above
+                    _ => {
+                        // Specific check for known but unhandled registers to return 0xFF
+                        // This helps avoid panics for registers we know exist but aren't fully emulated.
+                        if addr >= 0xFF50 && addr <= 0xFF7F { // Example: Wave RAM, other I/O
+                            0xFF
+                        } else {
+                            // For truly unmapped I/O in this range, 0xFF is a safe default.
+                            // Or, if a register is known but behavior for it isn't defined yet.
+                            0xFF
+                        }
+                    }
                 }
             }
             0xFF80..=0xFFFE => self.memory.read_byte(addr), // HRAM
@@ -124,9 +181,7 @@ impl Bus {
             0xFF00..=0xFF7F => {
                 // I/O Registers
                 match addr {
-                    0xFF00 => {
-                        // Joypad - Placeholder
-                    }
+                    0xFF00 => self.joypad.write_p1(value), // Joypad write
                     0xFF01..=0xFF02 => { // Serial Data Transfer
                         if addr == 0xFF01 { // SB: Serial Transfer Data
                             // For now, we just append the byte to our serial_output vector
@@ -144,9 +199,20 @@ impl Bus {
                     }
                     0xFF0F => { self.if_register = value & 0x1F; }, // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.write_byte(addr, value), // APU registers
-                    0xFF40..=0xFF4F => self.ppu.write_byte(addr, value), // PPU registers
+                    0xFF40..=0xFF4B => self.ppu.write_byte(addr, value), // PPU registers
+                    0xFF4D => { // KEY1 - CGB Speed Switch
+                        self.key1_prepare_speed_switch = (value & 0x01) != 0;
+                        // Other bits of KEY1 are read-only or have fixed values.
+                    }
+                    0xFF4C | 0xFF4E..=0xFF4F => { /* Unmapped or Read-only */ }
                     // Other I/O registers - Placeholder
-                    _ => {}
+                    _ => {
+                        // Specific check for known but unhandled registers
+                        if addr >= 0xFF50 && addr <= 0xFF7F {
+                            // Potentially handle specific registers here if needed, or do nothing.
+                        }
+                        // Otherwise, do nothing for unmapped writes in this I/O range.
+                    }
                 }
             }
             0xFF80..=0xFFFE => self.memory.write_byte(addr, value), // HRAM
@@ -361,7 +427,7 @@ mod tests {
         // The previous rom_data[0xFF] = 0xBB was a bit confusing as it mixed setup_test_env's ROM
         // with this test's specific ROM.
         // Let's make it clear:
-        let specific_addr_ff = 0x00FF;
+        let _specific_addr_ff = 0x00FF;
         // Ensure test_rom_data has a value at 0x00FF if we are to test it.
         // The current test_rom_data is initialized with 0s, then specific values.
         // So test_rom_data[0x00FF] would be 0 unless we set it.
@@ -424,5 +490,73 @@ mod tests {
 
         // Check internal Vec<u8> directly
         assert_eq!(bus.serial_output, vec![b'T', b'e', b's', b't', b' ', b'1', b'2', b'3']);
+    }
+
+    #[test]
+    fn test_bus_system_mode_selection() {
+        // Test CGB mode selection (0x80)
+        let mut rom_cgb1 = vec![0u8; 0x150];
+        rom_cgb1[0x0143] = 0x80;
+        let bus_cgb1 = Bus::new(rom_cgb1);
+        assert_eq!(bus_cgb1.get_system_mode(), SystemMode::CGB, "Failed CGB mode (0x80)");
+
+        // Test CGB mode selection (0xC0)
+        let mut rom_cgb2 = vec![0u8; 0x150];
+        rom_cgb2[0x0143] = 0xC0;
+        let bus_cgb2 = Bus::new(rom_cgb2);
+        assert_eq!(bus_cgb2.get_system_mode(), SystemMode::CGB, "Failed CGB mode (0xC0)");
+
+        // Test DMG mode selection (0x00)
+        let mut rom_dmg = vec![0u8; 0x150];
+        rom_dmg[0x0143] = 0x00;
+        let bus_dmg = Bus::new(rom_dmg);
+        assert_eq!(bus_dmg.get_system_mode(), SystemMode::DMG, "Failed DMG mode (0x00)");
+
+        // Test DMG mode selection (other value)
+        let mut rom_dmg_other = vec![0u8; 0x150];
+        rom_dmg_other[0x0143] = 0x40; // Some other non-CGB value
+        let bus_dmg_other = Bus::new(rom_dmg_other);
+        assert_eq!(bus_dmg_other.get_system_mode(), SystemMode::DMG, "Failed DMG mode (other)");
+
+        // Test short ROM (less than 0x0144 bytes) defaults to DMG
+        let short_rom = vec![0u8; 0x100];
+        let bus_short_rom = Bus::new(short_rom);
+        assert_eq!(bus_short_rom.get_system_mode(), SystemMode::DMG, "Short ROM should default to DMG");
+    }
+
+    #[test]
+    fn test_key1_register_read_write() {
+        let rom_data = vec![0u8; 0x150]; // Generic ROM
+        let mut bus = Bus::new(rom_data);
+
+        // Initial state
+        assert!(!bus.get_is_double_speed(), "Initial is_double_speed should be false");
+        assert!(!bus.get_key1_prepare_speed_switch(), "Initial key1_prepare_speed_switch should be false");
+        // KEY1 read: speed_bit (0) | prepare_bit (0) | 0x7E = 0x7E
+        assert_eq!(bus.read_byte(0xFF4D), 0x7E, "Initial KEY1 read incorrect");
+
+        // Write to KEY1 to set prepare_speed_switch
+        bus.write_byte(0xFF4D, 0x01); // Bit 0 set
+        assert!(bus.get_key1_prepare_speed_switch(), "key1_prepare_speed_switch should be true after writing 0x01");
+        // KEY1 read: speed_bit (0) | prepare_bit (1) | 0x7E = 0x7F
+        assert_eq!(bus.read_byte(0xFF4D), 0x7F, "KEY1 read after setting prepare bit incorrect");
+
+        // Write to KEY1 to clear prepare_speed_switch
+        bus.write_byte(0xFF4D, 0xFE); // Bit 0 clear (value & 0x01 == 0)
+        assert!(!bus.get_key1_prepare_speed_switch(), "key1_prepare_speed_switch should be false after writing 0xFE");
+        // KEY1 read: speed_bit (0) | prepare_bit (0) | 0x7E = 0x7E
+        assert_eq!(bus.read_byte(0xFF4D), 0x7E, "KEY1 read after clearing prepare bit incorrect");
+
+        // Toggle speed mode (internal state change)
+        bus.toggle_speed_mode();
+        assert!(bus.get_is_double_speed(), "is_double_speed should be true after toggle");
+        // KEY1 read: speed_bit (0x80) | prepare_bit (0) | 0x7E = 0xFE
+        assert_eq!(bus.read_byte(0xFF4D), 0xFE, "KEY1 read after toggling speed mode incorrect");
+
+        // Set prepare switch again while in double speed
+        bus.write_byte(0xFF4D, 0x01);
+        assert!(bus.get_key1_prepare_speed_switch(), "key1_prepare_speed_switch should be true again");
+        // KEY1 read: speed_bit (0x80) | prepare_bit (1) | 0x7E = 0xFF
+        assert_eq!(bus.read_byte(0xFF4D), 0xFF, "KEY1 read with double speed and prepare bit set incorrect");
     }
 }
