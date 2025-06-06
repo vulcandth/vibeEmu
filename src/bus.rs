@@ -48,9 +48,70 @@ pub struct Bus {
     pub serial_output: Vec<u8>, // Added for serial output capture
     pub interrupt_enable_register: u8, // IE Register (0xFFFF)
     pub if_register: u8, // Interrupt Flag Register (0xFF0F)
+    pub oam_dma_active: bool,
+    pub oam_dma_cycles_remaining: u32,
+    pub oam_dma_source_address_upper: u8,
+    // HDMA/GDMA Registers
+    pub hdma1_src_high: u8,
+    pub hdma2_src_low: u8,
+    pub hdma3_dest_high: u8,
+    pub hdma4_dest_low: u8,
+    pub hdma5: u8,
+    // HDMA/GDMA Internal State
+    hdma_active: bool,
+    gdma_active: bool, // May not be strictly needed if GDMA is instant, but good for state tracking
+    hdma_current_src: u16,
+    hdma_current_dest: u16,
+    hdma_blocks_remaining: u8,
+    hblank_hdma_pending: bool, // Flag to perform one HDMA block transfer
 }
 
 impl Bus {
+    // Placeholder for GDMA transfer logic
+    fn perform_gdma_transfer(&mut self) {
+        // Actual transfer logic will be implemented in the next step.
+        // This function will be called when a GDMA is initiated via HDMA5.
+        // For now, it will just consume the blocks conceptually.
+
+        let num_blocks_to_transfer = self.hdma_blocks_remaining; // This was set based on HDMA5 value
+        if !self.gdma_active || num_blocks_to_transfer == 0 {
+            return; // Should not happen if called correctly
+        }
+
+        println!(
+            "GDMA: Transferring {} blocks from 0x{:04X} to 0x{:04X} (VRAM Bank {})",
+            num_blocks_to_transfer, self.hdma_current_src, self.hdma_current_dest, self.ppu.vbk
+        );
+
+        for _block in 0..num_blocks_to_transfer {
+            for i in 0..16 {
+                // Ensure source address does not go out of typical RAM/ROM bounds.
+                // ROM: 0x0000-0x7FFF, WRAM: 0xC000-0xDFFF (or E000-FDFF echo), CartRAM: A000-BFFF
+                // HRAM (FF80-FFFE) is small. OAM (FE00-FE9F) and VRAM (8000-9FFF) are usually not sources.
+                // For simplicity, we assume valid source for now.
+                let byte_to_transfer = self.read_byte_internal(self.hdma_current_src.wrapping_add(i));
+
+                // Destination is VRAM (0x8000-0x9FFF), offset within current VBK bank.
+                let dest_offset = (self.hdma_current_dest.wrapping_add(i)) & 0x1FFF; // Mask to stay within 8KB bank range
+                let current_vbk = self.ppu.vbk as usize;
+
+                if dest_offset < 8192 { // Ensure offset is within bank bounds
+                    self.ppu.vram[current_vbk][dest_offset] = byte_to_transfer;
+                }
+            }
+            self.hdma_current_src = self.hdma_current_src.wrapping_add(16);
+            self.hdma_current_dest = self.hdma_current_dest.wrapping_add(16);
+            // Destination address should wrap around in the 0x8000-0x9FFF range (0x1FF0 effectively for 16-byte alignment)
+            self.hdma_current_dest = 0x8000 | (self.hdma_current_dest & 0x1FF0);
+        }
+
+        // GDMA finishes, update state
+        self.hdma_blocks_remaining = 0; // All blocks transferred
+        self.hdma5 = 0xFF; // HDMA5 reflects completion
+        self.gdma_active = false;
+        self.hdma_active = false; // GDMA also stops any pending HDMA
+    }
+
     pub fn new(rom_data: Vec<u8>) -> Self {
         let mut determined_mode = SystemMode::DMG;
         if rom_data.len() >= 0x0144 { // Check for CGB flag existence
@@ -99,10 +160,12 @@ impl Bus {
             // this might need revisiting. For now, assume Unknown covers all unlisted byte values.
         };
 
+        let ppu_system_mode = determined_mode; // Capture for clarity if needed, or use directly
+
         Self {
             mbc, // Store the initialized MBC
             memory: Memory::new(),
-            ppu: Ppu::new(),
+            ppu: Ppu::new(ppu_system_mode), // Pass system_mode to Ppu
             apu: Apu::new(),
             joypad: Joypad::new(), // Initialize joypad
             timer: Timer::new(),
@@ -114,23 +177,155 @@ impl Bus {
             serial_output: Vec::new(), // Initialize serial_output
             interrupt_enable_register: 0, // Default value for IE
             if_register: 0x00, // Default value for IF
+            oam_dma_active: false,
+            oam_dma_cycles_remaining: 0,
+            oam_dma_source_address_upper: 0,
+            // HDMA/GDMA Registers Init
+            hdma1_src_high: 0xFF,
+            hdma2_src_low: 0xFF,
+            hdma3_dest_high: 0xFF,
+            hdma4_dest_low: 0xFF,
+            hdma5: 0xFF,
+            // HDMA/GDMA Internal State Init
+            hdma_active: false,
+            gdma_active: false,
+            hdma_current_src: 0,
+            hdma_current_dest: 0,
+            hdma_blocks_remaining: 0,
+            hblank_hdma_pending: false,
         }
     }
 
     pub fn tick_components(&mut self, m_cycles: u32) {
-        let t_cycles = m_cycles * 4; // Convert M-cycles to T-cycles
+        // Note: Cycle accounting for DMA (GDMA/HDMA) halting the CPU is not yet implemented here.
+        // GDMA effectively happens "instantly" from the CPU's perspective after the write to FF55.
+        // HDMA blocks also happen "instantly" during an HBlank from CPU perspective.
+        // Correct cycle modeling would involve the Bus consuming cycles for DMA here.
+
+        let t_cycles = m_cycles * 4;
 
         // Tick PPU and handle interrupt request
+        // PPU tick might set its `just_entered_hblank` flag.
         if let Some(interrupt_type) = self.ppu.tick(t_cycles) {
             self.request_interrupt(interrupt_type);
+        }
+
+        // Check for HDMA trigger based on PPU state
+        if self.system_mode == SystemMode::CGB && self.hdma_active && self.ppu.just_entered_hblank {
+            self.hblank_hdma_pending = true;
+            self.ppu.just_entered_hblank = false; // Bus acknowledged the HBlank signal for HDMA
+        }
+
+        // Handle HDMA transfer if pending (one block per HBlank)
+        if self.hblank_hdma_pending {
+            if self.hdma_blocks_remaining > 0 {
+                // Perform one 16-byte block transfer for HDMA
+                println!(
+                    "HDMA: Transferring 1 block from 0x{:04X} to 0x{:04X} (VRAM Bank {}), {} blocks left",
+                    self.hdma_current_src, self.hdma_current_dest, self.ppu.vbk, self.hdma_blocks_remaining -1
+                );
+                for i in 0..16 {
+                    let byte_to_transfer = self.read_byte_internal(self.hdma_current_src.wrapping_add(i));
+                    let dest_offset = (self.hdma_current_dest.wrapping_add(i)) & 0x1FFF;
+                    let current_vbk = self.ppu.vbk as usize;
+                    if dest_offset < 8192 {
+                        self.ppu.vram[current_vbk][dest_offset] = byte_to_transfer;
+                    }
+                }
+                self.hdma_current_src = self.hdma_current_src.wrapping_add(16);
+                self.hdma_current_dest = 0x8000 | (self.hdma_current_dest.wrapping_add(16) & 0x1FF0);
+
+                self.hdma_blocks_remaining -= 1;
+
+                if self.hdma_blocks_remaining == 0 {
+                    self.hdma_active = false;
+                    self.hdma5 = 0xFF; // HDMA finished
+                } else {
+                    // Update HDMA5 for readback (remaining blocks - 1, bit 7 is 0 because active)
+                    // This was potentially set when HDMA5 was written, but needs to reflect current remaining blocks.
+                    // However, HDMA5 read logic already calculates this from hdma_blocks_remaining.
+                    // self.hdma5 = (self.hdma_blocks_remaining - 1) & 0x7F; // This isn't quite right, HDMA5 holds original len/mode.
+                }
+            }
+            self.hblank_hdma_pending = false; // Processed one block for this HBlank signal
         }
 
         // Tick Timer
         self.timer.tick(t_cycles, &mut self.if_register);
 
+        // OAM DMA Transfer Logic (this is separate from HDMA/GDMA)
+        if self.oam_dma_active {
+            if self.oam_dma_cycles_remaining == 160 * 4 { // Check if just initiated
+                let source_base_address = (self.oam_dma_source_address_upper as u16) << 8;
+                for i in 0..160 {
+                    let byte_to_copy = self.read_byte_internal(source_base_address + i as u16);
+                    self.ppu.write_byte(0xFE00 + i as u16, byte_to_copy);
+                }
+            }
+
+            if self.oam_dma_cycles_remaining <= t_cycles {
+                self.oam_dma_cycles_remaining = 0;
+                self.oam_dma_active = false;
+            } else {
+                self.oam_dma_cycles_remaining -= t_cycles;
+            }
+        }
+
         // TODO: Tick APU
-        // self.apu.tick(t_cycles); // Future APU ticking - APU might also need to request interrupts
-                                  // or interact with if_register, so its signature might change.
+        // self.apu.tick(t_cycles);
+    }
+
+    // Internal read method that bypasses DMA locks, for use by DMA itself.
+    fn read_byte_internal(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x7FFF => self.mbc.read_rom(addr),
+            0x8000..=0x9FFF => self.ppu.read_byte(addr), // VRAM (DMA can read from VRAM)
+            0xA000..=0xBFFF => self.mbc.read_ram(addr - 0xA000), // Cartridge RAM
+            0xC000..=0xDFFF => self.memory.read_byte(addr), // WRAM
+            0xE000..=0xFDFF => { // Echo RAM
+                let mirrored_addr = addr - 0x2000;
+                self.memory.read_byte(mirrored_addr)
+            }
+            // OAM (0xFE00-0xFE9F) and I/O registers (0xFF00-0xFF7F) are generally not DMA sources
+            // or require special handling. HRAM (0xFF80-0xFFFE) can be a source.
+            // For simplicity, this internal read covers common source areas.
+            // If DMA could source from OAM or I/O, those cases would need to be added.
+            // Reading from 0xFE00..=0xFEFF (OAM and unusable)
+            0xFE00..=0xFEFF => {
+                 // This range includes OAM (FE00-FE9F) and Unusable (FEA0-FEFF)
+                 // DMA source usually isn't OAM itself, but if it were, PPU read is appropriate.
+                 // For Unusable, 0xFF is typical.
+                if addr <= 0xFE9F {
+                    self.ppu.read_byte(addr) // OAM
+                } else {
+                    0xFF // Unusable memory
+                }
+            }
+            // I/O Registers. Some games might try to DMA from weird sources.
+            // Generally, DMA sources are ROM, WRAM, HRAM.
+            // Let's assume for now DMA from I/O regs returns 0xFF or specific values if ever needed.
+            // This part matches the main read_byte for I/O for consistency if any are readable.
+            0xFF00..=0xFF7F => {
+                match addr {
+                    0xFF00 => self.joypad.read_p1(),
+                    0xFF01..=0xFF02 => 0xFF, // Serial placeholder
+                    0xFF04..=0xFF07 => self.timer.read_byte(addr),
+                    0xFF0F => self.if_register | 0xE0,
+                    0xFF10..=0xFF3F => self.apu.read_byte(addr),
+                    0xFF40..=0xFF4B => self.ppu.read_byte(addr), // Note: 0xFF46 (DMA reg) read during DMA? Unlikely.
+                    0xFF4D => {
+                        let speed_bit = if self.is_double_speed { 0x80 } else { 0x00 };
+                        let prepare_bit = if self.key1_prepare_speed_switch { 0x01 } else { 0x00 };
+                        speed_bit | prepare_bit | 0x7E
+                    }
+                    0xFF4C | 0xFF4E..=0xFF4F => 0xFF,
+                    _ => 0xFF, // Default for other I/O
+                }
+            }
+            0xFF80..=0xFFFE => self.memory.read_byte(addr), // HRAM
+            0xFFFF => self.interrupt_enable_register, // IE Register
+            // _ => 0xFF, // Default for any unmapped reads
+        }
     }
 
     pub fn get_system_mode(&self) -> SystemMode {
@@ -155,6 +350,17 @@ impl Bus {
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
+        // DMA Access Restrictions:
+        // If OAM DMA is active, most of the bus is inaccessible, except for HRAM.
+        // Reads from non-HRAM addresses return 0xFF during OAM DMA.
+        if self.oam_dma_active {
+            if !(addr >= 0xFF80 && addr <= 0xFFFE) {
+                // Allow reads from HRAM (0xFF80 - 0xFFFE)
+                // For addresses outside HRAM, reads return 0xFF during OAM DMA
+                return 0xFF;
+            }
+        }
+
         // println!("Bus read at 0x{:04X}", addr);
         match addr {
             0x0000..=0x7FFF => self.mbc.read_rom(addr), // ROM area, handled by MBC
@@ -183,25 +389,36 @@ impl Bus {
                     0xFF04..=0xFF07 => self.timer.read_byte(addr), // Route to Timer
                     0xFF0F => self.if_register | 0xE0, // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.read_byte(addr), // APU registers
-                    0xFF40..=0xFF4B => self.ppu.read_byte(addr), // PPU registers (0xFF4C is not used by PPU)
+                    // Extended PPU range to include VBK (0xFF4F) and CGB Palettes (0xFF68-0xFF6B)
+                    0xFF40..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => self.ppu.read_byte(addr),
                     0xFF4D => { // KEY1 - CGB Speed Switch
                         let speed_bit = if self.is_double_speed { 0x80 } else { 0x00 };
                         let prepare_bit = if self.key1_prepare_speed_switch { 0x01 } else { 0x00 };
                         speed_bit | prepare_bit | 0x7E // Other bits are 1
                     }
-                    0xFF4C | 0xFF4E..=0xFF4F => 0xFF, // Unmapped PPU related, or general unmapped
-                    // Other I/O registers - Placeholder for FF50-FF7F range not explicitly handled above
-                    _ => {
-                        // Specific check for known but unhandled registers to return 0xFF
-                        // This helps avoid panics for registers we know exist but aren't fully emulated.
-                        if addr >= 0xFF50 && addr <= 0xFF7F { // Example: Wave RAM, other I/O
-                            0xFF
-                        } else {
-                            // For truly unmapped I/O in this range, 0xFF is a safe default.
-                            // Or, if a register is known but behavior for it isn't defined yet.
+                    // 0xFF4C is defined as "Unused" by Pandocs for DMG, CGB.
+                    // 0xFF4E is defined as "Unused" by Pandocs for DMG, (KEY0 for CGB BIOS).
+                    // For now, treating them as unmapped is fine.
+                    0xFF4C | 0xFF4E => 0xFF,
+                    // HDMA Registers
+                    0xFF51 => self.hdma1_src_high,
+                    0xFF52 => self.hdma2_src_low,
+                    0xFF53 => self.hdma3_dest_high,
+                    0xFF54 => self.hdma4_dest_low,
+                    0xFF55 => { // HDMA5 - DMA Status
+                        if self.hdma_active { // Active HDMA
+                            // Bit 7 is 0, lower 7 bits are (blocks_remaining - 1)
+                            (self.hdma_blocks_remaining.saturating_sub(1)) & 0x7F
+                        } else { // Inactive HDMA (or after GDMA)
                             0xFF
                         }
                     }
+                    // Other I/O registers (0xFF56-0xFF67, 0xFF6C-0xFF7F)
+                    0xFF56..=0xFF67 | 0xFF6C..=0xFF7F => {
+                        // SVBK (FF70) etc. would be here too if not part of a larger unmapped range
+                        0xFF // Placeholder for other CGB I/O regs
+                    }
+                    _ => 0xFF // Default for unmapped I/O in 0xFFxx range
                 }
             }
             0xFF80..=0xFFFE => self.memory.read_byte(addr), // HRAM
@@ -215,6 +432,16 @@ impl Bus {
     }
 
     pub fn write_byte(&mut self, addr: u16, value: u8) {
+        // DMA Access Restrictions:
+        // If OAM DMA is active, most of the bus is inaccessible, except for HRAM.
+        if self.oam_dma_active {
+            if !(addr >= 0xFF80 && addr <= 0xFFFE) {
+                // Allow writes to HRAM (0xFF80 - 0xFFFE)
+                // For addresses outside HRAM, writes are ignored during OAM DMA
+                return;
+            }
+        }
+
         // println!("Bus write at 0x{:04X} with value 0x{:02X}", addr, value);
         match addr {
             0x0000..=0x7FFF => self.mbc.write_rom(addr, value), // ROM area, handled by MBC
@@ -250,20 +477,63 @@ impl Bus {
                     0xFF04..=0xFF07 => self.timer.write_byte(addr, value), // Route to Timer
                     0xFF0F => { self.if_register = value & 0x1F; }, // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.write_byte(addr, value), // APU registers
-                    0xFF40..=0xFF4B => self.ppu.write_byte(addr, value), // PPU registers
+                    // Extended PPU range for writes
+                    0xFF40..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => self.ppu.write_byte(addr, value),
+                    // OAM DMA (FF46) is handled in its own separate PPU range entry
                     0xFF4D => { // KEY1 - CGB Speed Switch
                         self.key1_prepare_speed_switch = (value & 0x01) != 0;
-                        // Other bits of KEY1 are read-only or have fixed values.
                     }
-                    0xFF4C | 0xFF4E..=0xFF4F => { /* Unmapped or Read-only */ }
-                    // Other I/O registers - Placeholder
-                    _ => {
-                        // Specific check for known but unhandled registers
-                        if addr >= 0xFF50 && addr <= 0xFF7F {
-                            // Potentially handle specific registers here if needed, or do nothing.
+                    0xFF4C | 0xFF4E => { /* Unmapped or Read-only */ }
+                    // HDMA Registers
+                    0xFF51 => self.hdma1_src_high = value,
+                    0xFF52 => self.hdma2_src_low = value & 0xF0, // Lower 4 bits ignored
+                    0xFF53 => self.hdma3_dest_high = value & 0x1F, // Upper 3 bits ignored (dest in 0x8000-0x9FFF)
+                    0xFF54 => self.hdma4_dest_low = value & 0xF0,  // Lower 4 bits ignored
+                    0xFF55 => { // HDMA5 - DMA Control/Start
+                        if self.system_mode == SystemMode::DMG { return; } // CGB Only feature
+
+                        // Source address
+                        self.hdma_current_src = ((self.hdma1_src_high as u16) << 8) | (self.hdma2_src_low as u16);
+                        self.hdma_current_src &= 0xFFF0; // Align to 16 bytes (lower 4 bits are zero)
+                        // Source must be in ROM or RAM (0x0000-0x7FFF or 0xA000-0xDFFF)
+
+                        // Destination address in VRAM
+                        self.hdma_current_dest = 0x8000 | (((self.hdma3_dest_high & 0x1F) as u16) << 8) | (self.hdma4_dest_low as u16);
+                        self.hdma_current_dest &= 0x1FF0; // Align to 16 bytes (lower 4 bits are zero) and mask to VRAM range (0x0000-0x1FF0 relative to 0x8000)
+
+                        self.hdma_blocks_remaining = (value & 0x7F) + 1; // Number of 16-byte blocks
+
+                        if (value & 0x80) == 0 { // GDMA (General Purpose DMA)
+                            if self.hdma_active { // Writing 0 to bit 7 of HDMA5 when HDMA is active should have no effect (HDMA continues)
+                                // This interpretation might vary. Some sources say it might stop HDMA.
+                                // Pandocs: "writing to FF55 can start a new transfer, or terminate an active HDMA transfer."
+                                // "If HDMA is active, writing to FF55 with bit 7 cleared will end the HDMA transfer."
+                                // This means if HDMA is active, and we write a new value with bit 7 = 0 for GDMA, HDMA stops.
+                                self.hdma_active = false;
+                            }
+                            self.gdma_active = true;
+                            self.perform_gdma_transfer(); // Execute GDMA immediately
+                            // perform_gdma_transfer will set hdma5 to 0xFF and gdma_active to false.
+                        } else { // HDMA (H-Blank DMA)
+                            if self.hdma_active { // Request to stop current HDMA
+                                self.hdma_active = false;
+                                // HDMA5 read will now show remaining length with bit 7 as 1.
+                                // The value written to HDMA5 (value & 0x7F) is the new "length" for HDMA5 reads.
+                                // However, hdma_blocks_remaining still holds the actual blocks for a potential restart.
+                                // For readback, we need to store the value written if we want HDMA5 to reflect (value & 0x7F) | 0x80.
+                                // Pandocs: "Reading $FF55 returns ... $FF if the HDMA is inactive. Bit 7 is ... 1 otherwise."
+                                // So if we stop it, HDMA5 should read as 0xFF.
+                                // Let's ensure self.hdma5 reflects this for reads.
+                                self.hdma5 = 0xFF; // When HDMA is stopped, it reads as inactive.
+                            } else { // Start new HDMA
+                                self.hdma_active = true;
+                                self.hdma5 = value; // Store for readback (active flag will be based on hdma_active)
+                                // Transfer will occur in HBlank periods.
+                            }
                         }
-                        // Otherwise, do nothing for unmapped writes in this I/O range.
                     }
+                    // Other I/O (0xFF56-0xFF67, 0xFF6C-0xFF7F)
+                     _ => { /* Writes to other unhandled I/O regs are ignored */ }
                 }
             }
             0xFF80..=0xFFFE => self.memory.write_byte(addr, value), // HRAM
@@ -288,7 +558,12 @@ impl Bus {
     pub fn clear_interrupt_flag(&mut self, interrupt_bit: u8) {
         self.if_register &= !(1 << interrupt_bit);
     }
-} // This closes the `impl Bus` block. The test module should be outside.
+}
+
+#[cfg(test)]
+mod bus_tests;
+
+// This closes the `impl Bus` block. The test module should be outside.
 
 #[cfg(test)]
 mod tests {
