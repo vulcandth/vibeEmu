@@ -11,12 +11,14 @@ use crate::memory::Memory;
 use crate::ppu::Ppu;
 use crate::interrupts::InterruptType;
 use crate::joypad::Joypad; // Added Joypad
+use crate::timer::Timer;
 
 pub struct Bus {
     pub memory: Memory,
     pub ppu: Ppu,
     pub apu: Apu,
     pub joypad: Joypad, // Added joypad field
+    pub timer: Timer,
     pub system_mode: SystemMode, // Added system_mode field
     pub is_double_speed: bool,
     pub key1_prepare_speed_switch: bool,
@@ -41,6 +43,7 @@ impl Bus {
             ppu: Ppu::new(),
             apu: Apu::new(),
             joypad: Joypad::new(), // Initialize joypad
+            timer: Timer::new(),
             system_mode: determined_mode,
             is_double_speed: false,
             key1_prepare_speed_switch: false,
@@ -49,6 +52,13 @@ impl Bus {
             interrupt_enable_register: 0, // Default value for IE
             if_register: 0x00, // Default value for IF
         }
+    }
+
+    pub fn tick_components(&mut self, m_cycles: u32) {
+        let t_cycles = m_cycles * 4; // Convert M-cycles to T-cycles
+        self.timer.tick(t_cycles, &mut self.if_register);
+        // self.ppu.tick(t_cycles); // Future PPU ticking
+        // self.apu.tick(t_cycles); // Future APU ticking
     }
 
     pub fn get_system_mode(&self) -> SystemMode {
@@ -111,10 +121,7 @@ impl Bus {
                         // Serial - Placeholder
                         0xFF
                     }
-                    0xFF04..=0xFF07 => {
-                        // Timer - Placeholder
-                        0xFF
-                    }
+                    0xFF04..=0xFF07 => self.timer.read_byte(addr), // Route to Timer
                     0xFF0F => self.if_register | 0xE0, // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.read_byte(addr), // APU registers
                     0xFF40..=0xFF4B => self.ppu.read_byte(addr), // PPU registers (0xFF4C is not used by PPU)
@@ -194,9 +201,7 @@ impl Bus {
                         // Writes to SC might clear serial_output or trigger other behavior in a full system.
                         // For now, we only capture data written to SB (0xFF01).
                     }
-                    0xFF04..=0xFF07 => {
-                        // Timer - Placeholder
-                    }
+                    0xFF04..=0xFF07 => self.timer.write_byte(addr, value), // Route to Timer
                     0xFF0F => { self.if_register = value & 0x1F; }, // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.write_byte(addr, value), // APU registers
                     0xFF40..=0xFF4B => self.ppu.write_byte(addr, value), // PPU registers
