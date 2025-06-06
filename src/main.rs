@@ -29,6 +29,7 @@ use minifb::{Key, Window, WindowOptions}; // Added for minifb
 use crate::cpu::Cpu;
 use crate::interrupts::InterruptType;
 use crate::bus::Bus;
+use crate::apu::CPU_CLOCK_HZ; // Import for audio timing
 use crate::joypad::JoypadButton; // Added for joypad input
 
 // Define window dimensions
@@ -250,16 +251,34 @@ fn main() {
     const CYCLES_PER_FRAME: u32 = 456 * 154;
     let mut ppu_cycles_this_frame: u32 = 0;
 
+    // Audio Sampling
+    const AUDIO_SAMPLE_RATE: u32 = 44100; // Standard audio sample rate
+    const CPU_CYCLES_PER_AUDIO_SAMPLE: u32 = CPU_CLOCK_HZ / AUDIO_SAMPLE_RATE;
+    let mut audio_cycle_counter: u32 = 0;
+    let mut audio_buffer: Vec<(f32, f32)> = Vec::new(); // Simple buffer for collected samples
+
     while running {
         let m_cycles = cpu.step(); // Execute one CPU step and get M-cycles
 
         // PPU runs 4 times faster than CPU M-cycles (T-cycles = M-cycles * 4)
         // Each CPU M-cycle corresponds to 4 PPU T-cycles.
-        let t_cycles_for_step = m_cycles * 4; // These are PPU T-cycles
+        let t_cycles_for_step = m_cycles * 4; // These are PPU T-cycles (also CPU T-cycles)
 
         if !(cpu.is_halted && cpu.in_stop_mode) {
-            bus.borrow_mut().tick_components(m_cycles);
-            ppu_cycles_this_frame += t_cycles_for_step as u32;
+            bus.borrow_mut().tick_components(m_cycles); // Ticks PPU, Timer
+            bus.borrow_mut().apu.tick(t_cycles_for_step); // Tick APU with T-cycles
+
+            ppu_cycles_this_frame += t_cycles_for_step;
+
+            // Audio sample generation
+            audio_cycle_counter += t_cycles_for_step;
+            if audio_cycle_counter >= CPU_CYCLES_PER_AUDIO_SAMPLE {
+                audio_cycle_counter -= CPU_CYCLES_PER_AUDIO_SAMPLE;
+                let (left_sample, right_sample) = bus.borrow_mut().apu.get_mixed_audio_samples();
+                audio_buffer.push((left_sample, right_sample));
+                // In a real emulator, audio_buffer would be sent to an audio backend.
+                // For now, we'll just let it grow. We can print its size periodically for debugging.
+            }
 
             // Frame rendering logic (GUI mode) or PPU cycle accounting (headless)
             if ppu_cycles_this_frame >= CYCLES_PER_FRAME {
@@ -357,10 +376,13 @@ fn main() {
             if emulation_steps % (SERIAL_PRINT_INTERVAL * 10) == 0 || !running { // Less frequent full state print unless exiting
                  println!("Current CPU state (step {}): PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
                          emulation_steps, cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
+                if !audio_buffer.is_empty() {
+                    println!("Audio buffer size: {}", audio_buffer.len());
+                    // audio_buffer.clear(); // Optionally clear buffer after printing size
+                }
             }
 
             if is_headless {
-                // MAX_STEPS_HEADLESS check removed
                 if let Some(duration_limit_secs) = halt_duration_seconds {
                     let elapsed = start_time.elapsed();
                     if elapsed.as_secs() >= duration_limit_secs {
