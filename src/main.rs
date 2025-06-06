@@ -258,15 +258,7 @@ fn main() {
         let t_cycles_for_step = m_cycles * 4; // These are PPU T-cycles
 
         if !(cpu.is_halted && cpu.in_stop_mode) {
-            for _ in 0..t_cycles_for_step {
-                // First, call ppu.tick() and release the borrow on bus
-                let ppu_interrupt_request_type: Option<crate::interrupts::InterruptType> = bus.borrow_mut().ppu.tick();
-                // Then, if an interrupt was requested, borrow bus again to set the flag
-                if let Some(irq_type) = ppu_interrupt_request_type {
-                    bus.borrow_mut().request_interrupt(irq_type);
-                }
-                // TODO: Add bus.borrow_mut().timer.tick() and bus.borrow_mut().apu.tick() here as well
-            }
+            bus.borrow_mut().tick_components(m_cycles);
             ppu_cycles_this_frame += t_cycles_for_step as u32;
 
             // Frame rendering logic (GUI mode) or PPU cycle accounting (headless)

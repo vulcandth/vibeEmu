@@ -61,6 +61,7 @@ impl Timer {
                 }
             }
         }
+
     }
 
     fn is_timer_enabled(&self) -> bool {
