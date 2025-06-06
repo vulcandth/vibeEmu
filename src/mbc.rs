@@ -755,7 +755,7 @@ impl MemoryBankController for MBC1 {
                 // This is often simplified: if banking_mode is 0, high bits select ROM bank part.
                 // The problem description implies this logic:
                  if self.num_rom_banks >= 64 { // Simplified: apply high bits if ROM is 1MB or more
-                    effective_bank0 = (self.rom_bank_high_bits << 5);
+                    effective_bank0 = self.rom_bank_high_bits << 5;
                  }
             }
             // No matter what, bank 0 is always bank 0 for smaller ROMs or when high bits are 0.
@@ -858,19 +858,25 @@ impl MemoryBankController for MBC1 {
             return 0xFF;
         }
 
-        let effective_ram_bank = if self.banking_mode == 1 { // RAM Mode
-            self.selected_ram_bank
-        } else { // ROM Mode
-            0 // Only RAM Bank 0 is accessible in ROM Mode
-        };
+        let effective_ram_bank;
+        let relative_addr = addr as usize;
 
-        // selected_ram_bank is already masked by num_ram_banks on write.
-        // effective_ram_bank here will be valid if num_ram_banks > 0.
-        // If num_ram_banks is 0, ram_data.is_empty() check handles it.
+        if self.banking_mode == 1 { // RAM Mode
+            effective_ram_bank = self.selected_ram_bank;
+        } else { // ROM Mode
+            effective_ram_bank = 0;
+            // In ROM mode, only addresses 0x0000-0x1FFF in RAM bank 0 are accessible.
+            if relative_addr >= (8 * 1024) {
+                return 0xFF; // Address is out of bounds for ROM mode's 8KB window on bank 0
+            }
+        }
+        // effective_ram_bank is already masked by num_ram_banks if banking_mode == 1.
+        // For banking_mode == 0, it's always 0.
 
         let base_addr = effective_ram_bank * (8 * 1024);
-        let final_addr = base_addr + (addr as usize); // addr is 0x0000-0x1FFF from bus
+        let final_addr = base_addr + relative_addr;
 
+        // Final check against the actual allocated RAM vector size
         if final_addr < self.ram_data.len() {
             self.ram_data[final_addr]
         } else {
@@ -883,17 +889,1215 @@ impl MemoryBankController for MBC1 {
             return;
         }
 
-        let effective_ram_bank = if self.banking_mode == 1 { // RAM Mode
-            self.selected_ram_bank
+        let effective_ram_bank;
+        // addr is relative to 0xA000, so it's 0x0000-0x1FFF for an 8KB bank.
+        let relative_addr = addr as usize;
+
+        if self.banking_mode == 1 { // RAM Mode
+            effective_ram_bank = self.selected_ram_bank;
         } else { // ROM Mode
-            0 // Only RAM Bank 0 is accessible
-        };
+            effective_ram_bank = 0;
+            // In ROM mode, only addresses 0x0000-0x1FFF in RAM bank 0 are accessible.
+            if relative_addr >= (8 * 1024) {
+                return; // Address is out of bounds for ROM mode's 8KB window on bank 0
+            }
+        }
+        // effective_ram_bank is already masked by num_ram_banks if banking_mode == 1.
+        // For banking_mode == 0, it's always 0.
 
         let base_addr = effective_ram_bank * (8 * 1024);
-        let final_addr = base_addr + (addr as usize);
+        let final_addr = base_addr + relative_addr;
 
+        // Final check against the actual allocated RAM vector size
         if final_addr < self.ram_data.len() {
             self.ram_data[final_addr] = value;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*; // To import MBC structs and MemoryBankController trait
+
+    // Helper function to create ROM data with a predictable pattern
+    fn create_rom(size_kb: usize, start_value: u8) -> Vec<u8> {
+        let size_bytes = size_kb * 1024;
+        let mut rom = vec![0; size_bytes];
+        for i in 0..size_bytes {
+            rom[i] = ((start_value as usize + i) % 256) as u8;
+        }
+        rom
+    }
+
+    // Helper function to create RAM data vector with a predictable pattern
+    // Renamed from create_ram to avoid conflict if we were to create an MBC with RAM directly
+    fn create_ram_data(size_kb: usize, start_value: u8) -> Vec<u8> {
+        if size_kb == 0 {
+            return Vec::new();
+        }
+        let size_bytes = size_kb * 1024;
+        let mut ram = vec![0; size_bytes];
+        for i in 0..size_bytes {
+            ram[i] = ((start_value as usize + i) % 256) as u8;
+        }
+        ram
+    }
+
+    // Helper to calculate number of banks
+    fn get_num_banks(total_size_bytes: usize, bank_size_bytes: usize) -> usize {
+        if total_size_bytes == 0 || bank_size_bytes == 0 {
+            return 0;
+        }
+        let num = total_size_bytes / bank_size_bytes;
+        if total_size_bytes % bank_size_bytes != 0 {
+            num + 1
+        } else {
+            num
+        }
+    }
+
+    // Tests for NoMBC
+    #[test]
+    fn test_nom_mbc_rom_read() {
+        let rom_data = create_rom(32, 0); // 32KB ROM
+        let mbc = NoMBC::new(rom_data.clone(), 0); // No RAM
+
+        // Read from ROM
+        for i in 0..rom_data.len() {
+            assert_eq!(mbc.read_rom(i as u16), rom_data[i], "Mismatch at ROM addr {}", i);
+        }
+        // Read out of bounds
+        assert_eq!(mbc.read_rom(0x8000), 0xFF, "Out of bounds ROM read did not return 0xFF");
+    }
+
+    #[test]
+    fn test_nom_mbc_ram_read_write() {
+        let rom_data = create_rom(16, 0); // 16KB ROM
+        let ram_size_kb = 2;
+
+        // NoMBC constructor takes ram_size in bytes
+        let mut mbc = NoMBC::new(rom_data, ram_size_kb * 1024);
+
+        // Check initial RAM state (should be all 0s as NoMBC initializes its own RAM vec)
+        for i in 0..(ram_size_kb * 1024) {
+             assert_eq!(mbc.read_ram(i as u16), 0x00, "Initial RAM at {} not 0x00", i);
+        }
+
+        // Write to RAM
+        let test_val1 = 0xAB;
+        mbc.write_ram(0x0000, test_val1);
+        assert_eq!(mbc.read_ram(0x0000), test_val1, "RAM write/read failed at 0x0000");
+
+        let test_val2 = 0xCD;
+        let ram_addr = (ram_size_kb * 1024 - 1) as u16; // Last address in RAM
+        mbc.write_ram(ram_addr, test_val2);
+        assert_eq!(mbc.read_ram(ram_addr), test_val2, "RAM write/read failed at last RAM addr {}", ram_addr);
+
+        let out_of_bounds_ram_addr = (ram_size_kb * 1024) as u16;
+        assert_eq!(mbc.read_ram(out_of_bounds_ram_addr), 0xFF, "Out of bounds RAM read did not return 0xFF");
+        mbc.write_ram(out_of_bounds_ram_addr, 0xFF);
+        assert_eq!(mbc.read_ram(out_of_bounds_ram_addr), 0xFF, "Read after out of bounds RAM write did not return 0xFF");
+    }
+
+    #[test]
+    fn test_nom_mbc_no_ram() {
+        let rom_data = create_rom(16, 0);
+        let mut mbc = NoMBC::new(rom_data, 0); // 0 RAM size
+
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from non-existent RAM did not return 0xFF");
+        mbc.write_ram(0x0000, 0xAB);
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read after write to non-existent RAM did not return 0xFF");
+    }
+
+    #[test]
+    fn test_nom_mbc_write_to_rom_area() {
+        let rom_data = create_rom(32, 0);
+        let rom_data_clone = rom_data.clone();
+        let mut mbc = NoMBC::new(rom_data, 0);
+
+        mbc.write_rom(0x1000, 0xAB);
+        assert_eq!(mbc.read_rom(0x1000), rom_data_clone[0x1000], "ROM content changed after write_rom");
+
+        mbc.write_rom(0x0000, 0xCD);
+        assert_eq!(mbc.read_rom(0x0000), rom_data_clone[0x0000], "ROM content changed at 0x0000 after write_rom");
+    }
+
+    // Tests for MBC1
+    #[test]
+    fn test_mbc1_ram_enable_disable() {
+        let rom = create_rom(256, 0); // 256KB ROM
+        let mut mbc = MBC1::new(rom, 8 * 1024); // 8KB RAM
+
+        // RAM should be disabled initially
+        assert!(!mbc.ram_enabled, "RAM is not initially disabled");
+        mbc.write_ram(0x0000, 0xFF);
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from disabled RAM should return 0xFF");
+
+        // Enable RAM
+        mbc.write_rom(0x0000, 0x0A);
+        assert!(mbc.ram_enabled, "RAM is not enabled after writing 0x0A to 0x0000-0x1FFF");
+
+        // Write and read from enabled RAM
+        mbc.write_ram(0x0000, 0x55);
+        assert_eq!(mbc.read_ram(0x0000), 0x55, "RAM read/write failed when enabled");
+
+        // Disable RAM
+        mbc.write_rom(0x0000, 0x00);
+        assert!(!mbc.ram_enabled, "RAM is not disabled after writing 0x00 to 0x0000-0x1FFF");
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from re-disabled RAM should return 0xFF");
+    }
+
+    #[test]
+    fn test_mbc1_rom_bank_switching_low_bits() {
+        let rom_size_kb = 256; // 256KB ROM -> 16 banks (0-15)
+        let rom = create_rom(rom_size_kb, 0);
+        let mut mbc = MBC1::new(rom.clone(), 0); // No RAM for this test
+
+        // Bank 0 (0x0000-0x3FFF) should always read from bank 0 of the ROM initially
+        for i in 0..0x4000 {
+            assert_eq!(mbc.read_rom(i as u16), rom[i], "Initial bank 0 read mismatch at {}", i);
+        }
+
+        // Switch to bank 1 (low bits)
+        mbc.write_rom(0x2000, 1); // Bank 1
+        assert_eq!(mbc.rom_bank_low_bits, 1);
+        for i in 0..0x4000 { // Reading from 0x4000-0x7FFF
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[1 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 1 read mismatch at offset {}", i);
+        }
+
+        // Writing 0 to low bits should select bank 1
+        mbc.write_rom(0x2000, 0);
+        assert_eq!(mbc.rom_bank_low_bits, 1);
+         for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[1 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 1 (after writing 0) read mismatch at offset {}", i);
+        }
+
+        // Switch to bank 5 (0b00101)
+        mbc.write_rom(0x2000, 5);
+        assert_eq!(mbc.rom_bank_low_bits, 5);
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[5 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 5 read mismatch at offset {}", i);
+        }
+
+        // Switch to bank 15 (0b01111) (assuming rom_size_kb is large enough)
+        mbc.write_rom(0x2000, 15);
+        assert_eq!(mbc.rom_bank_low_bits, 15);
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[15 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 15 read mismatch at offset {}", i);
+        }
+
+        // Test aliasing: if we select bank 17 (0b10001) on a 16-bank ROM, it should map to bank 1 (17 % 16 = 1)
+        // Low bits only take 5 bits, so max value is 31 (0x1F).
+        // MBC1 num_rom_banks is (rom_data.len() / (16 * 1024)). For 256KB, it's 16.
+        // If bank_num is 17 (0x11), it should wrap to 17 % 16 = 1.
+        mbc.write_rom(0x2000, 0x11); // bank 17
+        assert_eq!(mbc.rom_bank_low_bits, 0x11); // internal low bits store 0x11
+                                                 // effective bank for reading is (0x11 % 16) = 1
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[1 * (16 * 1024) + i]; // Bank 1
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 17 (aliased to 1) read mismatch at offset {}", i);
+        }
+    }
+
+    #[test]
+    fn test_mbc1_rom_bank_switching_high_bits_rom_mode() {
+        let rom_size_kb = 1024; // 1MB ROM -> 64 banks (0-63)
+        let rom = create_rom(rom_size_kb, 0);
+        let mut mbc = MBC1::new(rom.clone(), 0); // No RAM
+
+        mbc.write_rom(0x6000, 0x00); // ROM banking mode
+        assert_eq!(mbc.banking_mode, 0);
+
+        // Select low bits: bank 1 (0b00001)
+        mbc.write_rom(0x2000, 1);
+        assert_eq!(mbc.rom_bank_low_bits, 1);
+
+        // Select high bits: bank 0b01 (for banks 0x20-0x3F)
+        // rom_bank_high_bits = 1
+        mbc.write_rom(0x4000, 0x01);
+        assert_eq!(mbc.rom_bank_high_bits, 1);
+
+        // Effective bank = (high_bits << 5) | low_bits = (1 << 5) | 1 = 0b0100001 = 32 + 1 = 33
+        // Read from 0x4000-0x7FFF should use bank 33
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[33 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 33 (1:1) read mismatch at offset {}", i);
+        }
+
+        // Test how bank 0 (0x0000-0x3FFF) is affected by high bits with 1MB ROM
+        // effective_bank0 = (self.rom_bank_high_bits << 5) % self.num_rom_banks
+        // Here, (1 << 5) % 64 = 32 % 64 = 32. So bank 0 should read from ROM bank 32.
+        for i in 0..0x4000 {
+            let expected_val = rom[32 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(i as u16), expected_val, "Bank 0 area (remapped to 32) read mismatch at {}", i);
+        }
+
+        // Select high bits: 0b10 (for banks 0x40-0x5F)
+        // rom_bank_high_bits = 2
+        mbc.write_rom(0x4000, 0x02);
+        assert_eq!(mbc.rom_bank_high_bits, 2);
+        // low_bits is still 1. Effective bank = (2 << 5) | 1 = 0b1000001 = 64 + 1 = 65
+        // This will be aliased by num_rom_banks (64). So, 65 % 64 = 1.
+        // Read from 0x4000-0x7FFF should use bank 1
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[1 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 65 (aliased to 1) read mismatch at offset {}", i);
+        }
+        // Bank 0 area mapping: (2 << 5) % 64 = 64 % 64 = 0. So bank 0 should read from ROM bank 0.
+        for i in 0..0x4000 {
+            let expected_val = rom[0 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(i as u16), expected_val, "Bank 0 area (remapped to 0) read mismatch at {}", i);
+        }
+    }
+
+    #[test]
+    fn test_mbc1_ram_banking_mode() {
+        let rom = create_rom(256, 0); // 256KB ROM
+        // 32KB RAM -> 4 banks of 8KB
+        let ram_size_bytes = 32 * 1024;
+        let mut mbc = MBC1::new(rom.clone(), ram_size_bytes);
+
+        // Enable RAM
+        mbc.write_rom(0x0000, 0x0A);
+        // Switch to RAM banking mode
+        mbc.write_rom(0x6000, 0x01);
+        assert_eq!(mbc.banking_mode, 1);
+
+        // In RAM banking mode, writes to 0x4000-0x5FFF select RAM bank
+        // Select RAM bank 0
+        mbc.write_rom(0x4000, 0x00);
+        assert_eq!(mbc.selected_ram_bank, 0);
+        mbc.write_ram(0x0000, 0xA0);
+        mbc.write_ram(0x0001, 0xA1);
+        assert_eq!(mbc.read_ram(0x0000), 0xA0);
+        assert_eq!(mbc.read_ram(0x0001), 0xA1);
+
+        // Select RAM bank 1
+        mbc.write_rom(0x4000, 0x01);
+        assert_eq!(mbc.selected_ram_bank, 1);
+        mbc.write_ram(0x0000, 0xB0); // This is offset 0 in RAM bank 1
+        mbc.write_ram(0x0001, 0xB1);
+        assert_eq!(mbc.read_ram(0x0000), 0xB0);
+        assert_eq!(mbc.read_ram(0x0001), 0xB1);
+        // Check that bank 0 data is still there
+        mbc.write_rom(0x4000, 0x00); // Switch back to RAM bank 0
+        assert_eq!(mbc.read_ram(0x0000), 0xA0);
+        assert_eq!(mbc.read_ram(0x0001), 0xA1);
+
+
+        // Select RAM bank 3 (max for 32KB RAM)
+        mbc.write_rom(0x4000, 0x03);
+        assert_eq!(mbc.selected_ram_bank, 3);
+        mbc.write_ram(0x1FFF, 0xC3); // Last byte of RAM bank 3
+        assert_eq!(mbc.read_ram(0x1FFF), 0xC3);
+
+        // Test RAM bank aliasing if num_ram_banks < 4 (e.g. 16KB RAM = 2 banks)
+        let mut mbc_small_ram = MBC1::new(create_rom(64,0), 16 * 1024); // 16KB RAM -> 2 banks
+        mbc_small_ram.write_rom(0x0000, 0x0A); // Enable RAM
+        mbc_small_ram.write_rom(0x6000, 0x01); // RAM banking mode
+
+        mbc_small_ram.write_rom(0x4000, 0x00); // RAM bank 0
+        mbc_small_ram.write_ram(0x0000, 0xAA);
+
+        mbc_small_ram.write_rom(0x4000, 0x01); // RAM bank 1
+        mbc_small_ram.write_ram(0x0000, 0xBB);
+
+        // Writing 0x02 to select RAM bank should alias to 0x02 % num_ram_banks (2) = 0
+        mbc_small_ram.write_rom(0x4000, 0x02);
+        assert_eq!(mbc_small_ram.selected_ram_bank, 0);
+        assert_eq!(mbc_small_ram.read_ram(0x0000), 0xAA, "RAM bank aliasing failed (0x02 -> bank 0)");
+
+        mbc_small_ram.write_rom(0x4000, 0x03); // Should alias to 0x03 % 2 = 1
+        assert_eq!(mbc_small_ram.selected_ram_bank, 1);
+        assert_eq!(mbc_small_ram.read_ram(0x0000), 0xBB, "RAM bank aliasing failed (0x03 -> bank 1)");
+
+        // In RAM banking mode, ROM bank 0 (0x0000-0x3FFF) is fixed to bank 0.
+        // rom_bank_high_bits are ignored for bank 0 selection.
+        mbc.write_rom(0x2000, 5); // low bits for ROM
+        mbc.write_rom(0x4000, 0x01); // This sets RAM bank to 1, NOT rom_bank_high_bits
+
+        // Check bank 0 of ROM
+        for i in 0..0x4000 {
+            assert_eq!(mbc.read_rom(i as u16), rom[i], "ROM Bank 0 not fixed in RAM mode, offset {}", i);
+        }
+        // Check switchable ROM area (0x4000-0x7FFF) - should use only rom_bank_low_bits (5)
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[5 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Switchable ROM bank mismatch in RAM mode, offset {}", i);
+        }
+    }
+
+    #[test]
+    fn test_mbc1_rom_mode_ram_access() {
+        let rom = create_rom(256, 0);
+        let mut mbc = MBC1::new(rom.clone(), 8 * 1024); // 8KB RAM (1 bank)
+
+        mbc.write_rom(0x0000, 0x0A); // Enable RAM
+        mbc.write_rom(0x6000, 0x00); // ROM banking mode
+        assert_eq!(mbc.banking_mode, 0);
+
+        // In ROM banking mode, only RAM bank 0 is accessible
+        // Writes to 0x4000-0x5FFF control rom_bank_high_bits, not RAM bank
+        mbc.write_rom(0x4000, 0x01); // Set rom_bank_high_bits = 1
+
+        // Write to RAM (should go to bank 0)
+        mbc.write_ram(0x0000, 0xDD);
+        mbc.write_ram(0x1FFF, 0xEE); // Last byte of 8KB RAM
+
+        assert_eq!(mbc.read_ram(0x0000), 0xDD);
+        assert_eq!(mbc.read_ram(0x1FFF), 0xEE);
+
+        // If we had more RAM banks, they wouldn't be accessible here.
+        // Let's test with 32KB RAM (4 banks)
+        let mut mbc_32kb_ram = MBC1::new(create_rom(256,0), 32 * 1024);
+        mbc_32kb_ram.write_rom(0x0000, 0x0A); // Enable RAM
+        mbc_32kb_ram.write_rom(0x6000, 0x00); // ROM banking mode
+
+        // Write to RAM bank 0
+        mbc_32kb_ram.write_ram(0x0000, 0x11);
+        mbc_32kb_ram.write_ram(0x1FFF, 0x22); // end of bank 0
+
+        // Attempt to select a different RAM bank via 0x4000 (this sets rom_bank_high_bits)
+        mbc_32kb_ram.write_rom(0x4000, 0x01); // rom_bank_high_bits = 1, RAM bank should remain 0
+
+        // Try writing to where bank 1 would be, it should still go to bank 0
+        // Or rather, reading from bank 0 should still yield bank 0's data
+        assert_eq!(mbc_32kb_ram.read_ram(0x0000), 0x11, "RAM bank changed in ROM mode");
+        assert_eq!(mbc_32kb_ram.read_ram(0x1FFF), 0x22, "RAM bank changed in ROM mode (end)");
+
+        // Write to offset 0x2000 (start of where bank 1 would map)
+        // This address is relative to A000. So A000 + 0x2000 = C000.
+        // If RAM is 32KB, it spans A000-BFFF (bank 0), C000-DFFF (bank 1) etc.
+        // But read_ram/write_ram take relative offsets.
+        // In ROM mode, only the first 8KB (0x0000-0x1FFF relative) of RAM is accessible.
+        // So writing to relative addr 0x2000 should be out of bounds for the accessible RAM window.
+        mbc_32kb_ram.write_ram(0x2000, 0x33);
+        assert_eq!(mbc_32kb_ram.read_ram(0x2000), 0xFF, "Accessing RAM beyond bank 0 in ROM mode should fail");
+    }
+
+    #[test]
+    fn test_mbc1_rom_bank_0_remapping_for_large_roms() {
+        // Test with 1MB ROM (64 banks)
+        let rom_1mb_data = create_rom(1024, 0);
+        let mut mbc_1mb = MBC1::new(rom_1mb_data.clone(), 0);
+        mbc_1mb.write_rom(0x6000, 0x00); // ROM mode
+
+        // Set rom_bank_high_bits to 0b01 (selects banks 0x20-0x3F for 0x0000-0x3FFF area)
+        mbc_1mb.write_rom(0x4000, 0x01); // rom_bank_high_bits = 1
+        // Fixed bank 0 (0000-3FFF) should now map to ROM bank (1 << 5) = 32
+        for i in 0..0x4000 {
+            let expected = rom_1mb_data[32 * (16 * 1024) + i];
+            assert_eq!(mbc_1mb.read_rom(i as u16), expected, "1MB ROM bank 0 remap (to 32) failed at {}", i);
+        }
+
+        // Set rom_bank_high_bits to 0b10 (selects banks 0x40-0x5F for 0x0000-0x3FFF area)
+        mbc_1mb.write_rom(0x4000, 0x02); // rom_bank_high_bits = 2
+        // Fixed bank 0 (0000-3FFF) should now map to ROM bank (2 << 5) = 64.
+        // Since there are 64 banks (0-63), this will be 64 % 64 = 0.
+        for i in 0..0x4000 {
+            let expected = rom_1mb_data[0 * (16 * 1024) + i]; // Bank 0
+            assert_eq!(mbc_1mb.read_rom(i as u16), expected, "1MB ROM bank 0 remap (to 0 via 64) failed at {}", i);
+        }
+
+        // Test with 512KB ROM (32 banks) - Bank 0 remapping should NOT occur
+        let rom_512kb_data = create_rom(512, 50);
+        let mut mbc_512kb = MBC1::new(rom_512kb_data.clone(), 0);
+        mbc_512kb.write_rom(0x6000, 0x00); // ROM mode
+
+        mbc_512kb.write_rom(0x4000, 0x01); // rom_bank_high_bits = 1
+        // num_rom_banks = 32. Condition `self.num_rom_banks >= 64` is false.
+        // So, effective_bank0 should remain 0.
+        for i in 0..0x4000 {
+            let expected = rom_512kb_data[0 * (16 * 1024) + i]; // Should always be bank 0
+            assert_eq!(mbc_512kb.read_rom(i as u16), expected, "512KB ROM bank 0 remap (should not happen) failed at {}", i);
+        }
+    }
+
+    // Tests for MBC2
+    #[test]
+    fn test_mbc2_ram_enable_disable() {
+        let rom = create_rom(128, 0); // 128KB ROM
+        let mut mbc = MBC2::new(rom);
+
+        // RAM should be disabled initially
+        assert!(!mbc.ram_enabled, "RAM is not initially disabled");
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from disabled RAM should be 0xFF (or 0xF0 | stored_nibble)");
+
+        // Enable RAM: Write 0x0A to an address in 0x0000-0x1FFF where addr bit 8 is 0.
+        // Example: 0x0000, 0x00FF, 0x0200 (but not 0x0100, 0x0300)
+        mbc.write_rom(0x0000, 0x0A); // Valid addr for RAM enable
+        assert!(mbc.ram_enabled, "RAM not enabled after writing 0x0A to 0x0000");
+
+        // Write and read from enabled RAM (checking nibble behavior)
+        mbc.write_ram(0x0000, 0xBC); // Write 0xBC, only 0x0C should be stored
+        assert_eq!(mbc.read_ram(0x0000), 0xFC, "RAM read/write incorrect (expected 0xFC for value 0x0C)");
+
+        // Test another RAM address
+        mbc.write_ram(0x01AF, 0x12); // Store 0x02
+        assert_eq!(mbc.read_ram(0x01AF), 0xF2, "RAM read/write incorrect (expected 0xF2 for value 0x02)");
+
+
+        // Disable RAM: Write something else (e.g. 0x00) to RAM enable address
+        mbc.write_rom(0x0000, 0x00);
+        assert!(!mbc.ram_enabled, "RAM not disabled after writing 0x00 to 0x0000");
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from re-disabled RAM should return 0xFF");
+
+        // Test other addresses for RAM enable control
+        // Address bit 8 must be 0.
+        mbc.write_rom(0x0250, 0x0A); // Bit 8 is 0 (0x250 & 0x100 == 0)
+        assert!(mbc.ram_enabled, "RAM not enabled via addr 0x0250");
+        mbc.write_rom(0x0250, 0x00);
+        assert!(!mbc.ram_enabled, "RAM not disabled via addr 0x0250");
+
+        // Address bit 8 is 1 - should NOT affect RAM enable
+        mbc.write_rom(0x0150, 0x0A); // Bit 8 is 1 (0x150 & 0x100 != 0) -> This is ROM bank select
+        assert!(!mbc.ram_enabled, "RAM affected by write to ROM bank select area (addr bit 8 was 1)");
+    }
+
+    #[test]
+    fn test_mbc2_rom_bank_switching() {
+        let rom_size_kb = 256; // 256KB ROM -> 16 banks (0-15)
+        let rom = create_rom(rom_size_kb, 0);
+        let mut mbc = MBC2::new(rom.clone());
+
+        // Bank 0 (0x0000-0x3FFF) is fixed
+        for i in 0..0x4000 {
+            assert_eq!(mbc.read_rom(i as u16), rom[i], "Initial bank 0 read mismatch at {}", i);
+        }
+
+        // Switch to bank 1: Write to addr 0x2000-0x3FFF where addr bit 8 is 1.
+        // Example: 0x2100, 0x21FF, 0x2300 (but not 0x2000, 0x2200)
+        // Value's lower 4 bits determine bank. 0 maps to 1.
+        mbc.write_rom(0x2100, 1); // Select bank 1
+        assert_eq!(mbc.selected_rom_bank, 1);
+        for i in 0..0x4000 { // Reading from 0x4000-0x7FFF
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[1 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 1 read mismatch at offset {}", i);
+        }
+
+        // Writing 0 should select bank 1
+        mbc.write_rom(0x2100, 0);
+        assert_eq!(mbc.selected_rom_bank, 1);
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[1 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 1 (after writing 0) read mismatch at offset {}", i);
+        }
+
+        // Switch to bank 5 (0b0101)
+        mbc.write_rom(0x2350, 5); // Addr bit 8 is 1
+        assert_eq!(mbc.selected_rom_bank, 5);
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[5 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 5 read mismatch at offset {}", i);
+        }
+
+        // Switch to bank 15 (0b1111) (max for MBC2's 4-bit selection)
+        mbc.write_rom(0x3F00, 15); // Addr bit 8 is 1
+        assert_eq!(mbc.selected_rom_bank, 15);
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[15 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 15 read mismatch at offset {}", i);
+        }
+
+        // Test aliasing: MBC2 has max 16 banks (e.g. 256KB ROM). selected_rom_bank is 1-15.
+        // If ROM is smaller, e.g., 64KB (4 banks: 0,1,2,3), selecting bank 5 should map to 5 % 4 = 1.
+        let rom_64kb = create_rom(64, 100); // 4 banks
+        let mut mbc_small_rom = MBC2::new(rom_64kb.clone());
+        // num_rom_banks should be 4.
+        assert_eq!(mbc_small_rom.num_rom_banks, 4);
+
+        mbc_small_rom.write_rom(0x2100, 5); // Select bank 5. Effective bank should be 5 % 4 = 1.
+        assert_eq!(mbc_small_rom.selected_rom_bank, 5); // Internal register stores 5
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom_64kb[1 * (16 * 1024) + i]; // Bank 1 data
+            assert_eq!(mbc_small_rom.read_rom(rom_addr as u16), expected_val, "Bank 5 (aliased to 1 on 64KB ROM) read mismatch at offset {}", i);
+        }
+
+        // Selecting bank 4 on 4-bank ROM (4%4=0).
+        mbc_small_rom.write_rom(0x2100, 4);
+        assert_eq!(mbc_small_rom.selected_rom_bank, 4);
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom_64kb[0 * (16 * 1024) + i]; // Bank 0 data
+            assert_eq!(mbc_small_rom.read_rom(rom_addr as u16), expected_val, "Bank 4 (aliased to 0 on 64KB ROM) read mismatch at offset {}", i);
+        }
+
+        // Test that writes to addresses where bit 8 is 0 do NOT affect ROM bank
+        let initial_bank = mbc.selected_rom_bank;
+        mbc.write_rom(0x2000, 10); // Addr bit 8 is 0 -> RAM enable/disable
+        assert_eq!(mbc.selected_rom_bank, initial_bank, "ROM bank changed by write to RAM enable area");
+    }
+
+    #[test]
+    fn test_mbc2_ram_storage() {
+        let rom = create_rom(32, 0);
+        let mut mbc = MBC2::new(rom);
+
+        // Enable RAM
+        mbc.write_rom(0x0000, 0x0A);
+
+        // Test RAM limits (512 nibbles, addr 0x000 to 0x1FF)
+        // Write to first RAM location
+        mbc.write_ram(0x000, 0x1A); // Store 0xA
+        assert_eq!(mbc.read_ram(0x000), 0xFA, "RAM 0x000 read/write failed");
+
+        // Write to last RAM location
+        mbc.write_ram(0x1FF, 0xB4); // Store 0x4
+        assert_eq!(mbc.read_ram(0x1FF), 0xF4, "RAM 0x1FF read/write failed");
+
+        // Verify only lower 4 bits are stored
+        mbc.write_ram(0x0A0, 0x79); // Store 0x9
+        assert_eq!(mbc.ram_data[0x0A0], 0x09, "RAM internal storage error, expected 0x09");
+        assert_eq!(mbc.read_ram(0x0A0), 0xF9, "RAM 0x0A0 read error, expected 0xF9");
+
+        // Reading out of RAM bounds (0x200 and above) should return 0xFF
+        assert_eq!(mbc.read_ram(0x200), 0xFF, "Out of bounds MBC2 RAM read (0x200) did not return 0xFF");
+
+        // Writing out of RAM bounds should not panic and ideally not corrupt
+        mbc.write_ram(0x200, 0xAB);
+        assert_eq!(mbc.read_ram(0x200), 0xFF, "Read after out of bounds MBC2 RAM write (0x200) was not 0xFF");
+        // Check if last valid RAM loc was corrupted
+        assert_eq!(mbc.read_ram(0x1FF), 0xF4, "Last valid RAM loc corrupted by out of bounds write");
+    }
+
+    // Tests for MBC3
+    #[test]
+    fn test_mbc3_ram_rtc_enable_disable() {
+        let rom = create_rom(512, 0); // 512KB ROM
+        let mut mbc = MBC3::new(rom, 32 * 1024); // 32KB RAM (4 banks)
+
+        // RAM & RTC should be disabled initially
+        assert!(!mbc.ram_and_rtc_enabled, "RAM/RTC is not initially disabled");
+        mbc.write_ram(0x0000, 0xFF); // Attempt write to RAM bank 0
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from disabled RAM should return 0xFF");
+
+        // Select RTC register for seconds (0x08)
+        mbc.write_rom(0x4000, 0x08);
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from disabled RTC register should return 0xFF");
+
+        // Enable RAM & RTC
+        mbc.write_rom(0x0000, 0x0A);
+        assert!(mbc.ram_and_rtc_enabled, "RAM/RTC is not enabled after writing 0x0A");
+
+        // Write and read from enabled RAM (bank 0)
+        mbc.write_rom(0x4000, 0x00); // Select RAM bank 0
+        mbc.write_ram(0x0000, 0x55);
+        assert_eq!(mbc.read_ram(0x0000), 0x55, "RAM read/write failed for bank 0 when enabled");
+
+        // Read from RTC register (should not be 0xFF now, but might be 0 if unlatched/default)
+        // Latch RTC first
+        mbc.write_rom(0x6000, 0x00);
+        mbc.write_rom(0x6000, 0x01);
+        mbc.write_rom(0x4000, 0x08); // Select RTC seconds
+        // Default RTC values are 0.
+        assert_eq!(mbc.read_ram(0x0000), 0x00, "RTC read for seconds after enable did not return default 0");
+
+
+        // Disable RAM & RTC
+        mbc.write_rom(0x0000, 0x00);
+        assert!(!mbc.ram_and_rtc_enabled, "RAM/RTC is not disabled after writing 0x00");
+        mbc.write_rom(0x4000, 0x00); // Select RAM bank 0
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from re-disabled RAM should return 0xFF");
+        mbc.write_rom(0x4000, 0x08); // Select RTC seconds
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from re-disabled RTC register should return 0xFF");
+    }
+
+    #[test]
+    fn test_mbc3_rom_bank_switching() {
+        let rom_size_kb = 2048; // 2MB ROM -> 128 banks (0-127)
+        let rom = create_rom(rom_size_kb, 0);
+        let mut mbc = MBC3::new(rom.clone(), 0); // No RAM for this test
+
+        // Bank 0 (0x0000-0x3FFF) is fixed
+        for i in 0..0x4000 {
+            assert_eq!(mbc.read_rom(i as u16), rom[i], "Initial bank 0 read mismatch at {}", i);
+        }
+
+        // Switch to bank 1 (writing 1 to 0x2000-0x3FFF)
+        mbc.write_rom(0x2000, 1);
+        assert_eq!(mbc.selected_rom_bank, 1);
+        for i in 0..0x4000 { // Reading from 0x4000-0x7FFF
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[1 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 1 read mismatch at offset {}", i);
+        }
+
+        // Writing 0 to select ROM bank should map to bank 1
+        mbc.write_rom(0x2000, 0);
+        assert_eq!(mbc.selected_rom_bank, 1);
+         for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[1 * (16 * 1024) + i]; // Still bank 1
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 1 (after writing 0) read mismatch at offset {}", i);
+        }
+
+        // Switch to bank 70 (0x46)
+        mbc.write_rom(0x3000, 0x46);
+        assert_eq!(mbc.selected_rom_bank, 0x46);
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[0x46 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 0x46 read mismatch at offset {}", i);
+        }
+
+        // Switch to bank 127 (0x7F, max value for 7-bit register)
+        mbc.write_rom(0x2ABC, 0x7F);
+        assert_eq!(mbc.selected_rom_bank, 0x7F);
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[0x7F * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 0x7F read mismatch at offset {}", i);
+        }
+
+        // Test aliasing: ROM has 128 banks (0-127). `num_rom_banks` is 128.
+        // Writing value > 127 (e.g. 0x80, which is 128) to the 7-bit register will be masked to 0.
+        // If 0 is written, it maps to bank 1.
+        // So, writing 0x80 (128) -> masked to 0 -> maps to bank 1.
+        mbc.write_rom(0x2000, 0x80); // value & 0x7F = 0. Then 0 maps to 1.
+        assert_eq!(mbc.selected_rom_bank, 1);
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[1 * (16 * 1024) + i]; // Bank 1
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 0x80 (aliased to 1) read mismatch at offset {}", i);
+        }
+
+        // If ROM is smaller, e.g. 512KB (32 banks, 0-31)
+        let rom_512kb = create_rom(512, 50);
+        let mut mbc_small_rom = MBC3::new(rom_512kb.clone(), 0);
+        assert_eq!(mbc_small_rom.num_rom_banks, 32);
+
+        // Select bank 33 (0x21). Masked by 0x7F is still 0x21.
+        // Effective bank = 0x21 % num_rom_banks (32) = 1.
+        mbc_small_rom.write_rom(0x2000, 0x21);
+        assert_eq!(mbc_small_rom.selected_rom_bank, 0x21); // Internal register stores 0x21
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom_512kb[1 * (16 * 1024) + i]; // Bank 1 data
+            assert_eq!(mbc_small_rom.read_rom(rom_addr as u16), expected_val, "Bank 0x21 (aliased to 1 on 512KB ROM) read mismatch at offset {}", i);
+        }
+    }
+
+    #[test]
+    fn test_mbc3_ram_banking() {
+        let rom = create_rom(256, 0);
+        // 32KB RAM -> 4 banks (0-3)
+        let ram_size_bytes = 32 * 1024;
+        let mut mbc = MBC3::new(rom, ram_size_bytes);
+        assert_eq!(mbc.num_ram_banks, 4);
+
+        mbc.write_rom(0x0000, 0x0A); // Enable RAM/RTC
+
+        // Select RAM bank 0
+        mbc.write_rom(0x4000, 0x00);
+        assert_eq!(mbc.selected_ram_bank_or_rtc_reg, 0x00);
+        mbc.write_ram(0x0001, 0xA1);
+        assert_eq!(mbc.read_ram(0x0001), 0xA1);
+
+        // Select RAM bank 1
+        mbc.write_rom(0x4000, 0x01);
+        assert_eq!(mbc.selected_ram_bank_or_rtc_reg, 0x01);
+        mbc.write_ram(0x0002, 0xB2);
+        assert_eq!(mbc.read_ram(0x0002), 0xB2);
+        // Check bank 0 data is still there
+        mbc.write_rom(0x4000, 0x00); // Switch back to RAM bank 0
+        assert_eq!(mbc.read_ram(0x0001), 0xA1);
+
+
+        // Select RAM bank 3 (max for 32KB RAM)
+        mbc.write_rom(0x5000, 0x03);
+        assert_eq!(mbc.selected_ram_bank_or_rtc_reg, 0x03);
+        mbc.write_ram(0x1FFF, 0xC3); // Last byte of RAM bank 3
+        assert_eq!(mbc.read_ram(0x1FFF), 0xC3);
+
+        // Selections 0x04-0x07 for RAM bank are invalid, should read as 0xFF
+        mbc.write_rom(0x4000, 0x04);
+        assert_eq!(mbc.selected_ram_bank_or_rtc_reg, 0x04);
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from invalid RAM bank selection 0x04 should be 0xFF");
+        mbc.write_ram(0x0000, 0xDD); // Write should be ignored
+        assert_eq!(mbc.read_ram(0x0000), 0xFF);
+
+
+        // Test with smaller RAM: 8KB (1 bank)
+        let mut mbc_8kb_ram = MBC3::new(create_rom(64,0), 8 * 1024);
+        assert_eq!(mbc_8kb_ram.num_ram_banks, 1);
+        mbc_8kb_ram.write_rom(0x0000, 0x0A); // Enable RAM
+
+        mbc_8kb_ram.write_rom(0x4000, 0x00); // RAM bank 0
+        mbc_8kb_ram.write_ram(0x0000, 0xAA);
+        assert_eq!(mbc_8kb_ram.read_ram(0x0000), 0xAA);
+
+        // Try selecting RAM bank 1 (0x01) on 1-bank setup. Should be out of bounds.
+        mbc_8kb_ram.write_rom(0x4000, 0x01);
+        assert_eq!(mbc_8kb_ram.selected_ram_bank_or_rtc_reg, 0x01);
+        assert_eq!(mbc_8kb_ram.read_ram(0x0000), 0xFF, "Read from RAM bank 1 (non-existent) should be 0xFF");
+        mbc_8kb_ram.write_ram(0x0000, 0xBB); // Write should be ignored
+        assert_eq!(mbc_8kb_ram.read_ram(0x0000), 0xFF);
+    }
+
+    #[test]
+    fn test_mbc3_rtc_latching_and_read() {
+        let rom = create_rom(64, 0);
+        let mut mbc = MBC3::new(rom, 8 * 1024);
+        mbc.write_rom(0x0000, 0x0A); // Enable RAM/RTC
+
+        // Set some initial RTC values directly (for testing)
+        mbc.rtc_registers.seconds = 10;
+        mbc.rtc_registers.minutes = 20;
+        mbc.rtc_registers.hours = 5;
+        mbc.rtc_registers.day_counter_low = 100;
+        mbc.rtc_registers.day_counter_high = 0x01; // Day MSB=1, Halt=0, Carry=0
+
+        // Attempt to read RTC registers before latching - should get default (or uninitialized) latched values
+        // Default latched values are all 0.
+        mbc.write_rom(0x4000, 0x08); // Select RTC Seconds
+        assert_eq!(mbc.read_ram(0x0000), 0, "RTC seconds before latch should be default 0");
+
+        // Latch sequence: write 0x00 then 0x01 to 0x6000-0x7FFF
+        mbc.write_rom(0x6000, 0x00);
+        mbc.write_rom(0x7000, 0x01); // Address doesn't matter in 0x6000-0x7FFF range for the value itself
+
+        // Verify latched values
+        mbc.write_rom(0x4000, 0x08); // Select RTC Seconds
+        assert_eq!(mbc.read_ram(0x0000), 10, "Latched RTC seconds mismatch");
+        mbc.write_rom(0x4000, 0x09); // Select RTC Minutes
+        assert_eq!(mbc.read_ram(0x0000), 20, "Latched RTC minutes mismatch");
+        mbc.write_rom(0x4000, 0x0A); // Select RTC Hours
+        assert_eq!(mbc.read_ram(0x0000), 5, "Latched RTC hours mismatch");
+        mbc.write_rom(0x4000, 0x0B); // Select RTC Day Low
+        assert_eq!(mbc.read_ram(0x0000), 100, "Latched RTC Day Low mismatch");
+        mbc.write_rom(0x4000, 0x0C); // Select RTC Day High
+        assert_eq!(mbc.read_ram(0x0000), 0x01, "Latched RTC Day High mismatch");
+
+        // Change RTC registers again
+        mbc.rtc_registers.seconds = 55;
+        // Read again without re-latching - should still get old latched values
+        mbc.write_rom(0x4000, 0x08); // Select RTC Seconds
+        assert_eq!(mbc.read_ram(0x0000), 10, "RTC seconds changed without re-latch");
+
+        // Re-latch
+        mbc.write_rom(0x6000, 0x00);
+        mbc.write_rom(0x6000, 0x01);
+        assert_eq!(mbc.read_ram(0x0000), 55, "RTC seconds not updated after re-latch");
+
+        // Test incorrect latch sequence (e.g., 0x01 then 0x00) - should not latch
+        mbc.rtc_registers.minutes = 33;
+        mbc.write_rom(0x6000, 0x01); // Wrong start to sequence
+        mbc.write_rom(0x6000, 0x00);
+        mbc.write_rom(0x4000, 0x09); // Select RTC Minutes
+        assert_eq!(mbc.read_ram(0x0000), 20, "RTC minutes changed with incorrect latch sequence");
+    }
+
+    #[test]
+    fn test_mbc3_rtc_write() {
+        let rom = create_rom(64, 0);
+        let mut mbc = MBC3::new(rom, 8 * 1024);
+        mbc.write_rom(0x0000, 0x0A); // Enable RAM/RTC
+
+        // Write to RTC seconds
+        mbc.write_rom(0x4000, 0x08); // Select RTC Seconds
+        mbc.write_ram(0x1000, 30);   // Write 30 seconds
+        assert_eq!(mbc.rtc_registers.seconds, 30);
+        // Value written > 59 should be wrapped
+        mbc.write_ram(0x1000, 70); // 70 % 60 = 10
+        assert_eq!(mbc.rtc_registers.seconds, 10);
+
+
+        // Write to RTC minutes
+        mbc.write_rom(0x4000, 0x09); // Select RTC Minutes
+        mbc.write_ram(0x1000, 45);
+        assert_eq!(mbc.rtc_registers.minutes, 45);
+        mbc.write_ram(0x1000, 65); // 65 % 60 = 5
+        assert_eq!(mbc.rtc_registers.minutes, 5);
+
+        // Write to RTC hours
+        mbc.write_rom(0x4000, 0x0A); // Select RTC Hours
+        mbc.write_ram(0x1000, 12);
+        assert_eq!(mbc.rtc_registers.hours, 12);
+        mbc.write_ram(0x1000, 25); // 25 % 24 = 1
+        assert_eq!(mbc.rtc_registers.hours, 1);
+
+        // Write to RTC Day Low
+        mbc.write_rom(0x4000, 0x0B); // Select RTC Day Low
+        mbc.write_ram(0x1000, 200);
+        assert_eq!(mbc.rtc_registers.day_counter_low, 200);
+
+        // Write to RTC Day High / Control
+        mbc.write_rom(0x4000, 0x0C); // Select RTC Day High
+        // Initial Day High: 0 (MSB=0, Halt=0, Carry=0)
+        // Write to set Day MSB (bit 0) and Halt (bit 6)
+        // Value 0x41 -> Day MSB=1, Halt=1
+        mbc.write_ram(0x1000, 0x41);
+        assert_eq!(mbc.rtc_registers.day_counter_high & 0x01, 0x01, "Day MSB not set"); // Day MSB
+        assert_eq!(mbc.rtc_registers.day_counter_high & 0x40, 0x40, "Halt bit not set");   // Halt bit
+
+        // Clear Day MSB, keep Halt
+        // Value 0x40 -> Day MSB=0, Halt=1
+        mbc.write_ram(0x1000, 0x40);
+        assert_eq!(mbc.rtc_registers.day_counter_high & 0x01, 0x00, "Day MSB not cleared");
+        assert_eq!(mbc.rtc_registers.day_counter_high & 0x40, 0x40, "Halt bit incorrect (should be set)");
+
+        // Carry bit (bit 7) is read-only, should not be affected by writes
+        mbc.rtc_registers.day_counter_high = 0x80; // Manually set carry for testing
+        mbc.write_ram(0x1000, 0x01); // Attempt to write 0x01 (Day MSB=1, Halt=0, Carry=0)
+                                     // Internal day_counter_high should become (0x80 & !0x41) | (0x01 & 0x41)
+                                     // = (0x80) | (0x01) = 0x81
+        assert_eq!(mbc.rtc_registers.day_counter_high & 0x80, 0x80, "Carry bit affected by write");
+        assert_eq!(mbc.rtc_registers.day_counter_high & 0x01, 0x01, "Day MSB not set after carry test");
+    }
+
+    // Tests for MBC5
+    #[test]
+    fn test_mbc5_ram_enable_disable() {
+        let rom = create_rom(1024, 0); // 1MB ROM
+        // Cartridge type 0x1B for MBC5+RAM+BATTERY
+        let mut mbc = MBC5::new(rom, 32 * 1024, 0x1B);
+
+        // RAM should be disabled initially
+        assert!(!mbc.ram_enabled, "RAM is not initially disabled");
+        mbc.write_ram(0x0000, 0xFF);
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from disabled RAM should return 0xFF");
+
+        // Enable RAM
+        mbc.write_rom(0x0000, 0x0A); // Any address in 0x0000-0x1FFF
+        assert!(mbc.ram_enabled, "RAM is not enabled after writing 0x0A");
+
+        // Write and read from enabled RAM
+        mbc.write_ram(0x0000, 0x55);
+        assert_eq!(mbc.read_ram(0x0000), 0x55, "RAM read/write failed when enabled");
+
+        // Disable RAM
+        mbc.write_rom(0x1000, 0x00); // Any address in 0x0000-0x1FFF
+        assert!(!mbc.ram_enabled, "RAM is not disabled after writing 0x00");
+        assert_eq!(mbc.read_ram(0x0000), 0xFF, "Read from re-disabled RAM should return 0xFF");
+    }
+
+    #[test]
+    fn test_mbc5_rom_bank_switching() {
+        let rom_size_kb = 8 * 1024; // 8MB ROM -> 512 banks (0-511)
+        let rom = create_rom(rom_size_kb, 0);
+        // Cartridge type 0x19 for MBC5 plain
+        let mut mbc = MBC5::new(rom.clone(), 0, 0x19);
+
+        // Bank 0 (0x0000-0x3FFF) is fixed
+        for i in 0..0x4000 {
+            assert_eq!(mbc.read_rom(i as u16), rom[i], "Initial bank 0 read mismatch at {}", i);
+        }
+
+        // Switch to bank 1 (low=1, high=0)
+        mbc.write_rom(0x2000, 1); // Lower 8 bits of ROM bank
+        mbc.write_rom(0x3000, 0); // Higher 1 bit of ROM bank
+        assert_eq!(mbc.selected_rom_bank_low, 1);
+        assert_eq!(mbc.selected_rom_bank_high, 0);
+        let expected_bank_1 = 1;
+        for i in 0..0x4000 { // Reading from 0x4000-0x7FFF
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[expected_bank_1 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 1 read mismatch at offset {}", i);
+        }
+
+        // Switch to bank 255 (low=255, high=0)
+        mbc.write_rom(0x2ABC, 255);
+        mbc.write_rom(0x3DEF, 0);
+        assert_eq!(mbc.selected_rom_bank_low, 255);
+        assert_eq!(mbc.selected_rom_bank_high, 0);
+        let expected_bank_255 = 255;
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[expected_bank_255 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 255 read mismatch at offset {}", i);
+        }
+
+        // Switch to bank 256 (low=0, high=1)
+        mbc.write_rom(0x2000, 0);
+        mbc.write_rom(0x3000, 1);
+        assert_eq!(mbc.selected_rom_bank_low, 0);
+        assert_eq!(mbc.selected_rom_bank_high, 1);
+        let expected_bank_256 = 256; // (1 << 8) | 0
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[expected_bank_256 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 256 read mismatch at offset {}", i);
+        }
+
+        // Switch to bank 511 (low=255, high=1) (max for 9-bit)
+        mbc.write_rom(0x2123, 255);
+        mbc.write_rom(0x3123, 1);
+        assert_eq!(mbc.selected_rom_bank_low, 255);
+        assert_eq!(mbc.selected_rom_bank_high, 1);
+        let expected_bank_511 = 511; // (1 << 8) | 255
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom[expected_bank_511 * (16 * 1024) + i];
+            assert_eq!(mbc.read_rom(rom_addr as u16), expected_val, "Bank 511 read mismatch at offset {}", i);
+        }
+
+        // Test aliasing with smaller ROM: 1MB ROM (64 banks, 0-63)
+        let rom_1mb = create_rom(1024, 50);
+        let mut mbc_small_rom = MBC5::new(rom_1mb.clone(), 0, 0x19);
+        assert_eq!(mbc_small_rom.num_rom_banks, 64);
+
+        // Select bank 65 (low=1, high=0, but full_rom_bank = 1). This is not how it works.
+        // full_rom_bank = (high << 8) | low
+        // Select bank 65: low=65 (0x41), high=0.  full_rom_bank = 65.
+        // Effective bank = 65 % num_rom_banks (64) = 1.
+        mbc_small_rom.write_rom(0x2000, 65);
+        mbc_small_rom.write_rom(0x3000, 0); // high bit is 0
+        assert_eq!(mbc_small_rom.selected_rom_bank_low, 65);
+        assert_eq!(mbc_small_rom.selected_rom_bank_high, 0);
+        let aliased_bank_1 = 1;
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom_1mb[aliased_bank_1 * (16 * 1024) + i];
+            assert_eq!(mbc_small_rom.read_rom(rom_addr as u16), expected_val, "Bank 65 (aliased to 1 on 1MB ROM) read mismatch at offset {}", i);
+        }
+
+        // Select bank 256 (low=0, high=1) on 1MB ROM. full_rom_bank = 256.
+        // Effective bank = 256 % 64 = 0.
+        mbc_small_rom.write_rom(0x2000, 0);
+        mbc_small_rom.write_rom(0x3000, 1);
+        assert_eq!(mbc_small_rom.selected_rom_bank_low, 0);
+        assert_eq!(mbc_small_rom.selected_rom_bank_high, 1);
+        let aliased_bank_0 = 0;
+        for i in 0..0x4000 {
+            let rom_addr = 0x4000 + i;
+            let expected_val = rom_1mb[aliased_bank_0 * (16 * 1024) + i];
+            assert_eq!(mbc_small_rom.read_rom(rom_addr as u16), expected_val, "Bank 256 (aliased to 0 on 1MB ROM) read mismatch at offset {}", i);
+        }
+    }
+
+    #[test]
+    fn test_mbc5_ram_banking() {
+        let rom = create_rom(256, 0);
+        // 128KB RAM -> 16 banks (0-15)
+        let ram_size_bytes = 128 * 1024;
+        let mut mbc = MBC5::new(rom, ram_size_bytes, 0x1B); // MBC5+RAM+BATTERY
+        assert_eq!(mbc.num_ram_banks, 16);
+
+        mbc.write_rom(0x0000, 0x0A); // Enable RAM
+
+        // Select RAM bank 0
+        mbc.write_rom(0x4000, 0x00); // value & 0x0F = 0
+        assert_eq!(mbc.selected_ram_bank, 0);
+        mbc.write_ram(0x0001, 0xA1);
+        assert_eq!(mbc.read_ram(0x0001), 0xA1);
+
+        // Select RAM bank 7
+        mbc.write_rom(0x4000, 0x07);
+        assert_eq!(mbc.selected_ram_bank, 7);
+        mbc.write_ram(0x1002, 0xB2);
+        assert_eq!(mbc.read_ram(0x1002), 0xB2);
+        // Check bank 0 data is still there
+        mbc.write_rom(0x4000, 0x00); // Switch back to RAM bank 0
+        assert_eq!(mbc.read_ram(0x0001), 0xA1);
+
+        // Select RAM bank 15 (0x0F) (max for 128KB RAM)
+        mbc.write_rom(0x5000, 0x0F);
+        assert_eq!(mbc.selected_ram_bank, 15);
+        mbc.write_ram(0x1FFF, 0xC3); // Last byte of RAM bank 15
+        assert_eq!(mbc.read_ram(0x1FFF), 0xC3);
+
+        // Writing value > 0x0F should be masked. E.g. 0x13 -> 0x03
+        // This is incorrect, the spec says "value & 0x0F". So 0x13 would be bank 3.
+        // The current code does `ram_bank % (self.num_ram_banks as u8)`
+        // If num_ram_banks is 16, then 0x13 (19) & 0x0F = 3. 3 % 16 = 3. So bank 3.
+        // If num_ram_banks is 8, then 0x0F (15) & 0x0F = 15. 15 % 8 = 7. So bank 7.
+        // Let's test the actual behavior based on `value & 0x0F` then modulo `num_ram_banks`.
+        mbc.write_rom(0x4000, 0x13); // value & 0x0F = 0x03. 0x03 % 16 = 3.
+        assert_eq!(mbc.selected_ram_bank, 3);
+
+
+        // Test with smaller RAM: 32KB (4 banks, 0-3)
+        let mut mbc_32kb_ram = MBC5::new(create_rom(64,0), 32 * 1024, 0x1B);
+        assert_eq!(mbc_32kb_ram.num_ram_banks, 4);
+        mbc_32kb_ram.write_rom(0x0000, 0x0A); // Enable RAM
+
+        mbc_32kb_ram.write_rom(0x4000, 0x00); // RAM bank 0
+        mbc_32kb_ram.write_ram(0x0000, 0xAA);
+        assert_eq!(mbc_32kb_ram.read_ram(0x0000), 0xAA);
+
+        // Select RAM bank 0x05. value & 0x0F = 0x05.
+        // selected_ram_bank = 0x05 % num_ram_banks (4) = 1.
+        mbc_32kb_ram.write_rom(0x4000, 0x05);
+        assert_eq!(mbc_32kb_ram.selected_ram_bank, 1);
+        mbc_32kb_ram.write_ram(0x0001, 0xBB);
+        assert_eq!(mbc_32kb_ram.read_ram(0x0001), 0xBB);
+
+        // Check data in bank 0 is still there
+        mbc_32kb_ram.write_rom(0x4000, 0x00); // bank 0
+        assert_eq!(mbc_32kb_ram.read_ram(0x0000), 0xAA);
+
+
+        // Test with no RAM. selected_ram_bank should be 0, reads/writes ineffective.
+        let mut mbc_no_ram = MBC5::new(create_rom(64,0), 0, 0x19); // No RAM
+        assert_eq!(mbc_no_ram.num_ram_banks, 0);
+        mbc_no_ram.write_rom(0x0000, 0x0A); // "Enable" RAM (flag is set)
+        assert!(mbc_no_ram.ram_enabled);
+
+        mbc_no_ram.write_rom(0x4000, 0x05); // Try to select bank 5
+        assert_eq!(mbc_no_ram.selected_ram_bank, 0, "Selected RAM bank should be 0 if no RAM");
+        assert_eq!(mbc_no_ram.read_ram(0x0000), 0xFF, "Read from non-existent RAM should be 0xFF");
+        mbc_no_ram.write_ram(0x0000, 0xCC); // Should do nothing
+        assert_eq!(mbc_no_ram.read_ram(0x0000), 0xFF);
+    }
+
+    #[test]
+    fn test_mbc5_rumble_flag() {
+        let rom = create_rom(64, 0);
+        // Cartridge types indicating rumble: 0x1C, 0x1D, 0x1E
+        let mbc_rumble1 = MBC5::new(rom.clone(), 8*1024, 0x1C); // MBC5+RUMBLE+RAM+BATTERY
+        assert!(mbc_rumble1.has_rumble, "has_rumble should be true for type 0x1C");
+
+        let mbc_rumble2 = MBC5::new(rom.clone(), 8*1024, 0x1D); // MBC5+RUMBLE+RAM
+        assert!(mbc_rumble2.has_rumble, "has_rumble should be true for type 0x1D");
+
+        let mbc_rumble3 = MBC5::new(rom.clone(), 8*1024, 0x1E); // MBC5+RUMBLE
+        assert!(mbc_rumble3.has_rumble, "has_rumble should be true for type 0x1E");
+
+        // Cartridge types not indicating rumble for MBC5
+        let mbc_no_rumble1 = MBC5::new(rom.clone(), 8*1024, 0x19); // MBC5
+        assert!(!mbc_no_rumble1.has_rumble, "has_rumble should be false for type 0x19");
+
+        let mbc_no_rumble2 = MBC5::new(rom.clone(), 8*1024, 0x1A); // MBC5+RAM
+        assert!(!mbc_no_rumble2.has_rumble, "has_rumble should be false for type 0x1A");
+
+        let mbc_no_rumble3 = MBC5::new(rom.clone(), 8*1024, 0x1B); // MBC5+RAM+BATTERY
+        assert!(!mbc_no_rumble3.has_rumble, "has_rumble should be false for type 0x1B");
+    }
+
+    // Tests for Stubbed MBCs
+
+    #[test]
+    fn test_mbc6_stub_behavior() { // MBC6 uses MBC1 internally
+        let rom_data = create_rom(128, 10); // 128KB ROM
+        let ram_size_bytes = 8 * 1024;    // 8KB RAM
+        // MBC6 cartridge type byte example 0x20
+        let mut mbc6 = MBC6::new(rom_data.clone(), ram_size_bytes, 0x20);
+
+        // Compare with a manually created MBC1
+        let mut mbc1_equivalent = MBC1::new(rom_data.clone(), ram_size_bytes);
+
+        // Test initial ROM read (bank 0)
+        assert_eq!(mbc6.read_rom(0x1000), mbc1_equivalent.read_rom(0x1000), "MBC6 ROM read (bank 0) mismatch with MBC1");
+
+        // Enable RAM (for both)
+        mbc6.write_rom(0x0000, 0x0A);
+        mbc1_equivalent.write_rom(0x0000, 0x0A);
+        assert!(mbc6.internal_mbc1.ram_enabled, "MBC6 internal MBC1 RAM not enabled");
+
+        // Test RAM write/read
+        mbc6.write_ram(0x0100, 0xAB);
+        mbc1_equivalent.write_ram(0x0100, 0xAB);
+        assert_eq!(mbc6.read_ram(0x0100), mbc1_equivalent.read_ram(0x0100), "MBC6 RAM r/w mismatch with MBC1");
+        assert_eq!(mbc6.read_ram(0x0100), 0xAB, "MBC6 RAM value incorrect");
+
+
+        // Test ROM bank switching (low bits)
+        mbc6.write_rom(0x2000, 5); // Switch to bank 5
+        mbc1_equivalent.write_rom(0x2000, 5);
+        assert_eq!(mbc6.internal_mbc1.rom_bank_low_bits, 5, "MBC6 internal MBC1 ROM bank low bits not set");
+
+        assert_eq!(mbc6.read_rom(0x4010), mbc1_equivalent.read_rom(0x4010), "MBC6 ROM read (bank 5) mismatch with MBC1");
+        let expected_val_bank5 = rom_data[5 * (16*1024) + 0x0010];
+        assert_eq!(mbc6.read_rom(0x4010), expected_val_bank5, "MBC6 ROM value incorrect for bank 5");
+    }
+
+    #[test]
+    fn test_mbc7_stub_behavior() { // MBC7 uses NoMBC internally
+        let rom_data = create_rom(64, 20);  // 64KB ROM
+        let ram_size_bytes = 0; // MBC7 typically doesn't use external RAM via A000-BFFF like this
+                                  // The stub passes this to NoMBC. Let's test with 0.
+        // MBC7 cartridge type byte example 0x22
+        let mut mbc7 = MBC7::new(rom_data.clone(), ram_size_bytes, 0x22);
+        let mut nombc_equivalent = NoMBC::new(rom_data.clone(), ram_size_bytes);
+
+        // Test ROM read
+        assert_eq!(mbc7.read_rom(0x1234), nombc_equivalent.read_rom(0x1234), "MBC7 ROM read mismatch with NoMBC");
+        assert_eq!(mbc7.read_rom(0x1234), rom_data[0x1234], "MBC7 ROM value incorrect");
+
+        // Test RAM read (should be 0xFF as no RAM for NoMBC)
+        assert_eq!(mbc7.read_ram(0x0000), nombc_equivalent.read_ram(0x0000), "MBC7 RAM read mismatch with NoMBC");
+        assert_eq!(mbc7.read_ram(0x0000), 0xFF, "MBC7 RAM read expected 0xFF");
+
+        // Test RAM write (should be ignored by NoMBC with 0 RAM size)
+        mbc7.write_ram(0x0000, 0xAA);
+        nombc_equivalent.write_ram(0x0000, 0xAA); // NoMBC would ignore this
+        assert_eq!(mbc7.read_ram(0x0000), 0xFF, "MBC7 RAM read after write expected 0xFF");
+
+        // Test write to ROM area (ignored by NoMBC)
+        let initial_rom_val = mbc7.read_rom(0x1000);
+        mbc7.write_rom(0x1000, 0xCC);
+        assert_eq!(mbc7.read_rom(0x1000), initial_rom_val, "MBC7 ROM content changed by write_rom, NoMBC should ignore");
+    }
+
+    #[test]
+    fn test_mbc30_stub_behavior() { // MBC30 uses MBC3 internally
+        let rom_data = create_rom(1024, 30); // 1MB ROM
+        let ram_size_bytes = 32 * 1024;     // 32KB RAM
+        // MBC30 hypothetical type byte 0x14 (or an MBC3 type byte)
+        let mut mbc30 = MBC30::new(rom_data.clone(), ram_size_bytes, 0x14);
+        let mut mbc3_equivalent = MBC3::new(rom_data.clone(), ram_size_bytes);
+
+        // Test initial ROM read (bank 0)
+        assert_eq!(mbc30.read_rom(0x0500), mbc3_equivalent.read_rom(0x0500), "MBC30 ROM read (bank 0) mismatch with MBC3");
+
+        // Enable RAM/RTC
+        mbc30.write_rom(0x0000, 0x0A);
+        mbc3_equivalent.write_rom(0x0000, 0x0A);
+        assert!(mbc30.internal_mbc3.ram_and_rtc_enabled, "MBC30 internal MBC3 RAM/RTC not enabled");
+
+        // Select RAM bank 1 and test RAM write/read
+        mbc30.write_rom(0x4000, 0x01); // Select RAM bank 1
+        mbc3_equivalent.write_rom(0x4000, 0x01);
+
+        mbc30.write_ram(0x0200, 0xBB);
+        mbc3_equivalent.write_ram(0x0200, 0xBB);
+        assert_eq!(mbc30.read_ram(0x0200), mbc3_equivalent.read_ram(0x0200), "MBC30 RAM r/w mismatch with MBC3");
+        assert_eq!(mbc30.read_ram(0x0200), 0xBB, "MBC30 RAM value incorrect");
+
+        // Test ROM bank switching
+        mbc30.write_rom(0x2000, 10); // Switch to bank 10
+        mbc3_equivalent.write_rom(0x2000, 10);
+        assert_eq!(mbc30.internal_mbc3.selected_rom_bank, 10, "MBC30 internal MBC3 ROM bank not set");
+
+        assert_eq!(mbc30.read_rom(0x4020), mbc3_equivalent.read_rom(0x4020), "MBC30 ROM read (bank 10) mismatch with MBC3");
+        let expected_val_bank10 = rom_data[10 * (16*1024) + 0x0020];
+        assert_eq!(mbc30.read_rom(0x4020), expected_val_bank10, "MBC30 ROM value incorrect for bank 10");
+
+        // Test RTC latch (basic check, RTC tests are more thorough in MBC3 tests)
+        mbc30.internal_mbc3.rtc_registers.seconds = 5; // Set directly for test
+        mbc3_equivalent.rtc_registers.seconds = 5;
+
+        mbc30.write_rom(0x6000, 0x00);
+        mbc30.write_rom(0x6000, 0x01);
+        mbc3_equivalent.write_rom(0x6000, 0x00);
+        mbc3_equivalent.write_rom(0x6000, 0x01);
+
+        mbc30.write_rom(0x4000, 0x08); // Select RTC seconds
+        mbc3_equivalent.write_rom(0x4000, 0x08);
+        assert_eq!(mbc30.read_ram(0x0000), mbc3_equivalent.read_ram(0x0000), "MBC30 RTC read mismatch with MBC3");
+        assert_eq!(mbc30.read_ram(0x0000), 5, "MBC30 RTC read incorrect value");
+    }
+
+    // Placeholder for future tests
+    #[test]
+    fn placeholder_test() {
+        assert_eq!(2 + 2, 4);
     }
 }
