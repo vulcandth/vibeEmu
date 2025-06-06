@@ -1,6 +1,6 @@
-# Game Boy Color Emulator
+# VibeEmu
 
-This project is a Game Boy Color emulator written in Rust.
+This project is a Game Boy Color emulator named VibeEmu written in Rust.
 
 ## Current State
 

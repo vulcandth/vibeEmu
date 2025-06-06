@@ -3,6 +3,16 @@
 version = 3
 
 [[package]]
+name = "VibeEmu"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "image",
+ "log",
+ "minifb",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -297,16 +307,6 @@ dependencies = [
  "pin-project-lite",
  "pin-utils",
  "slab",
-]
-
-[[package]]
-name = "gbc-emulator"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "image",
- "log",
- "minifb",
 ]
 
 [[package]]
