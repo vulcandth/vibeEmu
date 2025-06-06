@@ -331,7 +331,7 @@ mod tests {
         use crate::timer::Timer;
 
         let mut t = Timer::new();
-        let mut if_reg: u8 = 0;
+        let mut _if_reg: u8 = 0; // Prefixed with underscore as it's not read in this specific test logic
 
         // wreg TAC,$05  (enable, 262 kHz)
         t.write_byte(0xFF07, 0x05);
@@ -340,20 +340,20 @@ mod tests {
         t.write_byte(0xFF05, 0x00);
 
         // wreg IF,0
-        if_reg = 0;
+        _if_reg = 0;
 
         // delay 500
-        t.tick(500, &mut if_reg);
-        let if_after_500 = if_reg;                   // value used later
+        t.tick(500, &mut _if_reg);
+        let if_after_500 = _if_reg;                   // value used later
 
         // delay 500
-        t.tick(500, &mut if_reg);
+        t.tick(500, &mut _if_reg);
         assert_eq!(if_after_500 & (1 << TIMER_IRQ_BIT), 0,
             "Timer interrupt fired too early (≤ 1 000 T-cycles)");
 
         // delay 500  (total 1 500)
-        t.tick(500, &mut if_reg);
-        assert_ne!(if_reg & (1 << TIMER_IRQ_BIT), 0,
+        t.tick(500, &mut _if_reg);
+        assert_ne!(_if_reg & (1 << TIMER_IRQ_BIT), 0,
             "Timer interrupt never arrived within 1 500 T-cycles");
     }
 
