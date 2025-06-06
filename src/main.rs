@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(is_headless, false);
         assert_eq!(halt_time, None);
         assert_eq!(halt_cycles, None);
-        assert_eq!(rom_path, "roms/cpu_instrs.gb".to_string());
+        assert_eq!(rom_path, "roms/blargg/cpu_instrs/cpu_instrs.gb".to_string());
     }
 
     #[test]
