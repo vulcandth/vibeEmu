@@ -237,8 +237,7 @@ fn main() {
 
     // General emulation settings
     const SERIAL_PRINT_INTERVAL: u64 = 500_000; // Print serial output every N steps
-    // TODO: Make MAX_STEPS_HEADLESS configurable via command-line argument --steps <number>
-    const MAX_STEPS_HEADLESS: u64 = 20_000_000; // Limit for headless mode
+    // MAX_STEPS_HEADLESS has been removed. Functionality is covered by --halt-cycles or --halt-time.
 
     // Main emulation loop
     let mut emulation_steps: u64 = 0; // Total CPU steps executed
@@ -369,10 +368,7 @@ fn main() {
             }
 
             if is_headless {
-                if emulation_steps >= MAX_STEPS_HEADLESS {
-                    println!("Headless mode: Max steps ({}) reached.", MAX_STEPS_HEADLESS);
-                    running = false;
-                }
+                // MAX_STEPS_HEADLESS check removed
                 if let Some(duration_limit_secs) = halt_duration_seconds {
                     let elapsed = start_time.elapsed();
                     if elapsed.as_secs() >= duration_limit_secs {
