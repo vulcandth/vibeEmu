@@ -11,6 +11,7 @@ pub struct Timer {
 
     div_clock_cycles: u32, // Internal counter for DIV
     tima_clock_cycles: u32, // Internal counter for TIMA
+    tima_overflow_occurred: bool, // New field for delayed interrupt
 }
 
 impl Timer {
@@ -22,10 +23,17 @@ impl Timer {
             tac: 0,
             div_clock_cycles: 0,
             tima_clock_cycles: 0,
+            tima_overflow_occurred: false, // Initialize to false
         }
     }
 
     pub fn tick(&mut self, cycles: u32, interrupt_flag: &mut u8) {
+        // Handle delayed interrupt from previous overflow
+        if self.tima_overflow_occurred {
+            *interrupt_flag |= 1 << TIMER_IRQ_BIT;
+            self.tima_overflow_occurred = false;
+        }
+
         // DIV Logic
         self.div_clock_cycles += cycles;
         while self.div_clock_cycles >= DIV_THRESHOLD {
@@ -39,13 +47,17 @@ impl Timer {
             let tima_threshold = self.get_tima_threshold();
 
             while self.tima_clock_cycles >= tima_threshold {
+                // It's possible for TIMA to increment multiple times if many cycles are passed.
+                // Each increment needs to be processed for potential overflow.
+                self.tima_clock_cycles -= tima_threshold; // Consume cycles for one potential increment
+
                 let (new_tima, overflowed) = self.tima.overflowing_add(1);
                 self.tima = new_tima;
-                self.tima_clock_cycles -= tima_threshold;
 
                 if overflowed {
-                    self.tima = self.tma;
-                    *interrupt_flag |= 1 << TIMER_IRQ_BIT; // Request Timer Interrupt
+                    self.tima = self.tma; // Reload TIMA from TMA
+                    // Instead of setting interrupt flag immediately, signal it for the next tick call.
+                    self.tima_overflow_occurred = true;
                 }
             }
         }
@@ -255,18 +267,31 @@ mod tests {
         assert_eq!(if_reg & (1 << TIMER_IRQ_BIT), 0, "Interrupt flag should not be set yet");
 
         // Tick to increment TIMA from FF to 00 (overflow)
-        timer.tick(16, &mut if_reg);
+        timer.tick(16, &mut if_reg); // TIMA overflows, tima_overflow_occurred becomes true
         assert_eq!(timer.tima, 0xAB, "TIMA should be reset to TMA (0xAB) after overflow");
-        assert_ne!(if_reg & (1 << TIMER_IRQ_BIT), 0, "Timer interrupt flag should be set");
+        assert_eq!(if_reg & (1 << TIMER_IRQ_BIT), 0, "Interrupt flag should NOT be set yet (delay)");
+        assert!(timer.tima_overflow_occurred, "tima_overflow_occurred should be true after overflow");
         assert_eq!(timer.tima_clock_cycles, 0, "tima_clock_cycles should reset on overflow tick");
+
+        // Next tick call to process the pending overflow and set the interrupt flag
+        timer.tick(1, &mut if_reg); // Minimal tick to process the flag
+        assert_ne!(if_reg & (1 << TIMER_IRQ_BIT), 0, "Timer interrupt flag should NOW be set");
+        assert!(!timer.tima_overflow_occurred, "tima_overflow_occurred should be false after processing");
+
 
         // Reset interrupt flag for next test
         if_reg = 0;
         timer.tima = 0xFF; // Setup for another overflow
         timer.write_byte(0xFF06, 0x00); // TMA = 0x00
-        timer.tick(16, &mut if_reg);
+
+        timer.tick(16, &mut if_reg); // TIMA overflows, tima_overflow_occurred becomes true
         assert_eq!(timer.tima, 0x00, "TIMA should be reset to TMA (0x00) after overflow");
-        assert_ne!(if_reg & (1 << TIMER_IRQ_BIT), 0, "Timer interrupt flag should be set (TMA=0x00)");
+        assert_eq!(if_reg & (1 << TIMER_IRQ_BIT), 0, "Interrupt flag should NOT be set yet (TMA=0x00, delay)");
+        assert!(timer.tima_overflow_occurred, "tima_overflow_occurred should be true after overflow (TMA=0x00)");
+
+        timer.tick(1, &mut if_reg); // Minimal tick to process the flag
+        assert_ne!(if_reg & (1 << TIMER_IRQ_BIT), 0, "Timer interrupt flag should NOW be set (TMA=0x00)");
+        assert!(!timer.tima_overflow_occurred, "tima_overflow_occurred should be false after processing (TMA=0x00)");
     }
 
     #[test]
