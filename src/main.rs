@@ -66,70 +66,86 @@ fn convert_rgb_to_u32_buffer(rgb_buffer: &[u8], width: usize, height: usize) -> 
     u32_buffer
 }
 
-fn main() {
-    println!("GBC Emulator starting...");
-
-    // --- Argument Parsing ---
-    let args: Vec<String> = env::args().collect();
+// Returns: (is_headless, halt_duration_seconds, halt_cycles_count, rom_path, rom_path_explicitly_set, program_name)
+fn parse_args(args_vec: &[String]) -> (bool, Option<u64>, Option<u64>, String, bool, String) {
     let mut is_headless = false;
     let mut halt_duration_seconds: Option<u64> = None;
+    let mut halt_cycles_count: Option<u64> = None;
     let mut rom_path = "roms/cpu_instrs.gb".to_string(); // Default ROM path
     let mut rom_path_explicitly_set = false;
+    let program_name = args_vec.get(0).cloned().unwrap_or_else(|| "gbc_emulator".to_string());
 
-    // Manual argument parsing
+
     let mut i = 1; // Start after program name
-    while i < args.len() {
-        let arg = &args[i];
+    while i < args_vec.len() {
+        let arg = &args_vec[i];
         match arg.as_str() {
             "--headless" => {
                 is_headless = true;
             }
             "--halt-time" => {
-                if i + 1 < args.len() {
-                    match args[i + 1].parse::<u64>() {
+                if i + 1 < args_vec.len() {
+                    match args_vec[i + 1].parse::<u64>() {
                         Ok(seconds) => halt_duration_seconds = Some(seconds),
                         Err(_) => {
                             eprintln!("Error: Invalid value for --halt-time. Expected a number of seconds.");
-                            // std::process::exit(1); // Or simply proceed without time limit
                         }
                     }
                     i += 1; // Consume the value argument
                 } else {
                     eprintln!("Error: --halt-time requires a value (seconds).");
-                    // std::process::exit(1); // Or simply proceed without time limit
+                }
+            }
+            "--halt-cycles" => {
+                if i + 1 < args_vec.len() {
+                    match args_vec[i + 1].parse::<u64>() {
+                        Ok(cycles) => halt_cycles_count = Some(cycles),
+                        Err(_) => {
+                            eprintln!("Error: Invalid value for --halt-cycles. Expected a number of cycles.");
+                        }
+                    }
+                    i += 1; // Consume the value argument
+                } else {
+                    eprintln!("Error: --halt-cycles requires a value (number of cycles).");
                 }
             }
             _ => {
-                // If it's not a known flag, and ROM path hasn't been set yet, assume it's the ROM path.
                 if !arg.starts_with("--") && !rom_path_explicitly_set {
                     rom_path = arg.clone();
                     rom_path_explicitly_set = true;
                 } else if !arg.starts_with("--") && rom_path_explicitly_set {
-                    // If ROM path is already set and we encounter another non-flag argument.
                     println!("Warning: Multiple ROM paths? Using first one: {}", rom_path);
                 }
-                // Silently ignore unknown flags like --steps for now or print a warning.
             }
         }
         i += 1;
     }
 
-    if is_headless {
-        println!("Running in headless mode.");
-        if let Some(duration) = halt_duration_seconds {
-            println!("Halt time set to {} seconds.", duration);
-        }
-        if !rom_path_explicitly_set {
-            // Default ROM for headless if not specified is fine.
-            println!("No ROM path provided for headless mode. Defaulting to: {}", rom_path);
-        }
-    } else { // GUI Mode
-        if !rom_path_explicitly_set {
-            // If no ROM path is set explicitly for GUI mode, explain usage.
-            // The default rom_path is already "roms/cpu_instrs.gb", so this informs the user.
-            println!("Usage: {} <path_to_rom> [--headless] [--halt-time <seconds>]", args[0]);
-            println!("Defaulting to ROM: {}", rom_path);
-        }
+    // Apply default headless halt time if --headless was specified and no --halt-time was given.
+    if is_headless && halt_duration_seconds.is_none() {
+        halt_duration_seconds = Some(30);
+    }
+
+    (is_headless, halt_duration_seconds, halt_cycles_count, rom_path, rom_path_explicitly_set, program_name)
+}
+
+fn main() {
+    println!("GBC Emulator starting...");
+
+    let args_vec: Vec<String> = env::args().collect();
+    let (
+        mut is_headless, // Make mutable to allow fallback
+        mut halt_duration_seconds, // Make mutable for fallback
+        halt_cycles_count,
+        rom_path,
+        rom_path_explicitly_set,
+        program_name
+    ) = parse_args(&args_vec);
+
+    // Initial message about ROM and potential GUI mode usage.
+    if !is_headless && !rom_path_explicitly_set {
+        println!("Usage: {} <path_to_rom> [--headless] [--halt-time <seconds>] [--halt-cycles <cycles>]", program_name);
+        println!("Defaulting to ROM: {}", rom_path);
     }
     println!("Loading ROM from: {}", rom_path);
 
@@ -165,19 +181,54 @@ fn main() {
 
     println!("Initial CPU state: PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}", cpu.pc, cpu.sp, cpu.a, cpu.f);
 
-    // --- Conditional Window Initialization ---
-    let mut window: Option<minifb::Window> = if !is_headless {
-        Some(Window::new(
+    // --- Conditional Window Initialization with Fallback ---
+    let mut window_attempt: Option<minifb::Window> = None;
+    let mut fell_back_to_headless = false; // Track if fallback occurred
+
+    if !is_headless {
+        match Window::new(
             "GBC Emulator - Press ESC to exit",
             WINDOW_WIDTH,
             WINDOW_HEIGHT,
             WindowOptions::default(),
-        ).unwrap_or_else(|e| {
-            panic!("Failed to create window: {}", e); // Panic remains for GUI mode if window fails
-        }))
-    } else {
-        None // No window in headless mode
-    };
+        ) {
+            Ok(w) => window_attempt = Some(w),
+            Err(e) => {
+                eprintln!("Failed to create window: {}. Falling back to headless mode.", e);
+                is_headless = true; // Switch to headless
+                fell_back_to_headless = true; // Mark that fallback happened
+                // Apply default headless halt time if no other time is set
+                if halt_duration_seconds.is_none() {
+                    halt_duration_seconds = Some(30);
+                }
+                // window_attempt remains None
+            }
+        }
+    }
+    // Assign to the final window variable
+    let mut window: Option<minifb::Window> = window_attempt;
+
+    // Print headless mode status AFTER window initialization attempt
+    if is_headless {
+        if fell_back_to_headless {
+            // Specific message for fallback
+            println!("Now running in headless mode due to window creation failure.");
+        } else {
+            // Standard message if started in headless mode via argument
+            println!("Running in headless mode.");
+        }
+        if let Some(duration) = halt_duration_seconds {
+            println!("Halt time set to {} seconds.", duration);
+        }
+        if let Some(cycles) = halt_cycles_count {
+            println!("Halt cycles set to {}.", cycles);
+        }
+        if !rom_path_explicitly_set {
+             // This message might be redundant if already printed, but context dependent.
+            println!("No ROM path provided for headless mode. Defaulting to: {}", rom_path);
+        }
+    }
+
 
     if let Some(_w) = &mut window { // Only if window was created
         // Limit window update rate (optional, minifb handles this reasonably well)
@@ -186,8 +237,7 @@ fn main() {
 
     // General emulation settings
     const SERIAL_PRINT_INTERVAL: u64 = 500_000; // Print serial output every N steps
-    // TODO: Make MAX_STEPS_HEADLESS configurable via command-line argument --steps <number>
-    const MAX_STEPS_HEADLESS: u64 = 20_000_000; // Limit for headless mode
+    // MAX_STEPS_HEADLESS has been removed. Functionality is covered by --halt-cycles or --halt-time.
 
     // Main emulation loop
     let mut emulation_steps: u64 = 0; // Total CPU steps executed
@@ -318,15 +368,21 @@ fn main() {
             }
 
             if is_headless {
-                if emulation_steps >= MAX_STEPS_HEADLESS {
-                    println!("Headless mode: Max steps ({}) reached.", MAX_STEPS_HEADLESS);
-                    running = false;
-                }
+                // MAX_STEPS_HEADLESS check removed
                 if let Some(duration_limit_secs) = halt_duration_seconds {
                     let elapsed = start_time.elapsed();
                     if elapsed.as_secs() >= duration_limit_secs {
                         println!("Headless mode: Time limit of {} seconds reached. (Elapsed: {}s)", duration_limit_secs, elapsed.as_secs());
                         running = false;
+                    }
+                }
+                // Check for halt_cycles_count condition
+                if running { // Only check if not already stopped by time limit or max steps
+                    if let Some(limit) = halt_cycles_count {
+                        if emulation_steps >= limit {
+                            println!("Headless mode: Cycle limit of {} reached.", limit);
+                            running = false;
+                        }
                     }
                 }
             }
@@ -358,4 +414,94 @@ fn main() {
              cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
     println!("CPU is_halted: {}", cpu.is_halted);
     println!("GBC Emulator finished.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_args_halt_cycles_valid() {
+        let args = vec![
+            "program_name".to_string(),
+            "--headless".to_string(),
+            "--halt-cycles".to_string(),
+            "100".to_string(),
+        ];
+        let (_, _, halt_cycles, _, _, _) = parse_args(&args);
+        assert_eq!(halt_cycles, Some(100));
+    }
+
+    #[test]
+    fn test_parse_args_halt_cycles_invalid() {
+        let args = vec![
+            "program_name".to_string(),
+            "--headless".to_string(),
+            "--halt-cycles".to_string(),
+            "abc".to_string(),
+        ];
+        // Assuming error printed and value remains None (or default)
+        let (_, _, halt_cycles, _, _, _) = parse_args(&args);
+        assert_eq!(halt_cycles, None);
+    }
+
+    #[test]
+    fn test_parse_args_halt_cycles_missing_value() {
+        let args = vec![
+            "program_name".to_string(),
+            "--headless".to_string(),
+            "--halt-cycles".to_string(),
+        ];
+        let (_, _, halt_cycles, _, _, _) = parse_args(&args);
+        assert_eq!(halt_cycles, None);
+    }
+
+    #[test]
+    fn test_parse_args_headless_default_halt_time() {
+        let args = vec!["program_name".to_string(), "--headless".to_string()];
+        let (_, halt_time, _, _, _, _) = parse_args(&args);
+        assert_eq!(halt_time, Some(30));
+    }
+
+    #[test]
+    fn test_parse_args_headless_custom_halt_time() {
+        let args = vec![
+            "program_name".to_string(),
+            "--headless".to_string(),
+            "--halt-time".to_string(),
+            "10".to_string(),
+        ];
+        let (_, halt_time, _, _, _, _) = parse_args(&args);
+        assert_eq!(halt_time, Some(10));
+    }
+
+    #[test]
+    fn test_parse_args_headless_halt_time_zero() {
+        let args = vec![
+            "program_name".to_string(),
+            "--headless".to_string(),
+            "--halt-time".to_string(),
+            "0".to_string(),
+        ];
+        let (_, halt_time, _, _, _, _) = parse_args(&args);
+        assert_eq!(halt_time, Some(0));
+    }
+
+    #[test]
+    fn test_parse_args_no_args() {
+        let args = vec!["program_name".to_string()];
+        let (is_headless, halt_time, halt_cycles, rom_path, _, _) = parse_args(&args);
+        assert_eq!(is_headless, false);
+        assert_eq!(halt_time, None);
+        assert_eq!(halt_cycles, None);
+        assert_eq!(rom_path, "roms/cpu_instrs.gb".to_string());
+    }
+
+    #[test]
+    fn test_parse_args_rom_path_only() {
+        let args = vec!["program_name".to_string(), "my_rom.gb".to_string()];
+        let (_, _, _, rom_path, rom_explicitly_set, _) = parse_args(&args);
+        assert_eq!(rom_path, "my_rom.gb".to_string());
+        assert_eq!(rom_explicitly_set, true);
+    }
 }
