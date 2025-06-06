@@ -5908,10 +5908,20 @@ mod tests {
 
         #[test]
         fn test_stop_dmg_mode() {
-            let mut cpu = setup_cpu_with_mode(SystemMode::DMG);
-            let initial_pc = cpu.pc;
-            cpu.bus.borrow_mut().write_byte(cpu.pc, 0x10); // STOP opcode
-            cpu.bus.borrow_mut().write_byte(cpu.pc.wrapping_add(1), 0x00); // STOP's second byte
+            let initial_pc = 0x0100;
+            let mut rom_data = vec![0; 0x8000];
+            rom_data[0x0143] = 0x00; // DMG Mode
+            rom_data[0x0147] = 0x00; // NoMBC
+            rom_data[0x0149] = 0x02; // 8KB RAM
+            rom_data[initial_pc as usize] = 0x10; // STOP opcode
+            rom_data[(initial_pc + 1) as usize] = 0x00; // STOP second byte
+
+            let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+            let mut cpu = Cpu::new(Rc::clone(&bus));
+            // cpu.pc will be 0x0100 from Cpu::new
+
+            // For DMG STOP, no specific bus state like KEY1 is needed before STOP.
+            // The SystemMode::DMG is implicitly set by rom_data[0x0143] = 0x00 via Bus new -> get_system_mode.
 
             cpu.step(); // Execute STOP
 
@@ -5936,11 +5946,20 @@ mod tests {
 
         #[test]
         fn test_stop_cgb_mode_no_speed_switch() {
-            let mut cpu = setup_cpu_with_mode(SystemMode::CGB);
+            let initial_pc = 0x0100;
+            let mut rom_data = vec![0; 0x8000];
+            rom_data[0x0143] = 0x80; // CGB Mode
+            rom_data[0x0147] = 0x00; // NoMBC
+            rom_data[0x0149] = 0x02; // 8KB RAM
+            rom_data[initial_pc as usize] = 0x10; // STOP opcode
+            rom_data[(initial_pc + 1) as usize] = 0x00; // STOP second byte
+
+            let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+            let mut cpu = Cpu::new(Rc::clone(&bus));
+            // cpu.pc will be 0x0100 from Cpu::new
+
             cpu.bus.borrow_mut().set_key1_prepare_speed_switch(false); // Ensure no speed switch
-            let initial_pc = cpu.pc;
-            cpu.bus.borrow_mut().write_byte(cpu.pc, 0x10);
-            cpu.bus.borrow_mut().write_byte(cpu.pc.wrapping_add(1), 0x00);
+            // Removed direct bus writes for opcodes
 
             cpu.step(); // Execute STOP
 
@@ -5951,14 +5970,22 @@ mod tests {
 
         #[test]
         fn test_stop_cgb_mode_speed_switch_to_double() {
-            let mut cpu = setup_cpu_with_mode(SystemMode::CGB);
+            let initial_pc = 0x0100;
+            let mut rom_data = vec![0; 0x8000];
+            rom_data[0x0143] = 0x80; // CGB Only
+            rom_data[0x0147] = 0x00; // NoMBC
+            rom_data[0x0149] = 0x02; // 8KB RAM
+            rom_data[initial_pc as usize] = 0x10; // STOP opcode
+            rom_data[(initial_pc + 1) as usize] = 0x00; // STOP second byte
+
+            let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+            let mut cpu = Cpu::new(Rc::clone(&bus));
+            // Cpu::new defaults PC to 0x0100, so no need to set cpu.pc if initial_pc is 0x0100
+
             // Ensure bus is in normal speed initially and switch is prepared
             cpu.bus.borrow_mut().is_double_speed = false;
             cpu.bus.borrow_mut().set_key1_prepare_speed_switch(true);
-
-            let initial_pc = cpu.pc;
-            cpu.bus.borrow_mut().write_byte(cpu.pc, 0x10);
-            cpu.bus.borrow_mut().write_byte(cpu.pc.wrapping_add(1), 0x00);
+            // Removed direct bus writes for opcodes as they are in rom_data
 
             cpu.step(); // Execute STOP for speed switch
 
@@ -5971,14 +5998,22 @@ mod tests {
 
         #[test]
         fn test_stop_cgb_mode_speed_switch_to_normal() {
-            let mut cpu = setup_cpu_with_mode(SystemMode::CGB);
+            let initial_pc = 0x0100;
+            let mut rom_data = vec![0; 0x8000];
+            rom_data[0x0143] = 0x80; // CGB Only
+            rom_data[0x0147] = 0x00; // NoMBC
+            rom_data[0x0149] = 0x02; // 8KB RAM
+            rom_data[initial_pc as usize] = 0x10; // STOP opcode
+            rom_data[(initial_pc + 1) as usize] = 0x00; // STOP second byte
+
+            let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+            let mut cpu = Cpu::new(Rc::clone(&bus));
+            // Cpu::new defaults PC to 0x0100
+
             // Ensure bus is in double speed initially and switch is prepared
             cpu.bus.borrow_mut().is_double_speed = true;
             cpu.bus.borrow_mut().set_key1_prepare_speed_switch(true);
-
-            let initial_pc = cpu.pc;
-            cpu.bus.borrow_mut().write_byte(cpu.pc, 0x10);
-            cpu.bus.borrow_mut().write_byte(cpu.pc.wrapping_add(1), 0x00);
+            // Removed direct bus writes for opcodes
 
             cpu.step(); // Execute STOP for speed switch
 
