@@ -12,8 +12,26 @@ use crate::ppu::Ppu;
 use crate::interrupts::InterruptType;
 use crate::joypad::Joypad; // Added Joypad
 use crate::timer::Timer;
+use crate::mbc::{MemoryBankController, CartridgeType, NoMBC, MBC1, MBC2, MBC3, MBC5, MBC6, MBC7, MBC30}; // Added MBC30 import
+
+// Helper function to determine RAM size from cartridge header
+fn get_ram_size_from_header(ram_header_byte: u8) -> usize {
+    match ram_header_byte {
+        0x00 => 0,        // No RAM
+        0x01 => 2 * 1024, // 2KB
+        0x02 => 8 * 1024, // 8KB
+        0x03 => 32 * 1024, // 32KB (4 banks of 8KB)
+        0x04 => 128 * 1024, // 128KB (16 banks of 8KB)
+        0x05 => 64 * 1024, // 64KB (8 banks of 8KB)
+        _ => {
+            println!("Warning: Unknown RAM size code 0x{:02X}. Defaulting to 0 RAM.", ram_header_byte);
+            0 // Default to no RAM for unknown codes
+        }
+    }
+}
 
 pub struct Bus {
+    pub mbc: Box<dyn MemoryBankController>, // MBC trait object
     pub memory: Memory,
     pub ppu: Ppu,
     pub apu: Apu,
@@ -22,23 +40,69 @@ pub struct Bus {
     pub system_mode: SystemMode, // Added system_mode field
     pub is_double_speed: bool,
     pub key1_prepare_speed_switch: bool,
-    pub rom_data: Vec<u8>, // Added ROM data field
+    // rom_data is now primarily owned by the MBC. Bus might not need its own copy
+    // if all ROM access goes via MBC. For now, Bus::new still receives it for header parsing.
+    // Let's remove rom_data from Bus struct if MBC handles it.
+    // pub rom_data: Vec<u8>,
+    pub cartridge_type_byte: u8, // Cartridge type byte from ROM header
     pub serial_output: Vec<u8>, // Added for serial output capture
     pub interrupt_enable_register: u8, // IE Register (0xFFFF)
     pub if_register: u8, // Interrupt Flag Register (0xFF0F)
 }
 
 impl Bus {
-    pub fn new(rom_data: Vec<u8>) -> Self { // Added rom_data parameter
+    pub fn new(rom_data: Vec<u8>) -> Self {
         let mut determined_mode = SystemMode::DMG;
-        if rom_data.len() >= 0x0144 {
+        if rom_data.len() >= 0x0144 { // Check for CGB flag existence
             let cgb_flag = rom_data[0x0143];
             if cgb_flag == 0x80 || cgb_flag == 0xC0 {
                 determined_mode = SystemMode::CGB;
             }
         }
 
+        let cartridge_type_byte = if rom_data.len() >= 0x0148 {
+            rom_data[0x0147]
+        } else {
+            0x00 // Default to ROM ONLY if header is too short
+        };
+
+        let mbc_type = CartridgeType::from_byte(cartridge_type_byte);
+
+        let ram_header_byte = if rom_data.len() > 0x0149 {
+            rom_data[0x0149]
+        } else {
+            0x00 // Default to no RAM if header is too short
+        };
+        let ram_size = get_ram_size_from_header(ram_header_byte);
+
+        // The Bus struct still holds cartridge_type_byte for potential debugging/info.
+        // rom_data is cloned into the MBC. The Bus itself might not need to store rom_data directly
+        // if all cartridge access (ROM and RAM) goes through the MBC.
+        // For now, Bus::new takes rom_data, passes it to MBC, and Bus doesn't keep its own copy in the struct.
+        // If Bus needs rom_data for other header parsing (e.g. title), it should do so here before moving/cloning.
+
+        let mbc: Box<dyn MemoryBankController> = match mbc_type {
+            CartridgeType::NoMBC => Box::new(NoMBC::new(rom_data.clone(), ram_size)),
+            CartridgeType::MBC1 => Box::new(MBC1::new(rom_data.clone(), ram_size)),
+            CartridgeType::MBC2 => Box::new(MBC2::new(rom_data.clone())), // ram_size from header is ignored by MBC2
+            CartridgeType::MBC3 => Box::new(MBC3::new(rom_data.clone(), ram_size)),
+            CartridgeType::MBC5 => Box::new(MBC5::new(rom_data.clone(), ram_size, cartridge_type_byte)),
+            CartridgeType::MBC6 => Box::new(MBC6::new(rom_data.clone(), ram_size, cartridge_type_byte)),
+            CartridgeType::MBC7 => Box::new(MBC7::new(rom_data.clone(), ram_size, cartridge_type_byte)),
+            CartridgeType::MBC30 => Box::new(MBC30::new(rom_data.clone(), ram_size, cartridge_type_byte)),
+            CartridgeType::Unknown(byte) => {
+                println!("Warning: Unknown cartridge type 0x{:02X}. Defaulting to NoMBC for now.", byte);
+                Box::new(NoMBC::new(rom_data.clone(), ram_size)) // Fallback to NoMBC
+            }
+            // Add other MBC types here as they are implemented
+            _ => { // For any other CartridgeType variants not explicitly handled yet
+                println!("Warning: Cartridge type {:?} is not explicitly handled and not yet implemented. Defaulting to NoMBC for now.", mbc_type);
+                Box::new(NoMBC::new(rom_data.clone(), ram_size)) // Fallback to NoMBC
+            }
+        };
+
         Self {
+            mbc, // Store the initialized MBC
             memory: Memory::new(),
             ppu: Ppu::new(),
             apu: Apu::new(),
@@ -47,7 +111,8 @@ impl Bus {
             system_mode: determined_mode,
             is_double_speed: false,
             key1_prepare_speed_switch: false,
-            rom_data, // Initialize rom_data
+            // rom_data field removed from Bus struct, MBC is the owner now
+            cartridge_type_byte, // Still useful to store this raw byte
             serial_output: Vec::new(), // Initialize serial_output
             interrupt_enable_register: 0, // Default value for IE
             if_register: 0x00, // Default value for IF
@@ -83,22 +148,16 @@ impl Bus {
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
-        // println!("Bus read at 0x{:04X}", addr); // Commented out for less verbose logging
+        // println!("Bus read at 0x{:04X}", addr);
         match addr {
-            0x0000..=0x7FFF => { // ROM area
-                let index = addr as usize;
-                if index < self.rom_data.len() {
-                    self.rom_data[index]
-                } else {
-                    // Address is past the end of the loaded ROM
-                    0xFF
-                }
-            }
-            0x8000..=0x9FFF => self.ppu.read_byte(addr),
-            0xA000..=0xBFFF => {
-                // External RAM (Cartridge RAM) - Not implemented yet
-                // panic!("Read from External RAM not implemented. Address: {:#04X}", addr);
-                0xFF
+            0x0000..=0x7FFF => self.mbc.read_rom(addr), // ROM area, handled by MBC
+            0x8000..=0x9FFF => self.ppu.read_byte(addr), // VRAM
+            0xA000..=0xBFFF => self.mbc.read_ram(addr - 0xA000), // Cartridge RAM (External RAM)
+            0xC000..=0xDFFF => self.memory.read_byte(addr), // WRAM
+            0xE000..=0xFDFF => {
+                // Echo RAM (mirror of 0xC000 - 0xDDFF)
+                let mirrored_addr = addr - 0x2000;
+                self.memory.read_byte(mirrored_addr)
             }
             0xC000..=0xDFFF => self.memory.read_byte(addr), // WRAM
             0xE000..=0xFDFF => {
@@ -156,24 +215,16 @@ impl Bus {
     }
 
     pub fn write_byte(&mut self, addr: u16, value: u8) {
-        // println!("Bus write at 0x{:04X} with value 0x{:02X}", addr, value); // Commented out for less verbose logging
+        // println!("Bus write at 0x{:04X} with value 0x{:02X}", addr, value);
         match addr {
-            0x0000..=0x7FFF => {
-                // ROM - Writes are generally ignored or have special behavior
-                // For testing purposes, allow writing to the initial part of rom_data if needed.
-                let index = addr as usize;
-                if index < self.rom_data.len() {
-                    // This is not how real ROM works, but for tests that might write to
-                    // low memory addresses (e.g. stack wrapping to 0x0000), this helps.
-                    // In a real scenario, this write would be ignored or map to a cart RAM controller.
-                    self.rom_data[index] = value;
-                }
-                // Writes beyond rom_data.len() in this range are ignored.
-            }
+            0x0000..=0x7FFF => self.mbc.write_rom(addr, value), // ROM area, handled by MBC
             0x8000..=0x9FFF => self.ppu.write_byte(addr, value), // VRAM
-            0xA000..=0xBFFF => {
-                // External RAM (Cartridge RAM) - Not implemented yet
-                // For now, do nothing.
+            0xA000..=0xBFFF => self.mbc.write_ram(addr - 0xA000, value), // Cartridge RAM
+            0xC000..=0xDFFF => self.memory.write_byte(addr, value), // WRAM
+            0xE000..=0xFDFF => {
+                // Echo RAM (mirror of 0xC000 - 0xDDFF)
+                let mirrored_addr = addr - 0x2000;
+                self.memory.write_byte(mirrored_addr, value)
             }
             0xC000..=0xDFFF => self.memory.write_byte(addr, value), // WRAM
             0xE000..=0xFDFF => {

@@ -10,6 +10,7 @@ mod ppu;
 // and might be needed for a complete build, though not directly used in this step's main()
 mod interrupts;
 mod joypad;
+mod mbc; // Added MBC module
 mod serial;
 mod timer;
 
