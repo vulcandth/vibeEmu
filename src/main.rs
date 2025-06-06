@@ -72,7 +72,7 @@ fn parse_args(args_vec: &[String]) -> (bool, Option<u64>, Option<u64>, String, b
     let mut is_headless = false;
     let mut halt_duration_seconds: Option<u64> = None;
     let mut halt_cycles_count: Option<u64> = None;
-    let mut rom_path = "roms/cpu_instrs.gb".to_string(); // Default ROM path
+    let mut rom_path = "roms/blargg/cpu_instrs/cpu_instrs.gb".to_string(); // Default ROM path
     let mut rom_path_explicitly_set = false;
     let program_name = args_vec.get(0).cloned().unwrap_or_else(|| "gbc_emulator".to_string());
 
