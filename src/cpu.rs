@@ -28,6 +28,543 @@ use crate::bus::{Bus, SystemMode}; // Added SystemMode
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Timing {
+    Fixed(u8),
+    Conditional(u8, u8), // Represents (cycles_if_condition_true, cycles_if_condition_false)
+    Illegal,
+}
+
+impl Timing {
+    // Helper to unwrap fixed timing, panics if not Fixed.
+    // Useful for instructions known to have fixed timing.
+    pub fn unwrap_fixed(self) -> u8 {
+        match self {
+            Timing::Fixed(m_cycles) => m_cycles,
+            _ => panic!("Timing was expected to be Fixed but was not."),
+        }
+    }
+}
+
+// Timings are in M-cycles (T-states / 4)
+pub static OPCODE_TIMINGS: [Timing; 256] = [
+    Timing::Fixed(1), // 0x00 NOP
+    Timing::Fixed(3), // 0x01 LD BC,d16
+    Timing::Fixed(2), // 0x02 LD (BC),A
+    Timing::Fixed(2), // 0x03 INC BC
+    Timing::Fixed(1), // 0x04 INC B
+    Timing::Fixed(1), // 0x05 DEC B
+    Timing::Fixed(2), // 0x06 LD B,d8
+    Timing::Fixed(1), // 0x07 RLCA
+    Timing::Fixed(5), // 0x08 LD (a16),SP
+    Timing::Fixed(2), // 0x09 ADD HL,BC
+    Timing::Fixed(2), // 0x0A LD A,(BC)
+    Timing::Fixed(2), // 0x0B DEC BC
+    Timing::Fixed(1), // 0x0C INC C
+    Timing::Fixed(1), // 0x0D DEC C
+    Timing::Fixed(2), // 0x0E LD C,d8
+    Timing::Fixed(1), // 0x0F RRCA
+    Timing::Fixed(1), // 0x10 STOP d8 (0x10 00) - simplified to 1 M-cycle for STOP, though it can vary. JSON says 4 T-states.
+    Timing::Fixed(3), // 0x11 LD DE,d16
+    Timing::Fixed(2), // 0x12 LD (DE),A
+    Timing::Fixed(2), // 0x13 INC DE
+    Timing::Fixed(1), // 0x14 INC D
+    Timing::Fixed(1), // 0x15 DEC D
+    Timing::Fixed(2), // 0x16 LD D,d8
+    Timing::Fixed(1), // 0x17 RLA
+    Timing::Fixed(3), // 0x18 JR r8
+    Timing::Fixed(2), // 0x19 ADD HL,DE
+    Timing::Fixed(2), // 0x1A LD A,(DE)
+    Timing::Fixed(2), // 0x1B DEC DE
+    Timing::Fixed(1), // 0x1C INC E
+    Timing::Fixed(1), // 0x1D DEC E
+    Timing::Fixed(2), // 0x1E LD E,d8
+    Timing::Fixed(1), // 0x1F RRA
+    Timing::Conditional(3, 2), // 0x20 JR NZ,r8 (12/8 T-states)
+    Timing::Fixed(3), // 0x21 LD HL,d16
+    Timing::Fixed(2), // 0x22 LD (HL+),A
+    Timing::Fixed(2), // 0x23 INC HL
+    Timing::Fixed(1), // 0x24 INC H
+    Timing::Fixed(1), // 0x25 DEC H
+    Timing::Fixed(2), // 0x26 LD H,d8
+    Timing::Fixed(1), // 0x27 DAA
+    Timing::Conditional(3, 2), // 0x28 JR Z,r8 (12/8 T-states)
+    Timing::Fixed(2), // 0x29 ADD HL,HL
+    Timing::Fixed(2), // 0x2A LD A,(HL+)
+    Timing::Fixed(2), // 0x2B DEC HL
+    Timing::Fixed(1), // 0x2C INC L
+    Timing::Fixed(1), // 0x2D DEC L
+    Timing::Fixed(2), // 0x2E LD L,d8
+    Timing::Fixed(1), // 0x2F CPL
+    Timing::Conditional(3, 2), // 0x30 JR NC,r8 (12/8 T-states)
+    Timing::Fixed(3), // 0x31 LD SP,d16
+    Timing::Fixed(2), // 0x32 LD (HL-),A
+    Timing::Fixed(2), // 0x33 INC SP
+    Timing::Fixed(3), // 0x34 INC (HL)
+    Timing::Fixed(3), // 0x35 DEC (HL)
+    Timing::Fixed(3), // 0x36 LD (HL),d8
+    Timing::Fixed(1), // 0x37 SCF
+    Timing::Conditional(3, 2), // 0x38 JR C,r8 (12/8 T-states)
+    Timing::Fixed(2), // 0x39 ADD HL,SP
+    Timing::Fixed(2), // 0x3A LD A,(HL-)
+    Timing::Fixed(2), // 0x3B DEC SP
+    Timing::Fixed(1), // 0x3C INC A
+    Timing::Fixed(1), // 0x3D DEC A
+    Timing::Fixed(2), // 0x3E LD A,d8
+    Timing::Fixed(1), // 0x3F CCF
+    Timing::Fixed(1), // 0x40 LD B,B
+    Timing::Fixed(1), // 0x41 LD B,C
+    Timing::Fixed(1), // 0x42 LD B,D
+    Timing::Fixed(1), // 0x43 LD B,E
+    Timing::Fixed(1), // 0x44 LD B,H
+    Timing::Fixed(1), // 0x45 LD B,L
+    Timing::Fixed(2), // 0x46 LD B,(HL)
+    Timing::Fixed(1), // 0x47 LD B,A
+    Timing::Fixed(1), // 0x48 LD C,B
+    Timing::Fixed(1), // 0x49 LD C,C
+    Timing::Fixed(1), // 0x4A LD C,D
+    Timing::Fixed(1), // 0x4B LD C,E
+    Timing::Fixed(1), // 0x4C LD C,H
+    Timing::Fixed(1), // 0x4D LD C,L
+    Timing::Fixed(2), // 0x4E LD C,(HL)
+    Timing::Fixed(1), // 0x4F LD C,A
+    Timing::Fixed(1), // 0x50 LD D,B
+    Timing::Fixed(1), // 0x51 LD D,C
+    Timing::Fixed(1), // 0x52 LD D,D
+    Timing::Fixed(1), // 0x53 LD D,E
+    Timing::Fixed(1), // 0x54 LD D,H
+    Timing::Fixed(1), // 0x55 LD D,L
+    Timing::Fixed(2), // 0x56 LD D,(HL)
+    Timing::Fixed(1), // 0x57 LD D,A
+    Timing::Fixed(1), // 0x58 LD E,B
+    Timing::Fixed(1), // 0x59 LD E,C
+    Timing::Fixed(1), // 0x5A LD E,D
+    Timing::Fixed(1), // 0x5B LD E,E
+    Timing::Fixed(1), // 0x5C LD E,H
+    Timing::Fixed(1), // 0x5D LD E,L
+    Timing::Fixed(2), // 0x5E LD E,(HL)
+    Timing::Fixed(1), // 0x5F LD E,A
+    Timing::Fixed(1), // 0x60 LD H,B
+    Timing::Fixed(1), // 0x61 LD H,C
+    Timing::Fixed(1), // 0x62 LD H,D
+    Timing::Fixed(1), // 0x63 LD H,E
+    Timing::Fixed(1), // 0x64 LD H,H
+    Timing::Fixed(1), // 0x65 LD H,L
+    Timing::Fixed(2), // 0x66 LD H,(HL)
+    Timing::Fixed(1), // 0x67 LD H,A
+    Timing::Fixed(1), // 0x68 LD L,B
+    Timing::Fixed(1), // 0x69 LD L,C
+    Timing::Fixed(1), // 0x6A LD L,D
+    Timing::Fixed(1), // 0x6B LD L,E
+    Timing::Fixed(1), // 0x6C LD L,H
+    Timing::Fixed(1), // 0x6D LD L,L
+    Timing::Fixed(2), // 0x6E LD L,(HL)
+    Timing::Fixed(1), // 0x6F LD L,A
+    Timing::Fixed(2), // 0x70 LD (HL),B
+    Timing::Fixed(2), // 0x71 LD (HL),C
+    Timing::Fixed(2), // 0x72 LD (HL),D
+    Timing::Fixed(2), // 0x73 LD (HL),E
+    Timing::Fixed(2), // 0x74 LD (HL),H
+    Timing::Fixed(2), // 0x75 LD (HL),L
+    Timing::Fixed(1), // 0x76 HALT
+    Timing::Fixed(2), // 0x77 LD (HL),A
+    Timing::Fixed(1), // 0x78 LD A,B
+    Timing::Fixed(1), // 0x79 LD A,C
+    Timing::Fixed(1), // 0x7A LD A,D
+    Timing::Fixed(1), // 0x7B LD A,E
+    Timing::Fixed(1), // 0x7C LD A,H
+    Timing::Fixed(1), // 0x7D LD A,L
+    Timing::Fixed(2), // 0x7E LD A,(HL)
+    Timing::Fixed(1), // 0x7F LD A,A
+    Timing::Fixed(1), // 0x80 ADD A,B
+    Timing::Fixed(1), // 0x81 ADD A,C
+    Timing::Fixed(1), // 0x82 ADD A,D
+    Timing::Fixed(1), // 0x83 ADD A,E
+    Timing::Fixed(1), // 0x84 ADD A,H
+    Timing::Fixed(1), // 0x85 ADD A,L
+    Timing::Fixed(2), // 0x86 ADD A,(HL)
+    Timing::Fixed(1), // 0x87 ADD A,A
+    Timing::Fixed(1), // 0x88 ADC A,B
+    Timing::Fixed(1), // 0x89 ADC A,C
+    Timing::Fixed(1), // 0x8A ADC A,D
+    Timing::Fixed(1), // 0x8B ADC A,E
+    Timing::Fixed(1), // 0x8C ADC A,H
+    Timing::Fixed(1), // 0x8D ADC A,L
+    Timing::Fixed(2), // 0x8E ADC A,(HL)
+    Timing::Fixed(1), // 0x8F ADC A,A
+    Timing::Fixed(1), // 0x90 SUB B
+    Timing::Fixed(1), // 0x91 SUB C
+    Timing::Fixed(1), // 0x92 SUB D
+    Timing::Fixed(1), // 0x93 SUB E
+    Timing::Fixed(1), // 0x94 SUB H
+    Timing::Fixed(1), // 0x95 SUB L
+    Timing::Fixed(2), // 0x96 SUB (HL)
+    Timing::Fixed(1), // 0x97 SUB A
+    Timing::Fixed(1), // 0x98 SBC A,B
+    Timing::Fixed(1), // 0x99 SBC A,C
+    Timing::Fixed(1), // 0x9A SBC A,D
+    Timing::Fixed(1), // 0x9B SBC A,E
+    Timing::Fixed(1), // 0x9C SBC A,H
+    Timing::Fixed(1), // 0x9D SBC A,L
+    Timing::Fixed(2), // 0x9E SBC A,(HL)
+    Timing::Fixed(1), // 0x9F SBC A,A
+    Timing::Fixed(1), // 0xA0 AND B
+    Timing::Fixed(1), // 0xA1 AND C
+    Timing::Fixed(1), // 0xA2 AND D
+    Timing::Fixed(1), // 0xA3 AND E
+    Timing::Fixed(1), // 0xA4 AND H
+    Timing::Fixed(1), // 0xA5 AND L
+    Timing::Fixed(2), // 0xA6 AND (HL)
+    Timing::Fixed(1), // 0xA7 AND A
+    Timing::Fixed(1), // 0xA8 XOR B
+    Timing::Fixed(1), // 0xA9 XOR C
+    Timing::Fixed(1), // 0xAA XOR D
+    Timing::Fixed(1), // 0xAB XOR E
+    Timing::Fixed(1), // 0xAC XOR H
+    Timing::Fixed(1), // 0xAD XOR L
+    Timing::Fixed(2), // 0xAE XOR (HL)
+    Timing::Fixed(1), // 0xAF XOR A
+    Timing::Fixed(1), // 0xB0 OR B
+    Timing::Fixed(1), // 0xB1 OR C
+    Timing::Fixed(1), // 0xB2 OR D
+    Timing::Fixed(1), // 0xB3 OR E
+    Timing::Fixed(1), // 0xB4 OR H
+    Timing::Fixed(1), // 0xB5 OR L
+    Timing::Fixed(2), // 0xB6 OR (HL)
+    Timing::Fixed(1), // 0xB7 OR A
+    Timing::Fixed(1), // 0xB8 CP B
+    Timing::Fixed(1), // 0xB9 CP C
+    Timing::Fixed(1), // 0xBA CP D
+    Timing::Fixed(1), // 0xBB CP E
+    Timing::Fixed(1), // 0xBC CP H
+    Timing::Fixed(1), // 0xBD CP L
+    Timing::Fixed(2), // 0xBE CP (HL)
+    Timing::Fixed(1), // 0xBF CP A
+    Timing::Conditional(5, 2), // 0xC0 RET NZ (20/8 T-states)
+    Timing::Fixed(3), // 0xC1 POP BC
+    Timing::Conditional(4, 3), // 0xC2 JP NZ,a16 (16/12 T-states)
+    Timing::Fixed(4), // 0xC3 JP a16
+    Timing::Conditional(6, 3), // 0xC4 CALL NZ,a16 (24/12 T-states)
+    Timing::Fixed(4), // 0xC5 PUSH BC
+    Timing::Fixed(2), // 0xC6 ADD A,d8
+    Timing::Fixed(4), // 0xC7 RST 00H
+    Timing::Conditional(5, 2), // 0xC8 RET Z (20/8 T-states)
+    Timing::Fixed(4), // 0xC9 RET
+    Timing::Conditional(4, 3), // 0xCA JP Z,a16 (16/12 T-states)
+    Timing::Fixed(1), // 0xCB PREFIX CB - this entry is for the CB prefix itself, not the following instruction.
+    Timing::Conditional(6, 3), // 0xCC CALL Z,a16 (24/12 T-states)
+    Timing::Fixed(6), // 0xCD CALL a16
+    Timing::Fixed(2), // 0xCE ADC A,d8
+    Timing::Fixed(4), // 0xCF RST 08H
+    Timing::Conditional(5, 2), // 0xD0 RET NC (20/8 T-states)
+    Timing::Fixed(3), // 0xD1 POP DE
+    Timing::Conditional(4, 3), // 0xD2 JP NC,a16 (16/12 T-states)
+    Timing::Illegal,  // 0xD3 ILLEGAL_D3
+    Timing::Conditional(6, 3), // 0xD4 CALL NC,a16 (24/12 T-states)
+    Timing::Fixed(4), // 0xD5 PUSH DE
+    Timing::Fixed(2), // 0xD6 SUB d8
+    Timing::Fixed(4), // 0xD7 RST 10H
+    Timing::Conditional(5, 2), // 0xD8 RET C (20/8 T-states)
+    Timing::Fixed(4), // 0xD9 RETI
+    Timing::Conditional(4, 3), // 0xDA JP C,a16 (16/12 T-states)
+    Timing::Illegal,  // 0xDB ILLEGAL_DB
+    Timing::Conditional(6, 3), // 0xDC CALL C,a16 (24/12 T-states)
+    Timing::Illegal,  // 0xDD ILLEGAL_DD
+    Timing::Fixed(2), // 0xDE SBC A,d8
+    Timing::Fixed(4), // 0xDF RST 18H
+    Timing::Fixed(3), // 0xE0 LDH (a8),A
+    Timing::Fixed(3), // 0xE1 POP HL
+    Timing::Fixed(2), // 0xE2 LD (C),A - Correct mnemonic from JSON is LDH (a8),A ; (0xFF00+C)
+    Timing::Illegal,  // 0xE3 ILLEGAL_E3
+    Timing::Illegal,  // 0xE4 ILLEGAL_E4
+    Timing::Fixed(4), // 0xE5 PUSH HL
+    Timing::Fixed(2), // 0xE6 AND d8
+    Timing::Fixed(4), // 0xE7 RST 20H
+    Timing::Fixed(4), // 0xE8 ADD SP,r8
+    Timing::Fixed(1), // 0xE9 JP (HL)
+    Timing::Fixed(4), // 0xEA LD (a16),A
+    Timing::Illegal,  // 0xEB ILLEGAL_EB
+    Timing::Illegal,  // 0xEC ILLEGAL_EC
+    Timing::Illegal,  // 0xED ILLEGAL_ED
+    Timing::Fixed(2), // 0xEE XOR d8
+    Timing::Fixed(4), // 0xEF RST 28H
+    Timing::Fixed(3), // 0xF0 LDH A,(a8)
+    Timing::Fixed(3), // 0xF1 POP AF
+    Timing::Fixed(2), // 0xF2 LD A,(C) - Correct mnemonic from JSON is LDH A,(a8) ; (0xFF00+C)
+    Timing::Fixed(1), // 0xF3 DI
+    Timing::Illegal,  // 0xF4 ILLEGAL_F4
+    Timing::Fixed(4), // 0xF5 PUSH AF
+    Timing::Fixed(2), // 0xF6 OR d8
+    Timing::Fixed(4), // 0xF7 RST 30H
+    Timing::Fixed(3), // 0xF8 LD HL,SP+r8
+    Timing::Fixed(2), // 0xF9 LD SP,HL
+    Timing::Fixed(4), // 0xFA LD A,(a16)
+    Timing::Fixed(1), // 0xFB EI
+    Timing::Illegal,  // 0xFC ILLEGAL_FC
+    Timing::Illegal,  // 0xFD ILLEGAL_FD
+    Timing::Fixed(2), // 0xFE CP d8
+    Timing::Fixed(4), // 0xFF RST 38H
+];
+
+pub static CB_OPCODE_TIMINGS: [Timing; 256] = [
+    Timing::Fixed(2), // 0x00 RLC B
+    Timing::Fixed(2), // 0x01 RLC C
+    Timing::Fixed(2), // 0x02 RLC D
+    Timing::Fixed(2), // 0x03 RLC E
+    Timing::Fixed(2), // 0x04 RLC H
+    Timing::Fixed(2), // 0x05 RLC L
+    Timing::Fixed(4), // 0x06 RLC (HL)
+    Timing::Fixed(2), // 0x07 RLC A
+    Timing::Fixed(2), // 0x08 RRC B
+    Timing::Fixed(2), // 0x09 RRC C
+    Timing::Fixed(2), // 0x0A RRC D
+    Timing::Fixed(2), // 0x0B RRC E
+    Timing::Fixed(2), // 0x0C RRC H
+    Timing::Fixed(2), // 0x0D RRC L
+    Timing::Fixed(4), // 0x0E RRC (HL)
+    Timing::Fixed(2), // 0x0F RRC A
+    Timing::Fixed(2), // 0x10 RL B
+    Timing::Fixed(2), // 0x11 RL C
+    Timing::Fixed(2), // 0x12 RL D
+    Timing::Fixed(2), // 0x13 RL E
+    Timing::Fixed(2), // 0x14 RL H
+    Timing::Fixed(2), // 0x15 RL L
+    Timing::Fixed(4), // 0x16 RL (HL)
+    Timing::Fixed(2), // 0x17 RL A
+    Timing::Fixed(2), // 0x18 RR B
+    Timing::Fixed(2), // 0x19 RR C
+    Timing::Fixed(2), // 0x1A RR D
+    Timing::Fixed(2), // 0x1B RR E
+    Timing::Fixed(2), // 0x1C RR H
+    Timing::Fixed(2), // 0x1D RR L
+    Timing::Fixed(4), // 0x1E RR (HL)
+    Timing::Fixed(2), // 0x1F RR A
+    Timing::Fixed(2), // 0x20 SLA B
+    Timing::Fixed(2), // 0x21 SLA C
+    Timing::Fixed(2), // 0x22 SLA D
+    Timing::Fixed(2), // 0x23 SLA E
+    Timing::Fixed(2), // 0x24 SLA H
+    Timing::Fixed(2), // 0x25 SLA L
+    Timing::Fixed(4), // 0x26 SLA (HL)
+    Timing::Fixed(2), // 0x27 SLA A
+    Timing::Fixed(2), // 0x28 SRA B
+    Timing::Fixed(2), // 0x29 SRA C
+    Timing::Fixed(2), // 0x2A SRA D
+    Timing::Fixed(2), // 0x2B SRA E
+    Timing::Fixed(2), // 0x2C SRA H
+    Timing::Fixed(2), // 0x2D SRA L
+    Timing::Fixed(4), // 0x2E SRA (HL)
+    Timing::Fixed(2), // 0x2F SRA A
+    Timing::Fixed(2), // 0x30 SWAP B
+    Timing::Fixed(2), // 0x31 SWAP C
+    Timing::Fixed(2), // 0x32 SWAP D
+    Timing::Fixed(2), // 0x33 SWAP E
+    Timing::Fixed(2), // 0x34 SWAP H
+    Timing::Fixed(2), // 0x35 SWAP L
+    Timing::Fixed(4), // 0x36 SWAP (HL)
+    Timing::Fixed(2), // 0x37 SWAP A
+    Timing::Fixed(2), // 0x38 SRL B
+    Timing::Fixed(2), // 0x39 SRL C
+    Timing::Fixed(2), // 0x3A SRL D
+    Timing::Fixed(2), // 0x3B SRL E
+    Timing::Fixed(2), // 0x3C SRL H
+    Timing::Fixed(2), // 0x3D SRL L
+    Timing::Fixed(4), // 0x3E SRL (HL)
+    Timing::Fixed(2), // 0x3F SRL A
+    Timing::Fixed(2), // 0x40 BIT 0,B
+    Timing::Fixed(2), // 0x41 BIT 0,C
+    Timing::Fixed(2), // 0x42 BIT 0,D
+    Timing::Fixed(2), // 0x43 BIT 0,E
+    Timing::Fixed(2), // 0x44 BIT 0,H
+    Timing::Fixed(2), // 0x45 BIT 0,L
+    Timing::Fixed(3), // 0x46 BIT 0,(HL) (12 T-states)
+    Timing::Fixed(2), // 0x47 BIT 0,A
+    Timing::Fixed(2), // 0x48 BIT 1,B
+    Timing::Fixed(2), // 0x49 BIT 1,C
+    Timing::Fixed(2), // 0x4A BIT 1,D
+    Timing::Fixed(2), // 0x4B BIT 1,E
+    Timing::Fixed(2), // 0x4C BIT 1,H
+    Timing::Fixed(2), // 0x4D BIT 1,L
+    Timing::Fixed(3), // 0x4E BIT 1,(HL)
+    Timing::Fixed(2), // 0x4F BIT 1,A
+    Timing::Fixed(2), // 0x50 BIT 2,B
+    Timing::Fixed(2), // 0x51 BIT 2,C
+    Timing::Fixed(2), // 0x52 BIT 2,D
+    Timing::Fixed(2), // 0x53 BIT 2,E
+    Timing::Fixed(2), // 0x54 BIT 2,H
+    Timing::Fixed(2), // 0x55 BIT 2,L
+    Timing::Fixed(3), // 0x56 BIT 2,(HL)
+    Timing::Fixed(2), // 0x57 BIT 2,A
+    Timing::Fixed(2), // 0x58 BIT 3,B
+    Timing::Fixed(2), // 0x59 BIT 3,C
+    Timing::Fixed(2), // 0x5A BIT 3,D
+    Timing::Fixed(2), // 0x5B BIT 3,E
+    Timing::Fixed(2), // 0x5C BIT 3,H
+    Timing::Fixed(2), // 0x5D BIT 3,L
+    Timing::Fixed(3), // 0x5E BIT 3,(HL)
+    Timing::Fixed(2), // 0x5F BIT 3,A
+    Timing::Fixed(2), // 0x60 BIT 4,B
+    Timing::Fixed(2), // 0x61 BIT 4,C
+    Timing::Fixed(2), // 0x62 BIT 4,D
+    Timing::Fixed(2), // 0x63 BIT 4,E
+    Timing::Fixed(2), // 0x64 BIT 4,H
+    Timing::Fixed(2), // 0x65 BIT 4,L
+    Timing::Fixed(3), // 0x66 BIT 4,(HL)
+    Timing::Fixed(2), // 0x67 BIT 4,A
+    Timing::Fixed(2), // 0x68 BIT 5,B
+    Timing::Fixed(2), // 0x69 BIT 5,C
+    Timing::Fixed(2), // 0x6A BIT 5,D
+    Timing::Fixed(2), // 0x6B BIT 5,E
+    Timing::Fixed(2), // 0x6C BIT 5,H
+    Timing::Fixed(2), // 0x6D BIT 5,L
+    Timing::Fixed(3), // 0x6E BIT 5,(HL)
+    Timing::Fixed(2), // 0x6F BIT 5,A
+    Timing::Fixed(2), // 0x70 BIT 6,B
+    Timing::Fixed(2), // 0x71 BIT 6,C
+    Timing::Fixed(2), // 0x72 BIT 6,D
+    Timing::Fixed(2), // 0x73 BIT 6,E
+    Timing::Fixed(2), // 0x74 BIT 6,H
+    Timing::Fixed(2), // 0x75 BIT 6,L
+    Timing::Fixed(3), // 0x76 BIT 6,(HL)
+    Timing::Fixed(2), // 0x77 BIT 6,A
+    Timing::Fixed(2), // 0x78 BIT 7,B
+    Timing::Fixed(2), // 0x79 BIT 7,C
+    Timing::Fixed(2), // 0x7A BIT 7,D
+    Timing::Fixed(2), // 0x7B BIT 7,E
+    Timing::Fixed(2), // 0x7C BIT 7,H
+    Timing::Fixed(2), // 0x7D BIT 7,L
+    Timing::Fixed(3), // 0x7E BIT 7,(HL)
+    Timing::Fixed(2), // 0x7F BIT 7,A
+    Timing::Fixed(2), // 0x80 RES 0,B
+    Timing::Fixed(2), // 0x81 RES 0,C
+    Timing::Fixed(2), // 0x82 RES 0,D
+    Timing::Fixed(2), // 0x83 RES 0,E
+    Timing::Fixed(2), // 0x84 RES 0,H
+    Timing::Fixed(2), // 0x85 RES 0,L
+    Timing::Fixed(4), // 0x86 RES 0,(HL)
+    Timing::Fixed(2), // 0x87 RES 0,A
+    Timing::Fixed(2), // 0x88 RES 1,B
+    Timing::Fixed(2), // 0x89 RES 1,C
+    Timing::Fixed(2), // 0x8A RES 1,D
+    Timing::Fixed(2), // 0x8B RES 1,E
+    Timing::Fixed(2), // 0x8C RES 1,H
+    Timing::Fixed(2), // 0x8D RES 1,L
+    Timing::Fixed(4), // 0x8E RES 1,(HL)
+    Timing::Fixed(2), // 0x8F RES 1,A
+    Timing::Fixed(2), // 0x90 RES 2,B
+    Timing::Fixed(2), // 0x91 RES 2,C
+    Timing::Fixed(2), // 0x92 RES 2,D
+    Timing::Fixed(2), // 0x93 RES 2,E
+    Timing::Fixed(2), // 0x94 RES 2,H
+    Timing::Fixed(2), // 0x95 RES 2,L
+    Timing::Fixed(4), // 0x96 RES 2,(HL)
+    Timing::Fixed(2), // 0x97 RES 2,A
+    Timing::Fixed(2), // 0x98 RES 3,B
+    Timing::Fixed(2), // 0x99 RES 3,C
+    Timing::Fixed(2), // 0x9A RES 3,D
+    Timing::Fixed(2), // 0x9B RES 3,E
+    Timing::Fixed(2), // 0x9C RES 3,H
+    Timing::Fixed(2), // 0x9D RES 3,L
+    Timing::Fixed(4), // 0x9E RES 3,(HL)
+    Timing::Fixed(2), // 0x9F RES 3,A
+    Timing::Fixed(2), // 0xA0 RES 4,B
+    Timing::Fixed(2), // 0xA1 RES 4,C
+    Timing::Fixed(2), // 0xA2 RES 4,D
+    Timing::Fixed(2), // 0xA3 RES 4,E
+    Timing::Fixed(2), // 0xA4 RES 4,H
+    Timing::Fixed(2), // 0xA5 RES 4,L
+    Timing::Fixed(4), // 0xA6 RES 4,(HL)
+    Timing::Fixed(2), // 0xA7 RES 4,A
+    Timing::Fixed(2), // 0xA8 RES 5,B
+    Timing::Fixed(2), // 0xA9 RES 5,C
+    Timing::Fixed(2), // 0xAA RES 5,D
+    Timing::Fixed(2), // 0xAB RES 5,E
+    Timing::Fixed(2), // 0xAC RES 5,H
+    Timing::Fixed(2), // 0xAD RES 5,L
+    Timing::Fixed(4), // 0xAE RES 5,(HL)
+    Timing::Fixed(2), // 0xAF RES 5,A
+    Timing::Fixed(2), // 0xB0 RES 6,B
+    Timing::Fixed(2), // 0xB1 RES 6,C
+    Timing::Fixed(2), // 0xB2 RES 6,D
+    Timing::Fixed(2), // 0xB3 RES 6,E
+    Timing::Fixed(2), // 0xB4 RES 6,H
+    Timing::Fixed(2), // 0xB5 RES 6,L
+    Timing::Fixed(4), // 0xB6 RES 6,(HL)
+    Timing::Fixed(2), // 0xB7 RES 6,A
+    Timing::Fixed(2), // 0xB8 RES 7,B
+    Timing::Fixed(2), // 0xB9 RES 7,C
+    Timing::Fixed(2), // 0xBA RES 7,D
+    Timing::Fixed(2), // 0xBB RES 7,E
+    Timing::Fixed(2), // 0xBC RES 7,H
+    Timing::Fixed(2), // 0xBD RES 7,L
+    Timing::Fixed(4), // 0xBE RES 7,(HL)
+    Timing::Fixed(2), // 0xBF RES 7,A
+    Timing::Fixed(2), // 0xC0 SET 0,B
+    Timing::Fixed(2), // 0xC1 SET 0,C
+    Timing::Fixed(2), // 0xC2 SET 0,D
+    Timing::Fixed(2), // 0xC3 SET 0,E
+    Timing::Fixed(2), // 0xC4 SET 0,H
+    Timing::Fixed(2), // 0xC5 SET 0,L
+    Timing::Fixed(4), // 0xC6 SET 0,(HL)
+    Timing::Fixed(2), // 0xC7 SET 0,A
+    Timing::Fixed(2), // 0xC8 SET 1,B
+    Timing::Fixed(2), // 0xC9 SET 1,C
+    Timing::Fixed(2), // 0xCA SET 1,D
+    Timing::Fixed(2), // 0xCB SET 1,E
+    Timing::Fixed(2), // 0xCC SET 1,H
+    Timing::Fixed(2), // 0xCD SET 1,L
+    Timing::Fixed(4), // 0xCE SET 1,(HL)
+    Timing::Fixed(2), // 0xCF SET 1,A
+    Timing::Fixed(2), // 0xD0 SET 2,B
+    Timing::Fixed(2), // 0xD1 SET 2,C
+    Timing::Fixed(2), // 0xD2 SET 2,D
+    Timing::Fixed(2), // 0xD3 SET 2,E
+    Timing::Fixed(2), // 0xD4 SET 2,H
+    Timing::Fixed(2), // 0xD5 SET 2,L
+    Timing::Fixed(4), // 0xD6 SET 2,(HL)
+    Timing::Fixed(2), // 0xD7 SET 2,A
+    Timing::Fixed(2), // 0xD8 SET 3,B
+    Timing::Fixed(2), // 0xD9 SET 3,C
+    Timing::Fixed(2), // 0xDA SET 3,D
+    Timing::Fixed(2), // 0xDB SET 3,E
+    Timing::Fixed(2), // 0xDC SET 3,H
+    Timing::Fixed(2), // 0xDD SET 3,L
+    Timing::Fixed(4), // 0xDE SET 3,(HL)
+    Timing::Fixed(2), // 0xDF SET 3,A
+    Timing::Fixed(2), // 0xE0 SET 4,B
+    Timing::Fixed(2), // 0xE1 SET 4,C
+    Timing::Fixed(2), // 0xE2 SET 4,D
+    Timing::Fixed(2), // 0xE3 SET 4,E
+    Timing::Fixed(2), // 0xE4 SET 4,H
+    Timing::Fixed(2), // 0xE5 SET 4,L
+    Timing::Fixed(4), // 0xE6 SET 4,(HL)
+    Timing::Fixed(2), // 0xE7 SET 4,A
+    Timing::Fixed(2), // 0xE8 SET 5,B
+    Timing::Fixed(2), // 0xE9 SET 5,C
+    Timing::Fixed(2), // 0xEA SET 5,D
+    Timing::Fixed(2), // 0xEB SET 5,E
+    Timing::Fixed(2), // 0xEC SET 5,H
+    Timing::Fixed(2), // 0xED SET 5,L
+    Timing::Fixed(4), // 0xEE SET 5,(HL)
+    Timing::Fixed(2), // 0xEF SET 5,A
+    Timing::Fixed(2), // 0xF0 SET 6,B
+    Timing::Fixed(2), // 0xF1 SET 6,C
+    Timing::Fixed(2), // 0xF2 SET 6,D
+    Timing::Fixed(2), // 0xF3 SET 6,E
+    Timing::Fixed(2), // 0xF4 SET 6,H
+    Timing::Fixed(2), // 0xF5 SET 6,L
+    Timing::Fixed(4), // 0xF6 SET 6,(HL)
+    Timing::Fixed(2), // 0xF7 SET 6,A
+    Timing::Fixed(2), // 0xF8 SET 7,B
+    Timing::Fixed(2), // 0xF9 SET 7,C
+    Timing::Fixed(2), // 0xFA SET 7,D
+    Timing::Fixed(2), // 0xFB SET 7,E
+    Timing::Fixed(2), // 0xFC SET 7,H
+    Timing::Fixed(2), // 0xFD SET 7,L
+    Timing::Fixed(4), // 0xFE SET 7,(HL)
+    Timing::Fixed(2), // 0xFF SET 7,A
+];
+
 pub struct Cpu {
     pub a: u8,
     pub f: u8,
@@ -1272,36 +1809,18 @@ pub fn stop(&mut self) {
         // No flags are affected by this instruction.
     }
 
-    // JP cc, nn (0xC2, 0xCA, 0xD2, 0xDA)
-    // Helper function for conditional jumps
-    fn jp_cc_nn(&mut self, condition: bool, addr_lo: u8, addr_hi: u8) {
-        if condition {
-            let address = ((addr_hi as u16) << 8) | (addr_lo as u16);
-            self.pc = address;
-        } else {
-            self.pc = self.pc.wrapping_add(3); // Skip opcode and 2-byte operand
-        }
+    // JP nn (0xC3)
+    pub fn jp_nn(&mut self, addr_lo: u8, addr_hi: u8) {
+        let address = ((addr_hi as u16) << 8) | (addr_lo as u16);
+        self.pc = address;
         // No flags are affected by this instruction.
     }
 
-    pub fn jp_nz_nn(&mut self, addr_lo: u8, addr_hi: u8) {
-        let condition = !self.is_flag_z();
-        self.jp_cc_nn(condition, addr_lo, addr_hi);
-    }
-
-    pub fn jp_z_nn(&mut self, addr_lo: u8, addr_hi: u8) {
-        let condition = self.is_flag_z();
-        self.jp_cc_nn(condition, addr_lo, addr_hi);
-    }
-
-    pub fn jp_nc_nn(&mut self, addr_lo: u8, addr_hi: u8) {
-        let condition = !self.is_flag_c();
-        self.jp_cc_nn(condition, addr_lo, addr_hi);
-    }
-
-    pub fn jp_c_nn(&mut self, addr_lo: u8, addr_hi: u8) {
-        let condition = self.is_flag_c();
-        self.jp_cc_nn(condition, addr_lo, addr_hi);
+    // JP HL (0xE9)
+    pub fn jp_hl(&mut self) {
+        let address = ((self.h as u16) << 8) | (self.l as u16);
+        self.pc = address;
+        // No flags are affected by this instruction.
     }
 
     // JR d8 (0x18)
@@ -1311,46 +1830,6 @@ pub fn stop(&mut self) {
         let signed_offset = offset as i8;
         self.pc = pc_after_instruction.wrapping_add(signed_offset as i16 as u16);
         // No flags are affected
-    }
-
-    // JR cc, d8 helper
-    fn jr_cc_e8(&mut self, condition: bool, offset: u8) {
-        if condition {
-            // If condition met, PC is relative to the instruction *after* JR cc, d8
-            // JR cc, d8 is 2 bytes. So PC at JR + 2, then add offset.
-            let current_pc_val = self.pc;
-            let pc_after_instruction = current_pc_val.wrapping_add(2);
-            let signed_offset = offset as i8;
-            self.pc = pc_after_instruction.wrapping_add(signed_offset as i16 as u16);
-        } else {
-            // If condition not met, just skip the 2-byte JR instruction
-            self.pc = self.pc.wrapping_add(2);
-        }
-        // No flags are affected
-    }
-
-    // JR NZ, d8 (0x20)
-    pub fn jr_nz_e8(&mut self, offset: u8) {
-        let condition = !self.is_flag_z();
-        self.jr_cc_e8(condition, offset);
-    }
-
-    // JR Z, d8 (0x28)
-    pub fn jr_z_e8(&mut self, offset: u8) {
-        let condition = self.is_flag_z();
-        self.jr_cc_e8(condition, offset);
-    }
-
-    // JR NC, d8 (0x30)
-    pub fn jr_nc_e8(&mut self, offset: u8) {
-        let condition = !self.is_flag_c();
-        self.jr_cc_e8(condition, offset);
-    }
-
-    // JR C, d8 (0x38)
-    pub fn jr_c_e8(&mut self, offset: u8) {
-        let condition = self.is_flag_c();
-        self.jr_cc_e8(condition, offset);
     }
 
     // CALL nn (0xCD)
@@ -1370,47 +1849,6 @@ pub fn stop(&mut self) {
         // No flags are affected by this instruction.
     }
 
-    // CALL cc, nn (0xC4, 0xCC, 0xD4, 0xDC)
-    // Helper function for conditional calls
-    fn call_cc_nn(&mut self, condition: bool, addr_lo: u8, addr_hi: u8) {
-        if condition {
-            // Condition met: Perform the call
-            let return_addr = self.pc.wrapping_add(3); // Return address is after the 3-byte CALL instruction
-
-            self.sp = self.sp.wrapping_sub(1);
-            self.bus.borrow_mut().write_byte(self.sp, (return_addr >> 8) as u8); // Push high byte of return address
-            self.sp = self.sp.wrapping_sub(1);
-            self.bus.borrow_mut().write_byte(self.sp, (return_addr & 0xFF) as u8); // Push low byte of return address
-
-            let call_address = ((addr_hi as u16) << 8) | (addr_lo as u16);
-            self.pc = call_address;
-        } else {
-            // Condition not met: Skip the call and the 2-byte operand
-            self.pc = self.pc.wrapping_add(3);
-        }
-        // No flags are affected by this instruction.
-    }
-
-    pub fn call_nz_nn(&mut self, addr_lo: u8, addr_hi: u8) {
-        let condition = !self.is_flag_z();
-        self.call_cc_nn(condition, addr_lo, addr_hi);
-    }
-
-    pub fn call_z_nn(&mut self, addr_lo: u8, addr_hi: u8) {
-        let condition = self.is_flag_z();
-        self.call_cc_nn(condition, addr_lo, addr_hi);
-    }
-
-    pub fn call_nc_nn(&mut self, addr_lo: u8, addr_hi: u8) {
-        let condition = !self.is_flag_c();
-        self.call_cc_nn(condition, addr_lo, addr_hi);
-    }
-
-    pub fn call_c_nn(&mut self, addr_lo: u8, addr_hi: u8) {
-        let condition = self.is_flag_c();
-        self.call_cc_nn(condition, addr_lo, addr_hi);
-    }
-
     // RET (0xC9)
     pub fn ret(&mut self) {
         let pc_lo = self.bus.borrow().read_byte(self.sp) as u16;
@@ -1419,43 +1857,6 @@ pub fn stop(&mut self) {
         self.sp = self.sp.wrapping_add(1);
         self.pc = (pc_hi << 8) | pc_lo;
         // No flags are affected.
-    }
-
-    // RET cc (0xC0, 0xC8, 0xD0, 0xD8)
-    // Helper function for conditional returns
-    fn ret_cc(&mut self, condition: bool) {
-        if condition {
-            // Condition met: Perform the return
-            let pc_lo = self.bus.borrow().read_byte(self.sp) as u16;
-            self.sp = self.sp.wrapping_add(1);
-            let pc_hi = self.bus.borrow().read_byte(self.sp) as u16;
-            self.sp = self.sp.wrapping_add(1);
-            self.pc = (pc_hi << 8) | pc_lo;
-        } else {
-            // Condition not met: Skip the return, just increment PC for the RET cc opcode
-            self.pc = self.pc.wrapping_add(1);
-        }
-        // No flags are affected.
-    }
-
-    pub fn ret_nz(&mut self) {
-        let condition = !self.is_flag_z();
-        self.ret_cc(condition);
-    }
-
-    pub fn ret_z(&mut self) {
-        let condition = self.is_flag_z();
-        self.ret_cc(condition);
-    }
-
-    pub fn ret_nc(&mut self) {
-        let condition = !self.is_flag_c();
-        self.ret_cc(condition);
-    }
-
-    pub fn ret_c(&mut self) {
-        let condition = self.is_flag_c();
-        self.ret_cc(condition);
     }
 
     // RETI (0xD9)
@@ -1737,7 +2138,7 @@ pub fn stop(&mut self) {
     }
 
     // Main dispatcher for CB-prefixed opcodes
-    pub fn execute_cb_prefixed(&mut self, opcode: u8) {
+    pub fn execute_cb_prefixed(&mut self, opcode: u8) -> u8 {
         // PC has already been incremented for the CB prefix and this opcode.
         // So, no PC incrementing in these functions.
         #[allow(unreachable_patterns)]
@@ -1879,6 +2280,13 @@ pub fn stop(&mut self) {
             // All 0x00-0xFF are covered by the patterns above for CB-prefixed opcodes.
             _ => unreachable!("Unimplemented CB-prefixed opcode: {:#04X}. This should not be reached if all opcodes are covered.", opcode),
         }
+
+        // After executing the CB operation, return its fixed timing.
+        // All CB operations have fixed timings.
+        match CB_OPCODE_TIMINGS[opcode as usize] {
+            Timing::Fixed(m_cycles) => m_cycles,
+            _ => panic!("CB opcode {:#04X} has unexpected timing info", opcode),
+        }
     }
 
     fn service_interrupt(&mut self, interrupt_bit: u8, handler_addr: u16) {
@@ -1963,7 +2371,8 @@ pub fn step(&mut self) -> u32 {
         // Execution continues to fetch the instruction *after* HALT.
         // To match test expectation that PC is only incremented once (effectively skipping HALT)
         // and not executing the following instruction in this same step.
-        return DEFAULT_OPCODE_M_CYCLES;
+        // HALT bug effectively takes 1 M-cycle (the NOP that is "executed" instead).
+        return OPCODE_TIMINGS[0x00].unwrap_fixed(); // Use NOP's timing for HALT bug "skip"
     }
 
     if self.is_halted {
@@ -1978,228 +2387,470 @@ pub fn step(&mut self) -> u32 {
     }
 
     let opcode = self.bus.borrow().read_byte(self.pc);
+    let timing_info = OPCODE_TIMINGS[opcode as usize];
 
-    match opcode {
-        0x00 => self.nop(),
+    let cycles: u8 = match opcode {
+        0x00 => { self.nop(); timing_info.unwrap_fixed() }
         0x01 => {
             let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
             self.ld_bc_nn(lo, hi);
+            timing_info.unwrap_fixed()
         }
-        0x02 => self.ld_bc_mem_a(),
-        0x03 => self.inc_bc(),
-        0x04 => self.inc_b(),
-        0x05 => self.dec_b(),
+        0x02 => { self.ld_bc_mem_a(); timing_info.unwrap_fixed() }
+        0x03 => { self.inc_bc(); timing_info.unwrap_fixed() }
+        0x04 => { self.inc_b(); timing_info.unwrap_fixed() }
+        0x05 => { self.dec_b(); timing_info.unwrap_fixed() }
         0x06 => {
             let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             self.ld_b_n(n);
+            timing_info.unwrap_fixed()
         }
-        0x07 => self.rlca(),
+        0x07 => { self.rlca(); timing_info.unwrap_fixed() }
         0x08 => {
             let addr_lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             let addr_hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
             self.ld_nn_mem_sp(addr_lo, addr_hi);
+            timing_info.unwrap_fixed()
         }
-        0x09 => self.add_hl_bc(),
-        0x0A => self.ld_a_bc_mem(),
-        0x0B => self.dec_bc(),
-        0x0C => self.inc_c(),
-        0x0D => self.dec_c(),
+        0x09 => { self.add_hl_bc(); timing_info.unwrap_fixed() }
+        0x0A => { self.ld_a_bc_mem(); timing_info.unwrap_fixed() }
+        0x0B => { self.dec_bc(); timing_info.unwrap_fixed() }
+        0x0C => { self.inc_c(); timing_info.unwrap_fixed() }
+        0x0D => { self.dec_c(); timing_info.unwrap_fixed() }
         0x0E => {
             let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             self.ld_c_n(n);
+            timing_info.unwrap_fixed()
         }
-        0x0F => self.rrca(),
-        0x10 => self.stop(),
+        0x0F => { self.rrca(); timing_info.unwrap_fixed() }
+        0x10 => { self.stop(); timing_info.unwrap_fixed() } // STOP timing can be complex, 1 is simplified.
         0x11 => {
             let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
             self.ld_de_nn(lo, hi);
+            timing_info.unwrap_fixed()
         }
-        0x12 => self.ld_de_mem_a(),
-        0x13 => self.inc_de(),
-        0x14 => self.inc_d(),
-        0x15 => self.dec_d(),
+        0x12 => { self.ld_de_mem_a(); timing_info.unwrap_fixed() }
+        0x13 => { self.inc_de(); timing_info.unwrap_fixed() }
+        0x14 => { self.inc_d(); timing_info.unwrap_fixed() }
+        0x15 => { self.dec_d(); timing_info.unwrap_fixed() }
         0x16 => {
             let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             self.ld_d_n(n);
+            timing_info.unwrap_fixed()
         }
-        0x17 => self.rla(),
-        0x18 => {
+        0x17 => { self.rla(); timing_info.unwrap_fixed() }
+        0x18 => { // JR r8
             let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.jr_e8(offset);
+            self.jr_e8(offset); // jr_e8 handles PC update
+            timing_info.unwrap_fixed()
         }
-        0x19 => self.add_hl_de(),
-        0x1A => self.ld_a_de_mem(),
-        0x1B => self.dec_de(),
-        0x1C => self.inc_e(),
-        0x1D => self.dec_e(),
+        0x19 => { self.add_hl_de(); timing_info.unwrap_fixed() }
+        0x1A => { self.ld_a_de_mem(); timing_info.unwrap_fixed() }
+        0x1B => { self.dec_de(); timing_info.unwrap_fixed() }
+        0x1C => { self.inc_e(); timing_info.unwrap_fixed() }
+        0x1D => { self.dec_e(); timing_info.unwrap_fixed() }
         0x1E => {
             let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             self.ld_e_n(n);
+            timing_info.unwrap_fixed()
         }
-        0x1F => self.rra(),
-        0x20 => {
+        0x1F => { self.rra(); timing_info.unwrap_fixed() }
+        0x20 => { // JR NZ, r8
             let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.jr_nz_e8(offset);
+            let condition = !self.is_flag_z();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    let current_pc_val = self.pc;
+                    let pc_after_instruction = current_pc_val.wrapping_add(2);
+                    self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(2);
+                    cf
+                }
+            } else { panic!("Incorrect timing for JR NZ"); }
         }
         0x21 => {
             let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
             self.ld_hl_nn(lo, hi);
+            timing_info.unwrap_fixed()
         }
-        0x22 => self.ldi_hl_mem_a(),
-        0x23 => self.inc_hl(),
-        0x24 => self.inc_h(),
-        0x25 => self.dec_h(),
+        0x22 => { self.ldi_hl_mem_a(); timing_info.unwrap_fixed() }
+        0x23 => { self.inc_hl(); timing_info.unwrap_fixed() }
+        0x24 => { self.inc_h(); timing_info.unwrap_fixed() }
+        0x25 => { self.dec_h(); timing_info.unwrap_fixed() }
         0x26 => {
             let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             self.ld_h_n(n);
+            timing_info.unwrap_fixed()
         }
-        0x27 => self.daa(),
-        0x28 => {
+        0x27 => { self.daa(); timing_info.unwrap_fixed() }
+        0x28 => { // JR Z, r8
             let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.jr_z_e8(offset);
+            let condition = self.is_flag_z();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    let current_pc_val = self.pc;
+                    let pc_after_instruction = current_pc_val.wrapping_add(2);
+                    self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(2);
+                    cf
+                }
+            } else { panic!("Incorrect timing for JR Z"); }
         }
-        0x29 => self.add_hl_hl(),
-        0x2A => self.ldi_a_hl_mem(),
-        0x2B => self.dec_hl(),
-        0x2C => self.inc_l(),
-        0x2D => self.dec_l(),
+        0x29 => { self.add_hl_hl(); timing_info.unwrap_fixed() }
+        0x2A => { self.ldi_a_hl_mem(); timing_info.unwrap_fixed() }
+        0x2B => { self.dec_hl(); timing_info.unwrap_fixed() }
+        0x2C => { self.inc_l(); timing_info.unwrap_fixed() }
+        0x2D => { self.dec_l(); timing_info.unwrap_fixed() }
         0x2E => {
             let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             self.ld_l_n(n);
+            timing_info.unwrap_fixed()
         }
-        0x2F => self.cpl(),
-        0x30 => {
+        0x2F => { self.cpl(); timing_info.unwrap_fixed() }
+        0x30 => { // JR NC, r8
             let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.jr_nc_e8(offset);
+            let condition = !self.is_flag_c();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    let current_pc_val = self.pc;
+                    let pc_after_instruction = current_pc_val.wrapping_add(2);
+                    self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(2);
+                    cf
+                }
+            } else { panic!("Incorrect timing for JR NC"); }
         }
         0x31 => {
             let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
             self.ld_sp_nn(lo, hi);
+            timing_info.unwrap_fixed()
         }
-        0x32 => self.ldd_hl_mem_a(),
-        0x33 => self.inc_sp(),
-        0x34 => self.inc_hl_mem(),
-        0x35 => self.dec_hl_mem(),
+        0x32 => { self.ldd_hl_mem_a(); timing_info.unwrap_fixed() }
+        0x33 => { self.inc_sp(); timing_info.unwrap_fixed() }
+        0x34 => { self.inc_hl_mem(); timing_info.unwrap_fixed() }
+        0x35 => { self.dec_hl_mem(); timing_info.unwrap_fixed() }
         0x36 => {
             let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             self.ld_hl_mem_n(n);
+            timing_info.unwrap_fixed()
         }
-        0x37 => self.scf(),
-        0x38 => {
+        0x37 => { self.scf(); timing_info.unwrap_fixed() }
+        0x38 => { // JR C, r8
             let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.jr_c_e8(offset);
+            let condition = self.is_flag_c();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    let current_pc_val = self.pc;
+                    let pc_after_instruction = current_pc_val.wrapping_add(2);
+                    self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(2);
+                    cf
+                }
+            } else { panic!("Incorrect timing for JR C"); }
         }
-        0x39 => self.add_hl_sp(),
-        0x3A => self.ldd_a_hl_mem(),
-        0x3B => self.dec_sp(),
-        0x3C => self.inc_a(),
-        0x3D => self.dec_a(),
+        0x39 => { self.add_hl_sp(); timing_info.unwrap_fixed() }
+        0x3A => { self.ldd_a_hl_mem(); timing_info.unwrap_fixed() }
+        0x3B => { self.dec_sp(); timing_info.unwrap_fixed() }
+        0x3C => { self.inc_a(); timing_info.unwrap_fixed() }
+        0x3D => { self.dec_a(); timing_info.unwrap_fixed() }
         0x3E => {
             let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
             self.ld_a_n(n);
+            timing_info.unwrap_fixed()
         }
-        0x3F => self.ccf(),
-        0x40 => self.ld_b_b(), 0x41 => self.ld_b_c(), 0x42 => self.ld_b_d(), 0x43 => self.ld_b_e(),
-        0x44 => self.ld_b_h(), 0x45 => self.ld_b_l(), 0x46 => self.ld_b_hl_mem(), 0x47 => self.ld_b_a(),
-        0x48 => self.ld_c_b(), 0x49 => self.ld_c_c(), 0x4A => self.ld_c_d(), 0x4B => self.ld_c_e(),
-        0x4C => self.ld_c_h(), 0x4D => self.ld_c_l(), 0x4E => self.ld_c_hl_mem(), 0x4F => self.ld_c_a(),
-        0x50 => self.ld_d_b(), 0x51 => self.ld_d_c(), 0x52 => self.ld_d_d(), 0x53 => self.ld_d_e(),
-        0x54 => self.ld_d_h(), 0x55 => self.ld_d_l(), 0x56 => self.ld_d_hl_mem(), 0x57 => self.ld_d_a(),
-        0x58 => self.ld_e_b(), 0x59 => self.ld_e_c(), 0x5A => self.ld_e_d(), 0x5B => self.ld_e_e(),
-        0x5C => self.ld_e_h(), 0x5D => self.ld_e_l(), 0x5E => self.ld_e_hl_mem(), 0x5F => self.ld_e_a(),
-        0x60 => self.ld_h_b(), 0x61 => self.ld_h_c(), 0x62 => self.ld_h_d(), 0x63 => self.ld_h_e(),
-        0x64 => self.ld_h_h(), 0x65 => self.ld_h_l(), 0x66 => self.ld_h_hl_mem(), 0x67 => self.ld_h_a(),
-        0x68 => self.ld_l_b(), 0x69 => self.ld_l_c(), 0x6A => self.ld_l_d(), 0x6B => self.ld_l_e(),
-        0x6C => self.ld_l_h(), 0x6D => self.ld_l_l(), 0x6E => self.ld_l_hl_mem(), 0x6F => self.ld_l_a(),
-        0x70 => self.ld_hl_mem_b(), 0x71 => self.ld_hl_mem_c(), 0x72 => self.ld_hl_mem_d(), 0x73 => self.ld_hl_mem_e(),
-        0x74 => self.ld_hl_mem_h(), 0x75 => self.ld_hl_mem_l(),
-        0x76 => self.halt(),
-        0x77 => self.ld_hl_mem_a(),
-        0x78 => self.ld_a_b(), 0x79 => self.ld_a_c(), 0x7A => self.ld_a_d(), 0x7B => self.ld_a_e(),
-        0x7C => self.ld_a_h(), 0x7D => self.ld_a_l(), 0x7E => self.ld_a_hl_mem(), 0x7F => self.ld_a_a(),
-        0x80 => self.add_a_b(), 0x81 => self.add_a_c(), 0x82 => self.add_a_d(), 0x83 => self.add_a_e(),
-        0x84 => self.add_a_h(), 0x85 => self.add_a_l(), 0x86 => self.add_a_hl_mem(), 0x87 => self.add_a_a(),
-        0x88 => self.adc_a_b(), 0x89 => self.adc_a_c(), 0x8A => self.adc_a_d(), 0x8B => self.adc_a_e(),
-        0x8C => self.adc_a_h(), 0x8D => self.adc_a_l(), 0x8E => self.adc_a_hl_mem(), 0x8F => self.adc_a_a(),
-        0x90 => self.sub_a_b(), 0x91 => self.sub_a_c(), 0x92 => self.sub_a_d(), 0x93 => self.sub_a_e(),
-        0x94 => self.sub_a_h(), 0x95 => self.sub_a_l(), 0x96 => self.sub_a_hl_mem(), 0x97 => self.sub_a_a(),
-        0x98 => self.sbc_a_b(), 0x99 => self.sbc_a_c(), 0x9A => self.sbc_a_d(), 0x9B => self.sbc_a_e(),
-        0x9C => self.sbc_a_h(), 0x9D => self.sbc_a_l(), 0x9E => self.sbc_a_hl_mem(), 0x9F => self.sbc_a_a(),
-        0xA0 => self.and_a_b(), 0xA1 => self.and_a_c(), 0xA2 => self.and_a_d(), 0xA3 => self.and_a_e(),
-        0xA4 => self.and_a_h(), 0xA5 => self.and_a_l(), 0xA6 => self.and_a_hl_mem(), 0xA7 => self.and_a_a(),
-        0xA8 => self.xor_a_b(), 0xA9 => self.xor_a_c(), 0xAA => self.xor_a_d(), 0xAB => self.xor_a_e(),
-        0xAC => self.xor_a_h(), 0xAD => self.xor_a_l(), 0xAE => self.xor_a_hl_mem(), 0xAF => self.xor_a_a(),
-        0xB0 => self.or_a_b(), 0xB1 => self.or_a_c(), 0xB2 => self.or_a_d(), 0xB3 => self.or_a_e(),
-        0xB4 => self.or_a_h(), 0xB5 => self.or_a_l(), 0xB6 => self.or_a_hl_mem(), 0xB7 => self.or_a_a(),
-        0xB8 => self.cp_a_b(), 0xB9 => self.cp_a_c(), 0xBA => self.cp_a_d(), 0xBB => self.cp_a_e(),
-        0xBC => self.cp_a_h(), 0xBD => self.cp_a_l(), 0xBE => self.cp_a_hl_mem(), 0xBF => self.cp_a_a(),
-        0xC0 => self.ret_nz(),
-        0xC1 => self.pop_bc(),
-        0xC2 => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.jp_nz_nn(lo, hi); },
-        0xC3 => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.jp_nn(lo, hi); },
-        0xC4 => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.call_nz_nn(lo, hi); },
-        0xC5 => self.push_bc(),
-        0xC6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.add_a_n(val); },
-        0xC7 => self.rst_00h(),
-        0xC8 => self.ret_z(),
-        0xC9 => self.ret(),
-        0xCA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.jp_z_nn(lo, hi); },
-        0xCB => {
+        0x3F => { self.ccf(); timing_info.unwrap_fixed() }
+        0x40..=0x75 => { // LD r, r' ; LD r, (HL); LD (HL), r
+            match opcode {
+                0x40 => self.ld_b_b(), 0x41 => self.ld_b_c(), 0x42 => self.ld_b_d(), 0x43 => self.ld_b_e(),
+                0x44 => self.ld_b_h(), 0x45 => self.ld_b_l(), 0x46 => self.ld_b_hl_mem(), 0x47 => self.ld_b_a(),
+                0x48 => self.ld_c_b(), 0x49 => self.ld_c_c(), 0x4A => self.ld_c_d(), 0x4B => self.ld_c_e(),
+                0x4C => self.ld_c_h(), 0x4D => self.ld_c_l(), 0x4E => self.ld_c_hl_mem(), 0x4F => self.ld_c_a(),
+                0x50 => self.ld_d_b(), 0x51 => self.ld_d_c(), 0x52 => self.ld_d_d(), 0x53 => self.ld_d_e(),
+                0x54 => self.ld_d_h(), 0x55 => self.ld_d_l(), 0x56 => self.ld_d_hl_mem(), 0x57 => self.ld_d_a(),
+                0x58 => self.ld_e_b(), 0x59 => self.ld_e_c(), 0x5A => self.ld_e_d(), 0x5B => self.ld_e_e(),
+                0x5C => self.ld_e_h(), 0x5D => self.ld_e_l(), 0x5E => self.ld_e_hl_mem(), 0x5F => self.ld_e_a(),
+                0x60 => self.ld_h_b(), 0x61 => self.ld_h_c(), 0x62 => self.ld_h_d(), 0x63 => self.ld_h_e(),
+                0x64 => self.ld_h_h(), 0x65 => self.ld_h_l(), 0x66 => self.ld_h_hl_mem(), 0x67 => self.ld_h_a(),
+                0x68 => self.ld_l_b(), 0x69 => self.ld_l_c(), 0x6A => self.ld_l_d(), 0x6B => self.ld_l_e(),
+                0x6C => self.ld_l_h(), 0x6D => self.ld_l_l(), 0x6E => self.ld_l_hl_mem(), 0x6F => self.ld_l_a(),
+                0x70 => self.ld_hl_mem_b(), 0x71 => self.ld_hl_mem_c(), 0x72 => self.ld_hl_mem_d(), 0x73 => self.ld_hl_mem_e(),
+                0x74 => self.ld_hl_mem_h(), 0x75 => self.ld_hl_mem_l(),
+                _ => unreachable!(), // Should be covered by range
+            }
+            timing_info.unwrap_fixed()
+        }
+        0x76 => { self.halt(); timing_info.unwrap_fixed() } // HALT itself updates PC if not bugged
+        0x77 => { self.ld_hl_mem_a(); timing_info.unwrap_fixed() }
+        0x78..=0x7F => { // LD A, r ; LD A, (HL)
+             match opcode {
+                0x78 => self.ld_a_b(), 0x79 => self.ld_a_c(), 0x7A => self.ld_a_d(), 0x7B => self.ld_a_e(),
+                0x7C => self.ld_a_h(), 0x7D => self.ld_a_l(), 0x7E => self.ld_a_hl_mem(), 0x7F => self.ld_a_a(),
+                _ => unreachable!(),
+             }
+             timing_info.unwrap_fixed()
+        }
+        0x80..=0xBF => { // ALU A, r; ALU A, (HL); ALU A, n
+            match opcode {
+                0x80 => self.add_a_b(), 0x81 => self.add_a_c(), 0x82 => self.add_a_d(), 0x83 => self.add_a_e(),
+                0x84 => self.add_a_h(), 0x85 => self.add_a_l(), 0x86 => self.add_a_hl_mem(), 0x87 => self.add_a_a(),
+                0x88 => self.adc_a_b(), 0x89 => self.adc_a_c(), 0x8A => self.adc_a_d(), 0x8B => self.adc_a_e(),
+                0x8C => self.adc_a_h(), 0x8D => self.adc_a_l(), 0x8E => self.adc_a_hl_mem(), 0x8F => self.adc_a_a(),
+                0x90 => self.sub_a_b(), 0x91 => self.sub_a_c(), 0x92 => self.sub_a_d(), 0x93 => self.sub_a_e(),
+                0x94 => self.sub_a_h(), 0x95 => self.sub_a_l(), 0x96 => self.sub_a_hl_mem(), 0x97 => self.sub_a_a(),
+                0x98 => self.sbc_a_b(), 0x99 => self.sbc_a_c(), 0x9A => self.sbc_a_d(), 0x9B => self.sbc_a_e(),
+                0x9C => self.sbc_a_h(), 0x9D => self.sbc_a_l(), 0x9E => self.sbc_a_hl_mem(), 0x9F => self.sbc_a_a(),
+                0xA0 => self.and_a_b(), 0xA1 => self.and_a_c(), 0xA2 => self.and_a_d(), 0xA3 => self.and_a_e(),
+                0xA4 => self.and_a_h(), 0xA5 => self.and_a_l(), 0xA6 => self.and_a_hl_mem(), 0xA7 => self.and_a_a(),
+                0xA8 => self.xor_a_b(), 0xA9 => self.xor_a_c(), 0xAA => self.xor_a_d(), 0xAB => self.xor_a_e(),
+                0xAC => self.xor_a_h(), 0xAD => self.xor_a_l(), 0xAE => self.xor_a_hl_mem(), 0xAF => self.xor_a_a(),
+                0xB0 => self.or_a_b(), 0xB1 => self.or_a_c(), 0xB2 => self.or_a_d(), 0xB3 => self.or_a_e(),
+                0xB4 => self.or_a_h(), 0xB5 => self.or_a_l(), 0xB6 => self.or_a_hl_mem(), 0xB7 => self.or_a_a(),
+                0xB8 => self.cp_a_b(), 0xB9 => self.cp_a_c(), 0xBA => self.cp_a_d(), 0xBB => self.cp_a_e(),
+                0xBC => self.cp_a_h(), 0xBD => self.cp_a_l(), 0xBE => self.cp_a_hl_mem(), 0xBF => self.cp_a_a(),
+                _ => unreachable!(),
+            }
+            timing_info.unwrap_fixed()
+        }
+        0xC0 => { // RET NZ
+            let condition = !self.is_flag_z();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.ret(); // ret handles PC update from stack
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(1); // consumes only 1 byte for opcode
+                    cf
+                }
+            } else { panic!("Incorrect timing for RET NZ"); }
+        }
+        0xC1 => { self.pop_bc(); timing_info.unwrap_fixed() }
+        0xC2 => { // JP NZ,a16
+            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+            let condition = !self.is_flag_z();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.pc = ((hi as u16) << 8) | (lo as u16);
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(3);
+                    cf
+                }
+            } else { panic!("Incorrect timing for JP NZ,a16"); }
+        }
+        0xC3 => { // JP a16
+            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+            self.jp_nn(lo, hi); // jp_nn updates PC
+            timing_info.unwrap_fixed()
+        }
+        0xC4 => { // CALL NZ,a16
+            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+            let condition = !self.is_flag_z();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.call_nn(lo, hi); // call_nn handles PC update & stack
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(3);
+                    cf
+                }
+            } else { panic!("Incorrect timing for CALL NZ,a16"); }
+        }
+        0xC5 => { self.push_bc(); timing_info.unwrap_fixed() }
+        0xC6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.add_a_n(val); timing_info.unwrap_fixed() }
+        0xC7 => { self.rst_00h(); timing_info.unwrap_fixed() }
+        0xC8 => { // RET Z
+            let condition = self.is_flag_z();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.ret();
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(1);
+                    cf
+                }
+            } else { panic!("Incorrect timing for RET Z"); }
+        }
+        0xC9 => { self.ret(); timing_info.unwrap_fixed() }
+        0xCA => { // JP Z,a16
+            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+            let condition = self.is_flag_z();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.pc = ((hi as u16) << 8) | (lo as u16);
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(3);
+                    cf
+                }
+            } else { panic!("Incorrect timing for JP Z,a16"); }
+        }
+        0xCB => { // PREFIX CB
+            let prefix_cycles = timing_info.unwrap_fixed();
             let cb_opcode = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.pc = self.pc.wrapping_add(2);
-            self.execute_cb_prefixed(cb_opcode);
+            self.pc = self.pc.wrapping_add(2); // Advance PC for 0xCB and the operand
+            let cb_cycles = self.execute_cb_prefixed(cb_opcode);
+            prefix_cycles.wrapping_add(cb_cycles) // Total cycles
         }
-        0xCC => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.call_z_nn(lo, hi); },
-        0xCD => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.call_nn(lo, hi); },
-        0xCE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.adc_a_n(val); },
-        0xCF => self.rst_08h(),
-        0xD0 => self.ret_nc(),
-        0xD1 => self.pop_de(),
-        0xD2 => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.jp_nc_nn(lo, hi); },
-        0xD4 => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.call_nc_nn(lo, hi); },
-        0xD5 => self.push_de(),
-        0xD6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.sub_a_n(val); },
-        0xD7 => self.rst_10h(),
-        0xD8 => self.ret_c(),
-        0xD9 => self.reti(),
-        0xDA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.jp_c_nn(lo, hi); },
-        0xDC => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.call_c_nn(lo, hi); },
-        0xDE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.sbc_a_n(val); },
-        0xDF => self.rst_18h(),
-        0xE0 => { let offset=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ldh_n_offset_mem_a(offset); },
-        0xE1 => self.pop_hl(),
-        0xE2 => self.ldh_c_offset_mem_a(),
-        0xE5 => self.push_hl(),
-        0xE6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.and_a_n(val); },
-        0xE7 => self.rst_20h(),
-        0xE8 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.add_sp_e8(val); },
-        0xE9 => self.jp_hl(),
-        0xEA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.ld_nn_mem_a(lo, hi); },
-        0xEE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.xor_a_n(val); },
-        0xEF => self.rst_28h(),
-        0xF0 => { let offset=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ldh_a_n_offset_mem(offset); },
-        0xF1 => self.pop_af(),
-        0xF2 => self.ldh_a_c_offset_mem(),
-        0xF3 => self.di(),
-        0xF5 => self.push_af(),
-        0xF6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.or_a_n(val); },
-        0xF7 => self.rst_30h(),
-        0xF8 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ld_hl_sp_plus_e8(val); },
-        0xF9 => self.ld_sp_hl(),
-        0xFA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.ld_a_nn_mem(lo, hi); },
-        0xFB => self.ei(),
-        0xFE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.cp_a_n(val); },
-        0xFF => self.rst_38h(),
+        0xCC => { // CALL Z,a16
+            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+            let condition = self.is_flag_z();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.call_nn(lo, hi);
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(3);
+                    cf
+                }
+            } else { panic!("Incorrect timing for CALL Z,a16"); }
+        }
+        0xCD => { // CALL a16
+            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+            self.call_nn(lo, hi);
+            timing_info.unwrap_fixed()
+        }
+        0xCE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.adc_a_n(val); timing_info.unwrap_fixed() }
+        0xCF => { self.rst_08h(); timing_info.unwrap_fixed() }
+        0xD0 => { // RET NC
+            let condition = !self.is_flag_c();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.ret();
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(1);
+                    cf
+                }
+            } else { panic!("Incorrect timing for RET NC"); }
+        }
+        0xD1 => { self.pop_de(); timing_info.unwrap_fixed() }
+        0xD2 => { // JP NC,a16
+            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+            let condition = !self.is_flag_c();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.pc = ((hi as u16) << 8) | (lo as u16);
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(3);
+                    cf
+                }
+            } else { panic!("Incorrect timing for JP NC,a16"); }
+        }
+        0xD4 => { // CALL NC,a16
+            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+            let condition = !self.is_flag_c();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.call_nn(lo, hi);
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(3);
+                    cf
+                }
+            } else { panic!("Incorrect timing for CALL NC,a16"); }
+        }
+        0xD5 => { self.push_de(); timing_info.unwrap_fixed() }
+        0xD6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.sub_a_n(val); timing_info.unwrap_fixed() }
+        0xD7 => { self.rst_10h(); timing_info.unwrap_fixed() }
+        0xD8 => { // RET C
+            let condition = self.is_flag_c();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.ret();
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(1);
+                    cf
+                }
+            } else { panic!("Incorrect timing for RET C"); }
+        }
+        0xD9 => { self.reti(); timing_info.unwrap_fixed() }
+        0xDA => { // JP C,a16
+            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+            let condition = self.is_flag_c();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.pc = ((hi as u16) << 8) | (lo as u16);
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(3);
+                    cf
+                }
+            } else { panic!("Incorrect timing for JP C,a16"); }
+        }
+        0xDC => { // CALL C,a16
+            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+            let condition = self.is_flag_c();
+            if let Timing::Conditional(ct, cf) = timing_info {
+                if condition {
+                    self.call_nn(lo, hi);
+                    ct
+                } else {
+                    self.pc = self.pc.wrapping_add(3);
+                    cf
+                }
+            } else { panic!("Incorrect timing for CALL C,a16"); }
+        }
+        0xDE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.sbc_a_n(val); timing_info.unwrap_fixed() }
+        0xDF => { self.rst_18h(); timing_info.unwrap_fixed() }
+        0xE0 => { let offset=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ldh_n_offset_mem_a(offset); timing_info.unwrap_fixed() }
+        0xE1 => { self.pop_hl(); timing_info.unwrap_fixed() }
+        0xE2 => { self.ldh_c_offset_mem_a(); timing_info.unwrap_fixed() }
+        0xE5 => { self.push_hl(); timing_info.unwrap_fixed() }
+        0xE6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.and_a_n(val); timing_info.unwrap_fixed() }
+        0xE7 => { self.rst_20h(); timing_info.unwrap_fixed() }
+        0xE8 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.add_sp_e8(val); timing_info.unwrap_fixed() }
+        0xE9 => { self.jp_hl(); timing_info.unwrap_fixed() }
+        0xEA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.ld_nn_mem_a(lo, hi); timing_info.unwrap_fixed() }
+        0xEE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.xor_a_n(val); timing_info.unwrap_fixed() }
+        0xEF => { self.rst_28h(); timing_info.unwrap_fixed() }
+        0xF0 => { let offset=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ldh_a_n_offset_mem(offset); timing_info.unwrap_fixed() }
+        0xF1 => { self.pop_af(); timing_info.unwrap_fixed() }
+        0xF2 => { self.ldh_a_c_offset_mem(); timing_info.unwrap_fixed() }
+        0xF3 => { self.di(); timing_info.unwrap_fixed() }
+        0xF5 => { self.push_af(); timing_info.unwrap_fixed() }
+        0xF6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.or_a_n(val); timing_info.unwrap_fixed() }
+        0xF7 => { self.rst_30h(); timing_info.unwrap_fixed() }
+        0xF8 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ld_hl_sp_plus_e8(val); timing_info.unwrap_fixed() }
+        0xF9 => { self.ld_sp_hl(); timing_info.unwrap_fixed() }
+        0xFA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.ld_a_nn_mem(lo, hi); timing_info.unwrap_fixed() }
+        0xFB => { self.ei(); timing_info.unwrap_fixed() }
+        0xFE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.cp_a_n(val); timing_info.unwrap_fixed() }
+        0xFF => { self.rst_38h(); timing_info.unwrap_fixed() }
         0xD3 | 0xDB | 0xDD | 0xE3 | 0xE4 | 0xEB | 0xEC | 0xED | 0xF4 | 0xFC | 0xFD => {
-             panic!("Unimplemented or illegal opcode: {:#04X} at PC: {:#04X}", opcode, self.pc);
+            // For known illegal opcodes, we use Timing::Illegal.
+            // If an opcode is not in the timing table or marked as Timing::Illegal, panic.
+            match timing_info {
+                Timing::Illegal => panic!("Executed ILLEGAL opcode: {:#04X} at PC: {:#04X}", opcode, self.pc),
+                _ => panic!("Unimplemented or illegal opcode: {:#04X} at PC: {:#04X} (with valid timing entry, this is unexpected)", opcode, self.pc),
+            }
         }
     };
 
-    return DEFAULT_OPCODE_M_CYCLES;
+    return cycles as u32;
 }
 }
 
