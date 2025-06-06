@@ -21,7 +21,7 @@ const INTERRUPT_ENABLE_REGISTER_ADDR: u16 = 0xFFFF; // IE Register
 const INTERRUPT_SERVICE_M_CYCLES: u32 = 5; // M-cycles for interrupt dispatch
 const HALTED_IDLE_M_CYCLES: u32 = 1;      // M-cycles when halted and no interrupt
 // Default M-cycles for a regular instruction if not specified otherwise (for this subtask's simplification)
-const DEFAULT_OPCODE_M_CYCLES: u32 = 4;
+// const DEFAULT_OPCODE_M_CYCLES: u32 = 4; // Removed as unused
 
 use crate::bus::{Bus, SystemMode}; // Added SystemMode
 // Removed: use crate::interrupts::InterruptType; // Will be moved into test module
@@ -42,6 +42,14 @@ impl Timing {
         match self {
             Timing::Fixed(m_cycles) => m_cycles,
             _ => panic!("Timing was expected to be Fixed but was not."),
+        }
+    }
+
+    // Helper to unwrap conditional timing, panics if not Conditional.
+    pub fn unwrap_conditional(self) -> (u8, u8) {
+        match self {
+            Timing::Conditional(ct, cf) => (ct, cf),
+            _ => panic!("Timing was expected to be Conditional but was not."),
         }
     }
 }
@@ -1809,20 +1817,6 @@ pub fn stop(&mut self) {
         // No flags are affected by this instruction.
     }
 
-    // JP nn (0xC3)
-    pub fn jp_nn(&mut self, addr_lo: u8, addr_hi: u8) {
-        let address = ((addr_hi as u16) << 8) | (addr_lo as u16);
-        self.pc = address;
-        // No flags are affected by this instruction.
-    }
-
-    // JP HL (0xE9)
-    pub fn jp_hl(&mut self) {
-        let address = ((self.h as u16) << 8) | (self.l as u16);
-        self.pc = address;
-        // No flags are affected by this instruction.
-    }
-
     // JR d8 (0x18)
     pub fn jr_e8(&mut self, offset: u8) {
         let current_pc_val = self.pc; // PC at the JR opcode itself
@@ -2372,7 +2366,7 @@ pub fn step(&mut self) -> u32 {
         // To match test expectation that PC is only incremented once (effectively skipping HALT)
         // and not executing the following instruction in this same step.
         // HALT bug effectively takes 1 M-cycle (the NOP that is "executed" instead).
-        return OPCODE_TIMINGS[0x00].unwrap_fixed(); // Use NOP's timing for HALT bug "skip"
+        return OPCODE_TIMINGS[0x00].unwrap_fixed().into(); // Use NOP's timing for HALT bug "skip"
     }
 
     if self.is_halted {
@@ -5319,25 +5313,43 @@ mod tests {
             let mut cpu = setup_cpu();
             let addr_lo = 0x34;
             let addr_hi = 0x12; // Jump to 0x1234
-            let initial_pc = 0x0100;
+            let initial_pc = 0xC000; // USE WRAM FOR TEST OPCODES
 
             // Case 1: Condition met (Z flag is 0)
             cpu.pc = initial_pc;
             cpu.set_flag_z(false); // NZ is true
-            cpu.f = cpu.f & 0x0F; // Keep other flags as they are (e.g. 0x00, or some other combo)
-            let flags_before_jump = cpu.f;
-            cpu.jp_nz_nn(addr_lo, addr_hi);
+            // Preserve other flags by reading them, then clearing Z, then ORing back.
+            let original_flags = cpu.f;
+            cpu.f = original_flags & 0x7F; // Clear Z flag bit
+
+            // Write opcode and operands to memory
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xC2); // JP NZ,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
+
+            let cycles = cpu.step();
             assert_eq!(cpu.pc, 0x1234, "PC should jump to 0x1234 when Z is false");
-            assert_eq!(cpu.f, flags_before_jump, "Flags should not change on jump");
+            assert_eq!(cycles, OPCODE_TIMINGS[0xC2 as usize].unwrap_conditional().0 as u32, "Cycles incorrect for JP NZ taken");
+            // Flags N, H, C are not affected by JP. Z is tested for condition but not modified by JP itself.
+            // So, F should be what it was before the op, with Z still false.
+            assert_eq!(cpu.is_flag_z(), false, "Z flag should remain false");
+            assert_eq!((cpu.f & 0x70), (original_flags & 0x70), "N, H, C flags should not change");
+
 
             // Case 2: Condition not met (Z flag is 1)
-            cpu.pc = initial_pc;
+            cpu.pc = initial_pc; // Reset PC
             cpu.set_flag_z(true); // NZ is false
-            cpu.f = (cpu.f & 0x0F) | (1 << ZERO_FLAG_BYTE_POSITION); // Ensure Z is set, other flags as they are
-            let flags_before_no_jump = cpu.f;
-            cpu.jp_nz_nn(addr_lo, addr_hi);
-            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when Z is true");
-            assert_eq!(cpu.f, flags_before_no_jump, "Flags should not change on no jump");
+            let original_flags_no_jump = cpu.f; // Includes Z=1
+            // Write opcode and operands to memory
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xC2); // JP NZ,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
+
+            let cycles_no_jump = cpu.step();
+            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when Z is true (no jump)");
+            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0xC2 as usize].unwrap_conditional().1 as u32, "Cycles incorrect for JP NZ not taken");
+            // Flags N, H, C are not affected. Z was true and should remain true.
+            assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
         }
 
         #[test]
@@ -5345,25 +5357,36 @@ mod tests {
             let mut cpu = setup_cpu();
             let addr_lo = 0xCD;
             let addr_hi = 0xAB; // Jump to 0xABCD
-            let initial_pc = 0x0200;
+            let initial_pc = 0xC000; // USE WRAM FOR TEST OPCODES
 
             // Case 1: Condition met (Z flag is 1)
             cpu.pc = initial_pc;
             cpu.set_flag_z(true);
-            cpu.f = (cpu.f & 0x0F) | (1 << ZERO_FLAG_BYTE_POSITION);
-            let flags_before_jump = cpu.f;
-            cpu.jp_z_nn(addr_lo, addr_hi);
+            let original_flags_jump = cpu.f; // Z is 1
+            // Write opcode and operands to memory
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xCA); // JP Z,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
+
+            let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0xABCD, "PC should jump to 0xABCD when Z is true");
-            assert_eq!(cpu.f, flags_before_jump, "Flags should not change on jump");
+            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xCA as usize].unwrap_conditional().0 as u32, "Cycles incorrect for JP Z taken");
+            assert_eq!(cpu.f, original_flags_jump, "Flags should not change on jump");
+
 
             // Case 2: Condition not met (Z flag is 0)
-            cpu.pc = initial_pc;
+            cpu.pc = initial_pc; // Reset PC
             cpu.set_flag_z(false);
-            cpu.f = cpu.f & 0x0F;
-            let flags_before_no_jump = cpu.f;
-            cpu.jp_z_nn(addr_lo, addr_hi);
-            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when Z is false");
-            assert_eq!(cpu.f, flags_before_no_jump, "Flags should not change on no jump");
+            let original_flags_no_jump = cpu.f; // Z is 0
+            // Write opcode and operands to memory
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xCA); // JP Z,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
+
+            let cycles_no_jump = cpu.step();
+            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when Z is false (no jump)");
+            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0xCA as usize].unwrap_conditional().1 as u32, "Cycles incorrect for JP Z not taken");
+            assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
         }
 
         #[test]
@@ -5371,25 +5394,35 @@ mod tests {
             let mut cpu = setup_cpu();
             let addr_lo = 0x78;
             let addr_hi = 0x56; // Jump to 0x5678
-            let initial_pc = 0x0300;
+            let initial_pc = 0xC000; // USE WRAM FOR TEST OPCODES
 
             // Case 1: Condition met (C flag is 0)
             cpu.pc = initial_pc;
             cpu.set_flag_c(false); // NC is true
-            cpu.f = cpu.f & 0x0F;
-            let flags_before_jump = cpu.f;
-            cpu.jp_nc_nn(addr_lo, addr_hi);
+            let original_flags_jump = cpu.f; // C is 0
+            // Write opcode and operands to memory
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xD2); // JP NC,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
+
+            let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0x5678, "PC should jump to 0x5678 when C is false");
-            assert_eq!(cpu.f, flags_before_jump, "Flags should not change on jump");
+            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xD2 as usize].unwrap_conditional().0 as u32, "Cycles incorrect for JP NC taken");
+            assert_eq!(cpu.f, original_flags_jump, "Flags should not change on jump");
 
             // Case 2: Condition not met (C flag is 1)
-            cpu.pc = initial_pc;
+            cpu.pc = initial_pc; // Reset PC
             cpu.set_flag_c(true); // NC is false
-            cpu.f = (cpu.f & 0x0F) | (1 << CARRY_FLAG_BYTE_POSITION);
-            let flags_before_no_jump = cpu.f;
-            cpu.jp_nc_nn(addr_lo, addr_hi);
-            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when C is true");
-            assert_eq!(cpu.f, flags_before_no_jump, "Flags should not change on no jump");
+            let original_flags_no_jump = cpu.f; // C is 1
+            // Write opcode and operands to memory
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xD2); // JP NC,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
+
+            let cycles_no_jump = cpu.step();
+            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when C is true (no jump)");
+            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0xD2 as usize].unwrap_conditional().1 as u32, "Cycles incorrect for JP NC not taken");
+            assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
         }
 
         #[test]
@@ -5397,25 +5430,35 @@ mod tests {
             let mut cpu = setup_cpu();
             let addr_lo = 0xBC;
             let addr_hi = 0x9A; // Jump to 0x9ABC
-            let initial_pc = 0x0400;
+            let initial_pc = 0xC000; // USE WRAM FOR TEST OPCODES
 
             // Case 1: Condition met (C flag is 1)
             cpu.pc = initial_pc;
             cpu.set_flag_c(true);
-            cpu.f = (cpu.f & 0x0F) | (1 << CARRY_FLAG_BYTE_POSITION);
-            let flags_before_jump = cpu.f;
-            cpu.jp_c_nn(addr_lo, addr_hi);
+            let original_flags_jump = cpu.f; // C is 1
+            // Write opcode and operands to memory
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xDA); // JP C,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
+
+            let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0x9ABC, "PC should jump to 0x9ABC when C is true");
-            assert_eq!(cpu.f, flags_before_jump, "Flags should not change on jump");
+            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xDA as usize].unwrap_conditional().0 as u32, "Cycles incorrect for JP C taken");
+            assert_eq!(cpu.f, original_flags_jump, "Flags should not change on jump");
 
             // Case 2: Condition not met (C flag is 0)
-            cpu.pc = initial_pc;
+            cpu.pc = initial_pc; // Reset PC
             cpu.set_flag_c(false);
-            cpu.f = cpu.f & 0x0F;
-            let flags_before_no_jump = cpu.f;
-            cpu.jp_c_nn(addr_lo, addr_hi);
-            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when C is false");
-            assert_eq!(cpu.f, flags_before_no_jump, "Flags should not change on no jump");
+            let original_flags_no_jump = cpu.f; // C is 0
+            // Write opcode and operands to memory
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xDA); // JP C,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
+
+            let cycles_no_jump = cpu.step();
+            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when C is false (no jump)");
+            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0xDA as usize].unwrap_conditional().1 as u32, "Cycles incorrect for JP C not taken");
+            assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
         }
 
         #[test]
@@ -5454,113 +5497,147 @@ mod tests {
         #[test]
         fn test_jr_nz_e8() {
             let mut cpu = setup_cpu();
-            let initial_pc = 0x0150;
+            let initial_pc = 0xC000; // USE WRAM FOR TEST OPCODES
             let offset_fwd = 0x10; // Jump +16
             let offset_bwd = 0xE0 as u8; // Jump -32 (0xE0 as i8 = -32)
 
             // Case 1: NZ is true (Z=0), jump taken
-            cpu.pc = initial_pc; cpu.set_flag_z(false); cpu.f = 0x00; let flags = cpu.f;
-            cpu.jr_nz_e8(offset_fwd);
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset_fwd as i8 as i16 as u16), "JR NZ fwd (Z=0) failed");
-            assert_eq!(cpu.f, flags, "JR NZ fwd (Z=0) flags changed");
+            cpu.pc = initial_pc; cpu.set_flag_z(false);
+            let original_flags_fwd = cpu.f; // Z is 0
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0x20); // JR NZ,r8 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset_fwd);
+            let cycles_fwd = cpu.step();
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset_fwd as i8 as i16 as u16), "JR NZ fwd (Z=0) PC failed");
+            assert_eq!(cycles_fwd, OPCODE_TIMINGS[0x20 as usize].unwrap_conditional().0 as u32, "JR NZ fwd (Z=0) cycles failed");
+            assert_eq!(cpu.f, original_flags_fwd, "JR NZ fwd (Z=0) flags changed");
 
-            cpu.pc = initial_pc; cpu.set_flag_z(false); cpu.f = 0x00;
-            cpu.jr_nz_e8(offset_bwd);
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset_bwd as i8 as i16 as u16), "JR NZ bwd (Z=0) failed");
-
+            cpu.pc = initial_pc; cpu.set_flag_z(false); // Reset PC and Z
+            let original_flags_bwd = cpu.f; // Z is 0
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0x20); // JR NZ,r8 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset_bwd);
+            let cycles_bwd = cpu.step();
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset_bwd as i8 as i16 as u16), "JR NZ bwd (Z=0) PC failed");
+            assert_eq!(cycles_bwd, OPCODE_TIMINGS[0x20 as usize].unwrap_conditional().0 as u32, "JR NZ bwd (Z=0) cycles failed");
+            assert_eq!(cpu.f, original_flags_bwd, "JR NZ bwd (Z=0) flags changed");
 
             // Case 2: NZ is false (Z=1), jump not taken
-            cpu.pc = initial_pc; cpu.set_flag_z(true); cpu.f = 1 << ZERO_FLAG_BYTE_POSITION; let flags_no_jump = cpu.f;
-            cpu.jr_nz_e8(offset_fwd);
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "JR NZ fwd (Z=1) no jump failed");
-            assert_eq!(cpu.f, flags_no_jump, "JR NZ fwd (Z=1) no jump flags changed");
+            cpu.pc = initial_pc; cpu.set_flag_z(true);
+            let original_flags_no_jump = cpu.f; // Z is 1
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0x20); // JR NZ,r8 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset_fwd);
+            let cycles_no_jump = cpu.step();
+            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "JR NZ (Z=1) no jump PC failed");
+            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0x20 as usize].unwrap_conditional().1 as u32, "JR NZ (Z=1) no jump cycles failed");
+            assert_eq!(cpu.f, original_flags_no_jump, "JR NZ (Z=1) no jump flags changed");
         }
 
         #[test]
         fn test_jr_z_e8() {
             let mut cpu = setup_cpu();
-            let initial_pc = 0x0250;
+            let initial_pc = 0xC000; // USE WRAM FOR TEST OPCODES
             let offset = 0x0A;
 
             // Case 1: Z is true, jump taken
-            cpu.pc = initial_pc; cpu.set_flag_z(true); cpu.f = 1 << ZERO_FLAG_BYTE_POSITION; let flags = cpu.f;
-            cpu.jr_z_e8(offset);
+            cpu.pc = initial_pc; cpu.set_flag_z(true);
+            let original_flags_jump = cpu.f; // Z is 1
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0x28); // JR Z,r8 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
+            let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset as i8 as i16 as u16));
-            assert_eq!(cpu.f, flags);
+            assert_eq!(cycles_jump, OPCODE_TIMINGS[0x28 as usize].unwrap_conditional().0 as u32);
+            assert_eq!(cpu.f, original_flags_jump);
 
             // Case 2: Z is false, jump not taken
-            cpu.pc = initial_pc; cpu.set_flag_z(false); cpu.f = 0x00; let flags_no_jump = cpu.f;
-            cpu.jr_z_e8(offset);
+            cpu.pc = initial_pc; cpu.set_flag_z(false);
+            let original_flags_no_jump = cpu.f; // Z is 0
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0x28); // JR Z,r8 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
+            let cycles_no_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2));
-            assert_eq!(cpu.f, flags_no_jump);
+            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0x28 as usize].unwrap_conditional().1 as u32);
+            assert_eq!(cpu.f, original_flags_no_jump);
         }
 
         #[test]
         fn test_jr_c_e8() {
             let mut cpu = setup_cpu();
-            let initial_pc = 0x0450;
+            let initial_pc = 0xC000; // USE WRAM FOR TEST OPCODES
             let offset = 0x05;
 
             // Case 1: C is true, jump taken
-            cpu.pc = initial_pc; cpu.set_flag_c(true); cpu.f = 1 << CARRY_FLAG_BYTE_POSITION; let flags = cpu.f;
-            cpu.jr_c_e8(offset);
+            cpu.pc = initial_pc; cpu.set_flag_c(true);
+            let original_flags_jump = cpu.f; // C is 1
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0x38); // JR C,r8 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
+            let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset as i8 as i16 as u16));
-            assert_eq!(cpu.f, flags);
+            assert_eq!(cycles_jump, OPCODE_TIMINGS[0x38 as usize].unwrap_conditional().0 as u32);
+            assert_eq!(cpu.f, original_flags_jump);
 
             // Case 2: C is false, jump not taken
-            cpu.pc = initial_pc; cpu.set_flag_c(false); cpu.f = 0x00; let flags_no_jump = cpu.f;
-            cpu.jr_c_e8(offset);
+            cpu.pc = initial_pc; cpu.set_flag_c(false);
+            let original_flags_no_jump = cpu.f; // C is 0
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0x38); // JR C,r8 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
+            let cycles_no_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2));
-            assert_eq!(cpu.f, flags_no_jump);
+            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0x38 as usize].unwrap_conditional().1 as u32);
+            assert_eq!(cpu.f, original_flags_no_jump);
         }
 
         #[test]
         fn test_jr_nc_e8() {
             let mut cpu = setup_cpu();
-            let initial_pc_base = 0x0100u16;
+            let initial_pc_base = 0xC000; // USE WRAM FOR TEST OPCODES
 
             // Case 1: NC is true (C=0), positive offset
             cpu.pc = initial_pc_base;
             cpu.set_flag_c(false); // NC is true
             cpu.f = cpu.f & 0xF0; // Ensure other flags are zero, C is already handled by set_flag_c
-            let initial_flags_case1 = cpu.f;
+            let initial_flags_case1 = cpu.f; // C is 0
             let offset_case1 = 0x0A; // 10
+            cpu.bus.borrow_mut().write_byte(initial_pc_base, 0x30); // JR NC,r8 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc_base + 1, offset_case1);
+            let cycles_case1 = cpu.step();
             let expected_pc_case1 = initial_pc_base.wrapping_add(2).wrapping_add(offset_case1 as i8 as i16 as u16); // 0x100 + 2 + 10 = 0x10C
-            cpu.jr_nc_e8(offset_case1);
             assert_eq!(cpu.pc, expected_pc_case1, "JR NC (C=0, offset +10) PC failed");
+            assert_eq!(cycles_case1, OPCODE_TIMINGS[0x30 as usize].unwrap_conditional().0 as u32);
             assert_eq!(cpu.f, initial_flags_case1, "JR NC (C=0, offset +10) flags changed");
 
             // Case 2: NC is true (C=0), negative offset
-            cpu.pc = initial_pc_base;
-            cpu.set_flag_c(false); // NC is true
-            cpu.f = cpu.f & 0xF0;
-            let initial_flags_case2 = cpu.f;
+            cpu.pc = initial_pc_base; cpu.set_flag_c(false); // Reset
+            let initial_flags_case2 = cpu.f; // C is 0
             let offset_case2 = 0xF6u8; // -10 as i8
+            cpu.bus.borrow_mut().write_byte(initial_pc_base, 0x30);
+            cpu.bus.borrow_mut().write_byte(initial_pc_base + 1, offset_case2);
+            let cycles_case2 = cpu.step();
             let expected_pc_case2 = initial_pc_base.wrapping_add(2).wrapping_add(offset_case2 as i8 as i16 as u16); // 0x100 + 2 - 10 = 0x0F8
-            cpu.jr_nc_e8(offset_case2);
             assert_eq!(cpu.pc, expected_pc_case2, "JR NC (C=0, offset -10) PC failed");
+            assert_eq!(cycles_case2, OPCODE_TIMINGS[0x30 as usize].unwrap_conditional().0 as u32);
             assert_eq!(cpu.f, initial_flags_case2, "JR NC (C=0, offset -10) flags changed");
 
             // Case 3: NC is false (C=1), positive offset (no jump)
-            cpu.pc = initial_pc_base;
-            cpu.set_flag_c(true); // NC is false
-            cpu.f = (cpu.f & 0xF0) | (1 << CARRY_FLAG_BYTE_POSITION);
-            let initial_flags_case3 = cpu.f;
+            cpu.pc = initial_pc_base; cpu.set_flag_c(true); // Reset
+            let initial_flags_case3 = cpu.f; // C is 1
             let offset_case3 = 0x0A;
+            cpu.bus.borrow_mut().write_byte(initial_pc_base, 0x30);
+            cpu.bus.borrow_mut().write_byte(initial_pc_base + 1, offset_case3);
+            let cycles_case3 = cpu.step();
             let expected_pc_case3 = initial_pc_base.wrapping_add(2); // 0x100 + 2 = 0x102
-            cpu.jr_nc_e8(offset_case3);
             assert_eq!(cpu.pc, expected_pc_case3, "JR NC (C=1, offset +10) no jump PC failed");
+            assert_eq!(cycles_case3, OPCODE_TIMINGS[0x30 as usize].unwrap_conditional().1 as u32);
             assert_eq!(cpu.f, initial_flags_case3, "JR NC (C=1, offset +10) no jump flags changed");
 
             // Case 4: NC is false (C=1), negative offset (no jump)
-            cpu.pc = initial_pc_base;
-            cpu.set_flag_c(true); // NC is false
-            cpu.f = (cpu.f & 0xF0) | (1 << CARRY_FLAG_BYTE_POSITION);
-            let initial_flags_case4 = cpu.f;
+            cpu.pc = initial_pc_base; cpu.set_flag_c(true); // Reset
+            let initial_flags_case4 = cpu.f; // C is 1
             let offset_case4 = 0xF6u8; // -10
+            cpu.bus.borrow_mut().write_byte(initial_pc_base, 0x30);
+            cpu.bus.borrow_mut().write_byte(initial_pc_base + 1, offset_case4);
+            let cycles_case4 = cpu.step();
             let expected_pc_case4 = initial_pc_base.wrapping_add(2); // 0x100 + 2 = 0x102
-            cpu.jr_nc_e8(offset_case4);
             assert_eq!(cpu.pc, expected_pc_case4, "JR NC (C=1, offset -10) no jump PC failed");
+            assert_eq!(cycles_case4, OPCODE_TIMINGS[0x30 as usize].unwrap_conditional().1 as u32);
             assert_eq!(cpu.f, initial_flags_case4, "JR NC (C=1, offset -10) no jump flags changed");
         }
 
@@ -5655,39 +5732,42 @@ mod tests {
             let mut cpu = setup_cpu();
             let call_addr_lo = 0x34;
             let call_addr_hi = 0x12; // Call 0x1234
-            let initial_pc = 0x0100;
+            let initial_pc = 0xC000; // USE WRAM FOR TEST OPCODES
             let initial_sp_val = 0xFFFE;
 
             // Case 1: Condition met (Z flag is 0)
             cpu.pc = initial_pc;
             cpu.sp = initial_sp_val;
             cpu.set_flag_z(false); // NZ is true
-            cpu.f = (cpu.f & 0xF0) | 0b0000_0100; // Example: N=0, H=1, C=0, Z=0
-            let flags_before = cpu.f;
+            let original_flags_jump = cpu.f; // Z is 0
             let expected_return_addr = initial_pc.wrapping_add(3);
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xC4); // CALL NZ,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
 
-            cpu.call_nz_nn(call_addr_lo, call_addr_hi);
+            let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0x1234, "CALL NZ: PC should be 0x1234 when Z is false");
             assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL NZ: SP should decrement by 2 when Z is false");
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
             assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL NZ: Return address on stack incorrect when Z is false");
-            assert_eq!(cpu.f, flags_before, "CALL NZ: Flags should not change when Z is false");
+            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xC4 as usize].unwrap_conditional().0 as u32, "CALL NZ (taken) cycles incorrect");
+            assert_eq!(cpu.f, original_flags_jump, "CALL NZ: Flags should not change when Z is false");
 
             // Case 2: Condition not met (Z flag is 1)
             cpu.pc = initial_pc;
             cpu.sp = initial_sp_val; // Reset SP
             cpu.set_flag_z(true);  // NZ is false
-            cpu.f = (cpu.f & 0xF0) | 0b1000_0100; // Example: N=0, H=1, C=0, Z=1
-            let flags_before_no_call = cpu.f;
-            // To check if stack was touched, we'd ideally check memory if bus allowed direct read without side effects for tests
-            // For now, we rely on SP not changing.
+            let original_flags_no_call = cpu.f; // Z is 1
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xC4); // CALL NZ,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
 
-            cpu.call_nz_nn(call_addr_lo, call_addr_hi);
+            let cycles_no_call = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL NZ: PC should increment by 3 when Z is true");
             assert_eq!(cpu.sp, initial_sp_val, "CALL NZ: SP should not change when Z is true");
-            // Cannot easily assert memory non-modification without reading, which might have side effects via Bus.
-            assert_eq!(cpu.f, flags_before_no_call, "CALL NZ: Flags should not change when Z is true");
+            assert_eq!(cycles_no_call, OPCODE_TIMINGS[0xC4 as usize].unwrap_conditional().1 as u32, "CALL NZ (not taken) cycles incorrect");
+            assert_eq!(cpu.f, original_flags_no_call, "CALL NZ: Flags should not change when Z is true");
         }
 
         #[test]
@@ -5695,36 +5775,42 @@ mod tests {
             let mut cpu = setup_cpu();
             let call_addr_lo = 0xCD;
             let call_addr_hi = 0xAB; // Call 0xABCD
-            let initial_pc = 0x0200;
+            let initial_pc = 0xC000; // USE WRAM FOR TEST OPCODES
             let initial_sp_val = 0xFFFE;
 
             // Case 1: Condition met (Z flag is 1)
             cpu.pc = initial_pc;
             cpu.sp = initial_sp_val;
             cpu.set_flag_z(true);
-            cpu.f = (cpu.f & 0xF0) | 0b1000_0000; // Z=1
-            let flags_before = cpu.f;
+            let original_flags_jump = cpu.f; // Z is 1
             let expected_return_addr = initial_pc.wrapping_add(3);
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xCC); // CALL Z,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
 
-            cpu.call_z_nn(call_addr_lo, call_addr_hi);
+            let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0xABCD, "CALL Z: PC should be 0xABCD when Z is true");
             assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL Z: SP should decrement by 2 when Z is true");
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
             assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL Z: Return address on stack incorrect");
-            assert_eq!(cpu.f, flags_before, "CALL Z: Flags should not change");
+            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xCC as usize].unwrap_conditional().0 as u32, "CALL Z (taken) cycles incorrect");
+            assert_eq!(cpu.f, original_flags_jump, "CALL Z: Flags should not change");
 
             // Case 2: Condition not met (Z flag is 0)
             cpu.pc = initial_pc;
             cpu.sp = initial_sp_val;
             cpu.set_flag_z(false);
-            cpu.f = cpu.f & 0xF0 & !(1 << ZERO_FLAG_BYTE_POSITION); // Z=0
-            let flags_before_no_call = cpu.f;
+            let original_flags_no_call = cpu.f; // Z is 0
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xCC); // CALL Z,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
 
-            cpu.call_z_nn(call_addr_lo, call_addr_hi);
+            let cycles_no_call = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL Z: PC should increment by 3 when Z is false");
             assert_eq!(cpu.sp, initial_sp_val, "CALL Z: SP should not change when Z is false");
-            assert_eq!(cpu.f, flags_before_no_call, "CALL Z: Flags should not change when Z is false");
+            assert_eq!(cycles_no_call, OPCODE_TIMINGS[0xCC as usize].unwrap_conditional().1 as u32, "CALL Z (not taken) cycles incorrect");
+            assert_eq!(cpu.f, original_flags_no_call, "CALL Z: Flags should not change when Z is false");
         }
 
         #[test]
@@ -5732,36 +5818,42 @@ mod tests {
             let mut cpu = setup_cpu();
             let call_addr_lo = 0x78;
             let call_addr_hi = 0x56; // Call 0x5678
-            let initial_pc = 0x0300;
+            let initial_pc = 0xC000; // USE WRAM FOR TEST OPCODES
             let initial_sp_val = 0xFFFE;
 
             // Case 1: Condition met (C flag is 0)
             cpu.pc = initial_pc;
             cpu.sp = initial_sp_val;
             cpu.set_flag_c(false);
-            cpu.f = cpu.f & 0xF0 & !(1 << CARRY_FLAG_BYTE_POSITION); // C=0
-            let flags_before = cpu.f;
+            let original_flags_jump = cpu.f; // C is 0
             let expected_return_addr = initial_pc.wrapping_add(3);
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xD4); // CALL NC,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
 
-            cpu.call_nc_nn(call_addr_lo, call_addr_hi);
+            let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0x5678, "CALL NC: PC should be 0x5678 when C is false");
             assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL NC: SP should decrement by 2");
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
             assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL NC: Return address incorrect");
-            assert_eq!(cpu.f, flags_before, "CALL NC: Flags should not change");
+            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xD4 as usize].unwrap_conditional().0 as u32, "CALL NC (taken) cycles incorrect");
+            assert_eq!(cpu.f, original_flags_jump, "CALL NC: Flags should not change");
 
             // Case 2: Condition not met (C flag is 1)
             cpu.pc = initial_pc;
             cpu.sp = initial_sp_val;
             cpu.set_flag_c(true);
-            cpu.f = (cpu.f & 0xF0) | (1 << CARRY_FLAG_BYTE_POSITION); // C=1
-            let flags_before_no_call = cpu.f;
+            let original_flags_no_call = cpu.f; // C is 1
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xD4); // CALL NC,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
 
-            cpu.call_nc_nn(call_addr_lo, call_addr_hi);
+            let cycles_no_call = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL NC: PC should increment by 3 when C is true");
             assert_eq!(cpu.sp, initial_sp_val, "CALL NC: SP should not change when C is true");
-            assert_eq!(cpu.f, flags_before_no_call, "CALL NC: Flags should not change when C is true");
+            assert_eq!(cycles_no_call, OPCODE_TIMINGS[0xD4 as usize].unwrap_conditional().1 as u32, "CALL NC (not taken) cycles incorrect");
+            assert_eq!(cpu.f, original_flags_no_call, "CALL NC: Flags should not change when C is true");
         }
 
         #[test]
@@ -5769,36 +5861,42 @@ mod tests {
             let mut cpu = setup_cpu();
             let call_addr_lo = 0xBC;
             let call_addr_hi = 0x9A; // Call 0x9ABC
-            let initial_pc = 0x0400;
+            let initial_pc = 0xC000; // USE WRAM FOR TEST OPCODES
             let initial_sp_val = 0xFFFE;
 
             // Case 1: Condition met (C flag is 1)
             cpu.pc = initial_pc;
             cpu.sp = initial_sp_val;
             cpu.set_flag_c(true);
-            cpu.f = (cpu.f & 0xF0) | (1 << CARRY_FLAG_BYTE_POSITION); // C=1
-            let flags_before = cpu.f;
+            let original_flags_jump = cpu.f; // C is 1
             let expected_return_addr = initial_pc.wrapping_add(3);
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xDC); // CALL C,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
 
-            cpu.call_c_nn(call_addr_lo, call_addr_hi);
+            let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0x9ABC, "CALL C: PC should be 0x9ABC when C is true");
             assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL C: SP should decrement by 2");
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
             assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL C: Return address incorrect");
-            assert_eq!(cpu.f, flags_before, "CALL C: Flags should not change");
+            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xDC as usize].unwrap_conditional().0 as u32, "CALL C (taken) cycles incorrect");
+            assert_eq!(cpu.f, original_flags_jump, "CALL C: Flags should not change");
 
             // Case 2: Condition not met (C flag is 0)
             cpu.pc = initial_pc;
             cpu.sp = initial_sp_val;
             cpu.set_flag_c(false);
-            cpu.f = cpu.f & 0xF0 & !(1 << CARRY_FLAG_BYTE_POSITION); // C=0
-            let flags_before_no_call = cpu.f;
+            let original_flags_no_call = cpu.f; // C is 0
+            cpu.bus.borrow_mut().write_byte(initial_pc, 0xDC); // CALL C,a16 opcode
+            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
 
-            cpu.call_c_nn(call_addr_lo, call_addr_hi);
+            let cycles_no_call = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL C: PC should increment by 3 when C is false");
             assert_eq!(cpu.sp, initial_sp_val, "CALL C: SP should not change when C is false");
-            assert_eq!(cpu.f, flags_before_no_call, "CALL C: Flags should not change when C is false");
+            assert_eq!(cycles_no_call, OPCODE_TIMINGS[0xDC as usize].unwrap_conditional().1 as u32, "CALL C (not taken) cycles incorrect");
+            assert_eq!(cpu.f, original_flags_no_call, "CALL C: Flags should not change when C is false");
         }
 
         #[test]
@@ -5870,7 +5968,7 @@ mod tests {
         fn test_ret_nz() {
             let mut cpu = setup_cpu();
             let return_addr = 0x1234;
-            let initial_pc_val = 0x0100; // PC where RET NZ is located
+            let initial_pc_val = 0xC000; // USE WRAM FOR TEST OPCODES
             let initial_sp_val: u16 = 0xFFFC;
 
             // Setup stack
@@ -5881,104 +5979,117 @@ mod tests {
             cpu.pc = initial_pc_val;
             cpu.sp = initial_sp_val;
             cpu.set_flag_z(false); // NZ is true
-            cpu.f = (cpu.f & 0xF0) | 0b0000_0100; // Example flags (Z=0, N=0,H=1,C=0)
-            let flags_before = cpu.f;
+            let original_flags_ret = cpu.f;
+            cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xC0); // RET NZ opcode
 
-            cpu.ret_nz();
+            let cycles_ret = cpu.step();
             assert_eq!(cpu.pc, return_addr, "RET NZ: PC should be return_addr when Z is false");
             assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2), "RET NZ: SP should increment by 2 when Z is false");
-            assert_eq!(cpu.f, flags_before, "RET NZ: Flags should not change when Z is false");
+            assert_eq!(cycles_ret, OPCODE_TIMINGS[0xC0 as usize].unwrap_conditional().0 as u32, "RET NZ (taken) cycles incorrect");
+            assert_eq!(cpu.f, original_flags_ret, "RET NZ: Flags should not change when Z is false");
 
             // Case 2: Condition not met (Z flag is 1)
             cpu.pc = initial_pc_val;
             cpu.sp = initial_sp_val; // Reset SP
             cpu.set_flag_z(true);  // NZ is false
-            cpu.f = (cpu.f & 0xF0) | 0b1000_0100; // Example flags (Z=1, N=0,H=1,C=0)
-            let flags_before_no_ret = cpu.f;
+            let original_flags_no_ret = cpu.f;
+            cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xC0); // RET NZ opcode
 
-            cpu.ret_nz();
+            let cycles_no_ret = cpu.step();
             assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1), "RET NZ: PC should increment by 1 when Z is true");
             assert_eq!(cpu.sp, initial_sp_val, "RET NZ: SP should not change when Z is true");
-            // Cannot easily check memory non-modification here due to bus potentially having side effects on read for tests
-            assert_eq!(cpu.f, flags_before_no_ret, "RET NZ: Flags should not change when Z is true");
+            assert_eq!(cycles_no_ret, OPCODE_TIMINGS[0xC0 as usize].unwrap_conditional().1 as u32, "RET NZ (not taken) cycles incorrect");
+            assert_eq!(cpu.f, original_flags_no_ret, "RET NZ: Flags should not change when Z is true");
         }
 
         #[test]
         fn test_ret_z() {
             let mut cpu = setup_cpu();
             let return_addr = 0xABCD;
-            let initial_pc_val = 0x0200;
+            let initial_pc_val = 0xC000; // USE WRAM FOR TEST OPCODES
             let initial_sp_val: u16 = 0xFFFC;
             cpu.bus.borrow_mut().write_byte(initial_sp_val, (return_addr & 0xFF) as u8);
             cpu.bus.borrow_mut().write_byte(initial_sp_val.wrapping_add(1), (return_addr >> 8) as u8);
 
             // Case 1: Condition met (Z flag is 1)
             cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_z(true);
-            let flags_before = cpu.f;
-            cpu.ret_z();
+            let original_flags_ret = cpu.f;
+            cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xC8); // RET Z opcode
+            let cycles_ret = cpu.step();
             assert_eq!(cpu.pc, return_addr);
             assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2));
-            assert_eq!(cpu.f, flags_before);
+            assert_eq!(cycles_ret, OPCODE_TIMINGS[0xC8 as usize].unwrap_conditional().0 as u32);
+            assert_eq!(cpu.f, original_flags_ret);
 
             // Case 2: Condition not met (Z flag is 0)
             cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_z(false);
-            let flags_before_no_ret = cpu.f;
-            cpu.ret_z();
+            let original_flags_no_ret = cpu.f;
+            cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xC8); // RET Z opcode
+            let cycles_no_ret = cpu.step();
             assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1));
             assert_eq!(cpu.sp, initial_sp_val);
-            assert_eq!(cpu.f, flags_before_no_ret);
+            assert_eq!(cycles_no_ret, OPCODE_TIMINGS[0xC8 as usize].unwrap_conditional().1 as u32);
+            assert_eq!(cpu.f, original_flags_no_ret);
         }
 
         #[test]
         fn test_ret_nc() {
             let mut cpu = setup_cpu();
             let return_addr = 0x5678;
-            let initial_pc_val = 0x0300;
+            let initial_pc_val = 0xC000; // USE WRAM FOR TEST OPCODES
             let initial_sp_val: u16 = 0xFFFC;
             cpu.bus.borrow_mut().write_byte(initial_sp_val, (return_addr & 0xFF) as u8);
             cpu.bus.borrow_mut().write_byte(initial_sp_val.wrapping_add(1), (return_addr >> 8) as u8);
 
             // Case 1: Condition met (C flag is 0)
             cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(false);
-            let flags_before = cpu.f;
-            cpu.ret_nc();
+            let original_flags_ret = cpu.f;
+            cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xD0); // RET NC opcode
+            let cycles_ret = cpu.step();
             assert_eq!(cpu.pc, return_addr);
             assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2));
-            assert_eq!(cpu.f, flags_before);
+            assert_eq!(cycles_ret, OPCODE_TIMINGS[0xD0 as usize].unwrap_conditional().0 as u32);
+            assert_eq!(cpu.f, original_flags_ret);
 
             // Case 2: Condition not met (C flag is 1)
             cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(true);
-            let flags_before_no_ret = cpu.f;
-            cpu.ret_nc();
+            let original_flags_no_ret = cpu.f;
+            cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xD0); // RET NC opcode
+            let cycles_no_ret = cpu.step();
             assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1));
             assert_eq!(cpu.sp, initial_sp_val);
-            assert_eq!(cpu.f, flags_before_no_ret);
+            assert_eq!(cycles_no_ret, OPCODE_TIMINGS[0xD0 as usize].unwrap_conditional().1 as u32);
+            assert_eq!(cpu.f, original_flags_no_ret);
         }
 
         #[test]
         fn test_ret_c() {
             let mut cpu = setup_cpu();
             let return_addr = 0x9ABC;
-            let initial_pc_val = 0x0400;
+            let initial_pc_val = 0xC000; // USE WRAM FOR TEST OPCODES
             let initial_sp_val: u16 = 0xFFFC;
             cpu.bus.borrow_mut().write_byte(initial_sp_val, (return_addr & 0xFF) as u8);
             cpu.bus.borrow_mut().write_byte(initial_sp_val.wrapping_add(1), (return_addr >> 8) as u8);
 
             // Case 1: Condition met (C flag is 1)
             cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(true);
-            let flags_before = cpu.f;
-            cpu.ret_c();
+            let original_flags_ret = cpu.f;
+            cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xD8); // RET C opcode
+            let cycles_ret = cpu.step();
             assert_eq!(cpu.pc, return_addr);
             assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2));
-            assert_eq!(cpu.f, flags_before);
+            assert_eq!(cycles_ret, OPCODE_TIMINGS[0xD8 as usize].unwrap_conditional().0 as u32);
+            assert_eq!(cpu.f, original_flags_ret);
 
             // Case 2: Condition not met (C flag is 0)
             cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(false);
-            let flags_before_no_ret = cpu.f;
-            cpu.ret_c();
+            let original_flags_no_ret = cpu.f;
+            cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xD8); // RET C opcode
+            let cycles_no_ret = cpu.step();
             assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1));
             assert_eq!(cpu.sp, initial_sp_val);
-            assert_eq!(cpu.f, flags_before_no_ret);
+            assert_eq!(cycles_no_ret, OPCODE_TIMINGS[0xD8 as usize].unwrap_conditional().1 as u32);
+            assert_eq!(cpu.f, original_flags_no_ret);
         }
 
         #[test]

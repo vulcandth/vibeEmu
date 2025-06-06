@@ -94,11 +94,9 @@ impl Bus {
                 println!("Warning: Unknown cartridge type 0x{:02X}. Defaulting to NoMBC for now.", byte);
                 Box::new(NoMBC::new(rom_data.clone(), ram_size)) // Fallback to NoMBC
             }
-            // Add other MBC types here as they are implemented
-            _ => { // For any other CartridgeType variants not explicitly handled yet
-                println!("Warning: Cartridge type {:?} is not explicitly handled and not yet implemented. Defaulting to NoMBC for now.", mbc_type);
-                Box::new(NoMBC::new(rom_data.clone(), ram_size)) // Fallback to NoMBC
-            }
+            // The CartridgeType::Unknown variant should cover all other cases.
+            // If CartridgeType enum becomes non-exhaustive in the future or from_byte changes,
+            // this might need revisiting. For now, assume Unknown covers all unlisted byte values.
         };
 
         Self {
