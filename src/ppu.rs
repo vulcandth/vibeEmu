@@ -3,12 +3,12 @@ use image::{ImageBuffer, ImageError};
 use crate::interrupts::InterruptType;
 
 // DMG Palette Colors (RGB)
-const COLOR_WHITE: [u8; 3] = [0xFF, 0xFF, 0xFF];
-const COLOR_LIGHT_GRAY: [u8; 3] = [0xAA, 0xAA, 0xAA];
-const COLOR_DARK_GRAY: [u8; 3] = [0x55, 0x55, 0x55];
-const COLOR_BLACK: [u8; 3] = [0x00, 0x00, 0x00];
+pub const COLOR_WHITE: [u8; 3] = [0xFF, 0xFF, 0xFF];
+pub const COLOR_LIGHT_GRAY: [u8; 3] = [0xAA, 0xAA, 0xAA];
+pub const COLOR_DARK_GRAY: [u8; 3] = [0x55, 0x55, 0x55];
+pub const COLOR_BLACK: [u8; 3] = [0x00, 0x00, 0x00];
 
-const DMG_PALETTE: [[u8; 3]; 4] = [
+pub const DMG_PALETTE: [[u8; 3]; 4] = [
     COLOR_WHITE,
     COLOR_LIGHT_GRAY,
     COLOR_DARK_GRAY,
@@ -16,7 +16,7 @@ const DMG_PALETTE: [[u8; 3]; 4] = [
 ];
 
 // Helper function to convert CGB 15-bit color to 24-bit RGB
-fn cgb_color_to_rgb(color_val: u16) -> [u8; 3] {
+pub fn cgb_color_to_rgb(color_val: u16) -> [u8; 3] {
     let r_5bit = (color_val & 0x1F) as u8;
     let g_5bit = ((color_val >> 5) & 0x1F) as u8;
     let b_5bit = ((color_val >> 10) & 0x1F) as u8;
@@ -32,18 +32,18 @@ fn cgb_color_to_rgb(color_val: u16) -> [u8; 3] {
 }
 
 // PPU Mode timings
-const OAM_SCAN_CYCLES: u32 = 80;
-const DRAWING_CYCLES: u32 = 172;
-const HBLANK_CYCLES: u32 = 204;
-const SCANLINE_CYCLES: u32 = OAM_SCAN_CYCLES + DRAWING_CYCLES + HBLANK_CYCLES;
-const VBLANK_LINES: u8 = 10;
-const LINES_PER_FRAME: u8 = 144 + VBLANK_LINES;
+pub const OAM_SCAN_CYCLES: u32 = 80;
+pub const DRAWING_CYCLES: u32 = 172;
+pub const HBLANK_CYCLES: u32 = 204;
+pub const SCANLINE_CYCLES: u32 = OAM_SCAN_CYCLES + DRAWING_CYCLES + HBLANK_CYCLES;
+pub const VBLANK_LINES: u8 = 10;
+pub const LINES_PER_FRAME: u8 = 144 + VBLANK_LINES;
 
 // PPU Modes (for STAT register bits 0-1)
-const MODE_HBLANK: u8 = 0;
-const MODE_VBLANK: u8 = 1;
-const MODE_OAM_SCAN: u8 = 2;
-const MODE_DRAWING: u8 = 3;
+pub const MODE_HBLANK: u8 = 0;
+pub const MODE_VBLANK: u8 = 1;
+pub const MODE_OAM_SCAN: u8 = 2;
+pub const MODE_DRAWING: u8 = 3;
 
 pub struct Ppu {
     pub system_mode: crate::bus::SystemMode, // Added CGB mode tracking
@@ -109,7 +109,7 @@ impl Ppu {
         }
     }
 
-    fn set_mode(&mut self, mode: u8) -> Option<InterruptType> {
+    pub fn set_mode(&mut self, mode: u8) -> Option<InterruptType> {
         self.stat = (self.stat & 0b1111_1100) | mode;
         let mut stat_interrupt_to_request: Option<InterruptType> = None;
 
@@ -133,7 +133,7 @@ impl Ppu {
         stat_interrupt_to_request
     }
 
-    fn check_lyc_ly(&mut self) -> Option<InterruptType> {
+    pub fn check_lyc_ly(&mut self) -> Option<InterruptType> {
         let mut lyc_interrupt_to_request: Option<InterruptType> = None;
         if self.ly == self.lyc {
             self.stat |= 1 << 2;
@@ -261,7 +261,7 @@ impl Ppu {
         None
     }
 
-    fn render_scanline(&mut self) {
+    pub fn render_scanline(&mut self) {
         if (self.lcdc & (1 << 7)) == 0 {
             return;
         }
@@ -284,7 +284,6 @@ impl Ppu {
 
         // Actual Background & Window Rendering (if not blanked in DMG by LCDC.0)
         if !bg_is_blank_dmg {
-            let tile_map_base_addr = if (self.lcdc & (1 << 3)) == 0 { 0x9800 } else { 0x9C00 };
             // ... rest of BG rendering logic ...
             // ... Window rendering logic needs to be inside this `if !bg_is_blank_dmg` block too ...
             // This means the previous change that put Window rendering outside the BG loop needs adjustment
@@ -520,7 +519,6 @@ impl Ppu {
                 }
             }
         } // This closes the Window rendering condition: if (self.lcdc & (1 << 5)) != 0 ...
-    } // This closes the new main condition: if !bg_is_blank_dmg
 
         // Sprite Rendering
         // This part is outside the `if !bg_is_blank_dmg` block, so sprites always render if enabled by LCDC.1
@@ -582,7 +580,7 @@ impl Ppu {
                         sprite_tile_data_bank = ((attributes >> 3) & 1) as usize; // Bit 3 of OAM attributes selects VRAM bank
                     }
 
-                    let tile_data_offset_in_bank_sprite = (tile_index as usize * 16); // Relative to 0x8000 in its bank
+                    let tile_data_offset_in_bank_sprite = tile_index as usize * 16; // Relative to 0x8000 in its bank
                     let tile_row_data_addr_in_bank_sprite = tile_data_offset_in_bank_sprite + (tile_row_y_for_vram as usize * 2);
 
                     if tile_row_data_addr_in_bank_sprite + 1 >= 8192 {
@@ -830,9 +828,6 @@ impl Ppu {
         }
     }
 }
-
-#[cfg(test)]
-mod ppu_tests;
 
 #[allow(dead_code)]
 pub fn save_framebuffer_to_png(

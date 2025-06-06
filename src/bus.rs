@@ -58,11 +58,11 @@ pub struct Bus {
     pub hdma4_dest_low: u8,
     pub hdma5: u8,
     // HDMA/GDMA Internal State
-    hdma_active: bool,
-    gdma_active: bool, // May not be strictly needed if GDMA is instant, but good for state tracking
+    pub hdma_active: bool,
+    pub gdma_active: bool, // May not be strictly needed if GDMA is instant, but good for state tracking
     hdma_current_src: u16,
     hdma_current_dest: u16,
-    hdma_blocks_remaining: u8,
+    pub hdma_blocks_remaining: u8,
     hblank_hdma_pending: bool, // Flag to perform one HDMA block transfer
 }
 
@@ -96,7 +96,7 @@ impl Bus {
                 let current_vbk = self.ppu.vbk as usize;
 
                 if dest_offset < 8192 { // Ensure offset is within bank bounds
-                    self.ppu.vram[current_vbk][dest_offset] = byte_to_transfer;
+                    self.ppu.vram[current_vbk][dest_offset as usize] = byte_to_transfer;
                 }
             }
             self.hdma_current_src = self.hdma_current_src.wrapping_add(16);
@@ -229,7 +229,7 @@ impl Bus {
                     let dest_offset = (self.hdma_current_dest.wrapping_add(i)) & 0x1FFF;
                     let current_vbk = self.ppu.vbk as usize;
                     if dest_offset < 8192 {
-                        self.ppu.vram[current_vbk][dest_offset] = byte_to_transfer;
+                        self.ppu.vram[current_vbk][dest_offset as usize] = byte_to_transfer;
                     }
                 }
                 self.hdma_current_src = self.hdma_current_src.wrapping_add(16);
@@ -559,9 +559,6 @@ impl Bus {
         self.if_register &= !(1 << interrupt_bit);
     }
 }
-
-#[cfg(test)]
-mod bus_tests;
 
 // This closes the `impl Bus` block. The test module should be outside.
 

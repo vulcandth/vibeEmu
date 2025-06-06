@@ -6,6 +6,11 @@ mod cpu;
 mod memory;
 mod ppu;
 
+#[cfg(test)]
+mod bus_tests;
+#[cfg(test)]
+mod ppu_tests;
+
 // Assuming these other modules exist from the initial problem description context
 // and might be needed for a complete build, though not directly used in this step's main()
 mod interrupts;
