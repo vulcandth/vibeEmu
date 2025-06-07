@@ -195,8 +195,8 @@ impl Bus {
             hdma_current_dest: 0,
             hdma_blocks_remaining: 0,
             hblank_hdma_pending: false,
-        }
-    }
+        }) // Closes Ok(Self { ... })
+    } // Closes pub fn new(...) -> Result<Self, String>
 
     pub fn tick_components(&mut self, m_cycles: u32) {
         // Note: Cycle accounting for DMA (GDMA/HDMA) halting the CPU is not yet implemented here.
