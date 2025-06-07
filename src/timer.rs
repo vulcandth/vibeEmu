@@ -96,6 +96,7 @@ impl Timer {
             0xFF04 => {
                 self.div = 0; // Writing any value to DIV resets it to 0
                 self.div_clock_cycles = 0; // Reset internal counter as well
+                self.tima_clock_cycles = 0; // Also reset TIMA's clock accumulator
             }
             0xFF05 => self.tima = value,
             0xFF06 => self.tma = value,
@@ -326,4 +327,42 @@ mod tests {
         assert_eq!(timer.tac, 0b101, "Internal tac should be 0b101 after masked write");
     }
 
+    #[test]
+    fn tima_reset_by_div_write() {
+        let mut timer = Timer::new();
+        let mut if_reg = 0;
+
+        // Enable timer, Freq 0 (1024 cycle threshold for TIMA)
+        timer.write_byte(0xFF07, 0b0000_0100);
+        assert_eq!(timer.tac, 0b100);
+        let tima_thresh = timer.get_tima_threshold(); // Should be 1024
+        assert_eq!(tima_thresh, 1024);
+
+        // Tick for less than half the threshold
+        timer.tick(tima_thresh / 3, &mut if_reg);
+        assert_eq!(timer.tima, 0, "TIMA should not have incremented yet");
+        assert_eq!(timer.tima_clock_cycles, tima_thresh / 3, "TIMA clock cycles should have accumulated");
+        assert_ne!(timer.tima_clock_cycles, 0, "Sanity check: tima_clock_cycles should not be 0 before DIV write");
+
+        // Write to DIV
+        timer.write_byte(0xFF04, 0xAB); // Value doesn't matter, resets DIV and its clock
+
+        assert_eq!(timer.div, 0, "DIV should be reset");
+        assert_eq!(timer.div_clock_cycles, 0, "DIV clock cycles should be reset");
+        assert_eq!(timer.tima_clock_cycles, 0, "TIMA clock cycles SHOULD BE RESET by DIV write");
+
+        // Tick just under the threshold. TIMA should not increment.
+        timer.tick(tima_thresh - 1, &mut if_reg);
+        assert_eq!(timer.tima, 0, "TIMA should not increment after DIV write and partial tick");
+        assert_eq!(timer.tima_clock_cycles, tima_thresh - 1);
+
+        // Tick by 1 more cycle. TIMA should now increment.
+        timer.tick(1, &mut if_reg);
+        assert_eq!(timer.tima, 1, "TIMA should increment after DIV write and full threshold tick");
+        assert_eq!(timer.tima_clock_cycles, 0);
+
+        // Further check: ensure DIV still works
+        timer.tick(DIV_THRESHOLD * 2, &mut if_reg);
+        assert_eq!(timer.div, 6, "DIV should still be working");
+    }
 }
