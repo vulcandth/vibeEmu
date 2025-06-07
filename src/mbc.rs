@@ -158,11 +158,11 @@ pub struct MBC5 {
     selected_ram_bank: u8,      // 4 bits for RAM bank (0-15)
     num_rom_banks: usize,       // Max 512 for 8MB ROM
     num_ram_banks: usize,       // Max 16 for 128KB RAM
-    has_rumble: bool,           // True if cartridge type indicates rumble
+    // has_rumble: bool,        // True if cartridge type indicates rumble. Field removed as unused.
 }
 
 impl MBC5 {
-    pub fn new(rom_data: Vec<u8>, ram_data_size: usize, cartridge_type_byte: u8) -> Self {
+    pub fn new(rom_data: Vec<u8>, ram_data_size: usize, _cartridge_type_byte: u8) -> Self { // cartridge_type_byte changed to _cartridge_type_byte
         let mut num_rom_banks = if rom_data.is_empty() { 0 } else { rom_data.len() / (16 * 1024) };
         if num_rom_banks == 0 { num_rom_banks = 1; }
         // MBC5 can have up to 512 ROM banks (8MB)
@@ -174,7 +174,7 @@ impl MBC5 {
         // MBC5 can have up to 128KB RAM (16 banks)
         if num_ram_banks > 16 { num_ram_banks = 16; }
 
-        let has_rumble = matches!(cartridge_type_byte, 0x1C | 0x1D | 0x1E);
+        // let has_rumble = matches!(cartridge_type_byte, 0x1C | 0x1D | 0x1E); // Rumble detection removed as field is unused.
 
         MBC5 {
             rom_data,
@@ -185,7 +185,7 @@ impl MBC5 {
             selected_ram_bank: 0,
             num_rom_banks,
             num_ram_banks,
-            has_rumble,
+            // has_rumble, // Field removed
         }
     }
 }

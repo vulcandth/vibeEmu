@@ -44,7 +44,6 @@ pub struct Bus {
     // if all ROM access goes via MBC. For now, Bus::new still receives it for header parsing.
     // Let's remove rom_data from Bus struct if MBC handles it.
     // pub rom_data: Vec<u8>,
-    pub cartridge_type_byte: u8, // Cartridge type byte from ROM header
     pub serial_output: Vec<u8>, // Added for serial output capture
     pub interrupt_enable_register: u8, // IE Register (0xFFFF)
     pub if_register: u8, // Interrupt Flag Register (0xFF0F)
@@ -173,7 +172,7 @@ impl Bus {
             is_double_speed: false,
             key1_prepare_speed_switch: false,
             // rom_data field removed from Bus struct, MBC is the owner now
-            cartridge_type_byte, // Still useful to store this raw byte
+            // cartridge_type_byte, // Field removed
             serial_output: Vec::new(), // Initialize serial_output
             interrupt_enable_register: 0, // Default value for IE
             if_register: 0x00, // Default value for IF
