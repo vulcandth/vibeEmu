@@ -166,7 +166,7 @@ impl Bus {
             mbc, // Store the initialized MBC
             memory: Memory::new(),
             ppu: Ppu::new(ppu_system_mode), // Pass system_mode to Ppu
-            apu: Apu::new(),
+            apu: Apu::new(0), // Pass 0 to use default sample rate
             joypad: Joypad::new(), // Initialize joypad
             timer: Timer::new(),
             system_mode: determined_mode,
@@ -576,9 +576,11 @@ mod tests {
     fn setup_test_env() -> (Cpu, Rc<RefCell<Bus>>) {
         // Provide dummy ROM data for Bus creation
         let rom_data = vec![0; 0x100]; // Example: 256 bytes of ROM
-        let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
-        let cpu = Cpu::new(bus.clone());
-        (cpu, bus)
+        let bus_rc = Rc::new(RefCell::new(Bus::new(rom_data)));
+        // Power on the APU after creating the bus, so APU register writes are accepted
+        bus_rc.borrow_mut().write_byte(0xFF26, 0x80); // NR52_ADDR, APU On
+        let cpu = Cpu::new(bus_rc.clone());
+        (cpu, bus_rc)
     }
 
     #[test]
@@ -724,9 +726,9 @@ mod tests {
         cpu.ld_hl_mem_a();
 
         // To make the test somewhat useful, we can try reading back.
-        // The placeholder APU read should return 0xFF, not what was written.
+        // With a functional APU, it should return the value written to NR12.
         let read_back_val = bus.borrow().read_byte(apu_ch1_vol_addr);
-        assert_eq!(read_back_val, 0xFF, "Reading from APU placeholder after write should return dummy value");
+        assert_eq!(read_back_val, 0xF3, "Reading from APU NR12 after writing 0xF3 should return 0xF3");
     }
 
     #[test]

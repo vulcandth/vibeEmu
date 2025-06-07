@@ -22,6 +22,14 @@ impl Channel3 {
         }
     }
 
+    pub fn power_on_reset(&mut self) {
+        self.enabled = false;
+        self.length_counter = 0;
+        self.frequency_timer = 0;
+        self.sample_index = 0;
+        self.current_sample_buffer = 0;
+    }
+
     pub fn trigger(&mut self, _wave_ram_on_trigger: &[u8;16], current_frame_sequencer_step: u8) {
         self.enabled = self.nr30.dac_on();
         let length_data = self.nr31.sound_length_val();

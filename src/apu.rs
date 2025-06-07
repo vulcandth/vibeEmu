@@ -386,10 +386,27 @@ pub struct Apu {
     frame_sequencer_step: u8,
     hpf_capacitor_left: f32,
     hpf_capacitor_right: f32,
+    hpf_charge_factor: f32,
 }
 
 impl Apu {
-    pub fn new() -> Self {
+    // Parameter changed from output_sample_rate to output_sample_rate_param to avoid conflict with temporary hardcoding
+    pub fn new(output_sample_rate_param: u32) -> Self {
+        // Temporarily hardcode output_sample_rate if param is 0, or use param.
+        // This makes it callable from existing tests/main.rs without immediate change there if 0 is passed.
+        // A real scenario would require main.rs to provide a valid sample rate.
+        let output_sample_rate: u32 = if output_sample_rate_param == 0 { 44100 } else { output_sample_rate_param };
+
+        const CPU_CLOCK_HZ_F32: f32 = 4194304.0;
+        const DMG_CHARGE_FACTOR_ORIGINAL: f32 = 0.999958_f32;
+
+        let hpf_charge_factor = if output_sample_rate == 0 { // Should be caught by above default to 44100
+            DMG_CHARGE_FACTOR_ORIGINAL
+        } else {
+            let charge_factor_exponent = CPU_CLOCK_HZ_F32 / output_sample_rate as f32;
+            DMG_CHARGE_FACTOR_ORIGINAL.powf(charge_factor_exponent)
+        };
+
         let mut apu = Self {
             channel1: Channel1::new(),
             channel2: Channel2::new(),
@@ -403,6 +420,7 @@ impl Apu {
             frame_sequencer_step: 0,
             hpf_capacitor_left: 0.0,
             hpf_capacitor_right: 0.0,
+            hpf_charge_factor,
         };
         apu.reset_power_on_channel_flags();
         apu
@@ -411,8 +429,8 @@ impl Apu {
     fn reset_power_on_channel_flags(&mut self) {
         self.channel1.power_on_reset();
         self.channel2.power_on_reset();
-        // self.channel3.power_on_reset();
-        // self.channel4.power_on_reset();
+        self.channel3.power_on_reset();
+        self.channel4.power_on_reset();
     }
 
     fn full_apu_reset_on_power_off(&mut self) {
@@ -491,7 +509,7 @@ impl Apu {
 
         final_so1 /= 4.0; final_so2 /= 4.0;
 
-        let charge_factor = 0.999958_f32;
+        let charge_factor = self.hpf_charge_factor; // Use the struct field
         let any_dac_on = self.channel1.nr12.dac_power() || self.channel2.nr22.dac_power() ||
                          self.channel3.nr30.dac_on() || self.channel4.nr42.dac_power();
 

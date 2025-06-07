@@ -25,6 +25,16 @@ impl Channel4 {
         }
     }
 
+    pub fn power_on_reset(&mut self) {
+        self.enabled = false;
+        self.length_counter = 0;
+        self.frequency_timer = 0;
+        self.envelope_volume = 0;
+        self.envelope_period_timer = 0;
+        self.envelope_running = false;
+        self.lfsr = 0xFFFF;
+    }
+
     pub fn trigger(&mut self, current_frame_sequencer_step: u8) {
         if self.nr42.dac_power() { self.enabled = true; }
         else { self.enabled = false; return; }
