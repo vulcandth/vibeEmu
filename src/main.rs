@@ -25,6 +25,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread; // For std::thread::sleep and spawning
 
 use eframe::egui; // For egui integration
+#[cfg(target_os = "windows")]
+use winit::platform::windows::EventLoopBuilderExtWindows;
+#[cfg(target_os = "linux")]
+use winit::platform::x11::EventLoopBuilderExtX11; // Assuming X11 for broader compatibility on Linux
+#[cfg(target_os = "macos")]
+use winit::platform::macos::EventLoopBuilderExtMacOS;
+// Wayland could also be an option for Linux:
+// #[cfg(target_os = "linux")]
+// use winit::platform::wayland::EventLoopBuilderExtWayland;
+
 use minifb::{Key, Window, WindowOptions, MouseButton};
 use crossbeam_channel::{unbounded, Sender, Receiver}; // Added for MPSC channel
 use native_dialog::FileDialog; // For native file dialogs
@@ -46,6 +56,12 @@ const WINDOW_HEIGHT: usize = 144;
 enum EmulatorCommand {
     LoadRom,
     ResetEmulator,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ContextMenuCommand {
+    Show,
+    // Hide will be managed by the app itself
 }
 
 // Function to load ROM data from a file
@@ -194,6 +210,47 @@ fn main() {
 
     println!("Initial CPU state: PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}", cpu.pc, cpu.sp, cpu.a, cpu.f);
 
+    // Channels for communication between main thread and other threads
+    let (command_sender, command_receiver): (Sender<EmulatorCommand>, Receiver<EmulatorCommand>) = unbounded();
+    let (rom_path_sender, rom_path_receiver_main): (Sender<String>, Receiver<String>) = unbounded();
+    let (context_menu_cmd_sender, context_menu_cmd_receiver_for_app) = unbounded::<ContextMenuCommand>();
+
+    // --- Persistent Egui Context Menu Thread ---
+    let command_sender_clone_for_egui_thread = command_sender.clone();
+    let rom_path_sender_clone_for_egui_thread = rom_path_sender.clone();
+
+    thread::spawn(move || {
+        println!("Persistent Egui context menu thread started.");
+        let native_options = eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default()
+                .with_visible(false) // Start hidden
+                .with_inner_size([300.0, 150.0]) // Default size
+                .with_title("VibeEmu Context Menu"),
+            event_loop_builder: Some(Box::new(|event_loop_builder| {
+                #[cfg(target_os = "windows")]
+                event_loop_builder.with_any_thread(true);
+                #[cfg(target_os = "linux")]
+                event_loop_builder.with_any_thread(true);
+                #[cfg(target_os = "macos")]
+                event_loop_builder.with_any_thread(true);
+            })),
+            ..Default::default()
+        };
+
+        if let Err(e) = eframe::run_native(
+            "VibeEmu_ContextMenuApp", // Unique name for the app
+            native_options,
+            Box::new(|_cc| Box::new(ContextMenuApp::new(
+                command_sender_clone_for_egui_thread,
+                rom_path_sender_clone_for_egui_thread,
+                context_menu_cmd_receiver_for_app // Pass the receiver here
+            )))
+        ) {
+            eprintln!("Persistent Egui context menu thread failed: {:?}", e);
+        }
+        println!("Persistent Egui context menu thread finished.");
+    });
+
     // --- Conditional Window Initialization with Fallback ---
     let mut window_attempt: Option<minifb::Window> = None;
     let mut fell_back_to_headless = false; // Track if fallback occurred
@@ -259,9 +316,9 @@ fn main() {
     let mut has_printed_halt_message = false;
     let mut prev_right_mouse_down = false; // For right-click detection
     let paused = Arc::new(AtomicBool::new(false)); // For pause state
-    let egui_context_menu_active = Arc::new(AtomicBool::new(false)); // For egui context menu
-    let (command_sender, command_receiver): (Sender<EmulatorCommand>, Receiver<EmulatorCommand>) = unbounded();
-    let (rom_path_sender, rom_path_receiver_main): (Sender<String>, Receiver<String>) = unbounded(); // Moved here
+    // egui_context_menu_active and egui_context_menu_has_run_once are removed
+    // command_sender, command_receiver, rom_path_sender, rom_path_receiver_main,
+    // and context_menu_cmd_sender are now all declared before the persistent egui thread.
 
     // PPU timing: Game Boy PPU runs at a fixed speed.
     // Total PPU cycles per frame = Scanlines (154) * Cycles per scanline (456)
@@ -314,40 +371,19 @@ fn main() {
             let right_mouse_down = w.get_mouse_down(MouseButton::Right);
             if prev_right_mouse_down && !right_mouse_down {
                 let current_paused_state = paused.load(Ordering::SeqCst);
-                paused.store(!current_paused_state, Ordering::SeqCst);
-                if !current_paused_state {
-                    println!("Emulator paused.");
-                    // Check if context menu should be shown (emulator is now paused)
-                    if !egui_context_menu_active.load(Ordering::SeqCst) {
-                        egui_context_menu_active.store(true, Ordering::SeqCst);
-                        let egui_active_clone = egui_context_menu_active.clone();
-                        let command_sender_clone_for_thread = command_sender.clone(); // Clone for this thread
-                        let rom_path_sender_clone_for_thread = rom_path_sender.clone(); // Clone for this thread
+                let new_paused_state = !current_paused_state;
+                paused.store(new_paused_state, Ordering::SeqCst);
 
-                        thread::spawn(move || {
-                            println!("Egui thread started.");
-                            let native_options = eframe::NativeOptions {
-                                viewport: egui::ViewportBuilder::default()
-                                    .with_inner_size([300.0, 150.0]) // Slightly larger for status message
-                                    .with_title("VibeEmu Context Menu"),
-                                ..Default::default()
-                            };
-                            if let Err(e) = eframe::run_native(
-                                "VibeEmu Context Menu", // App name in taskbar
-                                native_options,
-                                Box::new(|_cc| Box::new(ContextMenuApp::new(command_sender_clone_for_thread, rom_path_sender_clone_for_thread)))
-                            ) {
-                                eprintln!("Egui failed: {:?}", e);
-                            }
-                            println!("Egui thread finished.");
-                            egui_active_clone.store(false, Ordering::SeqCst);
-                        });
+                if new_paused_state { // Emulator is now PAUSED
+                    println!("Emulator paused. Showing context menu.");
+                    // Send Show command to the egui thread
+                    if let Err(e) = context_menu_cmd_sender.send(ContextMenuCommand::Show) {
+                        eprintln!("Failed to send Show command to context menu: {:?}", e);
                     }
-                } else {
+                } else { // Emulator is now RESUMED
                     println!("Emulator resumed.");
-                    // If emulator is resumed, we generally wouldn't want a context menu
-                    // or if one was active, it might be implicitly closed by egui logic later.
-                    // For now, no specific action needed here for egui when resuming.
+                    // Current design: menu hides itself upon action or cancel.
+                    // Explicitly hiding here is deferred.
                 }
             }
             prev_right_mouse_down = right_mouse_down;
@@ -533,8 +569,9 @@ fn main() {
                     }
                 }
             }
-            paused.store(false, Ordering::SeqCst); // Resume emulation after processing command
-            println!("Emulator resumed after command.");
+            // Ensure emulation is unpaused after any command from the context menu is processed.
+            paused.store(false, Ordering::SeqCst);
+            println!("Emulator command processed. Resuming emulation.");
         }
 
         if !running {
@@ -565,16 +602,24 @@ fn main() {
 
 // --- egui App Implementation ---
 struct ContextMenuApp {
-    command_sender: Sender<EmulatorCommand>,
-    rom_path_sender: Sender<String>,
+    command_sender: Sender<EmulatorCommand>, // For sending commands back to main
+    rom_path_sender: Sender<String>,         // For sending ROM path for LoadRom
+    context_menu_command_receiver: Receiver<ContextMenuCommand>, // For receiving Show/Hide from main
+    is_visible: bool,
     status_message: Option<String>,
 }
 
 impl ContextMenuApp {
-    fn new(command_sender: Sender<EmulatorCommand>, rom_path_sender: Sender<String>) -> Self {
+    fn new(
+        command_sender: Sender<EmulatorCommand>,
+        rom_path_sender: Sender<String>,
+        context_menu_command_receiver: Receiver<ContextMenuCommand>,
+    ) -> Self {
         Self {
             command_sender,
             rom_path_sender,
+            context_menu_command_receiver,
+            is_visible: false, // Start hidden
             status_message: Some("Select an action.".to_string()),
         }
     }
@@ -582,51 +627,78 @@ impl ContextMenuApp {
 
 impl eframe::App for ContextMenuApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::Window::new("Context Menu").show(ctx, |ui| {
-            if let Some(message) = &self.status_message {
-                ui.label(message);
+        // Check for commands from the main thread
+        if let Ok(cmd) = self.context_menu_command_receiver.try_recv() {
+            match cmd {
+                ContextMenuCommand::Show => {
+                    self.is_visible = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus); // Bring to front
+                    self.status_message = Some("Select an action.".to_string()); // Reset status
+                }
+                // ContextMenuCommand::Hide could be handled here if needed
             }
-            ui.separator();
+        }
 
-            if ui.button("Load ROM").clicked() {
-                let dialog_result = FileDialog::new()
-                    .add_filter("Game Boy ROM", &["gb", "gbc"])
-                    .set_location("~/") // Example: start in user's home directory
-                    .show_open_single_file();
+        if self.is_visible {
+            egui::Window::new("Context Menu")
+                .collapsible(false) // Optional: prevent user from collapsing it
+                .resizable(false)   // Optional: prevent user from resizing it
+                .show(ctx, |ui| {
+                    if let Some(message) = &self.status_message {
+                        ui.label(message);
+                    }
+                    ui.separator();
 
-                match dialog_result {
-                    Ok(Some(path_buf)) => {
-                        if let Some(path_str) = path_buf.to_str() {
-                            self.rom_path_sender.send(path_str.to_string()).unwrap_or_else(|e| {
-                                eprintln!("Failed to send ROM path: {:?}", e);
-                                self.status_message = Some(format!("Error sending path: {:?}", e));
-                            });
-                            self.command_sender.send(EmulatorCommand::LoadRom).unwrap_or_else(|e| {
-                                eprintln!("Failed to send LoadRom command: {:?}", e);
-                                // Potentially update status_message here too if critical
-                            });
-                            self.status_message = Some(format!("ROM selected: {}", path_buf.file_name().unwrap_or_default().to_string_lossy()));
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        } else {
-                            self.status_message = Some("Selected path is not valid UTF-8.".to_string());
+                    if ui.button("Load ROM").clicked() {
+                        let dialog_result = FileDialog::new()
+                            .add_filter("Game Boy ROM", &["gb", "gbc"])
+                            .set_location("~/")
+                            .show_open_single_file();
+
+                        match dialog_result {
+                            Ok(Some(path_buf)) => {
+                                if let Some(path_str) = path_buf.to_str() {
+                                    self.rom_path_sender.send(path_str.to_string()).unwrap_or_else(|e| {
+                                        eprintln!("Failed to send ROM path: {:?}", e);
+                                        self.status_message = Some(format!("Error sending path: {:?}", e));
+                                    });
+                                    self.command_sender.send(EmulatorCommand::LoadRom).unwrap_or_else(|e| {
+                                        eprintln!("Failed to send LoadRom command: {:?}", e);
+                                    });
+                                    self.status_message = Some(format!("ROM selected: {}", path_buf.file_name().unwrap_or_default().to_string_lossy()));
+                                    self.is_visible = false;
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                                } else {
+                                    self.status_message = Some("Selected path is not valid UTF-8.".to_string());
+                                }
+                            }
+                            Ok(None) => {
+                                self.status_message = Some("ROM selection cancelled.".to_string());
+                                // Optionally keep menu visible or hide, current behavior keeps it visible until "Cancel"
+                            }
+                            Err(e) => {
+                                self.status_message = Some(format!("File dialog error: {:?}", e));
+                            }
                         }
                     }
-                    Ok(None) => {
-                        self.status_message = Some("ROM selection cancelled.".to_string());
-                    }
-                    Err(e) => {
-                        self.status_message = Some(format!("File dialog error: {:?}", e));
-                    }
-                }
-            }
 
-            if ui.button("Reset Emulator").clicked() {
-                self.command_sender.send(EmulatorCommand::ResetEmulator).unwrap_or_else(|e| {
-                    eprintln!("Failed to send ResetEmulator command: {:?}", e);
+                    if ui.button("Reset Emulator").clicked() {
+                        self.command_sender.send(EmulatorCommand::ResetEmulator).unwrap_or_else(|e| {
+                            eprintln!("Failed to send ResetEmulator command: {:?}", e);
+                        });
+                        self.is_visible = false;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    }
+
+                    ui.separator();
+                    if ui.button("Cancel").clicked() {
+                        self.is_visible = false;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        // Main thread will handle unpausing if no action was taken by menu.
+                    }
                 });
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        });
+        }
     }
 }
 
