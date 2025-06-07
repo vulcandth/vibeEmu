@@ -5329,7 +5329,11 @@ mod tests {
 
             let cycles = cpu.step();
             assert_eq!(cpu.pc, 0x1234, "PC should jump to 0x1234 when Z is false");
-            assert_eq!(cycles, OPCODE_TIMINGS[0xC2 as usize].unwrap_conditional().0 as u32, "Cycles incorrect for JP NZ taken");
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xC2 as usize] {
+                assert_eq!(cycles, ct as u32, "Cycles incorrect for JP NZ taken");
+            } else {
+                panic!("Expected conditional timing for JP NZ");
+            }
             // Flags N, H, C are not affected by JP. Z is tested for condition but not modified by JP itself.
             // So, F should be what it was before the op, with Z still false.
             assert_eq!(cpu.is_flag_z(), false, "Z flag should remain false");
@@ -5347,7 +5351,11 @@ mod tests {
 
             let cycles_no_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when Z is true (no jump)");
-            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0xC2 as usize].unwrap_conditional().1 as u32, "Cycles incorrect for JP NZ not taken");
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xC2 as usize] {
+                assert_eq!(cycles_no_jump, cf as u32, "Cycles incorrect for JP NZ not taken");
+            } else {
+                panic!("Expected conditional timing for JP NZ");
+            }
             // Flags N, H, C are not affected. Z was true and should remain true.
             assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
         }
@@ -5370,7 +5378,11 @@ mod tests {
 
             let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0xABCD, "PC should jump to 0xABCD when Z is true");
-            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xCA as usize].unwrap_conditional().0 as u32, "Cycles incorrect for JP Z taken");
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xCA as usize] {
+                assert_eq!(cycles_jump, ct as u32, "Cycles incorrect for JP Z taken");
+            } else {
+                panic!("Expected conditional timing for JP Z");
+            }
             assert_eq!(cpu.f, original_flags_jump, "Flags should not change on jump");
 
 
@@ -5385,7 +5397,11 @@ mod tests {
 
             let cycles_no_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when Z is false (no jump)");
-            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0xCA as usize].unwrap_conditional().1 as u32, "Cycles incorrect for JP Z not taken");
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xCA as usize] {
+                assert_eq!(cycles_no_jump, cf as u32, "Cycles incorrect for JP Z not taken");
+            } else {
+                panic!("Expected conditional timing for JP Z");
+            }
             assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
         }
 
@@ -5407,7 +5423,11 @@ mod tests {
 
             let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0x5678, "PC should jump to 0x5678 when C is false");
-            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xD2 as usize].unwrap_conditional().0 as u32, "Cycles incorrect for JP NC taken");
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xD2 as usize] {
+                assert_eq!(cycles_jump, ct as u32, "Cycles incorrect for JP NC taken");
+            } else {
+                panic!("Expected conditional timing for JP NC");
+            }
             assert_eq!(cpu.f, original_flags_jump, "Flags should not change on jump");
 
             // Case 2: Condition not met (C flag is 1)
@@ -5421,7 +5441,11 @@ mod tests {
 
             let cycles_no_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when C is true (no jump)");
-            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0xD2 as usize].unwrap_conditional().1 as u32, "Cycles incorrect for JP NC not taken");
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xD2 as usize] {
+                assert_eq!(cycles_no_jump, cf as u32, "Cycles incorrect for JP NC not taken");
+            } else {
+                panic!("Expected conditional timing for JP NC");
+            }
             assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
         }
 
@@ -5443,7 +5467,11 @@ mod tests {
 
             let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0x9ABC, "PC should jump to 0x9ABC when C is true");
-            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xDA as usize].unwrap_conditional().0 as u32, "Cycles incorrect for JP C taken");
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xDA as usize] {
+                assert_eq!(cycles_jump, ct as u32, "Cycles incorrect for JP C taken");
+            } else {
+                panic!("Expected conditional timing for JP C");
+            }
             assert_eq!(cpu.f, original_flags_jump, "Flags should not change on jump");
 
             // Case 2: Condition not met (C flag is 0)
@@ -5457,7 +5485,11 @@ mod tests {
 
             let cycles_no_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when C is false (no jump)");
-            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0xDA as usize].unwrap_conditional().1 as u32, "Cycles incorrect for JP C not taken");
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xDA as usize] {
+                assert_eq!(cycles_no_jump, cf as u32, "Cycles incorrect for JP C not taken");
+            } else {
+                panic!("Expected conditional timing for JP C");
+            }
             assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
         }
 
@@ -5508,7 +5540,11 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset_fwd);
             let cycles_fwd = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset_fwd as i8 as i16 as u16), "JR NZ fwd (Z=0) PC failed");
-            assert_eq!(cycles_fwd, OPCODE_TIMINGS[0x20 as usize].unwrap_conditional().0 as u32, "JR NZ fwd (Z=0) cycles failed");
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x20 as usize] {
+                assert_eq!(cycles_fwd, ct as u32, "JR NZ fwd (Z=0) cycles failed");
+            } else {
+                panic!("Expected conditional timing for JR NZ");
+            }
             assert_eq!(cpu.f, original_flags_fwd, "JR NZ fwd (Z=0) flags changed");
 
             cpu.pc = initial_pc; cpu.set_flag_z(false); // Reset PC and Z
@@ -5517,7 +5553,11 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset_bwd);
             let cycles_bwd = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset_bwd as i8 as i16 as u16), "JR NZ bwd (Z=0) PC failed");
-            assert_eq!(cycles_bwd, OPCODE_TIMINGS[0x20 as usize].unwrap_conditional().0 as u32, "JR NZ bwd (Z=0) cycles failed");
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x20 as usize] {
+                assert_eq!(cycles_bwd, ct as u32, "JR NZ bwd (Z=0) cycles failed");
+            } else {
+                panic!("Expected conditional timing for JR NZ");
+            }
             assert_eq!(cpu.f, original_flags_bwd, "JR NZ bwd (Z=0) flags changed");
 
             // Case 2: NZ is false (Z=1), jump not taken
@@ -5527,7 +5567,11 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset_fwd);
             let cycles_no_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "JR NZ (Z=1) no jump PC failed");
-            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0x20 as usize].unwrap_conditional().1 as u32, "JR NZ (Z=1) no jump cycles failed");
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0x20 as usize] {
+                assert_eq!(cycles_no_jump, cf as u32, "JR NZ (Z=1) no jump cycles failed");
+            } else {
+                panic!("Expected conditional timing for JR NZ");
+            }
             assert_eq!(cpu.f, original_flags_no_jump, "JR NZ (Z=1) no jump flags changed");
         }
 
@@ -5544,7 +5588,11 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
             let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset as i8 as i16 as u16));
-            assert_eq!(cycles_jump, OPCODE_TIMINGS[0x28 as usize].unwrap_conditional().0 as u32);
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x28 as usize] {
+                assert_eq!(cycles_jump, ct as u32);
+            } else {
+                panic!("Expected conditional timing for JR Z");
+            }
             assert_eq!(cpu.f, original_flags_jump);
 
             // Case 2: Z is false, jump not taken
@@ -5554,7 +5602,11 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
             let cycles_no_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2));
-            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0x28 as usize].unwrap_conditional().1 as u32);
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0x28 as usize] {
+                assert_eq!(cycles_no_jump, cf as u32);
+            } else {
+                panic!("Expected conditional timing for JR Z");
+            }
             assert_eq!(cpu.f, original_flags_no_jump);
         }
 
@@ -5571,7 +5623,11 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
             let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset as i8 as i16 as u16));
-            assert_eq!(cycles_jump, OPCODE_TIMINGS[0x38 as usize].unwrap_conditional().0 as u32);
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x38 as usize] {
+                assert_eq!(cycles_jump, ct as u32);
+            } else {
+                panic!("Expected conditional timing for JR C");
+            }
             assert_eq!(cpu.f, original_flags_jump);
 
             // Case 2: C is false, jump not taken
@@ -5581,7 +5637,11 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
             let cycles_no_jump = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(2));
-            assert_eq!(cycles_no_jump, OPCODE_TIMINGS[0x38 as usize].unwrap_conditional().1 as u32);
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0x38 as usize] {
+                assert_eq!(cycles_no_jump, cf as u32);
+            } else {
+                panic!("Expected conditional timing for JR C");
+            }
             assert_eq!(cpu.f, original_flags_no_jump);
         }
 
@@ -5601,7 +5661,11 @@ mod tests {
             let cycles_case1 = cpu.step();
             let expected_pc_case1 = initial_pc_base.wrapping_add(2).wrapping_add(offset_case1 as i8 as i16 as u16); // 0x100 + 2 + 10 = 0x10C
             assert_eq!(cpu.pc, expected_pc_case1, "JR NC (C=0, offset +10) PC failed");
-            assert_eq!(cycles_case1, OPCODE_TIMINGS[0x30 as usize].unwrap_conditional().0 as u32);
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x30 as usize] {
+                assert_eq!(cycles_case1, ct as u32);
+            } else {
+                panic!("Expected conditional timing for JR NC");
+            }
             assert_eq!(cpu.f, initial_flags_case1, "JR NC (C=0, offset +10) flags changed");
 
             // Case 2: NC is true (C=0), negative offset
@@ -5613,7 +5677,11 @@ mod tests {
             let cycles_case2 = cpu.step();
             let expected_pc_case2 = initial_pc_base.wrapping_add(2).wrapping_add(offset_case2 as i8 as i16 as u16); // 0x100 + 2 - 10 = 0x0F8
             assert_eq!(cpu.pc, expected_pc_case2, "JR NC (C=0, offset -10) PC failed");
-            assert_eq!(cycles_case2, OPCODE_TIMINGS[0x30 as usize].unwrap_conditional().0 as u32);
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x30 as usize] {
+                assert_eq!(cycles_case2, ct as u32);
+            } else {
+                panic!("Expected conditional timing for JR NC");
+            }
             assert_eq!(cpu.f, initial_flags_case2, "JR NC (C=0, offset -10) flags changed");
 
             // Case 3: NC is false (C=1), positive offset (no jump)
@@ -5625,7 +5693,11 @@ mod tests {
             let cycles_case3 = cpu.step();
             let expected_pc_case3 = initial_pc_base.wrapping_add(2); // 0x100 + 2 = 0x102
             assert_eq!(cpu.pc, expected_pc_case3, "JR NC (C=1, offset +10) no jump PC failed");
-            assert_eq!(cycles_case3, OPCODE_TIMINGS[0x30 as usize].unwrap_conditional().1 as u32);
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0x30 as usize] {
+                assert_eq!(cycles_case3, cf as u32);
+            } else {
+                panic!("Expected conditional timing for JR NC");
+            }
             assert_eq!(cpu.f, initial_flags_case3, "JR NC (C=1, offset +10) no jump flags changed");
 
             // Case 4: NC is false (C=1), negative offset (no jump)
@@ -5637,7 +5709,11 @@ mod tests {
             let cycles_case4 = cpu.step();
             let expected_pc_case4 = initial_pc_base.wrapping_add(2); // 0x100 + 2 = 0x102
             assert_eq!(cpu.pc, expected_pc_case4, "JR NC (C=1, offset -10) no jump PC failed");
-            assert_eq!(cycles_case4, OPCODE_TIMINGS[0x30 as usize].unwrap_conditional().1 as u32);
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0x30 as usize] {
+                assert_eq!(cycles_case4, cf as u32);
+            } else {
+                panic!("Expected conditional timing for JR NC");
+            }
             assert_eq!(cpu.f, initial_flags_case4, "JR NC (C=1, offset -10) no jump flags changed");
         }
 
@@ -5751,7 +5827,11 @@ mod tests {
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
             assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL NZ: Return address on stack incorrect when Z is false");
-            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xC4 as usize].unwrap_conditional().0 as u32, "CALL NZ (taken) cycles incorrect");
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xC4 as usize] {
+                assert_eq!(cycles_jump, ct as u32, "CALL NZ (taken) cycles incorrect");
+            } else {
+                panic!("Expected conditional timing for CALL NZ");
+            }
             assert_eq!(cpu.f, original_flags_jump, "CALL NZ: Flags should not change when Z is false");
 
             // Case 2: Condition not met (Z flag is 1)
@@ -5766,7 +5846,11 @@ mod tests {
             let cycles_no_call = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL NZ: PC should increment by 3 when Z is true");
             assert_eq!(cpu.sp, initial_sp_val, "CALL NZ: SP should not change when Z is true");
-            assert_eq!(cycles_no_call, OPCODE_TIMINGS[0xC4 as usize].unwrap_conditional().1 as u32, "CALL NZ (not taken) cycles incorrect");
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xC4 as usize] {
+                assert_eq!(cycles_no_call, cf as u32, "CALL NZ (not taken) cycles incorrect");
+            } else {
+                panic!("Expected conditional timing for CALL NZ");
+            }
             assert_eq!(cpu.f, original_flags_no_call, "CALL NZ: Flags should not change when Z is true");
         }
 
@@ -5794,7 +5878,11 @@ mod tests {
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
             assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL Z: Return address on stack incorrect");
-            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xCC as usize].unwrap_conditional().0 as u32, "CALL Z (taken) cycles incorrect");
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xCC as usize] {
+                assert_eq!(cycles_jump, ct as u32, "CALL Z (taken) cycles incorrect");
+            } else {
+                panic!("Expected conditional timing for CALL Z");
+            }
             assert_eq!(cpu.f, original_flags_jump, "CALL Z: Flags should not change");
 
             // Case 2: Condition not met (Z flag is 0)
@@ -5809,7 +5897,11 @@ mod tests {
             let cycles_no_call = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL Z: PC should increment by 3 when Z is false");
             assert_eq!(cpu.sp, initial_sp_val, "CALL Z: SP should not change when Z is false");
-            assert_eq!(cycles_no_call, OPCODE_TIMINGS[0xCC as usize].unwrap_conditional().1 as u32, "CALL Z (not taken) cycles incorrect");
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xCC as usize] {
+                assert_eq!(cycles_no_call, cf as u32, "CALL Z (not taken) cycles incorrect");
+            } else {
+                panic!("Expected conditional timing for CALL Z");
+            }
             assert_eq!(cpu.f, original_flags_no_call, "CALL Z: Flags should not change when Z is false");
         }
 
@@ -5837,7 +5929,11 @@ mod tests {
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
             assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL NC: Return address incorrect");
-            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xD4 as usize].unwrap_conditional().0 as u32, "CALL NC (taken) cycles incorrect");
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xD4 as usize] {
+                assert_eq!(cycles_jump, ct as u32, "CALL NC (taken) cycles incorrect");
+            } else {
+                panic!("Expected conditional timing for CALL NC");
+            }
             assert_eq!(cpu.f, original_flags_jump, "CALL NC: Flags should not change");
 
             // Case 2: Condition not met (C flag is 1)
@@ -5852,7 +5948,11 @@ mod tests {
             let cycles_no_call = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL NC: PC should increment by 3 when C is true");
             assert_eq!(cpu.sp, initial_sp_val, "CALL NC: SP should not change when C is true");
-            assert_eq!(cycles_no_call, OPCODE_TIMINGS[0xD4 as usize].unwrap_conditional().1 as u32, "CALL NC (not taken) cycles incorrect");
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xD4 as usize] {
+                assert_eq!(cycles_no_call, cf as u32, "CALL NC (not taken) cycles incorrect");
+            } else {
+                panic!("Expected conditional timing for CALL NC");
+            }
             assert_eq!(cpu.f, original_flags_no_call, "CALL NC: Flags should not change when C is true");
         }
 
@@ -5880,7 +5980,11 @@ mod tests {
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
             assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL C: Return address incorrect");
-            assert_eq!(cycles_jump, OPCODE_TIMINGS[0xDC as usize].unwrap_conditional().0 as u32, "CALL C (taken) cycles incorrect");
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xDC as usize] {
+                assert_eq!(cycles_jump, ct as u32, "CALL C (taken) cycles incorrect");
+            } else {
+                panic!("Expected conditional timing for CALL C");
+            }
             assert_eq!(cpu.f, original_flags_jump, "CALL C: Flags should not change");
 
             // Case 2: Condition not met (C flag is 0)
@@ -5895,7 +5999,11 @@ mod tests {
             let cycles_no_call = cpu.step();
             assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL C: PC should increment by 3 when C is false");
             assert_eq!(cpu.sp, initial_sp_val, "CALL C: SP should not change when C is false");
-            assert_eq!(cycles_no_call, OPCODE_TIMINGS[0xDC as usize].unwrap_conditional().1 as u32, "CALL C (not taken) cycles incorrect");
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xDC as usize] {
+                assert_eq!(cycles_no_call, cf as u32, "CALL C (not taken) cycles incorrect");
+            } else {
+                panic!("Expected conditional timing for CALL C");
+            }
             assert_eq!(cpu.f, original_flags_no_call, "CALL C: Flags should not change when C is false");
         }
 
@@ -5985,7 +6093,11 @@ mod tests {
             let cycles_ret = cpu.step();
             assert_eq!(cpu.pc, return_addr, "RET NZ: PC should be return_addr when Z is false");
             assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2), "RET NZ: SP should increment by 2 when Z is false");
-            assert_eq!(cycles_ret, OPCODE_TIMINGS[0xC0 as usize].unwrap_conditional().0 as u32, "RET NZ (taken) cycles incorrect");
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xC0 as usize] {
+                assert_eq!(cycles_ret, ct as u32, "RET NZ (taken) cycles incorrect");
+            } else {
+                panic!("Expected conditional timing for RET NZ");
+            }
             assert_eq!(cpu.f, original_flags_ret, "RET NZ: Flags should not change when Z is false");
 
             // Case 2: Condition not met (Z flag is 1)
@@ -5998,7 +6110,11 @@ mod tests {
             let cycles_no_ret = cpu.step();
             assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1), "RET NZ: PC should increment by 1 when Z is true");
             assert_eq!(cpu.sp, initial_sp_val, "RET NZ: SP should not change when Z is true");
-            assert_eq!(cycles_no_ret, OPCODE_TIMINGS[0xC0 as usize].unwrap_conditional().1 as u32, "RET NZ (not taken) cycles incorrect");
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xC0 as usize] {
+                assert_eq!(cycles_no_ret, cf as u32, "RET NZ (not taken) cycles incorrect");
+            } else {
+                panic!("Expected conditional timing for RET NZ");
+            }
             assert_eq!(cpu.f, original_flags_no_ret, "RET NZ: Flags should not change when Z is true");
         }
 
@@ -6018,7 +6134,11 @@ mod tests {
             let cycles_ret = cpu.step();
             assert_eq!(cpu.pc, return_addr);
             assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2));
-            assert_eq!(cycles_ret, OPCODE_TIMINGS[0xC8 as usize].unwrap_conditional().0 as u32);
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xC8 as usize] {
+                assert_eq!(cycles_ret, ct as u32);
+            } else {
+                panic!("Expected conditional timing for RET Z");
+            }
             assert_eq!(cpu.f, original_flags_ret);
 
             // Case 2: Condition not met (Z flag is 0)
@@ -6028,7 +6148,11 @@ mod tests {
             let cycles_no_ret = cpu.step();
             assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1));
             assert_eq!(cpu.sp, initial_sp_val);
-            assert_eq!(cycles_no_ret, OPCODE_TIMINGS[0xC8 as usize].unwrap_conditional().1 as u32);
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xC8 as usize] {
+                assert_eq!(cycles_no_ret, cf as u32);
+            } else {
+                panic!("Expected conditional timing for RET Z");
+            }
             assert_eq!(cpu.f, original_flags_no_ret);
         }
 
@@ -6048,7 +6172,11 @@ mod tests {
             let cycles_ret = cpu.step();
             assert_eq!(cpu.pc, return_addr);
             assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2));
-            assert_eq!(cycles_ret, OPCODE_TIMINGS[0xD0 as usize].unwrap_conditional().0 as u32);
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xD0 as usize] {
+                assert_eq!(cycles_ret, ct as u32);
+            } else {
+                panic!("Expected conditional timing for RET NC");
+            }
             assert_eq!(cpu.f, original_flags_ret);
 
             // Case 2: Condition not met (C flag is 1)
@@ -6058,7 +6186,11 @@ mod tests {
             let cycles_no_ret = cpu.step();
             assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1));
             assert_eq!(cpu.sp, initial_sp_val);
-            assert_eq!(cycles_no_ret, OPCODE_TIMINGS[0xD0 as usize].unwrap_conditional().1 as u32);
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xD0 as usize] {
+                assert_eq!(cycles_no_ret, cf as u32);
+            } else {
+                panic!("Expected conditional timing for RET NC");
+            }
             assert_eq!(cpu.f, original_flags_no_ret);
         }
 
@@ -6078,7 +6210,11 @@ mod tests {
             let cycles_ret = cpu.step();
             assert_eq!(cpu.pc, return_addr);
             assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2));
-            assert_eq!(cycles_ret, OPCODE_TIMINGS[0xD8 as usize].unwrap_conditional().0 as u32);
+            if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xD8 as usize] {
+                assert_eq!(cycles_ret, ct as u32);
+            } else {
+                panic!("Expected conditional timing for RET C");
+            }
             assert_eq!(cpu.f, original_flags_ret);
 
             // Case 2: Condition not met (C flag is 0)
@@ -6088,7 +6224,11 @@ mod tests {
             let cycles_no_ret = cpu.step();
             assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1));
             assert_eq!(cpu.sp, initial_sp_val);
-            assert_eq!(cycles_no_ret, OPCODE_TIMINGS[0xD8 as usize].unwrap_conditional().1 as u32);
+            if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xD8 as usize] {
+                assert_eq!(cycles_no_ret, cf as u32);
+            } else {
+                panic!("Expected conditional timing for RET C");
+            }
             assert_eq!(cpu.f, original_flags_no_ret);
         }
 

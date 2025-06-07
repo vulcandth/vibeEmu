@@ -56,6 +56,7 @@ use crate::joypad::JoypadButton; // Added for joypad input
 // Define window dimensions
 const WINDOW_WIDTH: usize = 160;
 const WINDOW_HEIGHT: usize = 144;
+const TARGET_FPS: f64 = 59.73;
 
 #[derive(Debug, Clone, Copy)]
 enum EmulatorCommand {
@@ -318,7 +319,6 @@ fn main() {
     let mut emulation_steps: u64 = 0; // Total CPU steps executed
     let mut running = true;
     let start_time = Instant::now(); // Record start time, used if halt_duration_seconds is Some
-    let mut has_printed_halt_message = false;
     let mut prev_right_mouse_down = false; // For right-click detection
     let paused = Arc::new(AtomicBool::new(false)); // For pause state
     // egui_context_menu_active and egui_context_menu_has_run_once are removed
@@ -329,6 +329,8 @@ fn main() {
     // Total PPU cycles per frame = Scanlines (154) * Cycles per scanline (456)
     const CYCLES_PER_FRAME: u32 = 456 * 154;
     let mut ppu_cycles_this_frame: u32 = 0;
+    let target_frame_duration = std::time::Duration::from_secs_f64(1.0 / TARGET_FPS);
+    let mut last_frame_time = std::time::Instant::now();
 
     // Audio Sampling
     const AUDIO_SAMPLE_RATE: u32 = 44100; // Standard audio sample rate
@@ -446,6 +448,12 @@ fn main() {
                     w.update_with_buffer(&display_buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
                         .unwrap_or_else(|e| panic!("Failed to update window buffer: {}", e));
                 }
+                // Frame rate locking logic
+                let elapsed_time = last_frame_time.elapsed();
+                if elapsed_time < target_frame_duration {
+                    std::thread::sleep(target_frame_duration - elapsed_time);
+                }
+                last_frame_time = std::time::Instant::now();
             }
             emulation_steps += 1; // Increment emulation steps only when not paused
         } else { // Emulator is paused
