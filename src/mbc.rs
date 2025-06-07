@@ -233,8 +233,9 @@ impl MemoryBankController for MBC5 {
             0x4000..=0x5FFF => { // RAM Bank Number
                 let ram_bank = value & 0x0F; // Bits 0-3 for RAM Bank
                 // Rumble motor control is often tied to bit 3 of this register
-                // if self.has_rumble && (ram_bank & 0x08) != 0 { /* TODO: activate rumble */ }
-                // else if self.has_rumble { /* TODO: deactivate rumble */ }
+                if self.has_rumble && (ram_bank & 0x08) != 0 { /* TODO: activate rumble */ }
+                else if self.has_rumble { /* TODO: deactivate rumble */ }
+                // Rumble functionality removed, has_rumble field is gone.
 
                 // For MBC5, num_ram_banks can be up to 16.
                 // So, no modulo is needed if ram_bank is already 0-15 from (value & 0x0F).
