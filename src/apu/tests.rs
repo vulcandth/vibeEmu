@@ -9,7 +9,7 @@ mod tests {
     };
 
     fn create_apu_and_power_on() -> Apu {
-        let mut apu = Apu::new(0); // Pass 0 to use default sample rate in Apu::new
+        let mut apu = Apu::new(44100); // Use a fixed sample rate for tests
         // Power on APU
         apu.write_byte(NR52_ADDR, 0x80);
         // Initialize NR50 and NR51 to enable outputs for testing
@@ -101,7 +101,7 @@ mod tests {
     // --- Tests for power_on_reset behavior ---
     #[test]
     fn test_ch3_initial_state_after_apu_power_on() {
-        let mut apu = Apu::new(0); // Pass 0 for default sample rate
+        let mut apu = Apu::new(44100); // Use a fixed sample rate for tests
         // CH3 is initially disabled, length counter 0 etc. by Apu::new() due to reset_power_on_channel_flags
         // Trigger CH3 to give it some non-default state IF Apu::new() didn't already reset it via power_on_reset
         apu.write_byte(NR52_ADDR, 0x80); // Power on to allow register writes
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_ch4_initial_state_after_apu_power_on() {
-        let mut apu = Apu::new(0); // Pass 0 for default sample rate
+        let mut apu = Apu::new(44100); // Use a fixed sample rate for tests
         // Setup CH4 to a non-default state
         apu.write_byte(NR52_ADDR, 0x80);
         apu.write_byte(NR41_ADDR, 0x3F); // Max Length

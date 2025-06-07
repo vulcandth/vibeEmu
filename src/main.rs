@@ -25,8 +25,10 @@ use std::io::{Read, Result}; // Added for file operations and Result type
 use std::time::Instant; // Added for time tracking
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::time::Duration; // May need this later for sleep/timing
 
 use minifb::{Key, Window, WindowOptions}; // Added for minifb
+use rodio::{OutputStream, Sink, source::Source};
 
 // Use crate:: if VibeEmu is a library and main.rs is an example or bin.
 // If main.rs is part of the library itself (e.g. src/main.rs in a binary crate),
@@ -40,6 +42,12 @@ use crate::joypad::JoypadButton; // Added for joypad input
 // Define window dimensions
 const WINDOW_WIDTH: usize = 160;
 const WINDOW_HEIGHT: usize = 144;
+const OUTPUT_SAMPLE_RATE: u32 = 44100;
+const CPU_CYCLES_PER_SECOND: u32 = CPU_CLOCK_HZ; // Alias for clarity from apu::CPU_CLOCK_HZ
+// Game Boy outputs one frame roughly every 70224 CPU T-cycles.
+const GB_FRAME_CPU_CYCLES: f64 = 70224.0;
+const SAMPLES_PER_FRAME: usize = (OUTPUT_SAMPLE_RATE as f64 / (CPU_CYCLES_PER_SECOND as f64 / GB_FRAME_CPU_CYCLES)) as usize;
+const NUM_CHANNELS: u16 = 2; // Stereo
 
 // Function to load ROM data from a file
 fn load_rom_file(path: &str) -> Result<Vec<u8>> {
@@ -168,7 +176,12 @@ fn main() {
     };
 
     // Create the Bus, wrapped in Rc and RefCell for shared mutable access
-    let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+    // Bus::new now returns a Result, so handle it appropriately.
+    let bus_instance = Bus::new(rom_data, OUTPUT_SAMPLE_RATE).unwrap_or_else(|e| {
+        eprintln!("Failed to initialize Bus: {}", e);
+        std::process::exit(1);
+    });
+    let bus = Rc::new(RefCell::new(bus_instance));
     println!("Determined System Mode: {:?}", bus.borrow().get_system_mode()); // Added logging
 
     // Create the Cpu, passing a clone of the Rc-wrapped bus
@@ -190,6 +203,11 @@ fn main() {
     // --- Conditional Window Initialization with Fallback ---
     let mut window_attempt: Option<minifb::Window> = None;
     let mut fell_back_to_headless = false; // Track if fallback occurred
+
+    // Initialize audio BEFORE window/main loop
+    let (_stream, stream_handle) = OutputStream::try_default().expect("Failed to get default audio output stream");
+    let sink = Sink::try_new(&stream_handle).expect("Failed to create audio sink");
+    // sink is not used yet in this step, but initialized. _stream must be kept alive.
 
     if !is_headless {
         match Window::new(
@@ -257,10 +275,10 @@ fn main() {
     let mut ppu_cycles_this_frame: u32 = 0;
 
     // Audio Sampling
-    const AUDIO_SAMPLE_RATE: u32 = 44100; // Standard audio sample rate
-    const CPU_CYCLES_PER_AUDIO_SAMPLE: u32 = CPU_CLOCK_HZ / AUDIO_SAMPLE_RATE;
-    let mut audio_cycle_counter: u32 = 0;
-    let mut audio_buffer: Vec<(f32, f32)> = Vec::new(); // Simple buffer for collected samples
+    // const AUDIO_SAMPLE_RATE: u32 = 44100; // Already defined as OUTPUT_SAMPLE_RATE
+    // const CPU_CYCLES_PER_AUDIO_SAMPLE: u32 = CPU_CLOCK_HZ / OUTPUT_SAMPLE_RATE; // Replaced by SAMPLES_PER_FRAME logic
+    // let mut audio_cycle_counter: u32 = 0; // Replaced by SAMPLES_PER_FRAME logic
+    let mut audio_buffer: Vec<f32> = Vec::with_capacity(SAMPLES_PER_FRAME * NUM_CHANNELS as usize);
 
     while running {
         let m_cycles = cpu.step(); // Execute one CPU step and get M-cycles
@@ -275,19 +293,32 @@ fn main() {
 
             ppu_cycles_this_frame += t_cycles_for_step;
 
-            // Audio sample generation
-            audio_cycle_counter += t_cycles_for_step;
-            if audio_cycle_counter >= CPU_CYCLES_PER_AUDIO_SAMPLE {
-                audio_cycle_counter -= CPU_CYCLES_PER_AUDIO_SAMPLE;
-                let (left_sample, right_sample) = bus.borrow_mut().apu.get_mixed_audio_samples();
-                audio_buffer.push((left_sample, right_sample));
-                // In a real emulator, audio_buffer would be sent to an audio backend.
-                // For now, we'll just let it grow. We can print its size periodically for debugging.
-            }
+            // Audio sample generation - This logic is now per-frame below
 
             // Frame rendering logic (GUI mode) or PPU cycle accounting (headless)
             if ppu_cycles_this_frame >= CYCLES_PER_FRAME {
                 ppu_cycles_this_frame -= CYCLES_PER_FRAME; // Reset for next frame
+
+                // Collect audio samples for the frame
+                if audio_buffer.capacity() > SAMPLES_PER_FRAME * NUM_CHANNELS as usize * 2 && sink.len() == 0 {
+                    audio_buffer.shrink_to(SAMPLES_PER_FRAME * NUM_CHANNELS as usize * 2);
+                }
+                audio_buffer.clear();
+
+                // Get a mutable borrow of bus once
+                let mut bus_mut = bus.borrow_mut();
+                for _i in 0..SAMPLES_PER_FRAME {
+                    let (left_sample, right_sample) = bus_mut.get_mixed_audio_samples();
+                    audio_buffer.push(left_sample);
+                    audio_buffer.push(right_sample);
+                }
+                // Drop bus_mut borrow before window handling or other bus access
+                drop(bus_mut);
+
+                if !audio_buffer.is_empty() {
+                    let source = rodio::buffer::SamplesBuffer::new(NUM_CHANNELS, OUTPUT_SAMPLE_RATE, audio_buffer.clone());
+                    sink.append(source);
+                }
 
                 if let Some(w) = window.as_mut() { // GUI mode rendering
                     let ppu_framebuffer = &bus.borrow().ppu.framebuffer;
@@ -381,9 +412,9 @@ fn main() {
             if emulation_steps % (SERIAL_PRINT_INTERVAL * 10) == 0 || !running { // Less frequent full state print unless exiting
                  println!("Current CPU state (step {}): PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
                          emulation_steps, cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
+                // The audio_buffer now contains f32, not (f32, f32)
                 if !audio_buffer.is_empty() {
-                    println!("Audio buffer size: {}", audio_buffer.len());
-                    // audio_buffer.clear(); // Optionally clear buffer after printing size
+                    println!("Audio samples collected this frame: {}", audio_buffer.len());
                 }
             }
 

@@ -112,7 +112,8 @@ impl Bus {
         self.hdma_active = false; // GDMA also stops any pending HDMA
     }
 
-    pub fn new(rom_data: Vec<u8>) -> Self {
+    // Changed signature to accept output_sample_rate
+    pub fn new(rom_data: Vec<u8>, output_sample_rate: u32) -> Result<Self, String> {
         let mut determined_mode = SystemMode::DMG;
         if rom_data.len() >= 0x0144 { // Check for CGB flag existence
             let cgb_flag = rom_data[0x0143];
@@ -162,11 +163,12 @@ impl Bus {
 
         let ppu_system_mode = determined_mode; // Capture for clarity if needed, or use directly
 
-        Self {
+        // Return Result for Bus::new
+        Ok(Self {
             mbc, // Store the initialized MBC
             memory: Memory::new(),
             ppu: Ppu::new(ppu_system_mode), // Pass system_mode to Ppu
-            apu: Apu::new(0), // Pass 0 to use default sample rate
+            apu: Apu::new(output_sample_rate), // Pass output_sample_rate to Apu
             joypad: Joypad::new(), // Initialize joypad
             timer: Timer::new(),
             system_mode: determined_mode,
@@ -558,6 +560,10 @@ impl Bus {
     pub fn clear_interrupt_flag(&mut self, interrupt_bit: u8) {
         self.if_register &= !(1 << interrupt_bit);
     }
+
+    pub fn get_mixed_audio_samples(&mut self) -> (f32, f32) {
+        self.apu.get_mixed_audio_samples()
+    }
 }
 
 // This closes the `impl Bus` block. The test module should be outside.
@@ -576,7 +582,9 @@ mod tests {
     fn setup_test_env() -> (Cpu, Rc<RefCell<Bus>>) {
         // Provide dummy ROM data for Bus creation
         let rom_data = vec![0; 0x100]; // Example: 256 bytes of ROM
-        let bus_rc = Rc::new(RefCell::new(Bus::new(rom_data)));
+        // Bus::new now returns a Result, so unwrap for tests or handle error
+        let bus_instance = Bus::new(rom_data, 44100).expect("Failed to create Bus for test");
+        let bus_rc = Rc::new(RefCell::new(bus_instance));
         // Power on the APU after creating the bus, so APU register writes are accepted
         bus_rc.borrow_mut().write_byte(0xFF26, 0x80); // NR52_ADDR, APU On
         let cpu = Cpu::new(bus_rc.clone());
@@ -736,12 +744,12 @@ mod tests {
         // ROM data for this specific test
         let mut test_rom_data = vec![0; 0x200]; // 512 bytes ROM
         test_rom_data[0x00] = 0xAA;
-        test_rom_data[0xFF] = 0xBB; // Last byte of the initial 0x100 dummy ROM in setup_test_env
-                                    // This will be overwritten by the new bus instance's ROM.
-        test_rom_data[0x1FE] = 0xCC; // Second to last byte of our 512 byte ROM
-        test_rom_data[0x1FF] = 0xDD; // Last byte of our 512 byte ROM
+        test_rom_data[0xFF] = 0xBB;
+        test_rom_data[0x1FE] = 0xCC;
+        test_rom_data[0x1FF] = 0xDD;
 
-        let bus_with_specific_rom = Rc::new(RefCell::new(Bus::new(test_rom_data.clone()))); // Use clone if test_rom_data is needed later for asserts
+        let bus_instance_specific_rom = Bus::new(test_rom_data.clone(), 44100).expect("Failed to create Bus with specific ROM for test");
+        let bus_with_specific_rom = Rc::new(RefCell::new(bus_instance_specific_rom));
 
         // 1. Reading from an address within the bounds of rom_data returns the correct byte.
         assert_eq!(bus_with_specific_rom.borrow().read_byte(0x0000), 0xAA, "Read from ROM start incorrect");
@@ -795,7 +803,7 @@ mod tests {
     #[test]
     fn test_serial_output_capture() {
         let rom_data = vec![0; 0x100]; // Dummy ROM
-        let mut bus = Bus::new(rom_data); // Not using Rc<RefCell<Bus>> here as we need direct mutable access for this test.
+        let mut bus = Bus::new(rom_data, 44100).expect("Failed to create Bus for serial test");
 
         // Write "Test" to serial port (0xFF01)
         bus.write_byte(0xFF01, b'T');
@@ -822,37 +830,37 @@ mod tests {
         // Test CGB mode selection (0x80)
         let mut rom_cgb1 = vec![0u8; 0x150];
         rom_cgb1[0x0143] = 0x80;
-        let bus_cgb1 = Bus::new(rom_cgb1);
+        let bus_cgb1 = Bus::new(rom_cgb1, 44100).expect("Bus creation failed for CGB1 test");
         assert_eq!(bus_cgb1.get_system_mode(), SystemMode::CGB, "Failed CGB mode (0x80)");
 
         // Test CGB mode selection (0xC0)
         let mut rom_cgb2 = vec![0u8; 0x150];
         rom_cgb2[0x0143] = 0xC0;
-        let bus_cgb2 = Bus::new(rom_cgb2);
+        let bus_cgb2 = Bus::new(rom_cgb2, 44100).expect("Bus creation failed for CGB2 test");
         assert_eq!(bus_cgb2.get_system_mode(), SystemMode::CGB, "Failed CGB mode (0xC0)");
 
         // Test DMG mode selection (0x00)
         let mut rom_dmg = vec![0u8; 0x150];
         rom_dmg[0x0143] = 0x00;
-        let bus_dmg = Bus::new(rom_dmg);
+        let bus_dmg = Bus::new(rom_dmg, 44100).expect("Bus creation failed for DMG test");
         assert_eq!(bus_dmg.get_system_mode(), SystemMode::DMG, "Failed DMG mode (0x00)");
 
         // Test DMG mode selection (other value)
         let mut rom_dmg_other = vec![0u8; 0x150];
         rom_dmg_other[0x0143] = 0x40; // Some other non-CGB value
-        let bus_dmg_other = Bus::new(rom_dmg_other);
+        let bus_dmg_other = Bus::new(rom_dmg_other, 44100).expect("Bus creation failed for DMG other test");
         assert_eq!(bus_dmg_other.get_system_mode(), SystemMode::DMG, "Failed DMG mode (other)");
 
         // Test short ROM (less than 0x0144 bytes) defaults to DMG
         let short_rom = vec![0u8; 0x100];
-        let bus_short_rom = Bus::new(short_rom);
+        let bus_short_rom = Bus::new(short_rom, 44100).expect("Bus creation failed for short ROM test");
         assert_eq!(bus_short_rom.get_system_mode(), SystemMode::DMG, "Short ROM should default to DMG");
     }
 
     #[test]
     fn test_key1_register_read_write() {
         let rom_data = vec![0u8; 0x150]; // Generic ROM
-        let mut bus = Bus::new(rom_data);
+        let mut bus = Bus::new(rom_data, 44100).expect("Bus creation failed for KEY1 test");
 
         // Initial state
         assert!(!bus.get_is_double_speed(), "Initial is_double_speed should be false");

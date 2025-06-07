@@ -57,7 +57,8 @@ impl Channel4 {
         self.envelope_period_timer = envelope_timer_load_val;
         self.envelope_running = self.nr42.dac_power() && env_period_raw != 0;
         self.lfsr = 0xFFFF;
-        if !self.nr42.dac_power() { self.enabled = false; }
+        // Redundant check removed: self.enabled is already set based on dac_power at the beginning of trigger.
+        // If DAC was off, function would have returned. If DAC is on, this would incorrectly set enabled to false.
     }
 
     fn update_frequency_timer(&mut self) {

@@ -390,22 +390,16 @@ pub struct Apu {
 }
 
 impl Apu {
-    // Parameter changed from output_sample_rate to output_sample_rate_param to avoid conflict with temporary hardcoding
     pub fn new(output_sample_rate_param: u32) -> Self {
-        // Temporarily hardcode output_sample_rate if param is 0, or use param.
-        // This makes it callable from existing tests/main.rs without immediate change there if 0 is passed.
-        // A real scenario would require main.rs to provide a valid sample rate.
-        let output_sample_rate: u32 = if output_sample_rate_param == 0 { 44100 } else { output_sample_rate_param };
+        // output_sample_rate_param is now expected to be > 0 and correctly provided.
+        assert!(output_sample_rate_param > 0, "Output sample rate must be positive.");
 
         const CPU_CLOCK_HZ_F32: f32 = 4194304.0;
         const DMG_CHARGE_FACTOR_ORIGINAL: f32 = 0.999958_f32;
 
-        let hpf_charge_factor = if output_sample_rate == 0 { // Should be caught by above default to 44100
-            DMG_CHARGE_FACTOR_ORIGINAL
-        } else {
-            let charge_factor_exponent = CPU_CLOCK_HZ_F32 / output_sample_rate as f32;
-            DMG_CHARGE_FACTOR_ORIGINAL.powf(charge_factor_exponent)
-        };
+        // Use output_sample_rate_param directly
+        let charge_factor_exponent = CPU_CLOCK_HZ_F32 / output_sample_rate_param as f32;
+        let hpf_charge_factor = DMG_CHARGE_FACTOR_ORIGINAL.powf(charge_factor_exponent);
 
         let mut apu = Self {
             channel1: Channel1::new(),
@@ -539,7 +533,8 @@ impl Apu {
             NR43_ADDR => self.channel4.nr43.read(), NR44_ADDR => self.channel4.nr44.read(),
             NR50_ADDR => self.nr50.read(), NR51_ADDR => self.nr51.read(), NR52_ADDR => self.nr52.read(),
             WAVE_PATTERN_RAM_START_ADDR..=WAVE_PATTERN_RAM_END_ADDR => {
-                if self.nr52.is_apu_enabled() && self.channel3.nr30.dac_on() {
+                // Pandocs: "Wave RAM can be read if APU is on OR if Channel 3 DAC is on (NR30 bit 7)"
+                if self.nr52.is_apu_enabled() || self.channel3.nr30.dac_on() {
                     self.wave_ram[(addr - WAVE_PATTERN_RAM_START_ADDR) as usize]
                 } else { 0xFF }
             }

@@ -20,7 +20,7 @@ fn setup_bus(rom_data_option: Option<Vec<u8>>, system_mode_override: Option<Syst
         r[0x0149] = 0x00; // No RAM ( cartridge ) for basic tests
         r
     });
-    Bus::new(rom)
+    Bus::new(rom, 44100) // Pass default sample rate
 }
 
 fn setup_bus_dmg() -> Bus { setup_bus(None, Some(SystemMode::DMG)) }

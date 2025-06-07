@@ -2873,7 +2873,7 @@ mod tests {
         if mode == SystemMode::CGB {
             rom_data[0x0143] = 0x80; // CGB supported/required
         }
-        let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+        let bus = Rc::new(RefCell::new(Bus::new(rom_data, 44100))); // Pass default sample rate
         Cpu::new(bus)
     }
 
@@ -5945,7 +5945,7 @@ mod tests {
             rom_data_ret_wrap[0x0143] = if cpu.bus.borrow().get_system_mode() == SystemMode::CGB { 0x80 } else { 0x00 };
             rom_data_ret_wrap[0x0000] = (return_addr_3 >> 8) as u8; // Pre-set PCH in ROM[0x0000]
 
-            let bus_ret_wrap = Rc::new(RefCell::new(Bus::new(rom_data_ret_wrap)));
+            let bus_ret_wrap = Rc::new(RefCell::new(Bus::new(rom_data_ret_wrap, 44100))); // Pass default sample rate
             let mut cpu_ret_wrap = Cpu::new(Rc::clone(&bus_ret_wrap));
 
             cpu_ret_wrap.sp = 0xFFFF;
@@ -6645,7 +6645,7 @@ mod tests {
         rom_data[0x0149] = 0x02; // 8KB RAM
         rom_data[0x0143] = 0x80; // CGB Mode (as setup_cpu defaults to CGB)
 
-        let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+        let bus = Rc::new(RefCell::new(Bus::new(rom_data, 44100))); // Pass default sample rate
         let mut cpu = Cpu::new(Rc::clone(&bus));
         cpu.pc = initial_pc; // Ensure PC is set correctly for the custom CPU
 
@@ -6691,7 +6691,7 @@ mod tests {
             rom_data[initial_pc as usize] = 0x10; // STOP opcode
             rom_data[(initial_pc + 1) as usize] = 0x00; // STOP second byte
 
-            let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+            let bus = Rc::new(RefCell::new(Bus::new(rom_data, 44100)));
             let mut cpu = Cpu::new(Rc::clone(&bus));
             // cpu.pc will be 0x0100 from Cpu::new
 
@@ -6729,7 +6729,7 @@ mod tests {
             rom_data[initial_pc as usize] = 0x10; // STOP opcode
             rom_data[(initial_pc + 1) as usize] = 0x00; // STOP second byte
 
-            let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+            let bus = Rc::new(RefCell::new(Bus::new(rom_data, 44100)));  // Pass default sample rate
             let mut cpu = Cpu::new(Rc::clone(&bus));
             // cpu.pc will be 0x0100 from Cpu::new
 
@@ -6753,7 +6753,7 @@ mod tests {
             rom_data[initial_pc as usize] = 0x10; // STOP opcode
             rom_data[(initial_pc + 1) as usize] = 0x00; // STOP second byte
 
-            let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+            let bus = Rc::new(RefCell::new(Bus::new(rom_data, 44100))); // Pass default sample rate
             let mut cpu = Cpu::new(Rc::clone(&bus));
             // Cpu::new defaults PC to 0x0100, so no need to set cpu.pc if initial_pc is 0x0100
 
@@ -6781,7 +6781,7 @@ mod tests {
             rom_data[initial_pc as usize] = 0x10; // STOP opcode
             rom_data[(initial_pc + 1) as usize] = 0x00; // STOP second byte
 
-            let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+            let bus = Rc::new(RefCell::new(Bus::new(rom_data, 44100))); // Pass default sample rate
             let mut cpu = Cpu::new(Rc::clone(&bus));
             // Cpu::new defaults PC to 0x0100
 
