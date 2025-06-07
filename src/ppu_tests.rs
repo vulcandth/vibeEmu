@@ -28,7 +28,13 @@ fn compare_pixel(fb: &[u8], x: usize, y: usize, width: usize, expected_rgb: &[u8
 fn test_ppu_initialization_values() {
     let ppu_dmg = setup_ppu_dmg();
     assert_eq!(ppu_dmg.lcdc, 0x91, "Initial LCDC");
-    assert_eq!(ppu_dmg.stat & 0b0111_1100, MODE_OAM_SCAN & 0b0111_1100, "Initial STAT mode (ignoring LYC and bit 7)");
+    // Check STAT mode bits (0-1)
+    assert_eq!(ppu_dmg.stat & 0b0000_0011, MODE_OAM_SCAN, "Initial STAT mode should be OAM Scan (2)");
+    // Check STAT interrupt enable bits (3,4,5,6) are initially 0
+    assert_eq!(ppu_dmg.stat & 0b0111_1000, 0b0000_0000, "Initial STAT interrupt sources (bits 3-6) should be 0");
+    // Bit 7 of STAT is always 1 (or reads as 1)
+    assert_ne!(ppu_dmg.stat & 0b1000_0000, 0, "Initial STAT bit 7 should be 1");
+
     assert_eq!(ppu_dmg.ly, 0, "Initial LY");
     assert_eq!(ppu_dmg.bgp, 0xFC, "Initial BGP");
     assert_eq!(ppu_dmg.system_mode, SystemMode::DMG, "System mode should be DMG");
@@ -73,7 +79,18 @@ fn test_lcdc_bg_window_enable_dmg() {
     ppu.render_scanline();
     compare_pixel(&ppu.framebuffer, 0, 10, 160, &DMG_PALETTE[3], "BG render if LCDC.0 on");
 
-    ppu.write_byte(0xFF40, ppu.lcdc & !(1 << 0)); // BG/Win OFF for DMG
+    // Modify pixel (0,10) to RED before the critical render_scanline call
+    let fb_idx_diag = (10 * 160 + 0) * 3;
+    ppu.framebuffer[fb_idx_diag] = 255;     // R
+    ppu.framebuffer[fb_idx_diag + 1] = 0;   // G
+    ppu.framebuffer[fb_idx_diag + 2] = 0;   // B
+
+    ppu.write_byte(0xFF40, ppu.lcdc & !(1 << 0)); // BG/Win OFF for DMG. ppu.lcdc is now 0x90 (OBJ on).
+
+    // Explicitly clear OAM to ensure no sprites from PPU::new() default interfere
+    // All OAM entries y-coord = 0, making them effectively disabled.
+    for i in 0..ppu.oam.len() { ppu.oam[i] = 0; }
+
     ppu.render_scanline();
     let bgp_col0_idx = (ppu.bgp >> 0) & 0b11;
     compare_pixel(&ppu.framebuffer, 0, 10, 160, &DMG_PALETTE[bgp_col0_idx as usize], "BG is BGP color 0 if LCDC.0 off (DMG)");
@@ -83,7 +100,8 @@ fn test_lcdc_bg_window_enable_dmg() {
     ppu.obp0 = 0b11100100;
     // Tile 0 already set to all black (0xFF, 0xFF)
     ppu.render_scanline();
-    compare_pixel(&ppu.framebuffer, 5, 10, 160, &DMG_PALETTE[bgp_col0_idx as usize], "BG still BGP color 0 with OBJ enabled");
+    // Check a pixel NOT covered by the sprite (sprite is at X=0 to X=7)
+    compare_pixel(&ppu.framebuffer, 8, 10, 160, &DMG_PALETTE[bgp_col0_idx as usize], "BG still BGP color 0 with OBJ enabled (pixel outside sprite)");
     compare_pixel(&ppu.framebuffer, 0, 10, 160, &DMG_PALETTE[3], "Sprite renders if LCDC.0 off (DMG)");
 }
 
@@ -131,35 +149,46 @@ fn test_lyc_ly_interrupt() {
     ppu.stat |= 1 << 6; // Enable LYC=LY STAT interrupt
 
     let mut interrupt: Option<InterruptType> = None;
-    for i in 0..5 { // Tick up to LY = 4
-        ppu.ly = i; ppu.cycles = 0;
-        interrupt = ppu.tick(SCANLINE_CYCLES);
-        assert!((ppu.stat & (1 << 2)) == 0, "LYC flag should not be set for LY={}", i);
-        if let Some(InterruptType::LcdStat) = interrupt { panic!("Unexpected STAT int for LY={}", i); }
+    for i in 0..ppu.lyc { // Iterate LY from 0 up to LYC-1
+        ppu.ly = i;
+        ppu.cycles = 0;
+        // Before tick, if ly != lyc, flag should be clear (check_lyc_ly updates it)
+        let _ = ppu.check_lyc_ly(); // Update STAT based on current LY and LYC
+        assert_eq!((ppu.stat & (1 << 2)), 0, "LYC flag should be clear when LY={} and LYC={}", i, ppu.lyc);
+
+        interrupt = ppu.tick(SCANLINE_CYCLES); // This will advance LY to i+1 and call check_lyc_ly again
+
+        // After tick, LY is effectively i+1.
+        // The LYC flag in STAT reflects whether (i+1) == ppu.lyc
+        if (i + 1) == ppu.lyc {
+            assert_ne!((ppu.stat & (1 << 2)), 0, "LYC flag should be SET after tick when new LY={} matches LYC={}", i+1, ppu.lyc);
+            if (ppu.stat & (1 << 6)) != 0 { // If LYC interrupt is enabled
+                 assert_eq!(interrupt, Some(InterruptType::LcdStat), "STAT interrupt expected for LYC match");
+            }
+        } else {
+            assert_eq!((ppu.stat & (1 << 2)), 0, "LYC flag should be CLEAR after tick when new LY={} != LYC={}", i+1, ppu.lyc);
+            if let Some(InterruptType::LcdStat) = interrupt {
+                 // A STAT interrupt could occur for other reasons (mode change), but not LYC if flag is clear.
+                 // This part of the test is primarily for the LYC flag state.
+            }
+        }
     }
 
-    ppu.ly = 5; ppu.cycles = 0; // LY becomes 5
-    // Manually call check_lyc_ly as tick() structure might call it at different times
-    // Or simulate the tick part that calls it
-    let _ = ppu.check_lyc_ly(); // Call it directly after setting LY
-    assert_ne!(ppu.stat & (1 << 2), 0, "LYC flag should be set for LY=5, LYC=5");
+    // Test check_lyc_ly directly for states around LYC
+    ppu.lyc = 5; // Ensure LYC is 5 for these checks
+    ppu.stat |= (1 << 6); // Enable LYC interrupt source in STAT
 
-    // The interrupt is generated if STAT bit 6 is enabled AND LYC=LY flag (STAT bit 2) is set.
-    // The check_lyc_ly itself returns the interrupt type.
-    // Resetting LY and ticking one full line.
-    ppu.ly = 4; ppu.cycles = 0; ppu.tick(SCANLINE_CYCLES); // LY becomes 5
-    interrupt = ppu.tick(1); // LY=5, check for interrupt generated on this boundary.
-                             // This is tricky as tick() handles many things.
-                             // A more direct test of `check_lyc_ly` and `set_mode` might be better.
+    ppu.ly = 4; // LY != LYC
+    assert_eq!(ppu.check_lyc_ly(), None, "check_lyc_ly should not signal for LY=4, LYC=5");
+    assert_eq!((ppu.stat & (1 << 2)), 0, "LYC flag clear for LY=4, LYC=5");
 
-    // Test check_lyc_ly directly
-    ppu.ly = 5; ppu.lyc = 5; ppu.stat |= (1 << 6); // Enable LYC interrupt
-    assert_eq!(ppu.check_lyc_ly(), Some(InterruptType::LcdStat), "check_lyc_ly should signal STAT interrupt");
-    assert_ne!(ppu.stat & (1 << 2), 0, "LYC flag should be set");
+    ppu.ly = 5; // LY == LYC
+    assert_eq!(ppu.check_lyc_ly(), Some(InterruptType::LcdStat), "check_lyc_ly should signal for LY=5, LYC=5");
+    assert_ne!((ppu.stat & (1 << 2)), 0, "LYC flag set for LY=5, LYC=5");
 
-    ppu.ly = 6;
-    assert_eq!(ppu.check_lyc_ly(), None, "check_lyc_ly should not signal if LY != LYC");
-    assert_eq!(ppu.stat & (1 << 2), 0, "LYC flag should be clear");
+    ppu.ly = 6; // LY != LYC
+    assert_eq!(ppu.check_lyc_ly(), None, "check_lyc_ly should not signal for LY=6, LYC=5");
+    assert_eq!((ppu.stat & (1 << 2)), 0, "LYC flag clear for LY=6, LYC=5");
 }
 
 

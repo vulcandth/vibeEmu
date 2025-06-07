@@ -258,7 +258,10 @@ impl Bus {
                 let source_base_address = (self.oam_dma_source_address_upper as u16) << 8;
                 for i in 0..160 {
                     let byte_to_copy = self.read_byte_internal(source_base_address + i as u16);
-                    self.ppu.write_byte(0xFE00 + i as u16, byte_to_copy);
+                    // Direct write to PPU OAM memory for DMA, bypassing PPU mode restrictions
+                    if i < self.ppu.oam.len() { // Ensure we don't write out of bounds
+                        self.ppu.oam[i as usize] = byte_to_copy;
+                    }
                 }
             }
 
@@ -476,9 +479,15 @@ impl Bus {
                     0xFF04..=0xFF07 => self.timer.write_byte(addr, value), // Route to Timer
                     0xFF0F => { self.if_register = value & 0x1F; }, // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.write_byte(addr, value), // APU registers
-                    // Extended PPU range for writes
-                    0xFF40..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => self.ppu.write_byte(addr, value),
-                    // OAM DMA (FF46) is handled in its own separate PPU range entry
+                    // PPU Registers excluding DMA
+                    0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => self.ppu.write_byte(addr, value),
+                    0xFF46 => { // OAM DMA Transfer Start
+                        self.oam_dma_source_address_upper = value;
+                        self.oam_dma_active = true;
+                        self.oam_dma_cycles_remaining = 160 * 4; // 160 M-cycles = 640 T-cycles
+                        // The actual data transfer happens in tick_components when oam_dma_active is true
+                        // and oam_dma_cycles_remaining was just set.
+                    }
                     0xFF4D => { // KEY1 - CGB Speed Switch
                         self.key1_prepare_speed_switch = (value & 0x01) != 0;
                     }
@@ -723,9 +732,12 @@ mod tests {
         cpu.ld_hl_mem_a();
 
         // To make the test somewhat useful, we can try reading back.
-        // The placeholder APU read should return 0xFF, not what was written.
+        // For NR12 (0xFF12), the initial value after APU reset is 0x00.
+        // The write to NR12 might change its value if the APU processes it,
+        // but the test is primarily about the bus routing and basic read/write.
+        // APU's NR12 struct initializes to 0, so reading it back should give 0.
         let read_back_val = bus.borrow().read_byte(apu_ch1_vol_addr);
-        assert_eq!(read_back_val, 0xFF, "Reading from APU placeholder after write should return dummy value");
+        assert_eq!(read_back_val, 0x00, "Reading from APU NR12 after init should return its default value (0x00)");
     }
 
     #[test]

@@ -271,65 +271,25 @@ impl Ppu {
         let bg_is_blank_dmg = self.system_mode == crate::bus::SystemMode::DMG && (self.lcdc & (1 << 0)) == 0;
 
         if bg_is_blank_dmg {
-            let dmg_color_0_idx = (self.bgp >> (0 * 2)) & 0b11; // Color for index 0 from BGP
-            let dmg_actual_color_0 = DMG_PALETTE[dmg_color_0_idx as usize];
+            // When BG is disabled in DMG mode, the screen area for BG/Window becomes white.
+            // Sprites can still be rendered on top.
             for x_on_screen in 0..160 {
                 let fb_idx = (self.ly as usize * 160 + x_on_screen as usize) * 3;
                 if fb_idx + 2 < self.framebuffer.len() {
-                    self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&dmg_actual_color_0);
+                    // Directly use COLOR_WHITE to ensure no BGP misinterpretation for this case.
+                    self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&COLOR_WHITE);
                 }
             }
             // Do not return; sprites should still render over this background.
         }
 
         // Actual Background & Window Rendering (if not blanked in DMG by LCDC.0)
-        if !bg_is_blank_dmg {
-            // ... rest of BG rendering logic ...
-            // ... Window rendering logic needs to be inside this `if !bg_is_blank_dmg` block too ...
-            // This means the previous change that put Window rendering outside the BG loop needs adjustment
-            // or window rendering needs its own `if !bg_is_blank_dmg` check.
-            // For simplicity, let's assume the existing BG loop handles its part,
-            // and the window part will also be conditional on !bg_is_blank_dmg.
-            // The structure from previous diff for BG rendering:
-            // for x_on_screen in 0..160 { ... BG pixel logic ... }
-            // Then for Window:
-            // if (self.lcdc & (1 << 5)) != 0 && self.ly >= self.wy && self.wx < 167 { ... Window pixel logic ... }
-            // This structure means the window logic needs its own check for `!bg_is_blank_dmg` if it's separate.
-            // Or, if window rendering is inside the `for x_on_screen in 0..160` loop (which it typically is for pixel overwrite),
-            // then the outer `if !bg_is_blank_dmg` covers it.
-            // Let's assume the current BG loop will be wrapped, and the Window loop will also be wrapped.
-            // The provided diff seems to put the BG loop inside `if !bg_is_blank_dmg`.
-            // The Window loop, if separate, will also need this condition.
-            // My current `render_scanline` has BG, then Window, then Sprites sequentially.
-            // So, BG rendering will be wrapped. Window rendering will also need to be wrapped.
-        } // This closes `if !bg_is_blank_dmg` for BG. Window needs its own check or be included.
-
-        // The previous diff for render_scanline:
-        // if !bg_is_blank_dmg { BG_LOOP } WINDOW_LOGIC SPRITE_LOGIC
-        // This is not quite right. Window logic should also be skipped if bg_is_blank_dmg.
-        // The correct structure should be:
-        // if bg_is_blank_dmg { FILL_WHITE_DMG }
-        // else { BG_RENDERING; WINDOW_RENDERING_IF_ENABLED; }
-        // SPRITE_RENDERING;
-
-        // So, the change below will wrap the existing BG and Window rendering sections.
-        // --- Search for the start of BG rendering's tile_map_base_addr ---
-        // This is a bit tricky with replace_with_git_merge_diff for large structural changes.
-        // I will apply the if condition around the existing BG and Window rendering blocks.
-        // The current diff utility is not ideal for wrapping large existing blocks.
-        // I will make two changes:
-        // 1. The initial blanking logic.
-        // 2. Add the `if !bg_is_blank_dmg` condition around the existing BG and Window rendering parts.
-
-        // For now, this first diff block only introduces the blanking logic
-        // and the start of the conditional block for actual rendering.
-        // The end of this conditional block will be added in a subsequent diff.
-        // This is a limitation of applying large structural changes with the current diff tool.
-        //
-        // The search block below should be the original start of the BG rendering section.
-        let tile_map_base_addr = if (self.lcdc & (1 << 3)) == 0 { 0x9800 } else { 0x9C00 };
-        let tile_data_base_addr = if (self.lcdc & (1 << 4)) == 0 { 0x8800 } else { 0x8000 };
-        let signed_tile_addressing = (self.lcdc & (1 << 4)) == 0;
+        // This block is now an ELSE to the `if bg_is_blank_dmg` block.
+        else {
+            // BG RENDERING LOGIC STARTS HERE
+            let tile_map_base_addr = if (self.lcdc & (1 << 3)) == 0 { 0x9800 } else { 0x9C00 };
+            let tile_data_base_addr = if (self.lcdc & (1 << 4)) == 0 { 0x8800 } else { 0x8000 };
+            let signed_tile_addressing = (self.lcdc & (1 << 4)) == 0;
 
         let current_scanline_y = self.ly;
         let scroll_y = self.scy;
@@ -519,6 +479,7 @@ impl Ppu {
                 }
             }
         } // This closes the Window rendering condition: if (self.lcdc & (1 << 5)) != 0 ...
+    } // THIS NOW CLOSES THE ELSE BLOCK FOR `if !bg_is_blank_dmg`
 
         // Sprite Rendering
         // This part is outside the `if !bg_is_blank_dmg` block, so sprites always render if enabled by LCDC.1
