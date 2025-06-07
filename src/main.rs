@@ -23,7 +23,6 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread; // For std::thread::sleep and spawning
-use std::path::PathBuf; // For handling paths from file dialog
 
 use eframe::egui; // For egui integration
 use minifb::{Key, Window, WindowOptions, MouseButton};
@@ -176,7 +175,7 @@ fn main() {
     };
 
     // Create the Bus, wrapped in Rc and RefCell for shared mutable access
-    let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+    let mut bus = Rc::new(RefCell::new(Bus::new(rom_data)));
     println!("Determined System Mode: {:?}", bus.borrow().get_system_mode()); // Added logging
 
     // Create the Cpu, passing a clone of the Rc-wrapped bus

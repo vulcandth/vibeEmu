@@ -46,12 +46,12 @@ impl Timing {
     }
 
     // Helper to unwrap conditional timing, panics if not Conditional.
-    pub fn unwrap_conditional(self) -> (u8, u8) {
-        match self {
-            Timing::Conditional(ct, cf) => (ct, cf),
-            _ => panic!("Timing was expected to be Conditional but was not."),
-        }
-    }
+    // pub fn unwrap_conditional(self) -> (u8, u8) { // Dead code removed
+    //     match self {
+    //         Timing::Conditional(ct, cf) => (ct, cf),
+    //         _ => panic!("Timing was expected to be Conditional but was not."),
+    //     }
+    // }
 }
 
 // Timings are in M-cycles (T-states / 4)
