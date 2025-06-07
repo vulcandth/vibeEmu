@@ -452,19 +452,6 @@ fn main() {
             thread::sleep(std::time::Duration::from_millis(10)); // Prevent busy loop
         }
 
-        // --- Halt Condition Checks & Logging ---
-        if cpu.is_halted {
-            if !has_printed_halt_message {
-                println!("CPU Halted at step {}. PC=0x{:04X}", emulation_steps, cpu.pc); // Added PC for context
-                has_printed_halt_message = true;
-            }
-        } else {
-            if has_printed_halt_message { // Reset if CPU is no longer halted
-                println!("CPU resumed from HALT at step {}.", emulation_steps);
-                has_printed_halt_message = false;
-            }
-        }
-
         // Periodic logging and headless checks (common to both modes, but some actions are headless-specific)
         if emulation_steps % SERIAL_PRINT_INTERVAL == 0 || !running { // Also print on last step
             let serial_data = bus.borrow().get_serial_output_string();
