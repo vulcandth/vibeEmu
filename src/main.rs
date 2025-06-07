@@ -26,9 +26,11 @@ use std::time::Instant; // Added for time tracking
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::time::Duration; // May need this later for sleep/timing
+use std::sync::mpsc;
+use log;
 
 use minifb::{Key, Window, WindowOptions}; // Added for minifb
-use rodio::{OutputStream, Sink, source::Source};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 // Use crate:: if VibeEmu is a library and main.rs is an example or bin.
 // If main.rs is part of the library itself (e.g. src/main.rs in a binary crate),
@@ -204,10 +206,67 @@ fn main() {
     let mut window_attempt: Option<minifb::Window> = None;
     let mut fell_back_to_headless = false; // Track if fallback occurred
 
-    // Initialize audio BEFORE window/main loop
-    let (_stream, stream_handle) = OutputStream::try_default().expect("Failed to get default audio output stream");
-    let sink = Sink::try_new(&stream_handle).expect("Failed to create audio sink");
-    // sink is not used yet in this step, but initialized. _stream must be kept alive.
+    // Robust cpal audio initialization
+    let mut audio_initialized = false;
+    let mut audio_sender: Option<mpsc::SyncSender<f32>> = None;
+    let mut _audio_stream: Option<cpal::Stream> = None; // Keep stream alive
+
+    let host = cpal::default_host();
+    if let Some(device) = host.default_output_device() {
+        println!("Output device: {}", device.name().unwrap_or_else(|_| "N/A".to_string()));
+        match device.default_output_config() {
+            Ok(config) => {
+                println!("Default output config: {:?}", config);
+
+                // TODO: Determine sample format and handle conversions if not f32.
+                // For now, assuming f32 or compatible.
+
+                let (sender, receiver) = mpsc::sync_channel::<f32>(SAMPLES_PER_FRAME * NUM_CHANNELS as usize * 4);
+                audio_sender = Some(sender);
+
+                let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
+
+                let audio_callback = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    for sample in data.iter_mut() {
+                        *sample = match receiver.try_recv() {
+                            Ok(s) => s,
+                            Err(_) => 0.0, // Write silence
+                        };
+                    }
+                };
+
+                let stream_config_cpal = cpal::StreamConfig { // Renamed to avoid conflict
+                    channels: NUM_CHANNELS,
+                    sample_rate: cpal::SampleRate(OUTPUT_SAMPLE_RATE),
+                    buffer_size: cpal::BufferSize::Default,
+                };
+
+                match device.build_output_stream(&stream_config_cpal, audio_callback, err_fn, None) {
+                    Ok(stream) => {
+                        if let Err(e) = stream.play() {
+                            eprintln!("Warning: Failed to play audio stream: {}. Running without audio.", e);
+                            audio_sender = None; // Disable audio sending
+                        } else {
+                            _audio_stream = Some(stream); // Keep stream alive
+                            audio_initialized = true;
+                            println!("Audio stream started successfully.");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to build output stream: {}. Running without audio.", e);
+                        audio_sender = None; // Disable audio sending
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to get default output config: {}. Running without audio.", e);
+                // audio_sender remains None
+            }
+        }
+    } else {
+        eprintln!("Warning: No output audio device available. Running without audio.");
+        // audio_sender remains None
+    }
 
     if !is_headless {
         match Window::new(
@@ -278,7 +337,6 @@ fn main() {
     // const AUDIO_SAMPLE_RATE: u32 = 44100; // Already defined as OUTPUT_SAMPLE_RATE
     // const CPU_CYCLES_PER_AUDIO_SAMPLE: u32 = CPU_CLOCK_HZ / OUTPUT_SAMPLE_RATE; // Replaced by SAMPLES_PER_FRAME logic
     // let mut audio_cycle_counter: u32 = 0; // Replaced by SAMPLES_PER_FRAME logic
-    let mut audio_buffer: Vec<f32> = Vec::with_capacity(SAMPLES_PER_FRAME * NUM_CHANNELS as usize);
 
     while running {
         let m_cycles = cpu.step(); // Execute one CPU step and get M-cycles
@@ -299,26 +357,30 @@ fn main() {
             if ppu_cycles_this_frame >= CYCLES_PER_FRAME {
                 ppu_cycles_this_frame -= CYCLES_PER_FRAME; // Reset for next frame
 
-                // Collect audio samples for the frame
-                if audio_buffer.capacity() > SAMPLES_PER_FRAME * NUM_CHANNELS as usize * 2 && sink.len() == 0 {
-                    audio_buffer.shrink_to(SAMPLES_PER_FRAME * NUM_CHANNELS as usize * 2);
-                }
-                audio_buffer.clear();
+                // Audio samples are now sent directly to the audio thread via mpsc channel.
 
                 // Get a mutable borrow of bus once
                 let mut bus_mut = bus.borrow_mut();
-                for _i in 0..SAMPLES_PER_FRAME {
-                    let (left_sample, right_sample) = bus_mut.get_mixed_audio_samples();
-                    audio_buffer.push(left_sample);
-                    audio_buffer.push(right_sample);
+                if let Some(sender) = &audio_sender { // Only send if audio is initialized
+                    for _i in 0..SAMPLES_PER_FRAME { // This loop now sends samples
+                        let (left_sample, right_sample) = bus_mut.get_mixed_audio_samples();
+                        // Send samples to the audio thread.
+                        if let Err(e) = sender.try_send(left_sample) {
+                            log::debug!("Failed to send left audio sample, buffer likely full: {}", e);
+                        }
+                        if let Err(e) = sender.try_send(right_sample) {
+                            log::debug!("Failed to send right audio sample, buffer likely full: {}", e);
+                        }
+                    }
+                } else { // If audio is not initialized, still need to call get_mixed_audio_samples to advance APU state.
+                    for _i in 0..SAMPLES_PER_FRAME {
+                        let (_, _) = bus_mut.get_mixed_audio_samples();
+                    }
                 }
                 // Drop bus_mut borrow before window handling or other bus access
                 drop(bus_mut);
 
-                if !audio_buffer.is_empty() {
-                    let source = rodio::buffer::SamplesBuffer::new(NUM_CHANNELS, OUTPUT_SAMPLE_RATE, audio_buffer.clone());
-                    sink.append(source);
-                }
+                // The mpsc channel handles buffering.
 
                 if let Some(w) = window.as_mut() { // GUI mode rendering
                     let ppu_framebuffer = &bus.borrow().ppu.framebuffer;
@@ -412,10 +474,6 @@ fn main() {
             if emulation_steps % (SERIAL_PRINT_INTERVAL * 10) == 0 || !running { // Less frequent full state print unless exiting
                  println!("Current CPU state (step {}): PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
                          emulation_steps, cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
-                // The audio_buffer now contains f32, not (f32, f32)
-                if !audio_buffer.is_empty() {
-                    println!("Audio samples collected this frame: {}", audio_buffer.len());
-                }
             }
 
             if is_headless {
