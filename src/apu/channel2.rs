@@ -131,4 +131,18 @@ impl Channel2 {
         };
         if wave_output == 1 { self.envelope_volume } else { 0 }
     }
+
+    // In src/apu/channel2.rs, within impl Channel2
+    pub fn reload_length_on_enable(&mut self, current_frame_sequencer_step: u8) {
+        let length_data = self.nr21.initial_length_timer_val(); // 0-63
+        let is_max_length_condition_len = length_data == 0;
+        let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
+
+        let fs_condition_met = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
+        // self.nr24.is_length_enabled() should be true
+        if fs_condition_met && self.nr24.is_length_enabled() && is_max_length_condition_len {
+            actual_load_val_len = 63;
+        }
+        self.length_counter = actual_load_val_len;
+    }
 }

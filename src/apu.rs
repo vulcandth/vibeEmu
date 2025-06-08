@@ -570,7 +570,12 @@ impl Apu {
                     self.channel1.disable_for_sweep_bug();
                 }
             },
-            NR11_ADDR => self.channel1.nr11.write(value),
+            NR11_ADDR => {
+                self.channel1.nr11.write(value);
+                if self.channel1.enabled && self.channel1.nr14.is_length_enabled() {
+                    self.channel1.reload_length_on_enable(self.frame_sequencer_step);
+                }
+            },
             NR12_ADDR => {
                 let old_period = self.channel1.nr12.envelope_period_val();
                 let old_dir_increase = self.channel1.nr12.envelope_direction_is_increase();
@@ -588,15 +593,29 @@ impl Apu {
             NR14_ADDR => {
                 let prev_len_enabled = self.channel1.nr14.is_length_enabled();
                 let len_counter_was_non_zero = self.channel1.get_length_counter() > 0;
-                self.channel1.nr14.write(value);
+                self.channel1.nr14.write(value); // NRx4 is updated
                 let new_len_enabled = self.channel1.nr14.is_length_enabled();
-                let next_fs_step_will_not_clock_length = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
-                if next_fs_step_will_not_clock_length && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
+                // Condition for "APU frame sequencer's next step will not clock the length timer"
+                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
+
+                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
                     self.channel1.extra_length_clock(trigger_val_in_write);
                 }
-                if self.channel1.nr14.consume_trigger_flag() { self.channel1.trigger(self.frame_sequencer_step); }
+
+                if self.channel1.nr14.consume_trigger_flag() { // Checks bit 7 from 'value'
+                    self.channel1.trigger(self.frame_sequencer_step);
+                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
+                    // Load length if length enable (NRx4 bit 6) is set from 0 to 1
+                    // AND the specific frame sequencer timing condition is met.
+                    self.channel1.reload_length_on_enable(self.frame_sequencer_step);
+                }
             },
-            NR21_ADDR => self.channel2.nr21.write(value),
+            NR21_ADDR => {
+                self.channel2.nr21.write(value);
+                if self.channel2.enabled && self.channel2.nr24.is_length_enabled() {
+                    self.channel2.reload_length_on_enable(self.frame_sequencer_step);
+                }
+            },
             NR22_ADDR => {
                 let old_period = self.channel2.nr22.envelope_period_val();
                 let old_dir_increase = self.channel2.nr22.envelope_direction_is_increase();
@@ -614,16 +633,27 @@ impl Apu {
             NR24_ADDR => {
                 let prev_len_enabled = self.channel2.nr24.is_length_enabled();
                 let len_counter_was_non_zero = self.channel2.get_length_counter() > 0;
-                self.channel2.nr24.write(value);
+                self.channel2.nr24.write(value); // NRx4 is updated
                 let new_len_enabled = self.channel2.nr24.is_length_enabled();
-                let next_fs_step_will_not_clock_length = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
-                if next_fs_step_will_not_clock_length && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
+                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
+
+                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
                     self.channel2.extra_length_clock(trigger_val_in_write);
                 }
-                if self.channel2.nr24.consume_trigger_flag() { self.channel2.trigger(self.frame_sequencer_step); }
+
+                if self.channel2.nr24.consume_trigger_flag() {
+                    self.channel2.trigger(self.frame_sequencer_step);
+                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
+                    self.channel2.reload_length_on_enable(self.frame_sequencer_step);
+                }
             },
             NR30_ADDR => self.channel3.nr30.write(value),
-            NR31_ADDR => self.channel3.nr31.write(value),
+            NR31_ADDR => {
+                self.channel3.nr31.write(value);
+                if self.channel3.enabled && self.channel3.nr34.is_length_enabled() {
+                    self.channel3.reload_length_on_enable(self.frame_sequencer_step);
+                }
+            },
             NR32_ADDR => self.channel3.nr32.write(value),
             NR33_ADDR => self.channel3.nr33.write(value),
             NR34_ADDR => {
@@ -636,15 +666,26 @@ impl Apu {
 
                 let prev_len_enabled = self.channel3.nr34.is_length_enabled();
                 let len_counter_was_non_zero = self.channel3.get_length_counter() > 0;
-                self.channel3.nr34.write(value);
+                self.channel3.nr34.write(value); // NRx4 is updated
                 let new_len_enabled = self.channel3.nr34.is_length_enabled();
-                let next_fs_step_will_not_clock_length = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
-                if next_fs_step_will_not_clock_length && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
+                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
+
+                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
                     self.channel3.extra_length_clock(trigger_val_in_write);
                 }
-                if self.channel3.nr34.consume_trigger_flag() { self.channel3.trigger(&self.wave_ram, self.frame_sequencer_step); }
+
+                if self.channel3.nr34.consume_trigger_flag() {
+                    self.channel3.trigger(&self.wave_ram, self.frame_sequencer_step);
+                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
+                    self.channel3.reload_length_on_enable(self.frame_sequencer_step);
+                }
             },
-            NR41_ADDR => self.channel4.nr41.write(value),
+            NR41_ADDR => {
+                self.channel4.nr41.write(value);
+                if self.channel4.enabled && self.channel4.nr44.is_length_enabled() {
+                    self.channel4.reload_length_on_enable(self.frame_sequencer_step);
+                }
+            },
             NR42_ADDR => {
                 let old_period = self.channel4.nr42.envelope_period_val();
                 let old_dir_increase = self.channel4.nr42.envelope_direction_is_increase();
@@ -662,13 +703,19 @@ impl Apu {
             NR44_ADDR => {
                 let prev_len_enabled = self.channel4.nr44.is_length_enabled();
                 let len_counter_was_non_zero = self.channel4.get_length_counter() > 0;
-                self.channel4.nr44.write(value);
+                self.channel4.nr44.write(value); // NRx4 is updated
                 let new_len_enabled = self.channel4.nr44.is_length_enabled();
-                let next_fs_step_will_not_clock_length = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
-                if next_fs_step_will_not_clock_length && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
+                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
+
+                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
                     self.channel4.extra_length_clock(trigger_val_in_write);
                 }
-                if self.channel4.nr44.consume_trigger_flag() { self.channel4.trigger(self.frame_sequencer_step); }
+
+                if self.channel4.nr44.consume_trigger_flag() {
+                    self.channel4.trigger(self.frame_sequencer_step);
+                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
+                    self.channel4.reload_length_on_enable(self.frame_sequencer_step);
+                }
             },
             NR50_ADDR => self.nr50.write(value),
             NR51_ADDR => self.nr51.write(value),

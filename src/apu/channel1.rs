@@ -184,4 +184,24 @@ impl Channel1 {
         };
         if wave_output == 1 { self.envelope_volume } else { 0 }
     }
+
+    pub fn reload_length_on_enable(&mut self, current_frame_sequencer_step: u8) {
+        // Channel is not explicitly enabled here by just loading length,
+        // its status depends on trigger or if it was already enabled.
+        // DAC power is a prerequisite for sound output, not for length counter loading.
+
+        let length_data = self.nr11.initial_length_timer_val(); // 0-63
+        let is_max_length_condition_len = length_data == 0;
+        let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
+
+        // Apply the "set to 63 instead of 64" obscure behavior.
+        // Condition: Next Frame Sequencer step doesn't clock length (current_frame_sequencer_step is 0, 2, 4, or 6),
+        // AND length is enabled in NR14, AND NR11's length data was 0 (meaning max length).
+        let fs_condition_met = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
+        // self.nr14.is_length_enabled() should be true if this path is taken from apu.rs
+        if fs_condition_met && self.nr14.is_length_enabled() && is_max_length_condition_len {
+            actual_load_val_len = 63;
+        }
+        self.length_counter = actual_load_val_len;
+    }
 }

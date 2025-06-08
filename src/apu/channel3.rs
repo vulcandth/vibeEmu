@@ -87,4 +87,19 @@ impl Channel3 {
         let shifted_nibble = output_nibble >> self.nr32.get_volume_shift();
         shifted_nibble
     }
+
+    // In src/apu/channel3.rs, within impl Channel3
+    pub fn reload_length_on_enable(&mut self, current_frame_sequencer_step: u8) {
+        let length_data = self.nr31.sound_length_val(); // 0-255
+        let is_max_length_condition_len = length_data == 0;
+        // Max length for channel 3 is 256
+        let mut actual_load_val_len = if is_max_length_condition_len { 256 } else { 256 - length_data as u16 };
+
+        let fs_condition_met = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
+        // self.nr34.is_length_enabled() should be true
+        if fs_condition_met && self.nr34.is_length_enabled() && is_max_length_condition_len {
+            actual_load_val_len = 255;
+        }
+        self.length_counter = actual_load_val_len;
+    }
 }
