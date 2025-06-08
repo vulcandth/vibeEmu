@@ -4,8 +4,6 @@
 #![allow(dead_code)]
 
 use crate::bus::{Bus, SystemMode};
-use crate::ppu::{Ppu, MODE_HBLANK, OAM_SCAN_CYCLES, DRAWING_CYCLES, HBLANK_CYCLES, SCANLINE_CYCLES};
-
 // Helper to create a Bus instance with a simple ROM
 fn setup_bus(rom_data_option: Option<Vec<u8>>, system_mode_override: Option<SystemMode>) -> Bus {
     let mode = system_mode_override.unwrap_or(SystemMode::DMG);
