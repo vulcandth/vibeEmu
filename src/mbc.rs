@@ -69,6 +69,22 @@ impl MemoryBankController for MBC30 {
     fn write_ram(&mut self, addr: u16, value: u8) {
         self.internal_mbc3.write_ram(addr, value)
     }
+
+    fn get_ram(&self) -> Option<&[u8]> {
+        self.internal_mbc3.get_ram()
+    }
+
+    fn get_ram_mut(&mut self) -> Option<&mut [u8]> {
+        self.internal_mbc3.get_ram_mut()
+    }
+
+    fn get_rtc(&self) -> Option<&RtcRegisters> {
+        self.internal_mbc3.get_rtc()
+    }
+
+    fn get_rtc_mut(&mut self) -> Option<&mut RtcRegisters> {
+        self.internal_mbc3.get_rtc_mut()
+    }
 }
 
 pub struct MBC7 {
@@ -113,6 +129,14 @@ impl MemoryBankController for MBC7 {
         // Similar to read_ram, NoMBC stub will ignore writes if no RAM.
         self.internal_nombs.write_ram(addr, value)
     }
+
+    fn get_ram(&self) -> Option<&[u8]> {
+        self.internal_nombs.get_ram()
+    }
+
+    fn get_ram_mut(&mut self) -> Option<&mut [u8]> {
+        self.internal_nombs.get_ram_mut()
+    }
 }
 
 pub struct MBC6 {
@@ -146,6 +170,14 @@ impl MemoryBankController for MBC6 {
 
     fn write_ram(&mut self, addr: u16, value: u8) {
         self.internal_mbc1.write_ram(addr, value)
+    }
+
+    fn get_ram(&self) -> Option<&[u8]> {
+        self.internal_mbc1.get_ram()
+    }
+
+    fn get_ram_mut(&mut self) -> Option<&mut [u8]> {
+        self.internal_mbc1.get_ram_mut()
     }
 }
 
@@ -284,15 +316,23 @@ impl MemoryBankController for MBC5 {
         // If self.has_rumble, RAM writes might also affect rumble motor state. // This comment is now potentially misleading.
         // For now, this is just a plain RAM write.
     }
+
+    fn get_ram(&self) -> Option<&[u8]> {
+        if self.ram_data.is_empty() { None } else { Some(&self.ram_data) }
+    }
+
+    fn get_ram_mut(&mut self) -> Option<&mut [u8]> {
+        if self.ram_data.is_empty() { None } else { Some(&mut self.ram_data) }
+    }
 }
 
 #[derive(Default, Clone, Copy, Debug)]
 pub struct RtcRegisters {
-    seconds: u8, // 0-59
-    minutes: u8, // 0-59
-    hours: u8,   // 0-23
-    day_counter_low: u8, // Lower 8 bits of day counter
-    day_counter_high: u8, // Bit 0: MSB of day counter (bit 8)
+    pub seconds: u8, // 0-59
+    pub minutes: u8, // 0-59
+    pub hours: u8,   // 0-23
+    pub day_counter_low: u8, // Lower 8 bits of day counter
+    pub day_counter_high: u8, // Bit 0: MSB of day counter (bit 8)
                          // Bit 6: Halt (0=active, 1=halted)
                          // Bit 7: Day counter carry (1=overflow)
 }
@@ -466,6 +506,22 @@ impl MemoryBankController for MBC3 {
         }
         // Writes to invalid RAM bank selections (0x04-0x07) are ignored.
     }
+
+    fn get_ram(&self) -> Option<&[u8]> {
+        if self.ram_data.is_empty() { None } else { Some(&self.ram_data) }
+    }
+
+    fn get_ram_mut(&mut self) -> Option<&mut [u8]> {
+        if self.ram_data.is_empty() { None } else { Some(&mut self.ram_data) }
+    }
+
+    fn get_rtc(&self) -> Option<&RtcRegisters> {
+        Some(&self.rtc_registers)
+    }
+
+    fn get_rtc_mut(&mut self) -> Option<&mut RtcRegisters> {
+        Some(&mut self.rtc_registers)
+    }
 }
 
 pub trait MemoryBankController {
@@ -473,6 +529,10 @@ pub trait MemoryBankController {
     fn write_rom(&mut self, addr: u16, value: u8); // For control registers, bank switching etc.
     fn read_ram(&self, addr: u16) -> u8;
     fn write_ram(&mut self, addr: u16, value: u8);
+    fn get_ram(&self) -> Option<&[u8]> { None }
+    fn get_ram_mut(&mut self) -> Option<&mut [u8]> { None }
+    fn get_rtc(&self) -> Option<&RtcRegisters> { None }
+    fn get_rtc_mut(&mut self) -> Option<&mut RtcRegisters> { None }
 }
 
 // Basic MBC implementations
@@ -531,6 +591,14 @@ impl MemoryBankController for NoMBC {
             self.ram_data[addr as usize] = value;
         }
         // Else, ignore write to disabled RAM or out-of-bounds RAM address
+    }
+
+    fn get_ram(&self) -> Option<&[u8]> {
+        if self.ram_data.is_empty() { None } else { Some(&self.ram_data) }
+    }
+
+    fn get_ram_mut(&mut self) -> Option<&mut [u8]> {
+        if self.ram_data.is_empty() { None } else { Some(&mut self.ram_data) }
     }
 }
 
@@ -701,6 +769,14 @@ impl MemoryBankController for MBC2 {
         if (addr as usize) < self.ram_data.len() {
             self.ram_data[addr as usize] = value & 0x0F; // Store only lower 4 bits
         }
+    }
+
+    fn get_ram(&self) -> Option<&[u8]> {
+        if self.ram_data.is_empty() { None } else { Some(&self.ram_data) }
+    }
+
+    fn get_ram_mut(&mut self) -> Option<&mut [u8]> {
+        if self.ram_data.is_empty() { None } else { Some(&mut self.ram_data) }
     }
 }
 
@@ -913,6 +989,14 @@ impl MemoryBankController for MBC1 {
         if final_addr < self.ram_data.len() {
             self.ram_data[final_addr] = value;
         }
+    }
+
+    fn get_ram(&self) -> Option<&[u8]> {
+        if self.ram_data.is_empty() { None } else { Some(&self.ram_data) }
+    }
+
+    fn get_ram_mut(&mut self) -> Option<&mut [u8]> {
+        if self.ram_data.is_empty() { None } else { Some(&mut self.ram_data) }
     }
 }
 

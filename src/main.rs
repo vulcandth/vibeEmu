@@ -200,6 +200,7 @@ fn main() {
 
     // Create the Bus, wrapped in Rc and RefCell for shared mutable access
     let mut bus = Rc::new(RefCell::new(Bus::new(rom_data)));
+    bus.borrow_mut().load_save_files(&rom_path);
     println!("Determined System Mode: {:?}", bus.borrow().get_system_mode()); // Added logging
 
     // Create the Cpu, passing a clone of the Rc-wrapped bus
@@ -528,6 +529,7 @@ fn main() {
                             match load_rom_file(&new_rom_path_str) {
                                 Ok(new_rom_data_vec) => {
                                     bus = Rc::new(RefCell::new(Bus::new(new_rom_data_vec)));
+                                    bus.borrow_mut().load_save_files(&new_rom_path_str);
                                     cpu = Cpu::new(bus.clone());
                                     cpu.pc = 0x0100; // Reset PC
                                     emulation_steps = 0;
@@ -553,7 +555,8 @@ fn main() {
                     // Using the original rom_path determined at startup
                     match load_rom_file(&rom_path) {
                         Ok(original_rom_data_vec) => {
-                            bus = Rc::new(RefCell::new(Bus::new(original_rom_data_vec)));
+                            bus = Rc::new(RefCell::new(Bus::new(original_rom_data_vec))); 
+                            bus.borrow_mut().load_save_files(&rom_path);
                             cpu = Cpu::new(bus.clone());
                             cpu.pc = 0x0100; // Reset PC
                             emulation_steps = 0;
@@ -591,6 +594,8 @@ fn main() {
     if !serial_data.is_empty() {
         println!("\nFinal Serial Output:\n{}", serial_data);
     }
+
+    bus.borrow().save_save_files(&rom_path);
 
     println!("\nFinal CPU state: PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
              cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);

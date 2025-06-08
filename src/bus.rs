@@ -13,6 +13,9 @@ use crate::interrupts::InterruptType;
 use crate::joypad::Joypad; // Added Joypad
 use crate::timer::Timer;
 use crate::mbc::{MemoryBankController, CartridgeType, NoMBC, MBC1, MBC2, MBC3, MBC5, MBC6, MBC7, MBC30}; // Added MBC30 import
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::Path;
 
 // Helper function to determine RAM size from cartridge header
 fn get_ram_size_from_header(ram_header_byte: u8) -> usize {
@@ -350,6 +353,50 @@ impl Bus {
         self.key1_prepare_speed_switch = prepared;
     }
 
+    pub fn load_save_files(&mut self, rom_path: &str) {
+        let save_path = Path::new(rom_path).with_extension("sav");
+        if let Ok(mut file) = File::open(&save_path) {
+            let mut data = Vec::new();
+            if file.read_to_end(&mut data).is_ok() {
+                if let Some(ram) = self.mbc.get_ram_mut() {
+                    let len = ram.len().min(data.len());
+                    ram[..len].copy_from_slice(&data[..len]);
+                }
+            }
+        }
+
+        let rtc_path = Path::new(rom_path).with_extension("rtc");
+        if let Ok(mut file) = File::open(&rtc_path) {
+            let mut buf = [0u8; 5];
+            if file.read_exact(&mut buf).is_ok() {
+                if let Some(rtc) = self.mbc.get_rtc_mut() {
+                    rtc.seconds = buf[0];
+                    rtc.minutes = buf[1];
+                    rtc.hours = buf[2];
+                    rtc.day_counter_low = buf[3];
+                    rtc.day_counter_high = buf[4];
+                }
+            }
+        }
+    }
+
+    pub fn save_save_files(&self, rom_path: &str) {
+        if let Some(ram) = self.mbc.get_ram() {
+            let save_path = Path::new(rom_path).with_extension("sav");
+            if let Ok(mut file) = OpenOptions::new().create(true).write(true).truncate(true).open(save_path) {
+                let _ = file.write_all(ram);
+            }
+        }
+
+        if let Some(rtc) = self.mbc.get_rtc() {
+            let rtc_path = Path::new(rom_path).with_extension("rtc");
+            if let Ok(mut file) = OpenOptions::new().create(true).write(true).truncate(true).open(rtc_path) {
+                let buf = [rtc.seconds, rtc.minutes, rtc.hours, rtc.day_counter_low, rtc.day_counter_high];
+                let _ = file.write_all(&buf);
+            }
+        }
+    }
+
     pub fn read_byte(&self, addr: u16) -> u8 {
         // DMA Access Restrictions:
         // If OAM DMA is active, most of the bus is inaccessible, except for HRAM.
@@ -581,6 +628,7 @@ mod tests {
     use crate::cpu::Cpu; // Assuming cpu.rs is in crate root
     use std::rc::Rc;
     use std::cell::RefCell;
+    use std::env;
 
     fn setup_test_env() -> (Cpu, Rc<RefCell<Bus>>) {
         // Provide dummy ROM data for Bus creation
@@ -891,5 +939,28 @@ mod tests {
         assert!(bus.get_key1_prepare_speed_switch(), "key1_prepare_speed_switch should be true again");
         // KEY1 read: speed_bit (0x80) | prepare_bit (1) | 0x7E = 0xFF
         assert_eq!(bus.read_byte(0xFF4D), 0xFF, "KEY1 read with double speed and prepare bit set incorrect");
+    }
+
+    #[test]
+    fn test_save_and_load_files() {
+        let mut rom_data = vec![0u8; 0x150];
+        rom_data[0x0147] = 0x00; // NoMBC
+        rom_data[0x0149] = 0x02; // 8KB RAM
+        let mut bus = Bus::new(rom_data);
+        let temp_dir = env::temp_dir();
+        let rom_path = temp_dir.join("test_rom.gb");
+
+        bus.write_byte(0xA000, 0x42);
+        bus.save_save_files(rom_path.to_str().unwrap());
+
+        if let Some(ram) = bus.mbc.get_ram_mut() {
+            for b in ram.iter_mut() { *b = 0; }
+        }
+
+        bus.load_save_files(rom_path.to_str().unwrap());
+        assert_eq!(bus.read_byte(0xA000), 0x42);
+
+        let _ = std::fs::remove_file(rom_path.with_extension("sav"));
+        let _ = std::fs::remove_file(rom_path.with_extension("rtc"));
     }
 }
