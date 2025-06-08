@@ -24,13 +24,13 @@ impl Channel3 {
 
     pub fn trigger(&mut self, _wave_ram_on_trigger: &[u8;16], current_frame_sequencer_step: u8) {
         self.enabled = self.nr30.dac_on();
-        if self.length_counter == 0 {
-            let length_data = self.nr31.sound_length_val();
-            let is_max_length_condition = length_data == 0;
+        let length_data = self.nr31.sound_length_val();
+        let is_max_length_condition = length_data == 0;
+        if self.length_counter == 0 || is_max_length_condition {
             let mut actual_load_val = if is_max_length_condition { 256 } else { 256 - (length_data as u16) };
             let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
             let length_is_enabled_on_trigger = self.nr34.is_length_enabled();
-            if next_fs_step_will_not_clock_length && length_is_enabled_on_trigger && is_max_length_condition {
+            if self.length_counter == 0 && next_fs_step_will_not_clock_length && length_is_enabled_on_trigger && is_max_length_condition {
                 actual_load_val = 255;
             }
             self.length_counter = actual_load_val;
