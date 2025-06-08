@@ -733,9 +733,10 @@ mod tests {
         cpu.ld_hl_mem_a();
 
         // To make the test somewhat useful, we can try reading back.
-        // The placeholder APU read should return 0xFF, not what was written.
+        // With the current APU implementation the write is ignored because the
+        // APU is powered off by default, so the register reads as 0.
         let read_back_val = bus.borrow().read_byte(apu_ch1_vol_addr);
-        assert_eq!(read_back_val, 0xFF, "Reading from APU placeholder after write should return dummy value");
+        assert_eq!(read_back_val, 0x00, "Reading NR12 after write while APU is disabled should return 0");
     }
 
     #[test]

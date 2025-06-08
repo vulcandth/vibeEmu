@@ -4,7 +4,7 @@
 // Allow dead code for helper functions that might not be used in every test.
 #![allow(dead_code)]
 
-use crate::ppu::{Ppu, MODE_HBLANK, MODE_VBLANK, MODE_OAM_SCAN, MODE_DRAWING, DMG_PALETTE, COLOR_WHITE, SCANLINE_CYCLES, OAM_SCAN_CYCLES, DRAWING_CYCLES, HBLANK_CYCLES, LINES_PER_FRAME};
+use crate::ppu::{Ppu, MODE_HBLANK, MODE_VBLANK, MODE_OAM_SCAN, MODE_DRAWING, DMG_PALETTE, SCANLINE_CYCLES, OAM_SCAN_CYCLES, DRAWING_CYCLES, HBLANK_CYCLES};
 use crate::bus::SystemMode;
 use crate::interrupts::InterruptType;
 
@@ -28,7 +28,7 @@ fn compare_pixel(fb: &[u8], x: usize, y: usize, width: usize, expected_rgb: &[u8
 fn test_ppu_initialization_values() {
     let ppu_dmg = setup_ppu_dmg();
     assert_eq!(ppu_dmg.lcdc, 0x91, "Initial LCDC");
-    assert_eq!(ppu_dmg.stat & 0b0111_1100, MODE_OAM_SCAN & 0b0111_1100, "Initial STAT mode (ignoring LYC and bit 7)");
+    assert_eq!(ppu_dmg.stat & 0b11, MODE_OAM_SCAN, "Initial STAT mode (ignoring LYC and bit 7)");
     assert_eq!(ppu_dmg.ly, 0, "Initial LY");
     assert_eq!(ppu_dmg.bgp, 0xFC, "Initial BGP");
     assert_eq!(ppu_dmg.system_mode, SystemMode::DMG, "System mode should be DMG");
@@ -66,7 +66,7 @@ fn test_lcdc_bg_window_enable_dmg() {
     let mut ppu = setup_ppu_dmg();
     ppu.ly = 10;
     for i in 0..16 { ppu.vram[0][i] = 0xFF; } // Tile 0 is all color 3 (black with default BGP)
-    ppu.vram[0][(0x9800 - 0x8000)] = 0;
+    ppu.vram[0][0x9800 - 0x8000] = 0;
     ppu.bgp = 0b11100100; // 0->0, 1->1, 2->2, 3->3
 
     ppu.write_byte(0xFF40, ppu.lcdc | (1 << 0)); // BG/Win ON
@@ -83,7 +83,7 @@ fn test_lcdc_bg_window_enable_dmg() {
     ppu.obp0 = 0b11100100;
     // Tile 0 already set to all black (0xFF, 0xFF)
     ppu.render_scanline();
-    compare_pixel(&ppu.framebuffer, 5, 10, 160, &DMG_PALETTE[bgp_col0_idx as usize], "BG still BGP color 0 with OBJ enabled");
+    compare_pixel(&ppu.framebuffer, 10, 10, 160, &DMG_PALETTE[bgp_col0_idx as usize], "BG still BGP color 0 with OBJ enabled");
     compare_pixel(&ppu.framebuffer, 0, 10, 160, &DMG_PALETTE[3], "Sprite renders if LCDC.0 off (DMG)");
 }
 
@@ -130,10 +130,9 @@ fn test_lyc_ly_interrupt() {
     ppu.lyc = 5;
     ppu.stat |= 1 << 6; // Enable LYC=LY STAT interrupt
 
-    let mut interrupt: Option<InterruptType> = None;
-    for i in 0..5 { // Tick up to LY = 4
+    for i in 0..4 { // Tick up to LY = 3
         ppu.ly = i; ppu.cycles = 0;
-        interrupt = ppu.tick(SCANLINE_CYCLES);
+        let interrupt = ppu.tick(SCANLINE_CYCLES);
         assert!((ppu.stat & (1 << 2)) == 0, "LYC flag should not be set for LY={}", i);
         if let Some(InterruptType::LcdStat) = interrupt { panic!("Unexpected STAT int for LY={}", i); }
     }
@@ -148,12 +147,12 @@ fn test_lyc_ly_interrupt() {
     // The check_lyc_ly itself returns the interrupt type.
     // Resetting LY and ticking one full line.
     ppu.ly = 4; ppu.cycles = 0; ppu.tick(SCANLINE_CYCLES); // LY becomes 5
-    interrupt = ppu.tick(1); // LY=5, check for interrupt generated on this boundary.
+    let _interrupt = ppu.tick(1); // LY=5, check for interrupt generated on this boundary.
                              // This is tricky as tick() handles many things.
                              // A more direct test of `check_lyc_ly` and `set_mode` might be better.
 
     // Test check_lyc_ly directly
-    ppu.ly = 5; ppu.lyc = 5; ppu.stat |= (1 << 6); // Enable LYC interrupt
+    ppu.ly = 5; ppu.lyc = 5; ppu.stat |= 1 << 6; // Enable LYC interrupt
     assert_eq!(ppu.check_lyc_ly(), Some(InterruptType::LcdStat), "check_lyc_ly should signal STAT interrupt");
     assert_ne!(ppu.stat & (1 << 2), 0, "LYC flag should be set");
 

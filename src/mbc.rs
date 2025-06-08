@@ -1962,7 +1962,7 @@ mod tests {
 
     #[test]
     fn test_mbc5_rumble_flag() {
-        let rom = create_rom(64, 0);
+        let _rom = create_rom(64, 0);
         // Cartridge types indicating rumble: 0x1C, 0x1D, 0x1E
         // let mbc_rumble1 = MBC5::new(rom.clone(), 8*1024, 0x1C); // MBC5+RUMBLE+RAM+BATTERY
         // assert!(mbc_rumble1.has_rumble, "has_rumble should be true for type 0x1C");
