@@ -2,13 +2,19 @@
 use crate::interrupts::InterruptType;
 use image::{ImageBuffer, ImageError};
 
-// DMG Palette Colors (RGB)
+// CGB utility colors
 pub const COLOR_WHITE: [u8; 3] = [0xFF, 0xFF, 0xFF];
 pub const COLOR_LIGHT_GRAY: [u8; 3] = [0xAA, 0xAA, 0xAA];
 pub const COLOR_DARK_GRAY: [u8; 3] = [0x55, 0x55, 0x55];
 pub const COLOR_BLACK: [u8; 3] = [0x00, 0x00, 0x00];
 
-pub const DMG_PALETTE: [[u8; 3]; 4] = [COLOR_WHITE, COLOR_LIGHT_GRAY, COLOR_DARK_GRAY, COLOR_BLACK];
+// Standard DMG green shades (lightest to darkest)
+pub const DMG_GREEN_0: [u8; 3] = [0x9B, 0xBC, 0x0F];
+pub const DMG_GREEN_1: [u8; 3] = [0x8B, 0xAC, 0x0F];
+pub const DMG_GREEN_2: [u8; 3] = [0x30, 0x62, 0x30];
+pub const DMG_GREEN_3: [u8; 3] = [0x0F, 0x38, 0x0F];
+
+pub const DMG_PALETTE: [[u8; 3]; 4] = [DMG_GREEN_0, DMG_GREEN_1, DMG_GREEN_2, DMG_GREEN_3];
 
 // Helper function to convert CGB 15-bit color to 24-bit RGB
 pub fn cgb_color_to_rgb(color_val: u16) -> [u8; 3] {
