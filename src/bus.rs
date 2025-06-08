@@ -256,9 +256,11 @@ impl Bus {
         if self.oam_dma_active {
             if self.oam_dma_cycles_remaining == 160 * 4 { // Check if just initiated
                 let source_base_address = (self.oam_dma_source_address_upper as u16) << 8;
-                for i in 0..160 {
+                for i in 0..160 { // 0xA0 bytes
                     let byte_to_copy = self.read_byte_internal(source_base_address + i as u16);
-                    self.ppu.write_byte(0xFE00 + i as u16, byte_to_copy);
+                    // Write directly to PPU OAM array, bypassing PPU mode checks
+                    // Ensure index is within bounds (should always be for 0..160 for OAM size of 160)
+                    self.ppu.oam[i as usize] = byte_to_copy;
                 }
             }
 
@@ -476,9 +478,17 @@ impl Bus {
                     0xFF04..=0xFF07 => self.timer.write_byte(addr, value), // Route to Timer
                     0xFF0F => { self.if_register = value & 0x1F; }, // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.write_byte(addr, value), // APU registers
-                    // Extended PPU range for writes
-                    0xFF40..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => self.ppu.write_byte(addr, value),
-                    // OAM DMA (FF46) is handled in its own separate PPU range entry
+                    // PPU registers excluding 0xFF46 (DMA)
+                    0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => self.ppu.write_byte(addr, value),
+                    0xFF46 => { // OAM DMA Start Register
+                        self.oam_dma_source_address_upper = value;
+                        self.oam_dma_active = true;
+                        // DMA takes 160 M-cycles (160 * 4 T-cycles)
+                        // The actual data copy happens "instantly" in the current tick_components logic
+                        // when oam_dma_cycles_remaining is set to this initial value.
+                        // The CPU is effectively halted during these cycles.
+                        self.oam_dma_cycles_remaining = 160 * 4; 
+                    },
                     0xFF4D => { // KEY1 - CGB Speed Switch
                         self.key1_prepare_speed_switch = (value & 0x01) != 0;
                     }
