@@ -53,12 +53,20 @@ fn test_lcdc_display_enable_master() {
     assert_eq!(ppu.lcdc & (1 << 7), 0, "LCDC bit 7 off");
     ppu.tick(10);
     assert_eq!(ppu.ly, 0, "LY should reset to 0 when LCD disabled");
-    assert_eq!(ppu.stat & 0b11, MODE_VBLANK, "PPU mode should be VBLANK when LCD disabled");
+    assert_eq!(ppu.stat & 0b11, MODE_HBLANK, "PPU mode should be HBLANK when LCD disabled");
 
     ppu.write_byte(0xFF40, ppu.lcdc | (1 << 7)); // Turn on LCDC bit 7
     assert_ne!(ppu.lcdc & (1 << 7), 0, "LCDC bit 7 on");
     ppu.tick(SCANLINE_CYCLES + 1);
     assert_ne!(ppu.ly, 0, "LY should advance after re-enabling LCD");
+}
+
+#[test]
+fn test_stat_mode_bits_when_lcd_disabled() {
+    let mut ppu = setup_ppu_dmg();
+    ppu.write_byte(0xFF40, ppu.lcdc & !(1 << 7));
+    let stat_val = ppu.read_byte(0xFF41);
+    assert_eq!(stat_val & 0b11, 0, "STAT mode bits should be 0 when LCD disabled");
 }
 
 #[test]
