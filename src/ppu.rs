@@ -153,18 +153,15 @@ impl Ppu {
             if self.ly != 0 {
                 // If LY is not already 0, reset it and PPU state
                 self.ly = 0;
-                self.cycles = 0; // Reset cycle count for the scanline timing
-                                 // Set mode to VBLANK (Mode 1) when LCD is disabled
-                if self.set_mode(MODE_VBLANK).is_some() {
-                    // This also checks for STAT interrupt trigger
+                self.cycles = 0; // Reset cycle count
+                // When LCD is disabled the PPU enters Mode 0 (HBlank)
+                if self.set_mode(MODE_HBLANK).is_some() {
                     lcd_stat_occurred_this_call = true;
                 }
             } else {
-                // If LY is already 0 and LCD is off, ensure mode is VBLANK.
-                // This handles the case where LCD was disabled while LY was already 0.
-                // Or if LCD is kept off for multiple ticks.
-                if (self.stat & 0b11) != MODE_VBLANK {
-                    if self.set_mode(MODE_VBLANK).is_some() {
+                // If LY is already 0 and LCD is off, ensure mode is HBlank
+                if (self.stat & 0b11) != MODE_HBLANK {
+                    if self.set_mode(MODE_HBLANK).is_some() {
                         lcd_stat_occurred_this_call = true;
                     }
                 }
@@ -730,7 +727,13 @@ impl Ppu {
                 self.oam[relative_addr as usize]
             }
             0xFF40 => self.lcdc,
-            0xFF41 => self.stat | 0x80,
+            0xFF41 => {
+                let mut val = self.stat | 0x80;
+                if (self.lcdc & (1 << 7)) == 0 {
+                    val &= 0b1111_1100;
+                }
+                val
+            }
             0xFF42 => self.scy,
             0xFF43 => self.scx,
             0xFF44 => self.ly,
