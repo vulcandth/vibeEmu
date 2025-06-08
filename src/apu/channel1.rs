@@ -51,14 +51,15 @@ impl Channel1 {
         if self.nr12.dac_power() { self.enabled = true; } else { self.enabled = false; return; }
         let length_data = self.nr11.initial_length_timer_val();
         let is_max_length_condition_len = length_data == 0;
-        if self.length_counter == 0 || is_max_length_condition_len {
-            // According to the Pandocs, length data of 0 should be treated as
-            // the maximum length. The extra decrement that may happen on
-            // trigger only occurs when the previous counter was 0.
+        if self.length_counter == 0 {
+            // Treat zero in the length register as the maximum length. The
+            // extra decrement described in the Pandocs only happens when the
+            // counter was previously zero and the next frame sequencer step
+            // won't clock length.
             let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
             let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
             let length_is_enabled_on_trigger = self.nr14.is_length_enabled();
-            if self.length_counter == 0 && next_fs_step_will_not_clock_length && length_is_enabled_on_trigger && is_max_length_condition_len {
+            if next_fs_step_will_not_clock_length && length_is_enabled_on_trigger && is_max_length_condition_len {
                 actual_load_val_len = 63;
             }
             self.length_counter = actual_load_val_len;
