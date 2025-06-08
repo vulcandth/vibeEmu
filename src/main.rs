@@ -70,7 +70,7 @@ enum EmulatorCommand {
 
 #[derive(Debug, Clone, Copy)]
 enum ContextMenuCommand {
-    Show,
+    Show { x: f32, y: f32 },
     // Hide will be managed by the app itself
 }
 
@@ -380,9 +380,9 @@ fn main() {
                  bus_mut.request_interrupt(InterruptType::Joypad);
             }
 
-            // Handle right-click release detection for pause/resume
+            // Handle right-click press detection for pause/resume and context menu
             let right_mouse_down = w.get_mouse_down(MouseButton::Right);
-            if prev_right_mouse_down && !right_mouse_down {
+            if !prev_right_mouse_down && right_mouse_down {
                 let current_paused_state = paused.load(Ordering::SeqCst);
                 let new_paused_state = !current_paused_state;
                 paused.store(new_paused_state, Ordering::SeqCst);
@@ -390,7 +390,8 @@ fn main() {
                 if new_paused_state { // Emulator is now PAUSED
                     println!("Emulator paused. Showing context menu.");
                     // Send Show command to the egui thread
-                    if let Err(e) = context_menu_cmd_sender.send(ContextMenuCommand::Show) {
+                    let mouse_pos = w.get_mouse_pos(minifb::MouseMode::Discard).unwrap_or((50.0, 50.0));
+                    if let Err(e) = context_menu_cmd_sender.send(ContextMenuCommand::Show { x: mouse_pos.0, y: mouse_pos.1 }) {
                         eprintln!("Failed to send Show command to context menu: {:?}", e);
                     }
                 } else { // Emulator is now RESUMED
@@ -676,10 +677,11 @@ impl eframe::App for ContextMenuApp {
         // Check for commands from the main thread
         if let Ok(cmd) = self.context_menu_command_receiver.try_recv() {
             match cmd {
-                ContextMenuCommand::Show => {
+                ContextMenuCommand::Show { x, y } => {
                     self.is_visible = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus); // Bring to front
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::Pos2::new(x, y)));
                     self.status_message = Some("Select an action.".to_string()); // Reset status
                 }
                 // ContextMenuCommand::Hide could be handled here if needed
