@@ -662,6 +662,10 @@ impl ContextMenuApp {
 
 impl eframe::App for ContextMenuApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Ensure update is called periodically even when the window is hidden so
+        // that commands from the main thread can be processed and the menu can
+        // be shown when requested.
+        ctx.request_repaint_after(std::time::Duration::from_millis(33));
         if !self.initialized {
             ctx.set_visuals(egui::Visuals::light());
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
