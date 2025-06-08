@@ -201,7 +201,11 @@ impl Bus {
         // HDMA blocks also happen "instantly" during an HBlank from CPU perspective.
         // Correct cycle modeling would involve the Bus consuming cycles for DMA here.
 
-        let t_cycles = m_cycles * 4;
+        let t_cycles = if self.is_double_speed {
+            m_cycles * 2
+        } else {
+            m_cycles * 4
+        };
 
         // Tick PPU and handle interrupt request
         // PPU tick might set its `just_entered_hblank` flag.

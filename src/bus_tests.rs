@@ -221,6 +221,29 @@ fn test_hdma_stop_via_ff55() {
     assert_eq!(bus.read_byte(0xFF55), 0xFF, "HDMA5 should be 0xFF after stopping HDMA via GDMA-like write");
 }
 
+#[test]
+fn test_timer_double_speed_affects_cycles() {
+    let mut bus = setup_bus_cgb();
+
+    // Ensure timer starts at zero
+    assert_eq!(bus.timer.read_byte(0xFF04), 0);
+
+    // Tick 64 M-cycles at normal speed -> 256 T-cycles -> DIV increments once
+    bus.tick_components(64);
+    assert_eq!(bus.timer.read_byte(0xFF04), 1);
+
+    // Switch to double speed
+    bus.toggle_speed_mode();
+
+    // Another 64 M-cycles in double speed -> only 128 T-cycles -> no increment
+    bus.tick_components(64);
+    assert_eq!(bus.timer.read_byte(0xFF04), 1);
+
+    // 64 more M-cycles -> total 256 T-cycles -> DIV increments
+    bus.tick_components(64);
+    assert_eq!(bus.timer.read_byte(0xFF04), 2);
+}
+
 // TODO: Test HDMA conflicting with OAM DMA (OAM DMA should pause HDMA, or HDMA not run if OAM DMA active during HBlank?)
 // Pandocs: "OAM DMA is paused during HDMA transfer." - This implies HDMA has priority if both want to run.
 // However, HDMA only runs in HBlank, OAM DMA runs anytime. More likely: OAM DMA halts CPU and PPU. HDMA halts CPU.
