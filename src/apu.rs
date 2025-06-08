@@ -598,7 +598,7 @@ impl Apu {
                 // Condition for "APU frame sequencer's next step will not clock the length timer"
                 let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
 
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
+                if frame_sequencer_condition_met && new_len_enabled && len_counter_was_non_zero {
                     self.channel1.extra_length_clock(trigger_val_in_write);
                 }
 
@@ -637,7 +637,7 @@ impl Apu {
                 let new_len_enabled = self.channel2.nr24.is_length_enabled();
                 let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
 
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
+                if frame_sequencer_condition_met && new_len_enabled && len_counter_was_non_zero {
                     self.channel2.extra_length_clock(trigger_val_in_write);
                 }
 
@@ -670,7 +670,7 @@ impl Apu {
                 let new_len_enabled = self.channel3.nr34.is_length_enabled();
                 let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
 
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
+                if frame_sequencer_condition_met && new_len_enabled && len_counter_was_non_zero {
                     self.channel3.extra_length_clock(trigger_val_in_write);
                 }
 
@@ -707,7 +707,7 @@ impl Apu {
                 let new_len_enabled = self.channel4.nr44.is_length_enabled();
                 let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
 
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
+                if frame_sequencer_condition_met && new_len_enabled && len_counter_was_non_zero {
                     self.channel4.extra_length_clock(trigger_val_in_write);
                 }
 
