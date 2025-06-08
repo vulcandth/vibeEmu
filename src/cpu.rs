@@ -259,7 +259,7 @@ pub static OPCODE_TIMINGS: [Timing; 256] = [
     Timing::Conditional(5, 2), // 0xC8 RET Z (20/8 T-states)
     Timing::Fixed(4), // 0xC9 RET
     Timing::Conditional(4, 3), // 0xCA JP Z,a16 (16/12 T-states)
-    Timing::Fixed(1), // 0xCB PREFIX CB - this entry is for the CB prefix itself, not the following instruction.
+    Timing::Fixed(0), // 0xCB PREFIX CB - this entry is for the CB prefix itself, not the following instruction.
     Timing::Conditional(6, 3), // 0xCC CALL Z,a16 (24/12 T-states)
     Timing::Fixed(6), // 0xCD CALL a16
     Timing::Fixed(2), // 0xCE ADC A,d8
