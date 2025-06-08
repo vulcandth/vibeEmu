@@ -28,15 +28,17 @@ impl Channel4 {
     pub fn trigger(&mut self, current_frame_sequencer_step: u8) {
         if self.nr42.dac_power() { self.enabled = true; }
         else { self.enabled = false; return; }
-        let length_data = self.nr41.initial_length_timer_val();
-        let is_max_length_condition_len = length_data == 0;
-        let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
-        let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
-        let length_is_enabled_on_trigger = self.nr44.is_length_enabled();
-        if next_fs_step_will_not_clock_length && length_is_enabled_on_trigger && is_max_length_condition_len {
-            actual_load_val_len = 63;
+        if self.length_counter == 0 {
+            let length_data = self.nr41.initial_length_timer_val();
+            let is_max_length_condition_len = length_data == 0;
+            let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
+            let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
+            let length_is_enabled_on_trigger = self.nr44.is_length_enabled();
+            if next_fs_step_will_not_clock_length && length_is_enabled_on_trigger && is_max_length_condition_len {
+                actual_load_val_len = 63;
+            }
+            self.length_counter = actual_load_val_len;
         }
-        self.length_counter = actual_load_val_len;
         self.update_frequency_timer();
         self.envelope_volume = self.nr42.initial_volume_val();
         let env_period_raw = self.nr42.envelope_period_val();
