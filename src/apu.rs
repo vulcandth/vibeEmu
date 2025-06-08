@@ -537,14 +537,11 @@ impl Apu {
             NR43_ADDR => self.channel4.nr43.read(), NR44_ADDR => self.channel4.nr44.read(),
             NR50_ADDR => self.nr50.read(), NR51_ADDR => self.nr51.read(), NR52_ADDR => self.nr52.read(),
             WAVE_PATTERN_RAM_START_ADDR..=WAVE_PATTERN_RAM_END_ADDR => {
-                // According to Pandocs, for AGB/CGB, reads return 0xFF if CH3 is active.
-                // CH3 is considered active if self.channel3.enabled is true.
-                // (self.channel3.enabled is set by trigger if dac is on, and cleared by length timer or if dac is turned off).
                 if self.channel3.enabled {
-                    0xFF
+                    // CGB behavior: accesses redirect to the byte currently being read
+                    let idx = self.channel3.current_wave_ram_byte_index();
+                    self.wave_ram[idx]
                 } else {
-                    // If CH3 not active, Wave RAM can be read normally.
-                    // This covers cases where APU is off (NR52), as channel3.enabled would be false.
                     self.wave_ram[(addr - WAVE_PATTERN_RAM_START_ADDR) as usize]
                 }
             }
@@ -732,15 +729,12 @@ impl Apu {
                 }
             }
             WAVE_PATTERN_RAM_START_ADDR..=WAVE_PATTERN_RAM_END_ADDR => {
-                // According to Pandocs, for AGB/CGB, writes are ignored if CH3 is active.
-                // CH3 is considered active if self.channel3.enabled is true.
                 let ch3_is_active = self.channel3.enabled;
-
-                // If CH3 is active, the write is ignored.
-                // Otherwise, the write is allowed. This covers cases where the APU might be globally
-                // off (via NR52), in which case CH3 would not be active, and writes to Wave RAM
-                // should still be possible according to "Wave RAM ... can always be read/written".
-                if !ch3_is_active {
+                if ch3_is_active {
+                    // CGB behavior: redirect to byte currently being read
+                    let idx = self.channel3.current_wave_ram_byte_index();
+                    self.wave_ram[idx] = value;
+                } else {
                     self.wave_ram[(addr - WAVE_PATTERN_RAM_START_ADDR) as usize] = value;
                 }
             }

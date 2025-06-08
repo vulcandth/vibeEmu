@@ -90,6 +90,13 @@ impl Channel3 {
         shifted_nibble
     }
 
+    /// Returns the wave RAM byte index that the channel is currently reading
+    /// when active. This emulates CGB behavior where CPU accesses to wave RAM
+    /// while CH3 is active are redirected to the byte currently being read.
+    pub fn current_wave_ram_byte_index(&self) -> usize {
+        (self.sample_index / 2) as usize
+    }
+
     // In src/apu/channel3.rs, within impl Channel3
     pub fn reload_length_on_enable(&mut self, current_frame_sequencer_step: u8) {
         let length_data = self.nr31.sound_length_val(); // 0-255
