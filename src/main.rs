@@ -18,6 +18,7 @@ mod joypad;
 mod mbc; // Added MBC module
 mod serial;
 mod timer;
+mod audio;
 
 use std::env; // For command-line arguments
 use std::fs::File; // Added for file operations
@@ -52,6 +53,7 @@ use crate::interrupts::InterruptType;
 use crate::bus::Bus;
 use crate::apu::CPU_CLOCK_HZ; // Import for audio timing
 use crate::joypad::JoypadButton; // Added for joypad input
+use crate::audio::AudioOutput;
 
 // Define window dimensions
 const WINDOW_WIDTH: usize = 160;
@@ -332,11 +334,11 @@ fn main() {
     let target_frame_duration = std::time::Duration::from_secs_f64(1.0 / TARGET_FPS);
     let mut last_frame_time = std::time::Instant::now();
 
-    // Audio Sampling
-    const AUDIO_SAMPLE_RATE: u32 = 44100; // Standard audio sample rate
-    const CPU_CYCLES_PER_AUDIO_SAMPLE: u32 = CPU_CLOCK_HZ / AUDIO_SAMPLE_RATE;
+    // Audio output via cpal
+    let audio_output = AudioOutput::new();
+    let audio_sample_rate = audio_output.sample_rate();
+    let cpu_cycles_per_audio_sample: u32 = CPU_CLOCK_HZ / audio_sample_rate;
     let mut audio_cycle_counter: u32 = 0;
-    let mut audio_buffer: Vec<(f32, f32)> = Vec::new(); // Simple buffer for collected samples
 
     while running {
         // --- Input and Pause Toggle ---
@@ -418,11 +420,13 @@ fn main() {
                 ppu_cycles_this_frame += t_cycles_for_step; // Accumulate PPU cycles
 
                 // Audio sample generation
-                audio_cycle_counter += t_cycles_for_step;
-                if audio_cycle_counter >= CPU_CYCLES_PER_AUDIO_SAMPLE {
-                    audio_cycle_counter -= CPU_CYCLES_PER_AUDIO_SAMPLE;
-                    let (left_sample, right_sample) = bus.borrow_mut().apu.get_mixed_audio_samples();
-                    audio_buffer.push((left_sample, right_sample));
+                if audio_output.is_enabled() {
+                    audio_cycle_counter += t_cycles_for_step;
+                    if audio_cycle_counter >= cpu_cycles_per_audio_sample {
+                        audio_cycle_counter -= cpu_cycles_per_audio_sample;
+                        let (left_sample, right_sample) = bus.borrow_mut().apu.get_mixed_audio_samples();
+                        audio_output.push_sample(left_sample, right_sample);
+                    }
                 }
             } else {
                 // CPU is HALTed or in STOP mode.
@@ -469,10 +473,6 @@ fn main() {
             if emulation_steps % (SERIAL_PRINT_INTERVAL * 10) == 0 || !running { // Less frequent full state print unless exiting
                  println!("Current CPU state (step {}): PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
                          emulation_steps, cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
-                if !audio_buffer.is_empty() {
-                    println!("Audio buffer size: {}", audio_buffer.len());
-                    // audio_buffer.clear(); // Optionally clear buffer after printing size
-                }
             }
 
             // Check for halt conditions (time or cycles), applicable to both GUI and headless modes
@@ -533,7 +533,6 @@ fn main() {
                                     emulation_steps = 0;
                                     ppu_cycles_this_frame = 0;
                                     audio_cycle_counter = 0;
-                                    audio_buffer.clear();
                                     // The rom_path variable should ideally be updated to new_rom_path_str
                                     // if subsequent resets are to use the newly loaded ROM.
                                     // current_rom_path = new_rom_path_str; // Needs current_rom_path to be mutable
@@ -560,7 +559,6 @@ fn main() {
                             emulation_steps = 0;
                             ppu_cycles_this_frame = 0;
                             audio_cycle_counter = 0;
-                            audio_buffer.clear();
                             println!("Emulator reset successfully using original ROM.");
                         }
                         Err(e) => {

@@ -14,6 +14,7 @@ eframe = { version = "0.27.0", default-features = false, features = ["glow", "ac
 winit = "0.29.4" # Compatible with eframe 0.27.2
 crossbeam-channel = "0.5"
 native-dialog = "0.7.0"
+cpal = "0.16"
 
 [profile.dev]
 codegen-units = 16
