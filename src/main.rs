@@ -43,7 +43,7 @@ use winit::platform::macos::EventLoopBuilderExtMacOS;
 // use winit::platform::wayland::EventLoopBuilderExtWayland;
 
 use minifb::{Key, Window, WindowOptions, MouseButton};
-use crossbeam_channel::{unbounded, Sender, Receiver}; // Added for MPSC channel
+use crossbeam_channel::{unbounded, Sender, Receiver, TrySendError};
 use native_dialog::FileDialog; // For native file dialogs
 
 // Use crate:: if VibeEmu is a library and main.rs is an example or bin.
@@ -342,6 +342,7 @@ fn main() {
     let audio_sample_rate = audio_output.sample_rate();
     let cpu_cycles_per_audio_sample: u32 = CPU_CLOCK_HZ / audio_sample_rate;
     let mut audio_cycle_counter: u32 = 0;
+    let mut vram_viewer_sender: Option<Sender<VramSnapshot>> = None;
 
     while running {
         // --- Input and Pause Toggle ---
@@ -454,6 +455,25 @@ fn main() {
                     // update_with_buffer also pumps events for minifb
                     w.update_with_buffer(&display_buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
                         .unwrap_or_else(|e| panic!("Failed to update window buffer: {}", e));
+
+                    if let Some(sender) = &vram_viewer_sender {
+                        if w.is_active() {
+                            let snap = {
+                                let bus_ref = bus.borrow();
+                                VramSnapshot {
+                                    vram: bus_ref.ppu.vram.clone(),
+                                    oam: bus_ref.ppu.oam.clone(),
+                                    bg_palette: bus_ref.ppu.cgb_bg_palette_ram.clone(),
+                                    obj_palette: bus_ref.ppu.cgb_obj_palette_ram.clone(),
+                                }
+                            };
+                            match sender.try_send(snap) {
+                                Ok(_) => {}
+                                Err(TrySendError::Disconnected(_)) => vram_viewer_sender = None,
+                                Err(TrySendError::Full(_)) => {}
+                            }
+                        }
+                    }
                 }
                 // Frame rate locking logic
                 let elapsed_time = last_frame_time.elapsed();
@@ -572,17 +592,10 @@ fn main() {
                     }
                 }
                 EmulatorCommand::OpenVramViewer => {
-                    let snapshot = {
-                        let bus_ref = bus.borrow();
-                        VramSnapshot {
-                            vram: bus_ref.ppu.vram.clone(),
-                            oam: bus_ref.ppu.oam.clone(),
-                            bg_palette: bus_ref.ppu.cgb_bg_palette_ram.clone(),
-                            obj_palette: bus_ref.ppu.cgb_obj_palette_ram.clone(),
-                        }
-                    };
+                    let (tx, rx) = unbounded();
+                    vram_viewer_sender = Some(tx);
                     thread::spawn(move || {
-                        run_vram_viewer(snapshot);
+                        run_vram_viewer(rx);
                     });
                 }
             }
@@ -626,6 +639,7 @@ struct ContextMenuApp {
     context_menu_command_receiver: Receiver<ContextMenuCommand>, // For receiving Show/Hide from main
     is_visible: bool,
     status_message: Option<String>,
+    initialized: bool,
 }
 
 impl ContextMenuApp {
@@ -640,12 +654,25 @@ impl ContextMenuApp {
             context_menu_command_receiver,
             is_visible: false, // Start hidden
             status_message: Some("Select an action.".to_string()),
+            initialized: false,
         }
     }
 }
 
 impl eframe::App for ContextMenuApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.initialized {
+            ctx.set_visuals(egui::Visuals::light());
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.initialized = true;
+        }
+
+        if ctx.input(|i| i.viewport().close_requested()) {
+            self.is_visible = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+
         // Check for commands from the main thread
         if let Ok(cmd) = self.context_menu_command_receiver.try_recv() {
             match cmd {
@@ -661,8 +688,10 @@ impl eframe::App for ContextMenuApp {
 
         if self.is_visible {
             egui::Window::new("Context Menu")
-                .collapsible(false) // Optional: prevent user from collapsing it
-                .resizable(false)   // Optional: prevent user from resizing it
+                .title_bar(false)
+                .collapsible(false)
+                .resizable(false)
+                .frame(egui::Frame::popup(&ctx.style()))
                 .show(ctx, |ui| {
                     if let Some(message) = &self.status_message {
                         ui.label(message);
@@ -739,32 +768,53 @@ struct VramSnapshot {
 }
 
 struct VramViewerApp {
-    snapshot: VramSnapshot,
+    snapshot_receiver: Receiver<VramSnapshot>,
+    snapshot: Option<VramSnapshot>,
     current_tab: usize,
     tiles_texture: Option<TextureHandle>,
     bg_texture: Option<TextureHandle>,
 }
 
 impl VramViewerApp {
-    fn new(snapshot: VramSnapshot) -> Self {
-        Self { snapshot, current_tab: 0, tiles_texture: None, bg_texture: None }
+    fn new(snapshot_receiver: Receiver<VramSnapshot>) -> Self {
+        Self {
+            snapshot_receiver,
+            snapshot: None,
+            current_tab: 0,
+            tiles_texture: None,
+            bg_texture: None,
+        }
     }
 
-    fn ensure_textures(&mut self, ctx: &egui::Context) {
-        if self.tiles_texture.is_none() {
-            let img = generate_tiles_image(&self.snapshot);
-            self.tiles_texture = Some(ctx.load_texture("tiles", img, egui::TextureOptions::NEAREST));
+    fn update_snapshot(&mut self, ctx: &egui::Context) {
+        let mut updated = false;
+        while let Ok(new_snap) = self.snapshot_receiver.try_recv() {
+            self.snapshot = Some(new_snap);
+            updated = true;
         }
-        if self.bg_texture.is_none() {
-            let img = generate_bg_map_image(&self.snapshot);
-            self.bg_texture = Some(ctx.load_texture("bgmap", img, egui::TextureOptions::NEAREST));
+        if updated {
+            if let Some(ref snap) = self.snapshot {
+                let tiles_img = generate_tiles_image(snap);
+                if let Some(tex) = &mut self.tiles_texture {
+                    tex.set(tiles_img, egui::TextureOptions::NEAREST);
+                } else {
+                    self.tiles_texture = Some(ctx.load_texture("tiles", tiles_img, egui::TextureOptions::NEAREST));
+                }
+
+                let bg_img = generate_bg_map_image(snap);
+                if let Some(tex) = &mut self.bg_texture {
+                    tex.set(bg_img, egui::TextureOptions::NEAREST);
+                } else {
+                    self.bg_texture = Some(ctx.load_texture("bgmap", bg_img, egui::TextureOptions::NEAREST));
+                }
+            }
         }
     }
 }
 
 impl eframe::App for VramViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.ensure_textures(ctx);
+        self.update_snapshot(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.current_tab, 0, "Tiles");
@@ -857,12 +907,12 @@ fn generate_bg_map_image(snapshot: &VramSnapshot) -> ColorImage {
     img
 }
 
-fn run_vram_viewer(snapshot: VramSnapshot) {
+fn run_vram_viewer(receiver: Receiver<VramSnapshot>) {
     let native_options = eframe::NativeOptions::default();
     let _ = eframe::run_native(
         "VRAM Viewer",
         native_options,
-        Box::new(|_cc| Box::new(VramViewerApp::new(snapshot))),
+        Box::new(move |_cc| Box::new(VramViewerApp::new(receiver))),
     );
 }
 
