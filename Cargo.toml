@@ -6,12 +6,20 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-image = "0.24"
+image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
 minifb = "0.25"
 log = "0.4"
-env_logger = "0.10"
-egui = "0.27.0"
+egui = { version = "0.27.0", default-features = false, features = [] }
 eframe = { version = "0.27.0", default-features = false, features = ["glow", "accesskit"] }
 winit = "0.29.4" # Compatible with eframe 0.27.2
 crossbeam-channel = "0.5"
 native-dialog = "0.7.0"
+
+[profile.dev]
+codegen-units = 16
+incremental = true
+opt-level = 0
+
+[profile.release]
+codegen-units = 1
+lto = false
