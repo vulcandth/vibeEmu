@@ -201,11 +201,13 @@ impl Bus {
         // HDMA blocks also happen "instantly" during an HBlank from CPU perspective.
         // Correct cycle modeling would involve the Bus consuming cycles for DMA here.
 
-        let t_cycles = m_cycles * 4;
+        let speed_factor = if self.is_double_speed { 2 } else { 1 };
+        let ppu_cycles = m_cycles * 4 / speed_factor; // PPU/APU run at fixed 4MHz
+        let cpu_cycles = m_cycles * 4; // Components tied to CPU clock (Timer)
 
         // Tick PPU and handle interrupt request
         // PPU tick might set its `just_entered_hblank` flag.
-        if let Some(interrupt_type) = self.ppu.tick(t_cycles) {
+        if let Some(interrupt_type) = self.ppu.tick(ppu_cycles) {
             self.request_interrupt(interrupt_type);
         }
 
@@ -250,7 +252,7 @@ impl Bus {
         }
 
         // Tick Timer
-        self.timer.tick(t_cycles, &mut self.if_register);
+        self.timer.tick(cpu_cycles, &mut self.if_register);
 
         // OAM DMA Transfer Logic (this is separate from HDMA/GDMA)
         if self.oam_dma_active {
@@ -264,11 +266,11 @@ impl Bus {
                 }
             }
 
-            if self.oam_dma_cycles_remaining <= t_cycles {
+            if self.oam_dma_cycles_remaining <= ppu_cycles {
                 self.oam_dma_cycles_remaining = 0;
                 self.oam_dma_active = false;
             } else {
-                self.oam_dma_cycles_remaining -= t_cycles;
+                self.oam_dma_cycles_remaining -= ppu_cycles;
             }
         }
 

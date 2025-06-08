@@ -410,7 +410,8 @@ fn main() {
         // --- Core Emulation Logic ---
         if !paused.load(Ordering::SeqCst) {
             let m_cycles = cpu.step(); // Execute one CPU step and get M-cycles
-            let t_cycles_for_step = m_cycles * 4; // These are PPU T-cycles (also CPU T-cycles)
+            let speed_factor = if bus.borrow().get_is_double_speed() { 2 } else { 1 };
+            let t_cycles_for_step = m_cycles * 4 / speed_factor; // PPU/APU cycles
 
             if !(cpu.is_halted && cpu.in_stop_mode) {
                 bus.borrow_mut().tick_components(m_cycles); // Ticks PPU, Timer
