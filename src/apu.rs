@@ -70,7 +70,7 @@ pub(super) struct Nr11 {
 }
 
 impl Nr11 {
-    pub(super) fn new() -> Self { Self { wave_pattern_duty: 0b10, sound_length_data: 0x00 } }
+    pub(super) fn new() -> Self { Self { wave_pattern_duty: 0b00, sound_length_data: 0x00 } }
     pub(super) fn read(&self) -> u8 { (self.wave_pattern_duty << 6) | 0x3F }
     pub(super) fn write(&mut self, value: u8) {
         self.wave_pattern_duty = (value >> 6) & 0x03;
@@ -137,7 +137,7 @@ impl Nr14 {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Nr21 { wave_pattern_duty: u8, sound_length_data: u8 }
 impl Nr21 {
-    pub(super) fn new() -> Self { Self { wave_pattern_duty: 0b10, sound_length_data: 0x00 } }
+    pub(super) fn new() -> Self { Self { wave_pattern_duty: 0b00, sound_length_data: 0x00 } }
     pub(super) fn read(&self) -> u8 { (self.wave_pattern_duty << 6) | 0x3F }
     pub(super) fn write(&mut self, value: u8) {
         self.wave_pattern_duty = (value >> 6) & 0x03;
@@ -317,12 +317,12 @@ impl Nr52 {
     fn new() -> Self { Self::default() }
     fn is_apu_enabled(&self) -> bool { self.all_sound_on }
     fn read(&self) -> u8 {
-        (if self.all_sound_on { 0x80 } else { 0x00 }) |
-        0x70 |
-        (if self.ch4_status { 0x08 } else { 0x00 }) |
-        (if self.ch3_status { 0x04 } else { 0x00 }) |
-        (if self.ch2_status { 0x02 } else { 0x00 }) |
-        (if self.ch1_status { 0x01 } else { 0x00 })
+        (if self.all_sound_on { 0x80 } else { 0x00 }) | // Power bit
+        0x70 | // Unused bits read as 1
+        (if self.ch4_status { 0x08 } else { 0x00 }) | // Channel 4 status
+        (if self.ch3_status { 0x04 } else { 0x00 }) | // Channel 3 status
+        (if self.ch2_status { 0x02 } else { 0x00 }) | // Channel 2 status
+        (if self.ch1_status { 0x01 } else { 0x00 })   // Channel 1 status
     }
     fn write(&mut self, value: u8) { self.all_sound_on = (value >> 7) & 0x01 != 0; }
     fn update_status_bits(&mut self, ch1_on: bool, ch2_on: bool, ch3_on: bool, ch4_on: bool) {
@@ -420,6 +420,22 @@ impl Apu {
         self.channel2 = Channel2::new();
         self.channel3 = Channel3::new();
         self.channel4 = Channel4::new();
+
+        // Reset NR50 to 0x00
+        self.nr50.so1_volume = 0;
+        self.nr50.vin_so1_enable = false;
+        self.nr50.so2_volume = 0;
+        self.nr50.vin_so2_enable = false;
+
+        // Reset NR51 to 0x00
+        self.nr51.ch1_to_so1 = false;
+        self.nr51.ch2_to_so1 = false;
+        self.nr51.ch3_to_so1 = false;
+        self.nr51.ch4_to_so1 = false;
+        self.nr51.ch1_to_so2 = false;
+        self.nr51.ch2_to_so2 = false;
+        self.nr51.ch3_to_so2 = false;
+        self.nr51.ch4_to_so2 = false;
 
         self.frame_sequencer_step = 0;
         self.frame_sequencer_counter = CPU_CLOCKS_PER_FRAME_SEQUENCER_TICK;
