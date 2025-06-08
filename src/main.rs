@@ -389,9 +389,16 @@ fn main() {
 
                 if new_paused_state { // Emulator is now PAUSED
                     println!("Emulator paused. Showing context menu.");
-                    // Send Show command to the egui thread
-                    let mouse_pos = w.get_mouse_pos(minifb::MouseMode::Discard).unwrap_or((50.0, 50.0));
-                    if let Err(e) = context_menu_cmd_sender.send(ContextMenuCommand::Show { x: mouse_pos.0, y: mouse_pos.1 }) {
+                    let mouse_pos = w
+                        .get_mouse_pos(minifb::MouseMode::Discard)
+                        .unwrap_or((50.0, 50.0));
+                    let window_pos = w.get_position();
+                    let global_x = window_pos.0 as f32 + mouse_pos.0;
+                    let global_y = window_pos.1 as f32 + mouse_pos.1;
+                    if let Err(e) = context_menu_cmd_sender.send(ContextMenuCommand::Show {
+                        x: global_x,
+                        y: global_y,
+                    }) {
                         eprintln!("Failed to send Show command to context menu: {:?}", e);
                     }
                 } else { // Emulator is now RESUMED
