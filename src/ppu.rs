@@ -1,6 +1,6 @@
 // src/ppu.rs
-use image::{ImageBuffer, ImageError};
 use crate::interrupts::InterruptType;
+use image::{ImageBuffer, ImageError};
 
 // DMG Palette Colors (RGB)
 pub const COLOR_WHITE: [u8; 3] = [0xFF, 0xFF, 0xFF];
@@ -8,12 +8,7 @@ pub const COLOR_LIGHT_GRAY: [u8; 3] = [0xAA, 0xAA, 0xAA];
 pub const COLOR_DARK_GRAY: [u8; 3] = [0x55, 0x55, 0x55];
 pub const COLOR_BLACK: [u8; 3] = [0x00, 0x00, 0x00];
 
-pub const DMG_PALETTE: [[u8; 3]; 4] = [
-    COLOR_WHITE,
-    COLOR_LIGHT_GRAY,
-    COLOR_DARK_GRAY,
-    COLOR_BLACK,
-];
+pub const DMG_PALETTE: [[u8; 3]; 4] = [COLOR_WHITE, COLOR_LIGHT_GRAY, COLOR_DARK_GRAY, COLOR_BLACK];
 
 // Helper function to convert CGB 15-bit color to 24-bit RGB
 pub fn cgb_color_to_rgb(color_val: u16) -> [u8; 3] {
@@ -47,7 +42,7 @@ pub const MODE_DRAWING: u8 = 3;
 
 pub struct Ppu {
     pub system_mode: crate::bus::SystemMode, // Added CGB mode tracking
-    pub vram: [[u8; 8192]; 2], // Two VRAM banks for CGB
+    pub vram: [[u8; 8192]; 2],               // Two VRAM banks for CGB
     pub oam: [u8; 160],
     pub framebuffer: Vec<u8>,
     pub cycles: u32,
@@ -70,6 +65,8 @@ pub struct Ppu {
     pub ocps: u8, // FF6A - OCPS - Object Color Palette Specification
     pub vbk: u8,  // FF4F - VBK - CGB VRAM Bank Select
     pub just_entered_hblank: bool, // Flag for HDMA triggering
+    pub bg_color_index_buffer: [u8; 160], // Track BG/Window color index per pixel
+    pub bg_priority_buffer: [bool; 160], // Track CGB BG priority bit per pixel
 }
 
 impl Ppu {
@@ -81,7 +78,6 @@ impl Ppu {
             initial_stat |= 1 << 2;
         }
         initial_stat |= 1 << 7;
-
 
         Ppu {
             vram: [[0; 8192]; 2], // Initialize both VRAM banks
@@ -99,13 +95,15 @@ impl Ppu {
             obp1: 0xFF,
             wy: 0,
             wx: 0,
-            system_mode, // Store the passed system_mode
-            cgb_bg_palette_ram: [0xFF; 64], // Initialize CGB BG palettes (e.g., to 0xFF)
+            system_mode,                     // Store the passed system_mode
+            cgb_bg_palette_ram: [0xFF; 64],  // Initialize CGB BG palettes (e.g., to 0xFF)
             cgb_obj_palette_ram: [0xFF; 64], // Initialize CGB OBJ palettes (e.g., to 0xFF)
-            bcps: 0x00, // Initialize BCPS
-            ocps: 0x00, // Initialize OCPS
-            vbk: 0x00,  // Initialize VBK (Bank 0)
+            bcps: 0x00,                      // Initialize BCPS
+            ocps: 0x00,                      // Initialize OCPS
+            vbk: 0x00,                       // Initialize VBK (Bank 0)
             just_entered_hblank: false,
+            bg_color_index_buffer: [0; 160],
+            bg_priority_buffer: [false; 160],
         }
     }
 
@@ -150,14 +148,17 @@ impl Ppu {
         let mut vblank_occurred_this_call = false;
         let mut lcd_stat_occurred_this_call = false;
 
-        if (self.lcdc & (1 << 7)) == 0 { // LCD Display Enable is off
-            if self.ly != 0 { // If LY is not already 0, reset it and PPU state
-                 self.ly = 0;
-                 self.cycles = 0; // Reset cycle count for the scanline timing
-                 // Set mode to VBLANK (Mode 1) when LCD is disabled
-                 if self.set_mode(MODE_VBLANK).is_some() { // This also checks for STAT interrupt trigger
-                     lcd_stat_occurred_this_call = true;
-                 }
+        if (self.lcdc & (1 << 7)) == 0 {
+            // LCD Display Enable is off
+            if self.ly != 0 {
+                // If LY is not already 0, reset it and PPU state
+                self.ly = 0;
+                self.cycles = 0; // Reset cycle count for the scanline timing
+                                 // Set mode to VBLANK (Mode 1) when LCD is disabled
+                if self.set_mode(MODE_VBLANK).is_some() {
+                    // This also checks for STAT interrupt trigger
+                    lcd_stat_occurred_this_call = true;
+                }
             } else {
                 // If LY is already 0 and LCD is off, ensure mode is VBLANK.
                 // This handles the case where LCD was disabled while LY was already 0.
@@ -170,9 +171,13 @@ impl Ppu {
             }
             // LYC=LY check still occurs even when LCD is off
             if self.check_lyc_ly().is_some() {
-                 lcd_stat_occurred_this_call = true;
+                lcd_stat_occurred_this_call = true;
             }
-            return if lcd_stat_occurred_this_call { Some(InterruptType::LcdStat) } else { None };
+            return if lcd_stat_occurred_this_call {
+                Some(InterruptType::LcdStat)
+            } else {
+                None
+            };
         }
 
         for _ in 0..t_cycles {
@@ -218,7 +223,7 @@ impl Ppu {
                         }
                     }
                 } else if self.cycles < SCANLINE_CYCLES {
-                     if current_mode != MODE_HBLANK {
+                    if current_mode != MODE_HBLANK {
                         if self.set_mode(MODE_HBLANK).is_some() {
                             current_sub_cycle_lcd_stat = true;
                         }
@@ -262,14 +267,22 @@ impl Ppu {
     }
 
     pub fn render_scanline(&mut self) {
-        if (self.lcdc & (1 << 7)) == 0 { // LCD is off
+        if (self.lcdc & (1 << 7)) == 0 {
+            // LCD is off
             return;
         }
-    
+
+        // Reset per-scanline buffers used for sprite priority decisions
+        for x in 0..160 {
+            self.bg_color_index_buffer[x] = 0;
+            self.bg_priority_buffer[x] = false;
+        }
+
         // DMG Mode Specific: If LCDC Bit 0 is off, BG/Window are white (color 0 of BGP). Sprites can still draw.
         // In CGB Mode, LCDC Bit 0 is BG-to-OBJ Master Priority, not a display disable for BG/Win.
-        let bg_is_blank_dmg = self.system_mode == crate::bus::SystemMode::DMG && (self.lcdc & (1 << 0)) == 0;
-    
+        let bg_is_blank_dmg =
+            self.system_mode == crate::bus::SystemMode::DMG && (self.lcdc & (1 << 0)) == 0;
+
         if bg_is_blank_dmg {
             let dmg_color_0_idx = (self.bgp >> (0 * 2)) & 0b11; // Color for index 0 from BGP
             let dmg_actual_color_0 = DMG_PALETTE[dmg_color_0_idx as usize];
@@ -278,80 +291,107 @@ impl Ppu {
                 if fb_idx + 2 < self.framebuffer.len() {
                     self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&dmg_actual_color_0);
                 }
+                self.bg_color_index_buffer[x_on_screen as usize] = 0;
+                self.bg_priority_buffer[x_on_screen as usize] = false;
             }
         } else {
             // Actual Background & Window Rendering
-            let tile_map_base_addr = if (self.lcdc & (1 << 3)) == 0 { 0x9800 } else { 0x9C00 };
-            let tile_data_base_addr = if (self.lcdc & (1 << 4)) == 0 { 0x8800 } else { 0x8000 };
+            let tile_map_base_addr = if (self.lcdc & (1 << 3)) == 0 {
+                0x9800
+            } else {
+                0x9C00
+            };
+            let tile_data_base_addr = if (self.lcdc & (1 << 4)) == 0 {
+                0x8800
+            } else {
+                0x8000
+            };
             let signed_tile_addressing = (self.lcdc & (1 << 4)) == 0;
-    
+
             let current_scanline_y = self.ly;
             let scroll_y = self.scy;
             let scroll_x = self.scx;
-    
+
             for x_on_screen in 0..160 {
                 let map_x = (scroll_x.wrapping_add(x_on_screen)) as u16;
                 let map_y = (scroll_y.wrapping_add(current_scanline_y)) as u16;
-    
+
                 let tile_col_idx = map_x / 8;
                 let tile_row_idx = map_y / 8;
-    
+
                 let tile_map_offset = tile_row_idx * 32 + tile_col_idx;
-                let tile_index_map_addr = (tile_map_base_addr + (tile_map_offset % 1024) - 0x8000) as usize;
-    
-                if tile_index_map_addr >= 8192 { continue; }
-    
+                let tile_index_map_addr =
+                    (tile_map_base_addr + (tile_map_offset % 1024) - 0x8000) as usize;
+
+                if tile_index_map_addr >= 8192 {
+                    continue;
+                }
+
                 let tile_index = self.vram[0][tile_index_map_addr];
                 let mut bg_cgb_palette_idx: u8 = 0;
                 let mut bg_tile_data_bank: usize = 0;
                 let mut bg_x_flip: bool = false;
                 let mut bg_y_flip: bool = false;
-    
+                let mut bg_priority: bool = false;
+
                 if self.system_mode == crate::bus::SystemMode::CGB {
                     let tile_attributes = self.vram[1][tile_index_map_addr];
                     bg_cgb_palette_idx = tile_attributes & 0x07;
-                    bg_tile_data_bank = if (tile_attributes & (1 << 3)) != 0 { 1 } else { 0 };
+                    bg_tile_data_bank = if (tile_attributes & (1 << 3)) != 0 {
+                        1
+                    } else {
+                        0
+                    };
                     bg_x_flip = (tile_attributes & (1 << 5)) != 0;
                     bg_y_flip = (tile_attributes & (1 << 6)) != 0;
+                    bg_priority = (tile_attributes & (1 << 7)) != 0;
                 }
-    
+
                 let tile_data_offset_in_bank = if signed_tile_addressing {
                     (0x1000 as i16 + (tile_index as i8 as i16) * 16) as usize
                 } else {
                     ((tile_data_base_addr - 0x8000) + (tile_index as u16) * 16) as usize
                 };
-    
+
                 let mut pixel_y_in_tile = (map_y % 8) as u8;
-                if bg_y_flip { pixel_y_in_tile = 7 - pixel_y_in_tile; }
-    
+                if bg_y_flip {
+                    pixel_y_in_tile = 7 - pixel_y_in_tile;
+                }
+
                 let byte1_addr_in_bank = tile_data_offset_in_bank + (pixel_y_in_tile as usize * 2);
                 let byte2_addr_in_bank = byte1_addr_in_bank + 1;
-    
-                if byte2_addr_in_bank >= 8192 { 
+
+                if byte2_addr_in_bank >= 8192 {
                     let fb_idx = (current_scanline_y as usize * 160 + x_on_screen as usize) * 3;
                     if fb_idx + 2 < self.framebuffer.len() {
-                         self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&[0xFF,0,0xFF]);
+                        self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&[0xFF, 0, 0xFF]);
                     }
                     continue;
                 }
-    
+
                 let byte1 = self.vram[bg_tile_data_bank][byte1_addr_in_bank];
                 let byte2 = self.vram[bg_tile_data_bank][byte2_addr_in_bank];
                 let mut pixel_x_in_tile_bit_pos = 7 - (map_x % 8) as u8;
-                if bg_x_flip { pixel_x_in_tile_bit_pos = 7 - pixel_x_in_tile_bit_pos; }
-    
+                if bg_x_flip {
+                    pixel_x_in_tile_bit_pos = 7 - pixel_x_in_tile_bit_pos;
+                }
+
                 let color_bit1 = (byte1 >> pixel_x_in_tile_bit_pos) & 1;
                 let color_bit0 = (byte2 >> pixel_x_in_tile_bit_pos) & 1;
                 let color_num = (color_bit0 << 1) | color_bit1;
-    
+
                 let final_color: [u8; 3];
                 if self.system_mode == crate::bus::SystemMode::CGB {
-                    let palette_ram_base_idx = (bg_cgb_palette_idx as usize * 8) + (color_num as usize * 2);
+                    let palette_ram_base_idx =
+                        (bg_cgb_palette_idx as usize * 8) + (color_num as usize * 2);
                     if palette_ram_base_idx + 1 < self.cgb_bg_palette_ram.len() {
                         let color_byte1 = self.cgb_bg_palette_ram[palette_ram_base_idx];
                         let color_byte2 = self.cgb_bg_palette_ram[palette_ram_base_idx + 1];
-                        final_color = cgb_color_to_rgb(((color_byte2 as u16) << 8) | (color_byte1 as u16));
-                    } else { final_color = COLOR_WHITE; }
+                        final_color =
+                            cgb_color_to_rgb(((color_byte2 as u16) << 8) | (color_byte1 as u16));
+                    } else {
+                        final_color = COLOR_WHITE;
+                    }
                 } else {
                     final_color = DMG_PALETTE[((self.bgp >> (color_num * 2)) & 0b11) as usize];
                 }
@@ -359,15 +399,25 @@ impl Ppu {
                 if fb_idx + 2 < self.framebuffer.len() {
                     self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&final_color);
                 }
+                self.bg_color_index_buffer[x_on_screen as usize] = color_num;
+                self.bg_priority_buffer[x_on_screen as usize] = bg_priority;
             }
-    
+
             // Window Rendering
             if (self.lcdc & (1 << 5)) != 0 && self.ly >= self.wy && self.wx < 167 {
-                let win_tile_map_base_addr = if (self.lcdc & (1 << 6)) == 0 { 0x9800 } else { 0x9C00 };
-                let tile_data_base_addr_win = if (self.lcdc & (1 << 4)) == 0 { 0x8800 } else { 0x8000 };
+                let win_tile_map_base_addr = if (self.lcdc & (1 << 6)) == 0 {
+                    0x9800
+                } else {
+                    0x9C00
+                };
+                let tile_data_base_addr_win = if (self.lcdc & (1 << 4)) == 0 {
+                    0x8800
+                } else {
+                    0x8000
+                };
                 let signed_addressing_win = (self.lcdc & (1 << 4)) == 0;
                 let win_y_in_map = self.ly - self.wy;
-    
+
                 for x_on_screen_win in 0..160u8 {
                     let window_start_x = self.wx.saturating_sub(7);
                     if x_on_screen_win >= window_start_x {
@@ -375,99 +425,149 @@ impl Ppu {
                         let win_tile_x = win_x_in_map / 8;
                         let win_tile_y = win_y_in_map / 8;
                         let tile_map_offset = win_tile_y as u16 * 32 + win_tile_x as u16;
-                        let tile_index_map_addr_win = (win_tile_map_base_addr + (tile_map_offset % 1024) - 0x8000) as usize;
-    
-                        if tile_index_map_addr_win >= 8192 { continue; }
+                        let tile_index_map_addr_win =
+                            (win_tile_map_base_addr + (tile_map_offset % 1024) - 0x8000) as usize;
+
+                        if tile_index_map_addr_win >= 8192 {
+                            continue;
+                        }
                         let tile_index_win = self.vram[0][tile_index_map_addr_win];
                         let mut win_cgb_palette_idx: u8 = 0;
                         let mut win_tile_data_bank: usize = 0;
                         let mut win_x_flip: bool = false;
                         let mut win_y_flip: bool = false;
-    
+                        let mut win_priority: bool = false;
+
                         if self.system_mode == crate::bus::SystemMode::CGB {
                             let win_attributes = self.vram[1][tile_index_map_addr_win];
                             win_cgb_palette_idx = win_attributes & 0x07;
-                            win_tile_data_bank = if (win_attributes & (1 << 3)) != 0 { 1 } else { 0 };
+                            win_tile_data_bank = if (win_attributes & (1 << 3)) != 0 {
+                                1
+                            } else {
+                                0
+                            };
                             win_x_flip = (win_attributes & (1 << 5)) != 0;
                             win_y_flip = (win_attributes & (1 << 6)) != 0;
+                            win_priority = (win_attributes & (1 << 7)) != 0;
                         }
-    
+
                         let tile_data_offset_in_bank_win = if signed_addressing_win {
                             (0x1000 as i16 + (tile_index_win as i8 as i16) * 16) as usize
                         } else {
-                            ((tile_data_base_addr_win - 0x8000) + (tile_index_win as u16) * 16) as usize
+                            ((tile_data_base_addr_win - 0x8000) + (tile_index_win as u16) * 16)
+                                as usize
                         };
                         let mut pixel_y_in_tile_win = (win_y_in_map % 8) as u8;
-                        if win_y_flip { pixel_y_in_tile_win = 7 - pixel_y_in_tile_win; }
+                        if win_y_flip {
+                            pixel_y_in_tile_win = 7 - pixel_y_in_tile_win;
+                        }
                         let mut pixel_x_in_tile_bit_pos_win = 7 - (win_x_in_map % 8);
-                        if win_x_flip { pixel_x_in_tile_bit_pos_win = 7 - pixel_x_in_tile_bit_pos_win; }
-    
-                        let byte1_addr_in_bank_win = tile_data_offset_in_bank_win + (pixel_y_in_tile_win as usize * 2);
+                        if win_x_flip {
+                            pixel_x_in_tile_bit_pos_win = 7 - pixel_x_in_tile_bit_pos_win;
+                        }
+
+                        let byte1_addr_in_bank_win =
+                            tile_data_offset_in_bank_win + (pixel_y_in_tile_win as usize * 2);
                         let byte2_addr_in_bank_win = byte1_addr_in_bank_win + 1;
-    
-                        if byte2_addr_in_bank_win >= 8192 { continue; }
+
+                        if byte2_addr_in_bank_win >= 8192 {
+                            continue;
+                        }
                         let byte1_win = self.vram[win_tile_data_bank][byte1_addr_in_bank_win];
                         let byte2_win = self.vram[win_tile_data_bank][byte2_addr_in_bank_win];
-                        let color_num_win = (((byte2_win >> pixel_x_in_tile_bit_pos_win) & 1) << 1) | ((byte1_win >> pixel_x_in_tile_bit_pos_win) & 1);
-    
+                        let color_num_win = (((byte2_win >> pixel_x_in_tile_bit_pos_win) & 1) << 1)
+                            | ((byte1_win >> pixel_x_in_tile_bit_pos_win) & 1);
+
                         let final_color_win: [u8; 3];
                         if self.system_mode == crate::bus::SystemMode::CGB {
-                            let palette_ram_base_idx = (win_cgb_palette_idx as usize * 8) + (color_num_win as usize * 2);
+                            let palette_ram_base_idx =
+                                (win_cgb_palette_idx as usize * 8) + (color_num_win as usize * 2);
                             if palette_ram_base_idx + 1 < self.cgb_bg_palette_ram.len() {
                                 let color_byte1 = self.cgb_bg_palette_ram[palette_ram_base_idx];
                                 let color_byte2 = self.cgb_bg_palette_ram[palette_ram_base_idx + 1];
-                                final_color_win = cgb_color_to_rgb(((color_byte2 as u16) << 8) | (color_byte1 as u16));
-                            } else { final_color_win = COLOR_WHITE; }
+                                final_color_win = cgb_color_to_rgb(
+                                    ((color_byte2 as u16) << 8) | (color_byte1 as u16),
+                                );
+                            } else {
+                                final_color_win = COLOR_WHITE;
+                            }
                         } else {
-                            final_color_win = DMG_PALETTE[((self.bgp >> (color_num_win * 2)) & 0b11) as usize];
+                            final_color_win =
+                                DMG_PALETTE[((self.bgp >> (color_num_win * 2)) & 0b11) as usize];
                         }
                         let fb_idx = (self.ly as usize * 160 + x_on_screen_win as usize) * 3;
                         if fb_idx + 2 < self.framebuffer.len() {
                             self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&final_color_win);
                         }
+                        self.bg_color_index_buffer[x_on_screen_win as usize] = color_num_win;
+                        self.bg_priority_buffer[x_on_screen_win as usize] = win_priority;
                     }
                 }
             }
         }
-    
+
         // Sprite Rendering
-        if (self.lcdc & (1 << 1)) != 0 { // OBJ Display Enable
+        if (self.lcdc & (1 << 1)) != 0 {
+            // OBJ Display Enable
             let obj_size_8x16 = (self.lcdc & (1 << 2)) != 0;
             let sprite_height = if obj_size_8x16 { 16 } else { 8 };
             let mut visible_sprites_on_line_y_passed = 0;
-    
+
             #[derive(Debug)]
             struct SpriteInfo {
-                oam_idx: usize, sprite_x_oam: u8, tile_index_resolved: u8,
-                scanline_row_in_sprite: u8, sprite_height: u8, x_flip: bool, y_flip: bool,
-                palette_select_obp1_dmg: bool, sprite_has_priority_over_bg: bool,
-                cgb_palette_idx: u8, cgb_vram_bank: usize,
+                oam_idx: usize,
+                sprite_x_oam: u8,
+                tile_index_resolved: u8,
+                scanline_row_in_sprite: u8,
+                sprite_height: u8,
+                x_flip: bool,
+                y_flip: bool,
+                palette_select_obp1_dmg: bool,
+                sprite_has_priority_over_bg: bool,
+                cgb_palette_idx: u8,
+                cgb_vram_bank: usize,
             }
             let mut candidate_sprites: Vec<SpriteInfo> = Vec::with_capacity(10);
-    
+
             for oam_idx_val in (0..self.oam.len()).step_by(4) {
                 let sprite_y_oam = self.oam[oam_idx_val];
                 let sprite_x_oam = self.oam[oam_idx_val + 1];
                 let tile_index_oam = self.oam[oam_idx_val + 2];
                 let attributes = self.oam[oam_idx_val + 3];
-    
-                if sprite_y_oam == 0 || sprite_y_oam >= 160 { continue; }
+
+                if sprite_y_oam == 0 || sprite_y_oam >= 160 {
+                    continue;
+                }
                 let screen_y_top = sprite_y_oam.saturating_sub(16);
-    
+
                 if self.ly >= screen_y_top && self.ly < screen_y_top + sprite_height {
                     visible_sprites_on_line_y_passed += 1;
-                    if visible_sprites_on_line_y_passed > 10 { break; }
-                    if sprite_x_oam == 0 || sprite_x_oam >= 168 { continue; }
-    
+                    if visible_sprites_on_line_y_passed > 10 {
+                        break;
+                    }
+                    if sprite_x_oam == 0 || sprite_x_oam >= 168 {
+                        continue;
+                    }
+
                     let scanline_row_in_sprite = self.ly - screen_y_top;
                     let tile_index_resolved = if obj_size_8x16 {
-                        if scanline_row_in_sprite < 8 { tile_index_oam & 0xFE } else { tile_index_oam | 0x01 }
-                    } else { tile_index_oam };
-    
+                        if scanline_row_in_sprite < 8 {
+                            tile_index_oam & 0xFE
+                        } else {
+                            tile_index_oam | 0x01
+                        }
+                    } else {
+                        tile_index_oam
+                    };
+
                     candidate_sprites.push(SpriteInfo {
-                        oam_idx: oam_idx_val, sprite_x_oam, tile_index_resolved,
-                        scanline_row_in_sprite, sprite_height,
-                        x_flip: (attributes & (1 << 5)) != 0, y_flip: (attributes & (1 << 6)) != 0,
+                        oam_idx: oam_idx_val,
+                        sprite_x_oam,
+                        tile_index_resolved,
+                        scanline_row_in_sprite,
+                        sprite_height,
+                        x_flip: (attributes & (1 << 5)) != 0,
+                        y_flip: (attributes & (1 << 6)) != 0,
                         palette_select_obp1_dmg: (attributes & (1 << 4)) != 0,
                         sprite_has_priority_over_bg: (attributes & (1 << 7)) == 0,
                         cgb_palette_idx: attributes & 0x07,
@@ -475,11 +575,12 @@ impl Ppu {
                     });
                 }
             }
-    
+
             match self.system_mode {
                 crate::bus::SystemMode::DMG => {
                     candidate_sprites.sort_by(|a, b| {
-                        a.sprite_x_oam.cmp(&b.sprite_x_oam)
+                        a.sprite_x_oam
+                            .cmp(&b.sprite_x_oam)
                             .then_with(|| a.oam_idx.cmp(&b.oam_idx))
                     });
                 }
@@ -487,72 +588,107 @@ impl Ppu {
                     candidate_sprites.sort_by_key(|s| s.oam_idx);
                 }
             }
-            
+
             for sprite_info in candidate_sprites.iter().rev() {
                 let mut tile_row_y_for_vram = if sprite_info.y_flip {
                     sprite_info.sprite_height - 1 - sprite_info.scanline_row_in_sprite
-                } else { sprite_info.scanline_row_in_sprite };
+                } else {
+                    sprite_info.scanline_row_in_sprite
+                };
                 tile_row_y_for_vram %= 8;
-    
+
                 let tile_data_offset_in_bank_sprite = sprite_info.tile_index_resolved as usize * 16;
-                let tile_row_data_addr_in_bank_sprite = tile_data_offset_in_bank_sprite + (tile_row_y_for_vram as usize * 2);
+                let tile_row_data_addr_in_bank_sprite =
+                    tile_data_offset_in_bank_sprite + (tile_row_y_for_vram as usize * 2);
                 let active_sprite_vram_bank = if self.system_mode == crate::bus::SystemMode::CGB {
                     sprite_info.cgb_vram_bank
-                } else { 0 };
-    
-                if tile_row_data_addr_in_bank_sprite + 1 >= 8192 { continue; }
+                } else {
+                    0
+                };
+
+                if tile_row_data_addr_in_bank_sprite + 1 >= 8192 {
+                    continue;
+                }
                 let byte1 = self.vram[active_sprite_vram_bank][tile_row_data_addr_in_bank_sprite];
-                let byte2 = self.vram[active_sprite_vram_bank][tile_row_data_addr_in_bank_sprite + 1];
-                let chosen_obp_dmg = if sprite_info.palette_select_obp1_dmg { self.obp1 } else { self.obp0 };
-    
+                let byte2 =
+                    self.vram[active_sprite_vram_bank][tile_row_data_addr_in_bank_sprite + 1];
+                let chosen_obp_dmg = if sprite_info.palette_select_obp1_dmg {
+                    self.obp1
+                } else {
+                    self.obp0
+                };
+
                 for x_in_sprite_tile in 0..8u8 {
-                    let screen_pixel_x = sprite_info.sprite_x_oam.saturating_sub(8).wrapping_add(x_in_sprite_tile);
-                    if screen_pixel_x >= 160 { continue; }
-    
-                    let bit_pos = if sprite_info.x_flip { x_in_sprite_tile } else { 7 - x_in_sprite_tile };
-                    let color_num_sprite = (((byte2 >> bit_pos) & 1) << 1) | ((byte1 >> bit_pos) & 1);
-                    if color_num_sprite == 0 { continue; }
-    
+                    let screen_pixel_x = sprite_info
+                        .sprite_x_oam
+                        .saturating_sub(8)
+                        .wrapping_add(x_in_sprite_tile);
+                    if screen_pixel_x >= 160 {
+                        continue;
+                    }
+
+                    let bit_pos = if sprite_info.x_flip {
+                        x_in_sprite_tile
+                    } else {
+                        7 - x_in_sprite_tile
+                    };
+                    let color_num_sprite =
+                        (((byte2 >> bit_pos) & 1) << 1) | ((byte1 >> bit_pos) & 1);
+                    if color_num_sprite == 0 {
+                        continue;
+                    }
+
                     let final_sprite_color_rgb: [u8; 3]; // Removed 'mut'
                     if self.system_mode == crate::bus::SystemMode::CGB {
-                        let palette_ram_base_idx = (sprite_info.cgb_palette_idx as usize * 8) + (color_num_sprite as usize * 2);
+                        let palette_ram_base_idx = (sprite_info.cgb_palette_idx as usize * 8)
+                            + (color_num_sprite as usize * 2);
                         if palette_ram_base_idx + 1 < self.cgb_obj_palette_ram.len() {
                             let color_byte1 = self.cgb_obj_palette_ram[palette_ram_base_idx];
                             let color_byte2 = self.cgb_obj_palette_ram[palette_ram_base_idx + 1];
-                            final_sprite_color_rgb = cgb_color_to_rgb(((color_byte2 as u16) << 8) | (color_byte1 as u16));
-                        } else { final_sprite_color_rgb = COLOR_BLACK; }
+                            final_sprite_color_rgb = cgb_color_to_rgb(
+                                ((color_byte2 as u16) << 8) | (color_byte1 as u16),
+                            );
+                        } else {
+                            final_sprite_color_rgb = COLOR_BLACK;
+                        }
                     } else {
-                        final_sprite_color_rgb = DMG_PALETTE[((chosen_obp_dmg >> (color_num_sprite * 2)) & 0b11) as usize];
+                        final_sprite_color_rgb = DMG_PALETTE
+                            [((chosen_obp_dmg >> (color_num_sprite * 2)) & 0b11) as usize];
                     }
-    
+
                     let mut draw_sprite_pixel = true;
-                    let lcdc0_bg_master_priority_cgb = self.system_mode == crate::bus::SystemMode::CGB && (self.lcdc & (1<<0)) == 0;
-                    let bg_win_display_enabled_dmg = self.system_mode == crate::bus::SystemMode::DMG && (self.lcdc & (1<<0)) != 0;
-    
-                    if lcdc0_bg_master_priority_cgb {
-                        let fb_idx_check = (self.ly as usize * 160 + screen_pixel_x as usize) * 3;
-                        if fb_idx_check + 2 < self.framebuffer.len() {
-                            if self.framebuffer[fb_idx_check..fb_idx_check+3] != DMG_PALETTE[0] {
+                    let bg_color_idx = self.bg_color_index_buffer[screen_pixel_x as usize];
+                    let bg_win_display_enabled_dmg = self.system_mode
+                        == crate::bus::SystemMode::DMG
+                        && (self.lcdc & (1 << 0)) != 0;
+                    if self.system_mode == crate::bus::SystemMode::CGB {
+                        if (self.lcdc & (1 << 0)) == 0 {
+                            if bg_color_idx != 0 {
+                                draw_sprite_pixel = false;
+                            }
+                        } else {
+                            if self.bg_priority_buffer[screen_pixel_x as usize] && bg_color_idx != 0
+                            {
+                                draw_sprite_pixel = false;
+                            } else if !sprite_info.sprite_has_priority_over_bg && bg_color_idx != 0
+                            {
                                 draw_sprite_pixel = false;
                             }
                         }
                     } else {
-                        if self.system_mode == crate::bus::SystemMode::CGB || bg_win_display_enabled_dmg {
-                            if !sprite_info.sprite_has_priority_over_bg {
-                                let fb_idx_check = (self.ly as usize * 160 + screen_pixel_x as usize) * 3;
-                                if fb_idx_check + 2 < self.framebuffer.len() {
-                                    if self.framebuffer[fb_idx_check..fb_idx_check+3] != DMG_PALETTE[0] {
-                                        draw_sprite_pixel = false;
-                                    }
-                                }
-                            }
+                        if bg_win_display_enabled_dmg
+                            && !sprite_info.sprite_has_priority_over_bg
+                            && bg_color_idx != 0
+                        {
+                            draw_sprite_pixel = false;
                         }
                     }
-    
+
                     if draw_sprite_pixel {
                         let fb_idx_draw = (self.ly as usize * 160 + screen_pixel_x as usize) * 3;
                         if fb_idx_draw + 2 < self.framebuffer.len() {
-                            self.framebuffer[fb_idx_draw..fb_idx_draw + 3].copy_from_slice(&final_sprite_color_rgb);
+                            self.framebuffer[fb_idx_draw..fb_idx_draw + 3]
+                                .copy_from_slice(&final_sprite_color_rgb);
                         }
                     }
                 }
@@ -607,22 +743,30 @@ impl Ppu {
             0xFF4F => self.vbk | 0xFE, // VBK - CGB VRAM Bank Select (only bit 0 used, others read as 1)
             // CGB Palette Registers
             0xFF68 => self.bcps,
-            0xFF69 => { // BCPD - Background Color Palette Data
+            0xFF69 => {
+                // BCPD - Background Color Palette Data
                 // Note: Reading BCPD should only occur if self.system_mode == SystemMode::CGB
                 // However, for now, we allow the read even in DMG to simplify.
                 // A real DMG would ignore or behave differently.
                 let index = (self.bcps & 0x3F) as usize;
-                if index < 64 { self.cgb_bg_palette_ram[index] } else { 0xFF }
+                if index < 64 {
+                    self.cgb_bg_palette_ram[index]
+                } else {
+                    0xFF
+                }
             }
             0xFF6A => self.ocps,
-            0xFF6B => { // OCPD - Object Color Palette Data
+            0xFF6B => {
+                // OCPD - Object Color Palette Data
                 // Note: Similar CGB mode consideration as BCPD.
                 let index = (self.ocps & 0x3F) as usize;
-                if index < 64 { self.cgb_obj_palette_ram[index] } else { 0xFF }
+                if index < 64 {
+                    self.cgb_obj_palette_ram[index]
+                } else {
+                    0xFF
+                }
             }
-            _ => {
-                0xFF
-            }
+            _ => 0xFF,
         }
     }
 
@@ -675,7 +819,7 @@ impl Ppu {
             }
             0xFF42 => self.scy = value,
             0xFF43 => self.scx = value,
-            0xFF44 => {  }
+            0xFF44 => {}
             0xFF45 => {
                 self.lyc = value;
                 let _ = self.check_lyc_ly();
@@ -685,18 +829,21 @@ impl Ppu {
             0xFF49 => self.obp1 = value,
             0xFF4A => self.wy = value,
             0xFF4B => self.wx = value,
-            0xFF4F => { // VBK - CGB VRAM Bank Select
+            0xFF4F => {
+                // VBK - CGB VRAM Bank Select
                 if self.system_mode == crate::bus::SystemMode::CGB {
                     self.vbk = value & 1; // Only bit 0 is writable
                 }
                 // In DMG mode, writes to VBK are ignored.
             }
             // CGB Palette Registers
-            0xFF68 => { // BCPS - Background Color Palette Specification
+            0xFF68 => {
+                // BCPS - Background Color Palette Specification
                 // Note: Writing BCPS should ideally only occur if self.system_mode == SystemMode::CGB
                 self.bcps = value;
             }
-            0xFF69 => { // BCPD - Background Color Palette Data
+            0xFF69 => {
+                // BCPD - Background Color Palette Data
                 // Note: Similar CGB mode consideration.
                 // DMG hardware would ignore writes to 0xFF69.
                 // For CGB, perform write if PPU not in mode 3? Some docs say these are accessible always.
@@ -705,23 +852,27 @@ impl Ppu {
                 if index < 64 {
                     self.cgb_bg_palette_ram[index] = value;
                 }
-                if (self.bcps & 0x80) != 0 { // Auto-increment BCPS if bit 7 is set
+                if (self.bcps & 0x80) != 0 {
+                    // Auto-increment BCPS if bit 7 is set
                     self.bcps = 0x80 | (((index + 1) & 0x3F) as u8);
                 }
             }
-            0xFF6A => { // OCPS - Object Color Palette Specification
+            0xFF6A => {
+                // OCPS - Object Color Palette Specification
                 self.ocps = value;
             }
-            0xFF6B => { // OCPD - Object Color Palette Data
+            0xFF6B => {
+                // OCPD - Object Color Palette Data
                 let index = (self.ocps & 0x3F) as usize;
                 if index < 64 {
                     self.cgb_obj_palette_ram[index] = value;
                 }
-                if (self.ocps & 0x80) != 0 { // Auto-increment OCPS if bit 7 is set
+                if (self.ocps & 0x80) != 0 {
+                    // Auto-increment OCPS if bit 7 is set
                     self.ocps = 0x80 | (((index + 1) & 0x3F) as u8);
                 }
             }
-            _ => { }
+            _ => {}
         }
     }
 }
@@ -741,17 +892,11 @@ pub fn save_framebuffer_to_png(
         ));
     }
     match ImageBuffer::<image::Rgb<u8>, Vec<u8>>::from_raw(width, height, framebuffer.to_vec()) {
-        Some(image_buffer) => {
-            image_buffer.save(filepath)
-        }
-        None => {
-            Err(ImageError::Parameter(
-                image::error::ParameterError::from_kind(
-                    image::error::ParameterErrorKind::Generic(
-                        "Failed to create image buffer from raw data".to_string(),
-                    ),
-                ),
-            ))
-        }
+        Some(image_buffer) => image_buffer.save(filepath),
+        None => Err(ImageError::Parameter(
+            image::error::ParameterError::from_kind(image::error::ParameterErrorKind::Generic(
+                "Failed to create image buffer from raw data".to_string(),
+            )),
+        )),
     }
 }
