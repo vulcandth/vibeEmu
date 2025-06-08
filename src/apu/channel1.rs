@@ -1,5 +1,6 @@
 // src/apu/channel1.rs
 use super::{Nr10, Nr11, Nr12, Nr13, Nr14};
+use log::debug;
 
 pub struct Channel1 {
     pub nr10: Nr10,
@@ -43,6 +44,12 @@ impl Channel1 {
     }
 
     pub fn trigger(&mut self, current_frame_sequencer_step: u8) {
+        debug!(
+            "CH1 trigger start: len_cnt={} len_enabled={} fs_step={}",
+            self.length_counter,
+            self.nr14.is_length_enabled(),
+            current_frame_sequencer_step
+        );
         self.subtraction_sweep_calculated_since_trigger = false;
         if !self.has_been_triggered_since_power_on {
             self.force_output_zero_for_next_sample = true;
@@ -88,6 +95,7 @@ impl Channel1 {
             let new_freq = self.calculate_sweep_frequency();
             if new_freq > 2047 { self.enabled = false; self.sweep_calculated_overflow_this_step = true; }
         }
+        debug!("CH1 trigger end: len_cnt={}", self.length_counter);
     }
 
     fn calculate_sweep_frequency(&self) -> u16 {
@@ -100,10 +108,16 @@ impl Channel1 {
 
     pub fn extra_length_clock(&mut self, trigger_is_set_in_nrx4: bool) {
         if self.length_counter > 0 {
+            debug!(
+                "CH1 extra_length_clock: before={} trigger={}",
+                self.length_counter,
+                trigger_is_set_in_nrx4
+            );
             self.length_counter -= 1;
             if self.length_counter == 0 && !trigger_is_set_in_nrx4 {
                 self.enabled = false;
             }
+            debug!("CH1 extra_length_clock: after={}", self.length_counter);
         }
     }
 

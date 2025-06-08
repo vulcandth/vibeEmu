@@ -1,5 +1,6 @@
 // src/apu/channel2.rs
 use super::{Nr21, Nr22, Nr23, Nr24};
+use log::debug;
 
 pub struct Channel2 {
     pub nr21: Nr21,
@@ -33,6 +34,12 @@ impl Channel2 {
     }
 
     pub fn trigger(&mut self, current_frame_sequencer_step: u8) {
+        debug!(
+            "CH2 trigger start: len_cnt={} len_enabled={} fs_step={}",
+            self.length_counter,
+            self.nr24.is_length_enabled(),
+            current_frame_sequencer_step
+        );
         if !self.has_been_triggered_since_power_on {
             self.force_output_zero_for_next_sample = true;
             self.has_been_triggered_since_power_on = true;
@@ -64,16 +71,23 @@ impl Channel2 {
         }
         self.envelope_period_timer = envelope_timer_load_val;
         self.envelope_running = self.nr22.dac_power() && env_period_raw != 0;
+        debug!("CH2 trigger end: len_cnt={}", self.length_counter);
     }
 
     pub fn get_length_counter(&self) -> u16 { self.length_counter }
 
     pub fn extra_length_clock(&mut self, trigger_is_set_in_nrx4: bool) {
         if self.length_counter > 0 {
+            debug!(
+                "CH2 extra_length_clock: before={} trigger={}",
+                self.length_counter,
+                trigger_is_set_in_nrx4
+            );
             self.length_counter -= 1;
             if self.length_counter == 0 && !trigger_is_set_in_nrx4 {
                 self.enabled = false;
             }
+            debug!("CH2 extra_length_clock: after={}", self.length_counter);
         }
     }
 

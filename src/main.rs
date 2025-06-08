@@ -165,6 +165,7 @@ fn parse_args(args_vec: &[String]) -> (bool, Option<u64>, Option<u64>, String, b
 }
 
 fn main() {
+    env_logger::init();
     println!("VibeEmu starting...");
 
     let args_vec: Vec<String> = env::args().collect();

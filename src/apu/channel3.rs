@@ -1,5 +1,6 @@
 // src/apu/channel3.rs
 use super::{Nr30, Nr31, Nr32, Nr33, Nr34};
+use log::debug;
 
 pub struct Channel3 {
     pub nr30: Nr30,
@@ -23,6 +24,12 @@ impl Channel3 {
     }
 
     pub fn trigger(&mut self, _wave_ram_on_trigger: &[u8;16], current_frame_sequencer_step: u8) {
+        debug!(
+            "CH3 trigger start: len_cnt={} len_enabled={} fs_step={}",
+            self.length_counter,
+            self.nr34.is_length_enabled(),
+            current_frame_sequencer_step
+        );
         self.enabled = self.nr30.dac_on();
         let length_data = self.nr31.sound_length_val();
         let is_max_length_condition = length_data == 0;
@@ -42,16 +49,23 @@ impl Channel3 {
         self.frequency_timer = (2048 - period_val) * 2;
         self.sample_index = 0;
         if !self.nr30.dac_on() { self.enabled = false; }
+        debug!("CH3 trigger end: len_cnt={}", self.length_counter);
     }
 
     pub fn get_length_counter(&self) -> u16 { self.length_counter }
 
     pub fn extra_length_clock(&mut self, trigger_is_set_in_nrx4: bool) {
         if self.length_counter > 0 {
+            debug!(
+                "CH3 extra_length_clock: before={} trigger={}",
+                self.length_counter,
+                trigger_is_set_in_nrx4
+            );
             self.length_counter -= 1;
             if self.length_counter == 0 && !trigger_is_set_in_nrx4 {
                 self.enabled = false;
             }
+            debug!("CH3 extra_length_clock: after={}", self.length_counter);
         }
     }
 

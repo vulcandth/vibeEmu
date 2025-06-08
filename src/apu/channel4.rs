@@ -1,5 +1,6 @@
 // src/apu/channel4.rs
 use super::{Nr41, Nr42, Nr43, Nr44};
+use log::debug;
 
 pub struct Channel4 {
     pub nr41: Nr41,
@@ -26,6 +27,12 @@ impl Channel4 {
     }
 
     pub fn trigger(&mut self, current_frame_sequencer_step: u8) {
+        debug!(
+            "CH4 trigger start: len_cnt={} len_enabled={} fs_step={}",
+            self.length_counter,
+            self.nr44.is_length_enabled(),
+            current_frame_sequencer_step
+        );
         if self.nr42.dac_power() { self.enabled = true; }
         else { self.enabled = false; return; }
         let length_data = self.nr41.initial_length_timer_val();
@@ -50,6 +57,7 @@ impl Channel4 {
         self.envelope_running = self.nr42.dac_power() && env_period_raw != 0;
         self.lfsr = 0xFFFF;
         if !self.nr42.dac_power() { self.enabled = false; }
+        debug!("CH4 trigger end: len_cnt={}", self.length_counter);
     }
 
     fn update_frequency_timer(&mut self) {
@@ -63,10 +71,16 @@ impl Channel4 {
 
     pub fn extra_length_clock(&mut self, trigger_is_set_in_nrx4: bool) {
         if self.length_counter > 0 {
+            debug!(
+                "CH4 extra_length_clock: before={} trigger={}",
+                self.length_counter,
+                trigger_is_set_in_nrx4
+            );
             self.length_counter -= 1;
             if self.length_counter == 0 && !trigger_is_set_in_nrx4 {
                 self.enabled = false;
             }
+            debug!("CH4 extra_length_clock: after={}", self.length_counter);
         }
     }
 

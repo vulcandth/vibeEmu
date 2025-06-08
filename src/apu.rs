@@ -593,6 +593,13 @@ impl Apu {
             NR14_ADDR => {
                 let prev_len_enabled = self.channel1.nr14.is_length_enabled();
                 let len_counter_was_non_zero = self.channel1.get_length_counter() > 0;
+                debug!(
+                    "NR14 write: val={:#04X} len_before={} len_enabled_before={} fs_step={}",
+                    value,
+                    self.channel1.get_length_counter(),
+                    prev_len_enabled,
+                    self.frame_sequencer_step
+                );
                 self.channel1.nr14.write(value); // NRx4 is updated
                 let new_len_enabled = self.channel1.nr14.is_length_enabled();
                 // Condition for "APU frame sequencer's next step will not clock the length timer"
@@ -609,6 +616,11 @@ impl Apu {
                     // AND the specific frame sequencer timing condition is met.
                     self.channel1.reload_length_on_enable(self.frame_sequencer_step);
                 }
+                debug!(
+                    "NR14 handled: len_after={} len_enabled_after={}",
+                    self.channel1.get_length_counter(),
+                    new_len_enabled
+                );
             },
             NR21_ADDR => {
                 self.channel2.nr21.write(value);
@@ -633,6 +645,13 @@ impl Apu {
             NR24_ADDR => {
                 let prev_len_enabled = self.channel2.nr24.is_length_enabled();
                 let len_counter_was_non_zero = self.channel2.get_length_counter() > 0;
+                debug!(
+                    "NR24 write: val={:#04X} len_before={} len_enabled_before={} fs_step={}",
+                    value,
+                    self.channel2.get_length_counter(),
+                    prev_len_enabled,
+                    self.frame_sequencer_step
+                );
                 self.channel2.nr24.write(value); // NRx4 is updated
                 let new_len_enabled = self.channel2.nr24.is_length_enabled();
                 let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
@@ -646,6 +665,11 @@ impl Apu {
                 } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
                     self.channel2.reload_length_on_enable(self.frame_sequencer_step);
                 }
+                debug!(
+                    "NR24 handled: len_after={} len_enabled_after={}",
+                    self.channel2.get_length_counter(),
+                    new_len_enabled
+                );
             },
             NR30_ADDR => self.channel3.nr30.write(value),
             NR31_ADDR => {
@@ -666,6 +690,13 @@ impl Apu {
 
                 let prev_len_enabled = self.channel3.nr34.is_length_enabled();
                 let len_counter_was_non_zero = self.channel3.get_length_counter() > 0;
+                debug!(
+                    "NR34 write: val={:#04X} len_before={} len_enabled_before={} fs_step={}",
+                    value,
+                    self.channel3.get_length_counter(),
+                    prev_len_enabled,
+                    self.frame_sequencer_step
+                );
                 self.channel3.nr34.write(value); // NRx4 is updated
                 let new_len_enabled = self.channel3.nr34.is_length_enabled();
                 let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
@@ -679,6 +710,11 @@ impl Apu {
                 } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
                     self.channel3.reload_length_on_enable(self.frame_sequencer_step);
                 }
+                debug!(
+                    "NR34 handled: len_after={} len_enabled_after={}",
+                    self.channel3.get_length_counter(),
+                    new_len_enabled
+                );
             },
             NR41_ADDR => {
                 self.channel4.nr41.write(value);
@@ -703,6 +739,13 @@ impl Apu {
             NR44_ADDR => {
                 let prev_len_enabled = self.channel4.nr44.is_length_enabled();
                 let len_counter_was_non_zero = self.channel4.get_length_counter() > 0;
+                debug!(
+                    "NR44 write: val={:#04X} len_before={} len_enabled_before={} fs_step={}",
+                    value,
+                    self.channel4.get_length_counter(),
+                    prev_len_enabled,
+                    self.frame_sequencer_step
+                );
                 self.channel4.nr44.write(value); // NRx4 is updated
                 let new_len_enabled = self.channel4.nr44.is_length_enabled();
                 let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
@@ -716,6 +759,11 @@ impl Apu {
                 } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
                     self.channel4.reload_length_on_enable(self.frame_sequencer_step);
                 }
+                debug!(
+                    "NR44 handled: len_after={} len_enabled_after={}",
+                    self.channel4.get_length_counter(),
+                    new_len_enabled
+                );
             },
             NR50_ADDR => self.nr50.write(value),
             NR51_ADDR => self.nr51.write(value),
