@@ -395,6 +395,10 @@ fn main() {
                     let window_pos = w.get_position();
                     let global_x = window_pos.0 as f32 + mouse_pos.0;
                     let global_y = window_pos.1 as f32 + mouse_pos.1;
+                    println!(
+                        "Main thread sending Show command at global position ({:.1}, {:.1})",
+                        global_x, global_y
+                    );
                     if let Err(e) = context_menu_cmd_sender.send(ContextMenuCommand::Show {
                         x: global_x,
                         y: global_y,
@@ -603,7 +607,9 @@ fn main() {
                     let (tx, rx) = unbounded();
                     vram_viewer_sender = Some(tx);
                     thread::spawn(move || {
+                        println!("VRAM viewer thread started");
                         run_vram_viewer(rx);
+                        println!("VRAM viewer thread exited");
                     });
                 }
             }
@@ -680,6 +686,7 @@ impl eframe::App for ContextMenuApp {
         }
 
         if ctx.input(|i| i.viewport().close_requested()) {
+            println!("Context menu window close requested by OS");
             self.is_visible = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
@@ -689,11 +696,13 @@ impl eframe::App for ContextMenuApp {
         if let Ok(cmd) = self.context_menu_command_receiver.try_recv() {
             match cmd {
                 ContextMenuCommand::Show { x, y } => {
+                    println!("ContextMenuApp received Show command at ({:.1}, {:.1})", x, y);
                     self.is_visible = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus); // Bring to front
                     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::Pos2::new(x, y)));
                     self.status_message = Some("Select an action.".to_string()); // Reset status
+                    println!("Context menu should now be visible");
                 }
                 // ContextMenuCommand::Hide could be handled here if needed
             }
@@ -765,6 +774,7 @@ impl eframe::App for ContextMenuApp {
                     if ui.button("Cancel").clicked() {
                         self.is_visible = false;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        println!("Context menu cancelled by user");
                         // Main thread will handle unpausing if no action was taken by menu.
                     }
                 });
@@ -802,6 +812,7 @@ impl VramViewerApp {
     fn update_snapshot(&mut self, ctx: &egui::Context) {
         let mut updated = false;
         while let Ok(new_snap) = self.snapshot_receiver.try_recv() {
+            println!("VRAM viewer received new snapshot");
             self.snapshot = Some(new_snap);
             updated = true;
         }
