@@ -595,7 +595,13 @@ impl Cpu {
         let system_mode = bus.borrow().get_system_mode();
         let (a, f, b, c, d, e, h, l) = match system_mode {
             SystemMode::DMG => (0x01, 0xB0, 0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D),
-            SystemMode::CGB => (0x11, 0x80, 0x00, 0x00, 0xFF, 0x56, 0x00, 0x0D),
+            SystemMode::CGB_0 |
+            SystemMode::CGB_A |
+            SystemMode::CGB_B |
+            SystemMode::CGB_C |
+            SystemMode::CGB_D |
+            SystemMode::CGB_E => (0x11, 0x80, 0x00, 0x00, 0xFF, 0x56, 0x00, 0x0D),
+            SystemMode::AGB => (0x11, 0x80, 0x00, 0x00, 0xFF, 0x56, 0x00, 0x0D), // AGB defaults to CGB CPU init values for now
         };
 
         Cpu {
@@ -1775,7 +1781,7 @@ pub fn stop(&mut self) {
     let system_mode = self.bus.borrow().get_system_mode();
     let key1_prepared = self.bus.borrow().get_key1_prepare_speed_switch();
 
-    if system_mode == SystemMode::CGB && key1_prepared {
+    if matches!(system_mode, SystemMode::CGB_0 | SystemMode::CGB_A | SystemMode::CGB_B | SystemMode::CGB_C | SystemMode::CGB_D | SystemMode::CGB_E | SystemMode::AGB) && key1_prepared {
         self.bus.borrow_mut().toggle_speed_mode();
         self.bus.borrow_mut().set_key1_prepare_speed_switch(false);
         // For CGB speed switch, CPU does not halt.
@@ -2870,15 +2876,15 @@ mod tests {
         let mut rom_data = vec![0; 0x8000]; // Ensure enough size for header
         rom_data[0x0147] = 0x00; // NoMBC cartridge type
         rom_data[0x0149] = 0x02; // 8KB RAM size
-        if mode == SystemMode::CGB {
+        if matches!(mode, SystemMode::CGB_0 | SystemMode::CGB_A | SystemMode::CGB_B | SystemMode::CGB_C | SystemMode::CGB_D | SystemMode::CGB_E) {
             rom_data[0x0143] = 0x80; // CGB supported/required
         }
         let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
         Cpu::new(bus)
     }
 
-    fn setup_cpu() -> Cpu { // Default to CGB for existing tests, or adjust as needed
-        setup_cpu_with_mode(SystemMode::CGB)
+    fn setup_cpu() -> Cpu { // Default to CGB_D for existing tests, or adjust as needed
+        setup_cpu_with_mode(SystemMode::CGB_D)
     }
 
 
@@ -6050,7 +6056,7 @@ mod tests {
             let mut rom_data_ret_wrap = vec![0; 0x8000];
             rom_data_ret_wrap[0x0147] = 0x00; // NoMBC
             rom_data_ret_wrap[0x0149] = 0x02; // 8KB RAM
-            rom_data_ret_wrap[0x0143] = if cpu.bus.borrow().get_system_mode() == SystemMode::CGB { 0x80 } else { 0x00 };
+            rom_data_ret_wrap[0x0143] = if matches!(cpu.bus.borrow().get_system_mode(), SystemMode::CGB_0 | SystemMode::CGB_A | SystemMode::CGB_B | SystemMode::CGB_C | SystemMode::CGB_D | SystemMode::CGB_E) { 0x80 } else { 0x00 };
             rom_data_ret_wrap[0x0000] = (return_addr_3 >> 8) as u8; // Pre-set PCH in ROM[0x0000]
 
             let bus_ret_wrap = Rc::new(RefCell::new(Bus::new(rom_data_ret_wrap)));

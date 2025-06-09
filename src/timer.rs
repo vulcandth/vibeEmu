@@ -95,6 +95,11 @@ impl Timer {
         match address {
             0xFF04 => {
                 self.div = 0; // Writing any value to DIV resets it to 0
+                //ध्ययन Sameboy behavior (timer.c lines 103-112) suggests that on DIV write,
+                // if the current tima_clock_cycles would have caused TIMA to increment
+                // (i.e. >= threshold), TIMA *does* increment once before tima_clock_cycles is reset.
+                // This is a subtle glitch. For now, we keep the simpler reset of tima_clock_cycles.
+                // A more accurate implementation might need to check and apply this glitch.
                 self.div_clock_cycles = 0; // Reset internal counter as well
                 self.tima_clock_cycles = 0; // Also reset TIMA's clock accumulator
             }
@@ -113,6 +118,58 @@ impl Timer {
                 eprintln!("Warning: Write to unhandled timer address: {:#06X} with value {:#04X}", address, value);
             }
         }
+    }
+
+    pub fn get_div_counter(&self) -> u16 {
+        // Sameboy's div_counter is a u16 that increments every T-cycle for DIV register update.
+        // Our self.div is u8 and increments every 256 T-cycles.
+        // To emulate Sameboy's usage for APU glitch, we need the raw 16-bit counter.
+        // self.div_clock_cycles counts T-cycles towards the next self.div increment.
+        // So, (self.div as u16) << 8 would be the upper byte of a 16-bit DIV,
+        // and div_clock_cycles / (DIV_THRESHOLD / 256) or similar might approximate the lower byte.
+        // However, Sameboy's `div_divider` in APU is a separate 8-bit counter for APU events,
+        // and the `div` register for the skip glitch is the main CPU DIV.
+        // For the skip glitch, Sameboy reads `gb->div_timer`, which is a 16-bit free-running counter
+        // that increments every T-cycle and whose upper 8 bits become FF04.
+        // Our `div_clock_cycles` accumulates T-cycles for one DIV step (256 T-cycles).
+        // So, `(self.div as u16) * 256 + self.div_clock_cycles` might be closer to a raw counter.
+        // Let's assume for now the glitch relies on the upper bits primarily.
+        // A more direct equivalent to Sameboy's `gb->div_timer` would be needed.
+        // For now, returning a value based on `self.div` and `self.div_clock_cycles`.
+        // DIV_THRESHOLD is 256 T-cycles. div_clock_cycles is current count within that.
+        // So, (self.div as u16) << 8 | (self.div_clock_cycles / (DIV_THRESHOLD/256)) ? No, this is too complex.
+        // Sameboy's div_timer is essentially the system T-cycle counter.
+        // We don't have that directly in Timer struct.
+        // The skip glitch needs bit 12 or 13 of this raw T-cycle counter.
+        // Our `div` is `(raw_t_cycle_counter >> 8) & 0xFF`.
+        // So `(self.div as u16) << 8` gives us the upper byte of the raw counter.
+        // `self.div_clock_cycles` is `raw_t_cycle_counter % 256`.
+        // So, the raw 16-bit DIV is effectively `(self.div as u16) << 8 | (self.div_clock_cycles % 256) as u8` but div_clock_cycles can be > 255 before reset
+        // Let's construct the 16-bit DIV based on how it's formed:
+        // DIV register (FF04) is the upper 8 bits of a 14-bit or 16-bit internal counter.
+        // Pandocs: "This register is incremented at rate of 16384Hz (= CPU Clock / 256). So it acts as a 16-bit counter...
+        // Writing any value to this register resets it to $00."
+        // The div_clock_cycles counts up to DIV_THRESHOLD (256 system cycles).
+        // A 16-bit counter `internal_div_counter` would be `self.div` as MSB and some LSB.
+        // `div_clock_cycles` is the remainder for the current `div` value's 256 cycle period.
+        // So, `(self.div as u16) << 8 | self.div_clock_cycles_within_current_div_step_lsb`.
+        // This is tricky. For now, let's return a proxy that might work for the glitch.
+        // The glitch needs bit 12 (normal speed) or 13 (double speed) of the *actual* 16-bit DIV counter.
+        // If our `self.div` is the upper 8 bits, then `(self.div as u16) << 8` is part of it.
+        // The lower bits are `self.div_clock_cycles`.
+        // So, `internal_16bit_div = (self.div as u16) << 8 | (self.div_clock_cycles & 0xFF)` (approx, as div_clock_cycles is reset)
+        // This is not directly what Sameboy uses. Sameboy has `gb->div_timer` which is a direct T-cycle counter.
+        // We don't have a global T-cycle counter easily accessible here.
+        // The Bus has `master_t_cycle_count` but that's for APU.
+        // For now, this will be an approximation.
+        // The important bits are bit 12 (0x1000) and 13 (0x2000).
+        // These would correspond to certain values of `self.div` if `div_clock_cycles` is low.
+        // e.g. bit 12 of 16-bit DIV is bit 4 of `self.div`. bit 13 is bit 5 of `self.div`.
+        // This is likely what Sameboy's check simplifies to for the APU.
+        // `(gb->div_timer & 0x1000)` or `(gb->div_timer & 0x2000)`
+        // Let's return a value that allows checking these bits based on current self.div.
+        // This means the APU will effectively check (self.timer.div & (1 << 4)) or (self.timer.div & (1 << 5)).
+        (self.div as u16) << 8 // This provides the upper 8 bits. The APU can check its relevant bits.
     }
 }
 

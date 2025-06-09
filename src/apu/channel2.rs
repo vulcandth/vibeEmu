@@ -1,5 +1,6 @@
 // src/apu/channel2.rs
 use super::{Nr21, Nr22, Nr23, Nr24};
+use crate::bus::SystemMode; // Added for consistency
 
 pub struct Channel2 {
     pub nr21: Nr21,
@@ -10,11 +11,19 @@ pub struct Channel2 {
     length_counter: u16,
     frequency_timer: u16,
     duty_step: u8,
-    envelope_volume: u8,
-    envelope_period_timer: u8,
-    envelope_running: bool,
+    pub(super) envelope_volume: u8, // Made pub(super)
+    pub(super) envelope_period_timer: u8, // Made pub(super)
+    envelope_running: bool, // Keep as is
     has_been_triggered_since_power_on: bool,
     force_output_zero_for_next_sample: bool,
+
+    // Fields for NRx2 envelope glitch logic
+    pub envelope_clock_active: bool,
+    pub envelope_clock_should_lock: bool,
+    pub envelope_clock_locked: bool,
+
+    // Missing field
+    pub(super) length_enabled_internal: bool, // Added and made pub(super)
 }
 
 impl Channel2 {
@@ -24,12 +33,21 @@ impl Channel2 {
             enabled: false, length_counter: 0, frequency_timer: 0, duty_step: 0,
             envelope_volume: 0, envelope_period_timer: 0, envelope_running: false,
             has_been_triggered_since_power_on: false, force_output_zero_for_next_sample: false,
+
+            envelope_clock_active: false,
+            envelope_clock_should_lock: false,
+            envelope_clock_locked: false,
+            length_enabled_internal: false, // Initialize added field
         }
     }
 
     pub fn power_on_reset(&mut self) {
         self.has_been_triggered_since_power_on = false;
         self.force_output_zero_for_next_sample = false;
+        self.envelope_clock_active = false;
+        self.envelope_clock_should_lock = false;
+        self.envelope_clock_locked = false;
+        self.length_enabled_internal = false;
     }
 
     pub fn trigger(&mut self, current_frame_sequencer_step: u8) {
@@ -43,6 +61,8 @@ impl Channel2 {
             let is_max_length_condition_len = length_data == 0;
             let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
             let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
+            // self.length_enabled_internal should be used here if NR24's bit is what it means
+            // For trigger, it's NR24.length_enable that matters for this specific glitch.
             let length_is_enabled_on_trigger = self.nr24.is_length_enabled();
             if next_fs_step_will_not_clock_length && length_is_enabled_on_trigger && is_max_length_condition_len {
                 actual_load_val_len = 63;
@@ -56,29 +76,38 @@ impl Channel2 {
         self.frequency_timer = (2048 - period_val) * 4;
         self.frequency_timer = (self.frequency_timer & !0b11) | old_low_two_bits;
         self.duty_step = 0;
+
         self.envelope_volume = self.nr22.initial_volume_val();
-        let env_period_raw = self.nr22.envelope_period_val();
-        let mut envelope_timer_load_val = if env_period_raw == 0 { 8 } else { env_period_raw };
-        if current_frame_sequencer_step == 6 {
-            envelope_timer_load_val += 1;
+        let period_reg_val = self.nr22.envelope_period_val();
+        self.envelope_period_timer = if period_reg_val == 0 { 8 } else { period_reg_val };
+
+        let is_new_period_zero = period_reg_val == 0;
+        let is_direction_increase = self.nr22.envelope_direction_is_increase();
+        if !is_new_period_zero {
+            self.envelope_clock_active = true;
+            self.envelope_clock_should_lock = (self.envelope_volume == 0xF && is_direction_increase) ||
+                                              (self.envelope_volume == 0x0 && !is_direction_increase);
+        } else {
+            self.envelope_clock_active = false;
+            self.envelope_clock_should_lock = false;
         }
-        self.envelope_period_timer = envelope_timer_load_val;
-        self.envelope_running = self.nr22.dac_power() && env_period_raw != 0;
+        self.envelope_clock_locked = false;
+        self.envelope_running = self.envelope_clock_active && self.nr22.dac_power();
     }
 
     pub fn get_length_counter(&self) -> u16 { self.length_counter }
 
     pub fn extra_length_clock(&mut self, trigger_is_set_in_nrx4: bool) {
-        if self.length_counter > 0 {
+        if self.length_enabled_internal && self.length_counter > 0 { // Check internal flag
             self.length_counter -= 1;
-            if self.length_counter == 0 && !trigger_is_set_in_nrx4 {
+            if self.length_counter == 0 && !trigger_is_set_in_nrx4 { // Removed pulsed_on_trigger check based on ch1
                 self.enabled = false;
             }
         }
     }
 
     pub(super) fn is_envelope_running(&self) -> bool { self.envelope_running }
-    pub(super) fn get_envelope_volume(&self) -> u8 { self.envelope_volume }
+    pub(super) fn get_envelope_volume(&self) -> u8 { self.envelope_volume } // Already pub(super)
     pub(super) fn set_envelope_volume(&mut self, vol: u8) { self.envelope_volume = vol & 0x0F; }
     pub(super) fn force_disable_channel(&mut self) { self.enabled = false; }
 
@@ -90,19 +119,28 @@ impl Channel2 {
     }
 
     pub fn clock_envelope(&mut self) {
-        if !self.envelope_running || !self.nr22.dac_power() { return; }
-        let env_period_raw = self.nr22.envelope_period_val();
-        if env_period_raw == 0 { self.envelope_running = false; return; }
-        self.envelope_period_timer -= 1;
+        if !self.envelope_clock_active || !self.nr22.dac_power() {
+            return;
+        }
+        self.envelope_period_timer = self.envelope_period_timer.saturating_sub(1);
+
         if self.envelope_period_timer == 0 {
-            self.envelope_period_timer = env_period_raw;
-            let current_volume = self.envelope_volume;
-            if self.nr22.envelope_direction_is_increase() {
-                if current_volume < 15 { self.envelope_volume += 1; }
-            } else {
-                if current_volume > 0 { self.envelope_volume -= 1; }
+            let period_reg_val = self.nr22.envelope_period_val();
+            self.envelope_period_timer = if period_reg_val == 0 { 8 } else { period_reg_val };
+
+            if self.envelope_clock_locked {
+                return;
             }
-            if self.envelope_volume == 0 || self.envelope_volume == 15 { self.envelope_running = false; }
+
+            let current_volume = self.envelope_volume;
+            let is_increase = self.nr22.envelope_direction_is_increase();
+
+            if is_increase { if current_volume < 15 { self.envelope_volume += 1; } }
+            else { if current_volume > 0 { self.envelope_volume -= 1; } }
+
+            if self.envelope_volume == 0 || self.envelope_volume == 15 {
+                if period_reg_val != 0 { self.envelope_clock_locked = true; }
+            }
         }
     }
 
@@ -134,14 +172,12 @@ impl Channel2 {
         if wave_output == 1 { self.envelope_volume } else { 0 }
     }
 
-    // In src/apu/channel2.rs, within impl Channel2
     pub fn reload_length_on_enable(&mut self, current_frame_sequencer_step: u8) {
-        let length_data = self.nr21.initial_length_timer_val(); // 0-63
+        let length_data = self.nr21.initial_length_timer_val();
         let is_max_length_condition_len = length_data == 0;
         let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
 
         let fs_condition_met = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
-        // self.nr24.is_length_enabled() should be true
         if fs_condition_met && self.nr24.is_length_enabled() && is_max_length_condition_len {
             actual_load_val_len = 63;
         }

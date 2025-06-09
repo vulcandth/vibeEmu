@@ -283,8 +283,10 @@ impl Ppu {
 
         // DMG Mode Specific: If LCDC Bit 0 is off, BG/Window are white (color 0 of BGP). Sprites can still draw.
         // In CGB Mode, LCDC Bit 0 is BG-to-OBJ Master Priority, not a display disable for BG/Win.
-        let bg_is_blank_dmg =
-            self.system_mode == crate::bus::SystemMode::DMG && (self.lcdc & (1 << 0)) == 0;
+        let is_dmg_mode = self.system_mode == crate::bus::SystemMode::DMG;
+        let is_cgb_mode = matches!(self.system_mode, crate::bus::SystemMode::CGB_0 | crate::bus::SystemMode::CGB_A | crate::bus::SystemMode::CGB_B | crate::bus::SystemMode::CGB_C | crate::bus::SystemMode::CGB_D | crate::bus::SystemMode::CGB_E);
+
+        let bg_is_blank_dmg = is_dmg_mode && (self.lcdc & (1 << 0)) == 0;
 
         if bg_is_blank_dmg {
             let dmg_color_0_idx = (self.bgp >> (0 * 2)) & 0b11; // Color for index 0 from BGP
@@ -337,7 +339,7 @@ impl Ppu {
                 let mut bg_y_flip: bool = false;
                 let mut bg_priority: bool = false;
 
-                if self.system_mode == crate::bus::SystemMode::CGB {
+                if is_cgb_mode {
                     let tile_attributes = self.vram[1][tile_index_map_addr];
                     bg_cgb_palette_idx = tile_attributes & 0x07;
                     bg_tile_data_bank = if (tile_attributes & (1 << 3)) != 0 {
@@ -384,7 +386,7 @@ impl Ppu {
                 let color_num = (color_bit0 << 1) | color_bit1;
 
                 let final_color: [u8; 3];
-                if self.system_mode == crate::bus::SystemMode::CGB {
+                if is_cgb_mode {
                     let palette_ram_base_idx =
                         (bg_cgb_palette_idx as usize * 8) + (color_num as usize * 2);
                     if palette_ram_base_idx + 1 < self.cgb_bg_palette_ram.len() {
@@ -441,7 +443,7 @@ impl Ppu {
                         let mut win_y_flip: bool = false;
                         let mut win_priority: bool = false;
 
-                        if self.system_mode == crate::bus::SystemMode::CGB {
+                        if is_cgb_mode {
                             let win_attributes = self.vram[1][tile_index_map_addr_win];
                             win_cgb_palette_idx = win_attributes & 0x07;
                             win_tile_data_bank = if (win_attributes & (1 << 3)) != 0 {
@@ -482,7 +484,7 @@ impl Ppu {
                             | ((byte1_win >> pixel_x_in_tile_bit_pos_win) & 1);
 
                         let final_color_win: [u8; 3];
-                        if self.system_mode == crate::bus::SystemMode::CGB {
+                        if is_cgb_mode {
                             let palette_ram_base_idx =
                                 (win_cgb_palette_idx as usize * 8) + (color_num_win as usize * 2);
                             if palette_ram_base_idx + 1 < self.cgb_bg_palette_ram.len() {
@@ -587,7 +589,14 @@ impl Ppu {
                             .then_with(|| a.oam_idx.cmp(&b.oam_idx))
                     });
                 }
-                crate::bus::SystemMode::CGB => {
+                // All CGB modes and AGB (for now) use OAM index for sprite priority
+                crate::bus::SystemMode::CGB_0 |
+                crate::bus::SystemMode::CGB_A |
+                crate::bus::SystemMode::CGB_B |
+                crate::bus::SystemMode::CGB_C |
+                crate::bus::SystemMode::CGB_D |
+                crate::bus::SystemMode::CGB_E |
+                crate::bus::SystemMode::AGB => { // Assuming AGB uses similar OAM priority for sprites
                     candidate_sprites.sort_by_key(|s| s.oam_idx);
                 }
             }
@@ -603,7 +612,7 @@ impl Ppu {
                 let tile_data_offset_in_bank_sprite = sprite_info.tile_index_resolved as usize * 16;
                 let tile_row_data_addr_in_bank_sprite =
                     tile_data_offset_in_bank_sprite + (tile_row_y_for_vram as usize * 2);
-                let active_sprite_vram_bank = if self.system_mode == crate::bus::SystemMode::CGB {
+                let active_sprite_vram_bank = if is_cgb_mode { // Use is_cgb_mode helper
                     sprite_info.cgb_vram_bank
                 } else {
                     0
@@ -641,8 +650,8 @@ impl Ppu {
                         continue;
                     }
 
-                    let final_sprite_color_rgb: [u8; 3]; // Removed 'mut'
-                    if self.system_mode == crate::bus::SystemMode::CGB {
+                    let final_sprite_color_rgb: [u8; 3];
+                    if is_cgb_mode {
                         let palette_ram_base_idx = (sprite_info.cgb_palette_idx as usize * 8)
                             + (color_num_sprite as usize * 2);
                         if palette_ram_base_idx + 1 < self.cgb_obj_palette_ram.len() {
@@ -661,28 +670,21 @@ impl Ppu {
 
                     let mut draw_sprite_pixel = true;
                     let bg_color_idx = self.bg_color_index_buffer[screen_pixel_x as usize];
-                    let bg_win_display_enabled_dmg = self.system_mode
-                        == crate::bus::SystemMode::DMG
-                        && (self.lcdc & (1 << 0)) != 0;
-                    if self.system_mode == crate::bus::SystemMode::CGB {
+                    if is_cgb_mode { // CGB Mode Sprite Priority
                         if (self.lcdc & (1 << 0)) == 0 {
                             if bg_color_idx != 0 {
                                 draw_sprite_pixel = false;
                             }
                         } else {
-                            if self.bg_priority_buffer[screen_pixel_x as usize] && bg_color_idx != 0
-                            {
+                            if self.bg_priority_buffer[screen_pixel_x as usize] && bg_color_idx != 0 {
                                 draw_sprite_pixel = false;
-                            } else if !sprite_info.sprite_has_priority_over_bg && bg_color_idx != 0
-                            {
+                            } else if !sprite_info.sprite_has_priority_over_bg && bg_color_idx != 0 {
                                 draw_sprite_pixel = false;
                             }
                         }
-                    } else {
-                        if bg_win_display_enabled_dmg
-                            && !sprite_info.sprite_has_priority_over_bg
-                            && bg_color_idx != 0
-                        {
+                    } else { // DMG Mode Sprite Priority
+                        let bg_win_actually_displayed_dmg = is_dmg_mode && (self.lcdc & (1 << 0)) != 0;
+                        if bg_win_actually_displayed_dmg && !sprite_info.sprite_has_priority_over_bg && bg_color_idx != 0 {
                             draw_sprite_pixel = false;
                         }
                     }
@@ -701,6 +703,7 @@ impl Ppu {
 
     pub fn read_byte(&self, addr: u16) -> u8 {
         let mode = self.stat & 0b11; // Current PPU mode
+        let is_cgb_mode = matches!(self.system_mode, crate::bus::SystemMode::CGB_0 | crate::bus::SystemMode::CGB_A | crate::bus::SystemMode::CGB_B | crate::bus::SystemMode::CGB_C | crate::bus::SystemMode::CGB_D | crate::bus::SystemMode::CGB_E);
 
         // OAM Read Restrictions
         if addr >= 0xFE00 && addr <= 0xFE9F {
@@ -718,9 +721,8 @@ impl Ppu {
 
         match addr {
             0x8000..=0x9FFF => {
-                // Already checked for VRAM restrictions above if mode == MODE_DRAWING
                 let relative_addr = (addr - 0x8000) as usize;
-                if self.system_mode == crate::bus::SystemMode::CGB {
+                if is_cgb_mode {
                     let bank = self.vbk as usize;
                     self.vram[bank][relative_addr]
                 } else {
@@ -728,7 +730,6 @@ impl Ppu {
                 }
             }
             0xFE00..=0xFE9F => {
-                // Already checked for OAM restrictions above if mode == MODE_OAM_SCAN || mode == MODE_DRAWING
                 let relative_addr = addr - 0xFE00;
                 self.oam[relative_addr as usize]
             }
@@ -749,28 +750,29 @@ impl Ppu {
             0xFF49 => self.obp1,
             0xFF4A => self.wy,
             0xFF4B => self.wx,
-            0xFF4F => self.vbk | 0xFE, // VBK - CGB VRAM Bank Select (only bit 0 used, others read as 1)
-            // CGB Palette Registers
+            0xFF4F => self.vbk | 0xFE,
             0xFF68 => self.bcps,
             0xFF69 => {
-                // BCPD - Background Color Palette Data
-                // Note: Reading BCPD should only occur if self.system_mode == SystemMode::CGB
-                // However, for now, we allow the read even in DMG to simplify.
-                // A real DMG would ignore or behave differently.
-                let index = (self.bcps & 0x3F) as usize;
-                if index < 64 {
-                    self.cgb_bg_palette_ram[index]
+                if is_cgb_mode {
+                    let index = (self.bcps & 0x3F) as usize;
+                    if index < 64 {
+                        self.cgb_bg_palette_ram[index]
+                    } else {
+                        0xFF
+                    }
                 } else {
                     0xFF
                 }
             }
             0xFF6A => self.ocps,
             0xFF6B => {
-                // OCPD - Object Color Palette Data
-                // Note: Similar CGB mode consideration as BCPD.
-                let index = (self.ocps & 0x3F) as usize;
-                if index < 64 {
-                    self.cgb_obj_palette_ram[index]
+                if is_cgb_mode {
+                    let index = (self.ocps & 0x3F) as usize;
+                    if index < 64 {
+                        self.cgb_obj_palette_ram[index]
+                    } else {
+                        0xFF
+                    }
                 } else {
                     0xFF
                 }
@@ -781,34 +783,33 @@ impl Ppu {
 
     pub fn write_byte(&mut self, addr: u16, value: u8) {
         let mode = self.stat & 0b11; // Current PPU mode
+        let is_cgb_mode = matches!(self.system_mode, crate::bus::SystemMode::CGB_0 | crate::bus::SystemMode::CGB_A | crate::bus::SystemMode::CGB_B | crate::bus::SystemMode::CGB_C | crate::bus::SystemMode::CGB_D | crate::bus::SystemMode::CGB_E);
 
         // OAM Write Restrictions
         if addr >= 0xFE00 && addr <= 0xFE9F {
             if mode == MODE_OAM_SCAN || mode == MODE_DRAWING {
-                return; // Ignore write to OAM during Mode 2 or 3
+                return;
             }
         }
 
         // VRAM Write Restrictions
         if addr >= 0x8000 && addr <= 0x9FFF {
             if mode == MODE_DRAWING {
-                return; // Ignore write to VRAM during Mode 3
+                return;
             }
         }
 
         match addr {
             0x8000..=0x9FFF => {
-                // Already checked for VRAM restrictions above if mode == MODE_DRAWING
                 let relative_addr = (addr - 0x8000) as usize;
-                if self.system_mode == crate::bus::SystemMode::CGB {
+                if is_cgb_mode {
                     let bank = self.vbk as usize;
                     self.vram[bank][relative_addr] = value;
                 } else {
-                    self.vram[0][relative_addr] = value; // DMG always uses bank 0
+                    self.vram[0][relative_addr] = value;
                 }
             }
             0xFE00..=0xFE9F => {
-                // Already checked for OAM restrictions above if mode == MODE_OAM_SCAN || mode == MODE_DRAWING
                 let relative_addr = addr - 0xFE00;
                 self.oam[relative_addr as usize] = value;
             }
@@ -839,46 +840,36 @@ impl Ppu {
             0xFF4A => self.wy = value,
             0xFF4B => self.wx = value,
             0xFF4F => {
-                // VBK - CGB VRAM Bank Select
-                if self.system_mode == crate::bus::SystemMode::CGB {
-                    self.vbk = value & 1; // Only bit 0 is writable
+                if is_cgb_mode {
+                    self.vbk = value & 1;
                 }
-                // In DMG mode, writes to VBK are ignored.
             }
-            // CGB Palette Registers
             0xFF68 => {
-                // BCPS - Background Color Palette Specification
-                // Note: Writing BCPS should ideally only occur if self.system_mode == SystemMode::CGB
-                self.bcps = value;
+                if is_cgb_mode { self.bcps = value; }
             }
             0xFF69 => {
-                // BCPD - Background Color Palette Data
-                // Note: Similar CGB mode consideration.
-                // DMG hardware would ignore writes to 0xFF69.
-                // For CGB, perform write if PPU not in mode 3? Some docs say these are accessible always.
-                // For now, let's assume they are writable if address matches.
-                let index = (self.bcps & 0x3F) as usize;
-                if index < 64 {
-                    self.cgb_bg_palette_ram[index] = value;
-                }
-                if (self.bcps & 0x80) != 0 {
-                    // Auto-increment BCPS if bit 7 is set
-                    self.bcps = 0x80 | (((index + 1) & 0x3F) as u8);
+                if is_cgb_mode {
+                    let index = (self.bcps & 0x3F) as usize;
+                    if index < 64 {
+                        self.cgb_bg_palette_ram[index] = value;
+                    }
+                    if (self.bcps & 0x80) != 0 {
+                        self.bcps = 0x80 | (((index + 1) & 0x3F) as u8);
+                    }
                 }
             }
             0xFF6A => {
-                // OCPS - Object Color Palette Specification
-                self.ocps = value;
+                if is_cgb_mode { self.ocps = value; }
             }
             0xFF6B => {
-                // OCPD - Object Color Palette Data
-                let index = (self.ocps & 0x3F) as usize;
-                if index < 64 {
-                    self.cgb_obj_palette_ram[index] = value;
-                }
-                if (self.ocps & 0x80) != 0 {
-                    // Auto-increment OCPS if bit 7 is set
-                    self.ocps = 0x80 | (((index + 1) & 0x3F) as u8);
+                if is_cgb_mode {
+                    let index = (self.ocps & 0x3F) as usize;
+                    if index < 64 {
+                        self.cgb_obj_palette_ram[index] = value;
+                    }
+                    if (self.ocps & 0x80) != 0 {
+                        self.ocps = 0x80 | (((index + 1) & 0x3F) as u8);
+                    }
                 }
             }
             _ => {}

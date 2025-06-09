@@ -3,7 +3,13 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemMode {
     DMG,
-    CGB,
+    CGB_0, // Earliest CGB revision
+    CGB_A,
+    CGB_B,
+    CGB_C,
+    CGB_D, // Common CGB revision
+    CGB_E,
+    AGB,   // Game Boy Advance
 }
 
 use crate::apu::Apu;
@@ -119,7 +125,9 @@ impl Bus {
         if rom_data.len() >= 0x0144 { // Check for CGB flag existence
             let cgb_flag = rom_data[0x0143];
             if cgb_flag == 0x80 || cgb_flag == 0xC0 {
-                determined_mode = SystemMode::CGB;
+                // Default to a common CGB revision for now when CGB mode is detected.
+                // This can be refined later or made configurable.
+                determined_mode = SystemMode::CGB_D;
             }
         }
 
@@ -168,7 +176,7 @@ impl Bus {
             mbc, // Store the initialized MBC
             memory: Memory::new(),
             ppu: Ppu::new(ppu_system_mode), // Pass system_mode to Ppu
-            apu: Apu::new(),
+            apu: Apu::new(determined_mode), // Pass determined_mode to Apu
             joypad: Joypad::new(), // Initialize joypad
             timer: Timer::new(),
             system_mode: determined_mode,
@@ -213,7 +221,9 @@ impl Bus {
         }
 
         // Check for HDMA trigger based on PPU state
-        if self.system_mode == SystemMode::CGB && self.hdma_active && self.ppu.just_entered_hblank {
+        // Need to check against all CGB modes now
+        let is_cgb_mode = matches!(self.system_mode, SystemMode::CGB_0 | SystemMode::CGB_A | SystemMode::CGB_B | SystemMode::CGB_C | SystemMode::CGB_D | SystemMode::CGB_E);
+        if is_cgb_mode && self.hdma_active && self.ppu.just_entered_hblank {
             self.hblank_hdma_pending = true;
             self.ppu.just_entered_hblank = false; // Bus acknowledged the HBlank signal for HDMA
         }
@@ -334,6 +344,14 @@ impl Bus {
 
     pub fn get_system_mode(&self) -> SystemMode {
         self.system_mode
+    }
+
+    pub fn set_system_mode(&mut self, mode: SystemMode) {
+        self.system_mode = mode;
+        // Potentially need to inform other components like PPU, APU, CPU if they also need to change behavior dynamically.
+        // For now, this just sets the mode on the bus. PPU.system_mode is set at Ppu::new.
+        // CPU registers are set at Cpu::new. APU system_mode is set at Apu::new.
+        // If dynamic switching implies re-initialization or mode change for these, that logic would go here or be handled by them.
     }
 
     #[allow(dead_code)] // Added to address unused method warning
@@ -524,7 +542,15 @@ impl Bus {
                     }
                     0xFF04..=0xFF07 => self.timer.write_byte(addr, value), // Route to Timer
                     0xFF0F => { self.if_register = value & 0x1F; }, // IF - Interrupt Flag Register
-                    0xFF10..=0xFF3F => self.apu.write_byte(addr, value), // APU registers
+                    0xFF10..=0xFF3F => { // APU registers
+                        if addr == 0xFF26 { // NR52_ADDR
+                            // For NR52 power-on, APU needs access to DIV counter for a glitch
+                            let div_counter = self.timer.get_div_counter();
+                            self.apu.write_byte(addr, value, self.is_double_speed, div_counter); // Pass div_counter
+                        } else {
+                            self.apu.write_byte(addr, value, self.is_double_speed, 0); // Pass dummy div_counter for other APU regs
+                        }
+                    }
                     // PPU registers excluding 0xFF46 (DMA)
                     0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => self.ppu.write_byte(addr, value),
                     0xFF46 => { // OAM DMA Start Register
@@ -546,7 +572,9 @@ impl Bus {
                     0xFF53 => self.hdma3_dest_high = value & 0x1F, // Upper 3 bits ignored (dest in 0x8000-0x9FFF)
                     0xFF54 => self.hdma4_dest_low = value & 0xF0,  // Lower 4 bits ignored
                     0xFF55 => { // HDMA5 - DMA Control/Start
-                        if self.system_mode == SystemMode::DMG { return; } // CGB Only feature
+                        // CGB Only feature, AGB might have different DMA
+                        let is_cgb_mode = matches!(self.system_mode, SystemMode::CGB_0 | SystemMode::CGB_A | SystemMode::CGB_B | SystemMode::CGB_C | SystemMode::CGB_D | SystemMode::CGB_E);
+                        if !is_cgb_mode { return; } // Not DMG, but also not AGB for this specific DMA
 
                         // Source address
                         self.hdma_current_src = ((self.hdma1_src_high as u16) << 8) | (self.hdma2_src_low as u16);
@@ -877,15 +905,15 @@ mod tests {
     fn test_bus_system_mode_selection() {
         // Test CGB mode selection (0x80)
         let mut rom_cgb1 = vec![0u8; 0x150];
-        rom_cgb1[0x0143] = 0x80;
+        rom_cgb1[0x0143] = 0x80; // CGB flag
         let bus_cgb1 = Bus::new(rom_cgb1);
-        assert_eq!(bus_cgb1.get_system_mode(), SystemMode::CGB, "Failed CGB mode (0x80)");
+        assert_eq!(bus_cgb1.get_system_mode(), SystemMode::CGB_D, "Failed CGB mode (0x80 should default to CGB_D)");
 
         // Test CGB mode selection (0xC0)
         let mut rom_cgb2 = vec![0u8; 0x150];
-        rom_cgb2[0x0143] = 0xC0;
+        rom_cgb2[0x0143] = 0xC0; // CGB flag (CGB hardware + SGB functions)
         let bus_cgb2 = Bus::new(rom_cgb2);
-        assert_eq!(bus_cgb2.get_system_mode(), SystemMode::CGB, "Failed CGB mode (0xC0)");
+        assert_eq!(bus_cgb2.get_system_mode(), SystemMode::CGB_D, "Failed CGB mode (0xC0 should default to CGB_D)");
 
         // Test DMG mode selection (0x00)
         let mut rom_dmg = vec![0u8; 0x150];
@@ -907,8 +935,13 @@ mod tests {
 
     #[test]
     fn test_key1_register_read_write() {
-        let rom_data = vec![0u8; 0x150]; // Generic ROM
+        let mut rom_data = vec![0u8; 0x150]; // Generic ROM
+        // To test KEY1, bus should be in a CGB mode.
+        // Let's make this ROM CGB by default for this test.
+        rom_data[0x0143] = 0x80; // CGB flag
         let mut bus = Bus::new(rom_data);
+        assert!(matches!(bus.get_system_mode(), SystemMode::CGB_D), "Bus should be in CGB_D mode for KEY1 tests");
+
 
         // Initial state
         assert!(!bus.get_is_double_speed(), "Initial is_double_speed should be false");
