@@ -22,6 +22,7 @@ pub struct Channel1 {
     force_output_zero_for_next_sample: bool,
     subtraction_sweep_calculated_since_trigger: bool,
     initial_delay_countdown: u8, // For SameBoy's trigger initial sample delay
+    channel_1_restart_hold: bool, // For sweep trigger behavior
 }
 
 impl Channel1 {
@@ -35,6 +36,7 @@ impl Channel1 {
             has_been_triggered_since_power_on: false, force_output_zero_for_next_sample: false,
             subtraction_sweep_calculated_since_trigger: false,
             initial_delay_countdown: 0,
+            channel_1_restart_hold: false,
         }
     }
 
@@ -43,10 +45,12 @@ impl Channel1 {
         self.force_output_zero_for_next_sample = false;
         self.subtraction_sweep_calculated_since_trigger = false;
         self.initial_delay_countdown = 0;
+        self.channel_1_restart_hold = false;
     }
 
     // lf_div is (main_clock_cycles / 16) & 1, effectively. (0 or 1)
-    pub fn trigger(&mut self, current_frame_sequencer_step: u8, lf_div: u8) {
+    // length_enabled_from_nrx4: The state of bit 6 of the NRx4 value causing this trigger.
+    pub fn trigger(&mut self, current_frame_sequencer_step: u8, lf_div: u8, length_enabled_from_nrx4: bool) {
         let was_enabled_before_this_trigger = self.enabled; // Check before self.enabled might be set true
 
         self.subtraction_sweep_calculated_since_trigger = false;
@@ -73,9 +77,13 @@ impl Channel1 {
             let length_data = self.nr11.initial_length_timer_val();
             let is_max_length_condition_len = length_data == 0;
             let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
-            let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
-            let length_is_enabled_on_trigger = self.nr14.is_length_enabled();
-            if next_fs_step_will_not_clock_length && length_is_enabled_on_trigger && is_max_length_condition_len {
+
+            // Glitch: If length timer is reloaded when FS is due to clock length on the *next* step (i.e. current step is 0,2,4,6),
+            // and length is being enabled by the NRx4 write, and it's max length, load 63.
+            let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6); // Correct for "next step will clock"
+
+            // Use the length_enabled_from_nrx4 passed in, which reflects the NRx4 value causing the trigger
+            if next_fs_step_will_not_clock_length && length_enabled_from_nrx4 && is_max_length_condition_len {
                 actual_load_val_len = 63;
             }
             self.length_counter = actual_load_val_len;
@@ -100,10 +108,21 @@ impl Channel1 {
         // Initialize sweep_calculate_countdown
         self.sweep_calculate_countdown = if sweep_period_raw == 0 { 8 } else { sweep_period_raw };
         self.sweep_enabled = sweep_period_raw != 0 || self.nr10.sweep_shift_val() != 0;
+        self.channel_1_restart_hold = true; // Set on trigger
         self.sweep_calculated_overflow_this_step = false; // Reset this flag on trigger
+
+        // Initial sweep calculation if shift > 0
         if self.sweep_enabled && self.nr10.sweep_shift_val() != 0 {
             let new_freq = self.calculate_sweep_frequency();
-            if new_freq > 2047 { self.enabled = false; self.sweep_calculated_overflow_this_step = true; }
+            if new_freq > 2047 {
+                // If channel_1_restart_hold is true, channel is NOT disabled by this initial overflow.
+                // Frequency is not updated either.
+                if !self.channel_1_restart_hold { // Should always be true here due to above line, but for clarity
+                    self.enabled = false;
+                }
+                self.sweep_calculated_overflow_this_step = true;
+            }
+            // No frequency update here even if not overflowed; only on clock_sweep ticks.
         }
     }
 
@@ -195,20 +214,35 @@ impl Channel1 {
                 return;
             }
 
-            // At this point: shift > 0 and new_freq <= 2047
-            self.sweep_shadow_frequency = new_freq;
-            self.nr13.write((new_freq & 0xFF) as u8);
-            self.nr14.write_frequency_msb(((new_freq >> 8) & 0x07) as u8);
+            // At this point: shift > 0 and new_freq <= 2047 (first calculation passed or was held)
 
-            // A successful calculation and update happened, so clear the flag for this step
-            self.sweep_calculated_overflow_this_step = false;
+            let performing_update_after_hold = self.channel_1_restart_hold;
+            if self.channel_1_restart_hold {
+                self.channel_1_restart_hold = false; // Consume hold
+            }
 
-            // Perform the second overflow check using the new shadow frequency
-            let final_check_freq = self.calculate_sweep_frequency();
-            if final_check_freq > 2047 {
-                self.enabled = false;
-                // self.sweep_calculated_overflow_this_step = true; // Channel is disabled, output will be 0.
-                                                                // No need to set this again explicitly as primary effect is disabling.
+            // If restart_hold was active, and first calc overflowed (new_freq > 2047),
+            // we don't update frequency or disable channel from *that* first calc.
+            // The channel remains enabled, shadow_freq is old, but overflow_this_step might be true.
+            // If we are here due to hold, and first calc overflowed, new_freq is bad.
+            // We should effectively skip update if initial calc (on trigger) overflowed while hold was active.
+            if performing_update_after_hold && self.sweep_calculated_overflow_this_step {
+                 // Initial trigger calc overflowed, hold was active. Do not update frequency.
+                 // Channel remains enabled. sweep_calculated_overflow_this_step remains true.
+            } else {
+                // Normal operation or initial trigger calc did not overflow.
+                self.sweep_shadow_frequency = new_freq;
+                self.nr13.write((new_freq & 0xFF) as u8);
+                self.nr14.write_frequency_msb(((new_freq >> 8) & 0x07) as u8);
+
+                self.sweep_calculated_overflow_this_step = false; // Successful update
+
+                // Perform the second overflow check using the new shadow frequency
+                let final_check_freq = self.calculate_sweep_frequency();
+                if final_check_freq > 2047 {
+                    self.enabled = false;
+                    self.sweep_calculated_overflow_this_step = true;
+                }
             }
         }
     }
@@ -263,23 +297,23 @@ impl Channel1 {
         if wave_output == 1 { self.envelope_volume } else { 0 }
     }
 
-    pub fn reload_length_on_enable(&mut self, current_frame_sequencer_step: u8) {
-        // Channel is not explicitly enabled here by just loading length,
-        // its status depends on trigger or if it was already enabled.
-        // DAC power is a prerequisite for sound output, not for length counter loading.
+    // pub fn reload_length_on_enable(&mut self, current_frame_sequencer_step: u8) { // Now unused
+    //     // Channel is not explicitly enabled here by just loading length,
+    //     // its status depends on trigger or if it was already enabled.
+    //     // DAC power is a prerequisite for sound output, not for length counter loading.
 
-        let length_data = self.nr11.initial_length_timer_val(); // 0-63
-        let is_max_length_condition_len = length_data == 0;
-        let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
+    //     let length_data = self.nr11.initial_length_timer_val(); // 0-63
+    //     let is_max_length_condition_len = length_data == 0;
+    //     let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
 
-        // Apply the "set to 63 instead of 64" obscure behavior.
-        // Condition: Next Frame Sequencer step doesn't clock length (current_frame_sequencer_step is 0, 2, 4, or 6),
-        // AND length is enabled in NR14, AND NR11's length data was 0 (meaning max length).
-        let fs_condition_met = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
-        // self.nr14.is_length_enabled() should be true if this path is taken from apu.rs
-        if fs_condition_met && self.nr14.is_length_enabled() && is_max_length_condition_len {
-            actual_load_val_len = 63;
-        }
-        self.length_counter = actual_load_val_len;
-    }
+    //     // Apply the "set to 63 instead of 64" obscure behavior.
+    //     // Condition: Next Frame Sequencer step doesn't clock length (current_frame_sequencer_step is 0, 2, 4, or 6),
+    //     // AND length is enabled in NR14, AND NR11's length data was 0 (meaning max length).
+    //     let fs_condition_met = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
+    //     // self.nr14.is_length_enabled() should be true if this path is taken from apu.rs
+    //     if fs_condition_met && self.nr14.is_length_enabled() && is_max_length_condition_len {
+    //         actual_load_val_len = 63;
+    //     }
+    //     self.length_counter = actual_load_val_len;
+    // }
 }

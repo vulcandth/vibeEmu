@@ -28,7 +28,7 @@ impl Channel3 {
         }
     }
 
-    pub fn trigger(&mut self, wave_ram: &[u8;16], current_frame_sequencer_step: u8) {
+    pub fn trigger(&mut self, wave_ram: &[u8;16], current_frame_sequencer_step: u8, length_enabled_from_nrx4: bool) {
         self.enabled = self.nr30.dac_on();
         self.wave_form_just_read = false;
         self.pulsed = true; // Set on trigger per SameBoy
@@ -38,8 +38,8 @@ impl Channel3 {
             let is_max_length_condition = length_data == 0;
             let mut actual_load_val = if is_max_length_condition { 256 } else { 256 - (length_data as u16) };
             let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
-            let length_is_enabled_on_trigger = self.nr34.is_length_enabled();
-            if next_fs_step_will_not_clock_length && length_is_enabled_on_trigger && is_max_length_condition {
+            // Use the length_enabled_from_nrx4 passed in
+            if next_fs_step_will_not_clock_length && length_enabled_from_nrx4 && is_max_length_condition {
                 actual_load_val = 255;
             }
             self.length_counter = actual_load_val;
@@ -48,10 +48,19 @@ impl Channel3 {
         let freq_lsb = self.nr33.freq_lo_val() as u16;
         let freq_msb = self.nr34.frequency_msb_val() as u16;
         let period_val = (freq_msb << 8) | freq_lsb;
-        self.frequency_timer = (2048 - period_val) * 2; // Current initialization
+        // SameBoy: (period_val ^ 0x7FF) + 3. Our timer is *2 due to T-cycles vs M-cycles.
+        // ( (period_val ^ 0x7FF) + C ) * 2. Let C=2.
+        // period_val ^ 0x7FF is (2047 - period_val) because period_val <= 2047.
+        // So, (2047 - period_val + 2) * 2 = (2049 - period_val) * 2.
+        // Ensure period_val doesn't exceed 2049 for positive result, though max is 2047.
+        if period_val <= 2049 { // Max period_val is 2047, so this is always true.
+             self.frequency_timer = (2049u16.saturating_sub(period_val)) * 2;
+        } else { // Should not happen with valid period_val
+             self.frequency_timer = 0;
+        }
         self.sample_index = 0; // Reset sample index
 
-        // If frequency timer is immediately 0 (e.g. period_val is 2047),
+        // If frequency timer is immediately 0 (e.g. period_val is 2049 or more, or 2047 with C=2),
         // pre-load the first nibble from wave_ram[0].
         // This aligns with SameBoy loading sample_byte if sample_countdown is 0 on trigger.
         if self.frequency_timer == 0 && self.enabled {
@@ -147,6 +156,10 @@ impl Channel3 {
         self.pulsed = val;
     }
 
+    pub(super) fn is_active(&self) -> bool {
+        self.enabled && self.nr30.dac_on()
+    }
+
     /// Reloads the current_sample_buffer based on the current sample_index and wave_ram.
     /// Used when DAC is disabled at a specific timing per SameBoy.
     pub(super) fn reload_current_sample_buffer(&mut self, wave_ram: &[u8;16]) {
@@ -166,17 +179,17 @@ impl Channel3 {
     }
 
     // In src/apu/channel3.rs, within impl Channel3
-    pub fn reload_length_on_enable(&mut self, current_frame_sequencer_step: u8) {
-        let length_data = self.nr31.sound_length_val(); // 0-255
-        let is_max_length_condition_len = length_data == 0;
-        // Max length for channel 3 is 256
-        let mut actual_load_val_len = if is_max_length_condition_len { 256 } else { 256 - length_data as u16 };
+    // pub fn reload_length_on_enable(&mut self, current_frame_sequencer_step: u8) { // Now unused
+    //     let length_data = self.nr31.sound_length_val(); // 0-255
+    //     let is_max_length_condition_len = length_data == 0;
+    //     // Max length for channel 3 is 256
+    //     let mut actual_load_val_len = if is_max_length_condition_len { 256 } else { 256 - length_data as u16 };
 
-        let fs_condition_met = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
-        // self.nr34.is_length_enabled() should be true
-        if fs_condition_met && self.nr34.is_length_enabled() && is_max_length_condition_len {
-            actual_load_val_len = 255;
-        }
-        self.length_counter = actual_load_val_len;
-    }
+    //     let fs_condition_met = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
+    //     // self.nr34.is_length_enabled() should be true
+    //     if fs_condition_met && self.nr34.is_length_enabled() && is_max_length_condition_len {
+    //         actual_load_val_len = 255;
+    //     }
+    //     self.length_counter = actual_load_val_len;
+    // }
 }

@@ -687,9 +687,7 @@ impl Apu {
             },
             NR11_ADDR => {
                 self.channel1.nr11.write(value);
-                if self.channel1.enabled && self.channel1.nr14.is_length_enabled() {
-                    self.channel1.reload_length_on_enable(self.frame_sequencer_step);
-                }
+                // Removed: reload_length_on_enable call, NRx1 write should only set length data.
             },
             NR12_ADDR => {
                 let old_nr12_val = self.channel1.nr12.read();
@@ -774,6 +772,10 @@ impl Apu {
                 let new_len_enabled_from_value = (value & 0x40) != 0;
                 let trigger_from_value = (value & 0x80) != 0;
 
+                // 2. Actual NR14 write (this updates internal nr14 state including trigger flag and length_enable)
+                // Moved EARLIER to match SameBoy: NRx4 is written before other trigger effects.
+                self.channel1.nr14.write(value);
+
                 // 1. Length Clock Glitch Check
                 // Occurs if length is being enabled, on a FS step that normally clocks length, and length counter > 0.
                 let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7);
@@ -781,29 +783,25 @@ impl Apu {
                     self.channel1.extra_length_clock(trigger_from_value); // Pass trigger state from current write
                 }
 
-                // 2. Actual NR14 write (this updates internal nr14 state including trigger flag and length_enable)
-                self.channel1.nr14.write(value);
-
                 // 3. Triggering or Length Enabling Logic
+                // self.channel1.nr14.is_length_enabled() inside trigger will now use the NEW value.
                 if self.channel1.nr14.consume_trigger_flag() { // Checks internal flag set by write(value), effectively 'trigger_from_value'
                     let lf_div = 0; // Placeholder for actual (div_clock_sync >> 4) & 1 logic
-                    self.channel1.trigger(self.frame_sequencer_step, lf_div);
+                    self.channel1.trigger(self.frame_sequencer_step, lf_div, new_len_enabled_from_value);
                 } else {
-                    // If not triggered by this write, but length was just enabled by this write (value had bit 6 set)
-                    // new_len_enabled_from_value is the same as self.channel1.nr14.is_length_enabled() at this point if write was successful
-                    if new_len_enabled_from_value && !prev_len_enabled {
-                        // Reload length counter. This handles:
-                        // - Loading 64 (or 64-data) if it was 0.
-                        // - Applying the "63 instead of 64" rule if applicable (when data is 0 for max length).
-                        self.channel1.reload_length_on_enable(self.frame_sequencer_step);
-                    }
+                    // If not triggered by this write, but length was just enabled by this write (value had bit 6 set).
+                    // As per SameBoy, enabling length via NRx4 bit 6 does not by itself reload the length counter
+                    // from NRx1 data if the counter is currently 0. It just enables length for the current counter value.
+                    // The length counter is loaded from NRx1 data only on a trigger.
+                    // So, the call to reload_length_on_enable here was likely incorrect.
+                    // if new_len_enabled_from_value && !prev_len_enabled {
+                    //     self.channel1.reload_length_on_enable(self.frame_sequencer_step);
+                    // }
                 }
             },
             NR21_ADDR => {
                 self.channel2.nr21.write(value);
-                if self.channel2.enabled && self.channel2.nr24.is_length_enabled() {
-                    self.channel2.reload_length_on_enable(self.frame_sequencer_step);
-                }
+                // Removed: reload_length_on_enable call
             },
             NR22_ADDR => { // Apply same NRx2 glitch logic as for NR12
                 let old_nr22_val = self.channel2.nr22.read();
@@ -869,23 +867,23 @@ impl Apu {
                 let new_len_enabled_from_value = (value & 0x40) != 0;
                 let trigger_from_value = (value & 0x80) != 0; // Used for extra_length_clock and consume_trigger_flag
 
+                // 2. Actual NR24 write - Moved EARLIER
+                self.channel2.nr24.write(value);
+
                 // 1. Length Clock Glitch Check (Corrected logic)
                 let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7);
                 if new_len_enabled_from_value && !prev_len_enabled && fs_step_is_length_clocking_type && len_counter_was_non_zero {
                     self.channel2.extra_length_clock(trigger_from_value);
                 }
 
-                // 2. Actual NR24 write
-                self.channel2.nr24.write(value);
-
                 // 3. Triggering or Length Enabling Logic
                 if self.channel2.nr24.consume_trigger_flag() { // Checks internal flag set by write(value)
                     let lf_div = 0; // Placeholder
-                    self.channel2.trigger(self.frame_sequencer_step, lf_div);
+                    self.channel2.trigger(self.frame_sequencer_step, lf_div, new_len_enabled_from_value);
                 } else {
-                    if new_len_enabled_from_value && !prev_len_enabled {
-                        self.channel2.reload_length_on_enable(self.frame_sequencer_step);
-                    }
+                    // if new_len_enabled_from_value && !prev_len_enabled {
+                    //     self.channel2.reload_length_on_enable(self.frame_sequencer_step);
+                    // }
                 }
             },
             NR30_ADDR => {
@@ -908,9 +906,7 @@ impl Apu {
             },
             NR31_ADDR => {
                 self.channel3.nr31.write(value);
-                if self.channel3.enabled && self.channel3.nr34.is_length_enabled() {
-                    self.channel3.reload_length_on_enable(self.frame_sequencer_step);
-                }
+                // Removed: reload_length_on_enable call
             },
             NR32_ADDR => self.channel3.nr32.write(value),
             NR33_ADDR => self.channel3.nr33.write(value),
@@ -928,29 +924,27 @@ impl Apu {
                 let new_len_enabled_from_value = (value & 0x40) != 0;
                 let trigger_from_value = (value & 0x80) != 0;
 
+                // 2. Actual NR34 write - Moved EARLIER
+                self.channel3.nr34.write(value);
+
                 // 1. Length Clock Glitch Check (Corrected logic)
                 let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7);
                 if new_len_enabled_from_value && !prev_len_enabled && fs_step_is_length_clocking_type && len_counter_was_non_zero {
                     self.channel3.extra_length_clock(trigger_from_value);
                 }
 
-                // 2. Actual NR34 write
-                self.channel3.nr34.write(value);
-
                 // 3. Triggering or Length Enabling Logic
                 if self.channel3.nr34.consume_trigger_flag() {
-                    self.channel3.trigger(&self.wave_ram, self.frame_sequencer_step);
+                    self.channel3.trigger(&self.wave_ram, self.frame_sequencer_step, new_len_enabled_from_value);
                 } else {
-                    if new_len_enabled_from_value && !prev_len_enabled {
-                        self.channel3.reload_length_on_enable(self.frame_sequencer_step);
-                    }
+                    // if new_len_enabled_from_value && !prev_len_enabled {
+                    //     self.channel3.reload_length_on_enable(self.frame_sequencer_step);
+                    // }
                 }
             },
             NR41_ADDR => {
                 self.channel4.nr41.write(value);
-                if self.channel4.enabled && self.channel4.nr44.is_length_enabled() {
-                    self.channel4.reload_length_on_enable(self.frame_sequencer_step);
-                }
+                // Removed: reload_length_on_enable call
             },
             NR42_ADDR => { // Apply same NRx2 glitch logic as for NR12
                 let old_nr42_val = self.channel4.nr42.read();
@@ -1035,23 +1029,23 @@ impl Apu {
                 let new_len_enabled_from_value = (value & 0x40) != 0;
                 let trigger_from_value = (value & 0x80) != 0;
 
+                // 2. Actual NR44 write - Moved EARLIER
+                self.channel4.nr44.write(value);
+
                 // 1. Length Clock Glitch Check (Corrected logic)
                 let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7);
                 if new_len_enabled_from_value && !prev_len_enabled && fs_step_is_length_clocking_type && len_counter_was_non_zero {
                     self.channel4.extra_length_clock(trigger_from_value);
                 }
 
-                // 2. Actual NR44 write
-                self.channel4.nr44.write(value);
-
                 // 3. Triggering or Length Enabling Logic
                 if self.channel4.nr44.consume_trigger_flag() {
                     let lf_div = 0; // Placeholder
-                    self.channel4.trigger(self.frame_sequencer_step, lf_div);
+                    self.channel4.trigger(self.frame_sequencer_step, lf_div, new_len_enabled_from_value);
                 } else {
-                    if new_len_enabled_from_value && !prev_len_enabled {
-                        self.channel4.reload_length_on_enable(self.frame_sequencer_step);
-                    }
+                    // if new_len_enabled_from_value && !prev_len_enabled {
+                    //     self.channel4.reload_length_on_enable(self.frame_sequencer_step);
+                    // }
                 }
             },
             NR50_ADDR => self.nr50.write(value),
