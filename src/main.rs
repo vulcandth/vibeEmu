@@ -32,6 +32,7 @@ use std::thread; // For std::thread::sleep and spawning
 
 use eframe::egui; // For egui integration
 use eframe::egui::{ColorImage, Color32, TextureHandle};
+use crate::ppu::{DMG_PALETTE, cgb_color_to_rgb};
 #[cfg(target_os = "windows")]
 use winit::platform::windows::EventLoopBuilderExtWindows;
 #[cfg(target_os = "linux")]
@@ -604,13 +605,15 @@ fn main() {
                     }
                 }
                 EmulatorCommand::OpenVramViewer => {
-                    let (tx, rx) = unbounded();
-                    vram_viewer_sender = Some(tx);
-                    thread::spawn(move || {
-                        println!("VRAM viewer thread started");
-                        run_vram_viewer(rx);
-                        println!("VRAM viewer thread exited");
-                    });
+                    if vram_viewer_sender.is_none() {
+                        let (tx, rx) = unbounded();
+                        vram_viewer_sender = Some(tx);
+                        thread::spawn(move || {
+                            println!("VRAM viewer thread started");
+                            run_vram_viewer(rx);
+                            println!("VRAM viewer thread exited");
+                        });
+                    }
                 }
             }
             // Ensure emulation is unpaused after any command from the context menu is processed.
@@ -692,6 +695,11 @@ impl eframe::App for ContextMenuApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
 
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.is_visible = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+
         // Check for commands from the main thread
         if let Ok(cmd) = self.context_menu_command_receiver.try_recv() {
             match cmd {
@@ -713,7 +721,16 @@ impl eframe::App for ContextMenuApp {
                 .title_bar(false)
                 .collapsible(false)
                 .resizable(false)
-                .frame(egui::Frame::popup(&ctx.style()))
+                .frame(
+                    egui::Frame::popup(&ctx.style())
+                        .rounding(0.0)
+                        .shadow(egui::epaint::Shadow {
+                            offset: egui::vec2(4.0, 4.0),
+                            blur: 8.0,
+                            spread: 0.0,
+                            color: Color32::from_black_alpha(96),
+                        }),
+                )
                 .show(ctx, |ui| {
                     if let Some(message) = &self.status_message {
                         ui.label(message);
@@ -796,6 +813,8 @@ struct VramViewerApp {
     current_tab: usize,
     tiles_texture: Option<TextureHandle>,
     bg_texture: Option<TextureHandle>,
+    oam_texture: Option<TextureHandle>,
+    palette_texture: Option<TextureHandle>,
 }
 
 impl VramViewerApp {
@@ -806,6 +825,8 @@ impl VramViewerApp {
             current_tab: 0,
             tiles_texture: None,
             bg_texture: None,
+            oam_texture: None,
+            palette_texture: None,
         }
     }
 
@@ -830,6 +851,20 @@ impl VramViewerApp {
                     tex.set(bg_img, egui::TextureOptions::NEAREST);
                 } else {
                     self.bg_texture = Some(ctx.load_texture("bgmap", bg_img, egui::TextureOptions::NEAREST));
+                }
+
+                let oam_img = generate_oam_image(snap);
+                if let Some(tex) = &mut self.oam_texture {
+                    tex.set(oam_img, egui::TextureOptions::NEAREST);
+                } else {
+                    self.oam_texture = Some(ctx.load_texture("oam", oam_img, egui::TextureOptions::NEAREST));
+                }
+
+                let pal_img = generate_palette_image(snap);
+                if let Some(tex) = &mut self.palette_texture {
+                    tex.set(pal_img, egui::TextureOptions::NEAREST);
+                } else {
+                    self.palette_texture = Some(ctx.load_texture("palettes", pal_img, egui::TextureOptions::NEAREST));
                 }
             }
         }
@@ -859,10 +894,18 @@ impl eframe::App for VramViewerApp {
                     }
                 }
                 2 => {
-                    ui.label("OAM viewer not implemented");
+                    if let Some(tex) = &self.oam_texture {
+                        ui.add(egui::Image::new(tex).fit_to_exact_size(tex.size_vec2()));
+                    } else {
+                        ui.label("OAM viewer not ready");
+                    }
                 }
                 3 => {
-                    ui.label("Palette viewer not implemented");
+                    if let Some(tex) = &self.palette_texture {
+                        ui.add(egui::Image::new(tex).fit_to_exact_size(tex.size_vec2()));
+                    } else {
+                        ui.label("Palette viewer not ready");
+                    }
                 }
                 _ => {}
             }
@@ -924,6 +967,64 @@ fn generate_bg_map_image(snapshot: &VramSnapshot) -> ColorImage {
                     let color = ((b1 >> bit) & 1) | (((b2 >> bit) & 1) << 1);
                     let idx = (map_y * 8 + y) * width + (map_x * 8 + x);
                     img.pixels[idx] = palette[color as usize];
+                }
+            }
+        }
+    }
+    img
+}
+
+fn generate_oam_image(snapshot: &VramSnapshot) -> ColorImage {
+    let cols = 10usize;
+    let rows = 4usize;
+    let width = cols * 8;
+    let height = rows * 8;
+    let mut img = ColorImage::new([width, height], Color32::TRANSPARENT);
+    for sprite in 0..40usize {
+        let tile_x = sprite % cols;
+        let tile_y = sprite / cols;
+        let oam_index = sprite * 4;
+        let tile_idx = snapshot.oam[oam_index + 2] as usize;
+        let attrs = snapshot.oam[oam_index + 3];
+        let bank = if (attrs & 0x08) != 0 { 1 } else { 0 };
+        for y in 0..8 {
+            let b1 = snapshot.vram[bank][tile_idx * 16 + y * 2];
+            let b2 = snapshot.vram[bank][tile_idx * 16 + y * 2 + 1];
+            for x in 0..8 {
+                let bit = 7 - x;
+                let color = ((b1 >> bit) & 1) | (((b2 >> bit) & 1) << 1);
+                let idx = (tile_y * 8 + y) * width + (tile_x * 8 + x);
+                let rgb = DMG_PALETTE[color as usize];
+                img.pixels[idx] = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+            }
+        }
+    }
+    img
+}
+
+fn generate_palette_image(snapshot: &VramSnapshot) -> ColorImage {
+    let square = 8usize;
+    let width = 8 * 4 * square;
+    let height = 2 * square;
+    let mut img = ColorImage::new([width, height], Color32::BLACK);
+    for pal in 0..8usize {
+        for c in 0..4usize {
+            let base = pal * 8 + c * 2;
+            let color_val_bg = (snapshot.bg_palette[base + 1] as u16) << 8 | snapshot.bg_palette[base] as u16;
+            let color_bg = cgb_color_to_rgb(color_val_bg);
+            for y in 0..square {
+                for x in 0..square {
+                    let idx = y * width + pal * 4 * square + c * square + x;
+                    img.pixels[idx] = Color32::from_rgb(color_bg[0], color_bg[1], color_bg[2]);
+                }
+            }
+            let base_obj = pal * 8 + c * 2;
+            let color_val_obj = (snapshot.obj_palette[base_obj + 1] as u16) << 8 | snapshot.obj_palette[base_obj] as u16;
+            let color_obj = cgb_color_to_rgb(color_val_obj);
+            for y in 0..square {
+                for x in 0..square {
+                    let idx = (y + square) * width + pal * 4 * square + c * square + x;
+                    img.pixels[idx] = Color32::from_rgb(color_obj[0], color_obj[1], color_obj[2]);
                 }
             }
         }
