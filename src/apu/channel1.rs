@@ -14,13 +14,14 @@ pub struct Channel1 {
     envelope_volume: u8,
     envelope_period_timer: u8,
     envelope_running: bool,
-    sweep_period_timer: u8,
+    sweep_calculate_countdown: u8, // Renamed from sweep_period_timer
     sweep_shadow_frequency: u16,
     sweep_enabled: bool,
     sweep_calculated_overflow_this_step: bool,
     has_been_triggered_since_power_on: bool,
     force_output_zero_for_next_sample: bool,
     subtraction_sweep_calculated_since_trigger: bool,
+    initial_delay_countdown: u8, // For SameBoy's trigger initial sample delay
 }
 
 impl Channel1 {
@@ -29,10 +30,11 @@ impl Channel1 {
             nr10: Nr10::new(), nr11: Nr11::new(), nr12: Nr12::new(), nr13: Nr13::new(), nr14: Nr14::new(),
             enabled: false, length_counter: 0, frequency_timer: 0, duty_step: 0,
             envelope_volume: 0, envelope_period_timer: 0, envelope_running: false,
-            sweep_period_timer: 0, sweep_shadow_frequency: 0, sweep_enabled: false,
+            sweep_calculate_countdown: 0, sweep_shadow_frequency: 0, sweep_enabled: false,
             sweep_calculated_overflow_this_step: false,
             has_been_triggered_since_power_on: false, force_output_zero_for_next_sample: false,
             subtraction_sweep_calculated_since_trigger: false,
+            initial_delay_countdown: 0,
         }
     }
 
@@ -40,15 +42,33 @@ impl Channel1 {
         self.has_been_triggered_since_power_on = false;
         self.force_output_zero_for_next_sample = false;
         self.subtraction_sweep_calculated_since_trigger = false;
+        self.initial_delay_countdown = 0;
     }
 
-    pub fn trigger(&mut self, current_frame_sequencer_step: u8) {
+    // lf_div is (main_clock_cycles / 16) & 1, effectively. (0 or 1)
+    pub fn trigger(&mut self, current_frame_sequencer_step: u8, lf_div: u8) {
+        let was_enabled_before_this_trigger = self.enabled; // Check before self.enabled might be set true
+
         self.subtraction_sweep_calculated_since_trigger = false;
         if !self.has_been_triggered_since_power_on {
-            self.force_output_zero_for_next_sample = true;
+            self.force_output_zero_for_next_sample = true; // This is a separate power-on specific quirk
             self.has_been_triggered_since_power_on = true;
         }
+
+        // Standard DAC power check; if off, channel doesn't enable.
         if self.nr12.dac_power() { self.enabled = true; } else { self.enabled = false; return; }
+
+        // SameBoy's initial sample delay logic
+        // delay = (was_active ? 4 : 6) - lf_div;
+        // lf_div is 0 or 1. If lf_div is 1, delay is shorter.
+        if was_enabled_before_this_trigger {
+            self.initial_delay_countdown = 4u8.saturating_sub(lf_div);
+        } else {
+            self.initial_delay_countdown = 6u8.saturating_sub(lf_div);
+        }
+        // Ensure countdown is at least 1 if it becomes 0 due to lf_div, though SameBoy uses it as is.
+        // E.g. 4-1 = 3 samples delayed. If initial_delay_countdown is 0, no delay.
+
         if self.length_counter == 0 {
             let length_data = self.nr11.initial_length_timer_val();
             let is_max_length_condition_len = length_data == 0;
@@ -77,9 +97,10 @@ impl Channel1 {
         self.envelope_running = self.nr12.dac_power() && env_period_raw != 0;
         self.sweep_shadow_frequency = period_val;
         let sweep_period_raw = self.nr10.sweep_period();
-        self.sweep_period_timer = if sweep_period_raw == 0 { 8 } else { sweep_period_raw };
+        // Initialize sweep_calculate_countdown
+        self.sweep_calculate_countdown = if sweep_period_raw == 0 { 8 } else { sweep_period_raw };
         self.sweep_enabled = sweep_period_raw != 0 || self.nr10.sweep_shift_val() != 0;
-        self.sweep_calculated_overflow_this_step = false;
+        self.sweep_calculated_overflow_this_step = false; // Reset this flag on trigger
         if self.sweep_enabled && self.nr10.sweep_shift_val() != 0 {
             let new_freq = self.calculate_sweep_frequency();
             if new_freq > 2047 { self.enabled = false; self.sweep_calculated_overflow_this_step = true; }
@@ -129,34 +150,78 @@ impl Channel1 {
 
     pub fn clock_sweep(&mut self) {
         if !self.sweep_enabled || !self.nr12.dac_power() { return; }
-        let sweep_period_raw = self.nr10.sweep_period();
-        if sweep_period_raw == 0 { return; }
-        self.sweep_period_timer -= 1;
-        if self.sweep_period_timer == 0 {
-            self.sweep_period_timer = sweep_period_raw;
-            let _ = self.calculate_sweep_frequency();
-            if !self.nr10.sweep_direction_is_increase() {
+
+        if self.sweep_calculate_countdown > 0 {
+            self.sweep_calculate_countdown -= 1;
+        }
+
+        if self.sweep_calculate_countdown == 0 {
+            let sweep_period_raw = self.nr10.sweep_period();
+            self.sweep_calculate_countdown = if sweep_period_raw == 0 { 8 } else { sweep_period_raw };
+
+            if !self.enabled { return; } // Don't run if channel got disabled by other means
+
+            // If the sweep period is zero, the sweep timer is reloaded with 8,
+            // but the sweep calculation doesn't occur.
+            if sweep_period_raw == 0 {
+                return;
+            }
+
+            // Only if sweep is enabled and shift is non-zero can frequency change
+            // and overflow checks/updates happen.
+            // However, the subtraction flag might need to be set even if shift is 0,
+            // if a calculation was *attempted* with subtract direction.
+            // But sweep calculation only has effect if shift > 0.
+            // So, if shift is 0, new_freq is same as shadow_freq.
+
+            // Set subtraction flag before shadow frequency potentially changes
+            // This flag is for the NR10 negate bug.
+            if self.nr10.sweep_shift_val() != 0 && !self.nr10.sweep_direction_is_increase() {
                 self.subtraction_sweep_calculated_since_trigger = true;
             }
+
             let new_freq = self.calculate_sweep_frequency();
-            if new_freq > 2047 { self.enabled = false; self.sweep_calculated_overflow_this_step = true; return; }
+
+            if new_freq > 2047 {
+                self.enabled = false;
+                self.sweep_calculated_overflow_this_step = true;
+                return;
+            }
+
+            // If sweep shift is 0, the frequency doesn't change.
+            // No need to update registers or do the second overflow check.
+            if self.nr10.sweep_shift_val() == 0 {
+                // self.sweep_calculated_overflow_this_step = false; // Do not clear if set by trigger
+                return;
+            }
+
+            // At this point: shift > 0 and new_freq <= 2047
+            self.sweep_shadow_frequency = new_freq;
+            self.nr13.write((new_freq & 0xFF) as u8);
+            self.nr14.write_frequency_msb(((new_freq >> 8) & 0x07) as u8);
+
+            // A successful calculation and update happened, so clear the flag for this step
             self.sweep_calculated_overflow_this_step = false;
-            if self.nr10.sweep_shift_val() != 0 {
-                self.sweep_shadow_frequency = new_freq;
-                self.nr13.write((new_freq & 0xFF) as u8);
-                self.nr14.write_frequency_msb(((new_freq >> 8) & 0x07) as u8);
-                let final_check_freq = self.calculate_sweep_frequency();
-                if final_check_freq > 2047 { self.enabled = false; self.sweep_calculated_overflow_this_step = true; }
+
+            // Perform the second overflow check using the new shadow frequency
+            let final_check_freq = self.calculate_sweep_frequency();
+            if final_check_freq > 2047 {
+                self.enabled = false;
+                // self.sweep_calculated_overflow_this_step = true; // Channel is disabled, output will be 0.
+                                                                // No need to set this again explicitly as primary effect is disabling.
             }
         }
     }
 
-    pub(super) fn has_subtraction_sweep_calculated(&self) -> bool { self.subtraction_sweep_calculated_since_trigger }
-    pub(super) fn disable_for_sweep_bug(&mut self) { self.enabled = false; }
+    // Getter for sweep_shadow_frequency needed for NR10 negate glitch logic in apu.rs
+    pub(super) fn get_sweep_shadow_frequency(&self) -> u16 { self.sweep_shadow_frequency }
+    // pub(super) fn has_subtraction_sweep_calculated(&self) -> bool { self.subtraction_sweep_calculated_since_trigger } // Unused
+    // pub(super) fn disable_for_sweep_bug(&mut self) { self.enabled = false; } // Unused
 
     pub(super) fn is_envelope_running(&self) -> bool { self.envelope_running }
     pub(super) fn get_envelope_volume(&self) -> u8 { self.envelope_volume }
     pub(super) fn set_envelope_volume(&mut self, vol: u8) { self.envelope_volume = vol & 0x0F; }
+    // pub(super) fn get_envelope_period_timer(&self) -> u8 { self.envelope_period_timer } // Unused
     pub(super) fn force_disable_channel(&mut self) { self.enabled = false; }
 
     pub fn tick(&mut self) {
@@ -174,7 +239,18 @@ impl Channel1 {
     }
 
     pub fn get_output_volume(&mut self) -> u8 {
-        if self.force_output_zero_for_next_sample { self.force_output_zero_for_next_sample = false; return 0; }
+        // Initial trigger delay countdown
+        if self.initial_delay_countdown > 0 {
+            self.initial_delay_countdown -= 1;
+            return 0;
+        }
+
+        // Power-on specific first sample quirk
+        if self.force_output_zero_for_next_sample {
+            self.force_output_zero_for_next_sample = false;
+            return 0;
+        }
+
         if !self.enabled || !self.nr12.dac_power() || self.sweep_calculated_overflow_this_step { return 0; }
         let wave_duty = self.nr11.wave_pattern_duty_val();
         let wave_output = match wave_duty {

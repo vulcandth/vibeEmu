@@ -12,6 +12,9 @@ pub struct Channel3 {
     frequency_timer: u16,
     sample_index: u8,
     current_sample_buffer: u8,
+    wave_form_just_read: bool,
+    pulsed: bool, // For CGB-E specific retrigger behavior
+    bugged_read_countdown: u8, // For CGB-E specific retrigger behavior
 }
 
 impl Channel3 {
@@ -19,11 +22,17 @@ impl Channel3 {
         Self {
             nr30: Nr30::new(), nr31: Nr31::new(), nr32: Nr32::new(), nr33: Nr33::new(), nr34: Nr34::new(),
             enabled: false, length_counter: 0, frequency_timer: 0, sample_index: 0, current_sample_buffer: 0,
+            wave_form_just_read: false,
+            pulsed: false,
+            bugged_read_countdown: 0,
         }
     }
 
-    pub fn trigger(&mut self, _wave_ram_on_trigger: &[u8;16], current_frame_sequencer_step: u8) {
+    pub fn trigger(&mut self, wave_ram: &[u8;16], current_frame_sequencer_step: u8) {
         self.enabled = self.nr30.dac_on();
+        self.wave_form_just_read = false;
+        self.pulsed = true; // Set on trigger per SameBoy
+
         if self.length_counter == 0 {
             let length_data = self.nr31.sound_length_val();
             let is_max_length_condition = length_data == 0;
@@ -39,9 +48,22 @@ impl Channel3 {
         let freq_lsb = self.nr33.freq_lo_val() as u16;
         let freq_msb = self.nr34.frequency_msb_val() as u16;
         let period_val = (freq_msb << 8) | freq_lsb;
-        self.frequency_timer = (2048 - period_val) * 2;
-        self.sample_index = 0;
-        if !self.nr30.dac_on() { self.enabled = false; }
+        self.frequency_timer = (2048 - period_val) * 2; // Current initialization
+        self.sample_index = 0; // Reset sample index
+
+        // If frequency timer is immediately 0 (e.g. period_val is 2047),
+        // pre-load the first nibble from wave_ram[0].
+        // This aligns with SameBoy loading sample_byte if sample_countdown is 0 on trigger.
+        if self.frequency_timer == 0 && self.enabled {
+            let sample_byte = wave_ram[0];
+            self.current_sample_buffer = (sample_byte >> 4) & 0x0F; // First nibble
+            self.wave_form_just_read = true; // Considered an immediate read
+            // Note: tick() would advance sample_index to 1 then load if this wasn't here.
+            // This pre-load means the first played sample is indeed from index 0's first nibble.
+            // Then tick() will advance to index 1.
+        }
+
+        if !self.nr30.dac_on() { self.enabled = false; } // Ensure channel disabled if DAC is off
     }
 
     pub fn get_length_counter(&self) -> u16 { self.length_counter }
@@ -63,14 +85,22 @@ impl Channel3 {
     }
 
     pub fn tick(&mut self, wave_ram: &[u8; 16]) {
-        if !self.enabled { return; }
+        if !self.enabled {
+            self.wave_form_just_read = false; // Clear if channel is not enabled
+            return;
+        }
+
         self.frequency_timer = self.frequency_timer.saturating_sub(1);
+
+        let mut did_read_sample_this_tick = false;
+
         if self.frequency_timer == 0 {
             let freq_lsb = self.nr33.freq_lo_val() as u16;
             let freq_msb = self.nr34.frequency_msb_val() as u16;
             let period_val = (freq_msb << 8) | freq_lsb;
             self.frequency_timer = (2048 - period_val) * 2;
-            if self.nr30.dac_on() && self.enabled {
+            // self.enabled implies self.nr30.dac_on() due to trigger logic, but double check for safety
+            if self.enabled && self.nr30.dac_on() {
                 self.sample_index = (self.sample_index + 1) % 32;
                 let byte_index = (self.sample_index / 2) as usize;
                 let sample_byte = wave_ram[byte_index];
@@ -79,8 +109,10 @@ impl Channel3 {
                 } else {
                     sample_byte & 0x0F
                 };
+                did_read_sample_this_tick = true;
             }
         }
+        self.wave_form_just_read = did_read_sample_this_tick;
     }
 
     pub fn get_output_sample(&self) -> u8 {
@@ -95,6 +127,42 @@ impl Channel3 {
     /// while CH3 is active are redirected to the byte currently being read.
     pub fn current_wave_ram_byte_index(&self) -> usize {
         (self.sample_index / 2) as usize
+    }
+
+    #[allow(dead_code)] // Will be used once model checks are in place
+    pub(super) fn get_wave_form_just_read(&self) -> bool {
+        self.wave_form_just_read
+    }
+
+    pub(super) fn set_wave_form_just_read(&mut self, val: bool) {
+        self.wave_form_just_read = val;
+    }
+
+    pub(super) fn get_frequency_timer(&self) -> u16 {
+        self.frequency_timer
+    }
+
+    #[allow(dead_code)] // Will be used once model checks are in place for pulsed logic
+    pub(super) fn set_pulsed(&mut self, val: bool) {
+        self.pulsed = val;
+    }
+
+    /// Reloads the current_sample_buffer based on the current sample_index and wave_ram.
+    /// Used when DAC is disabled at a specific timing per SameBoy.
+    pub(super) fn reload_current_sample_buffer(&mut self, wave_ram: &[u8;16]) {
+        // This should only be called if channel was enabled and DAC is being turned off.
+        // The sample_index should be valid.
+        let byte_index = (self.sample_index / 2) as usize;
+        if byte_index < wave_ram.len() { // Ensure index is within bounds
+            let sample_byte = wave_ram[byte_index];
+            self.current_sample_buffer = if self.sample_index % 2 == 0 {
+                (sample_byte >> 4) & 0x0F
+            } else {
+                sample_byte & 0x0F
+            };
+        }
+        // wave_form_just_read is not explicitly set here as this is a corrective action,
+        // not a standard tick-based sample read.
     }
 
     // In src/apu/channel3.rs, within impl Channel3

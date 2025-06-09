@@ -386,6 +386,7 @@ pub struct Apu {
     frame_sequencer_step: u8,
     hpf_capacitor_left: f32,
     hpf_capacitor_right: f32,
+    skip_next_frame_sequencer_tick: bool, // For NR52 power-on DIV interaction
 }
 
 impl Apu {
@@ -403,6 +404,7 @@ impl Apu {
             frame_sequencer_step: 0,
             hpf_capacitor_left: 0.0,
             hpf_capacitor_right: 0.0,
+            skip_next_frame_sequencer_tick: false,
         };
         apu.reset_power_on_channel_flags();
         apu
@@ -448,7 +450,18 @@ impl Apu {
         self.frame_sequencer_counter += cpu_t_cycles;
         while self.frame_sequencer_counter >= CPU_CLOCKS_PER_FRAME_SEQUENCER_TICK {
             self.frame_sequencer_counter -= CPU_CLOCKS_PER_FRAME_SEQUENCER_TICK;
-            self.clock_frame_sequencer();
+
+            if self.skip_next_frame_sequencer_tick {
+                self.skip_next_frame_sequencer_tick = false;
+                // The frame_sequencer_step still advances, but clocks are skipped for this one tick
+                self.frame_sequencer_step = (self.frame_sequencer_step + 1) % 8;
+                 self.nr52.update_status_bits( // Keep status bits updated
+                    self.channel1.enabled, self.channel2.enabled,
+                    self.channel3.enabled, self.channel4.enabled
+                );
+            } else {
+                self.clock_frame_sequencer();
+            }
         }
 
         if self.nr52.is_apu_enabled() {
@@ -460,20 +473,43 @@ impl Apu {
     }
 
     fn clock_frame_sequencer(&mut self) {
+        // Note: self.frame_sequencer_step is advanced *after* this function in the original code.
+        // To match SameBoy's (div_divider & X) == Y, where div_divider is current step:
+        // old step 0 -> new step 1 (length)
+        // old step 1 -> new step 2
+        // old step 2 -> new step 3 (length, sweep)
+        // old step 3 -> new step 4
+        // old step 4 -> new step 5 (length)
+        // old step 5 -> new step 6
+        // old step 6 -> new step 7 (length, sweep, envelope)
+        // old step 7 -> new step 0
+        // So, we check self.frame_sequencer_step for what events occur *at the beginning* of this step.
+
         let apu_on = self.nr52.is_apu_enabled();
         if apu_on {
-            if self.frame_sequencer_step % 2 == 0 {
-                self.channel1.clock_length(); self.channel2.clock_length();
-                self.channel3.clock_length(); self.channel4.clock_length();
+            // Length Clock (Steps 1, 3, 5, 7 of effective new step; or 0,2,4,6 of old step if checking before increment)
+            // SameBoy: (div_divider & 1) -> steps 1,3,5,7. Our current step is 'about to become this value'.
+            // If self.frame_sequencer_step is what's *about to be processed*:
+            if self.frame_sequencer_step % 2 != 0 { // Steps 1, 3, 5, 7
+                self.channel1.clock_length();
+                self.channel2.clock_length();
+                self.channel3.clock_length();
+                self.channel4.clock_length();
             }
-            if self.frame_sequencer_step == 2 || self.frame_sequencer_step == 6 {
+
+            // Sweep Clock (Ch1 only) (Steps 3, 7)
+            if self.frame_sequencer_step == 3 || self.frame_sequencer_step == 7 {
                 self.channel1.clock_sweep();
             }
+
+            // Envelope Clock (Ch1, Ch2, Ch4) (Step 7)
             if self.frame_sequencer_step == 7 {
-                self.channel1.clock_envelope(); self.channel2.clock_envelope();
+                self.channel1.clock_envelope();
+                self.channel2.clock_envelope();
                 self.channel4.clock_envelope();
             }
         }
+
         self.frame_sequencer_step = (self.frame_sequencer_step + 1) % 8;
         self.nr52.update_status_bits(
             self.channel1.enabled, self.channel2.enabled,
@@ -553,18 +589,100 @@ impl Apu {
     }
 
     pub fn write_byte(&mut self, addr: u16, value: u8) {
-        let apu_was_enabled = self.nr52.is_apu_enabled();
-        if !apu_was_enabled && addr != NR52_ADDR { return; }
+        // Store APU power state *before* potential NR52 write changes it.
+        let apu_power_is_currently_off = !self.nr52.is_apu_enabled();
 
-        let trigger_val_in_write = (value >> 7) & 0x01 != 0;
+        if apu_power_is_currently_off {
+            let is_nr52_write = addr == NR52_ADDR;
+            let is_wave_ram_write = addr >= WAVE_PATTERN_RAM_START_ADDR && addr <= WAVE_PATTERN_RAM_END_ADDR;
 
+            // Placeholder for DMG model check. Assume non-DMG for now (stricter access).
+            let is_dmg_model = false; // TODO: Replace with actual model check
+            let is_allowed_nrx1_write_on_dmg = if is_dmg_model {
+                matches!(addr, NR11_ADDR | NR21_ADDR | NR31_ADDR | NR41_ADDR)
+            } else {
+                false
+            };
+
+            // If APU is off, only allow writes to NR52, Wave RAM, and (on DMG only) NRx1 registers.
+            if !(is_nr52_write || is_wave_ram_write || is_allowed_nrx1_write_on_dmg) {
+                // For other registers, if APU is off, the write might be ignored or behave differently.
+                // SameBoy returns here for most registers if APU is off.
+                // However, some registers (like NRx0, NRx2, NRx3, NRx4 for channels 1,2,4)
+                // might still be writable on CGB even if APU is off, but their channels won't produce sound.
+                // SameBoy's condition is:
+                // `if (!gb->apu.global_enable && reg != GB_IO_NR52 && reg < GB_IO_WAV_START && (GB_is_cgb(gb) || (reg != GB_IO_NR11 ...)))`
+                // This means if APU off, and not NR52, and not Wave RAM:
+                //   On CGB: all other writes (0xFF10-0xFF2F) are IGNORED.
+                //   On DMG: only NRx1 writes are allowed, others (NRx0, NRx2, NRx3, NRx4) are IGNORED.
+                // So, the condition to RETURN (ignore write) is:
+                // `apu_power_is_currently_off && !is_nr52_write && !is_wave_ram_write && !is_allowed_nrx1_write_on_dmg`
+                // This seems correct. The original code was `if !apu_was_enabled && addr != NR52_ADDR { return; }`
+                // which was too simple. It allowed all register writes if address was NR52, otherwise blocked all if APU off.
+
+                // If it's not one of the allowed registers when APU is off, then ignore the write.
+                return;
+            }
+        }
+
+        // let trigger_val_in_write = (value >> 7) & 0x01 != 0; // This was identified as unused.
+                                                              // Each NRx4 handler now derives its own 'trigger_from_value'.
         match addr {
             NR10_ADDR => {
-                let prev_sweep_direction_was_subtraction = !self.channel1.nr10.sweep_direction_is_increase();
+                // Sweep Negate Glitch Logic (from SameBoy)
+                // Condition: if (gb->apu.shadow_sweep_sample_length + gb->apu.channel1_completed_addend + old_negate > 0x7FF && !(value & 8))
+                // shadow_sweep_sample_length == current channel1.sweep_shadow_frequency
+                // channel1_completed_addend == current channel1.sweep_shadow_frequency >> old_sweep_shift
+                // old_negate == 1 if previous direction was subtract, 0 otherwise. ( (old_nr10_val >> 3) & 1 )
+                // !(value & 8) == new direction is addition
+
+                let old_nr10_val = self.channel1.nr10.read(); // Read before it's overwritten
+                let current_sweep_shadow_freq = self.channel1.get_sweep_shadow_frequency();
+
+                let old_sweep_shift = old_nr10_val & 0x07;
+                let old_direction_was_subtract_bit = (old_nr10_val >> 3) & 1; // 1 if subtract, 0 if add
+
+                // Write the new NR10 value first
                 self.channel1.nr10.write(value);
-                let new_sweep_direction_is_addition = self.channel1.nr10.sweep_direction_is_increase();
-                if prev_sweep_direction_was_subtraction && new_sweep_direction_is_addition && self.channel1.has_subtraction_sweep_calculated() {
-                    self.channel1.disable_for_sweep_bug();
+
+                let new_direction_is_add = (value & 0x08) == 0;
+
+                if new_direction_is_add {
+                    // Calculate the addend using the current sweep_shadow_frequency and the *old* shift value
+                    // If old_sweep_shift is 0, SameBoy's effective addend for this check seems to be 0,
+                    // because frequency_addend would not have been updated with shadow_freq >> 0.
+                    // Or, if it means shadow_freq >> 0 = shadow_freq, then the sum can be very large.
+                    // Based on `gb->apu.channel1_completed_addend = gb->apu.square_channels[0].frequency_addend;`
+                    // and `frequency_addend = gb->apu.square_channels[index].shadow_frequency >> shift_amount;`
+                    // if shift_amount is 0, this is a large value.
+                    // Let's assume if old_sweep_shift is 0, the addend for *this specific glitch check* is effectively 0,
+                    // as no meaningful "shift" would occur. More precisely, the hardware behavior for shift=0 needs care.
+                    // Most emulators/docs say sweep with shift 0 does nothing to frequency.
+                    // If old_sweep_shift == 0, addend is effectively sweep_shadow_freq, which is too large.
+                    // The crucial part is `gb->apu.square_channels[0].frequency_addend` which is updated
+                    // *during sweep calculation*. If shift is 0, sweep calc doesn't change frequency.
+                    // So, let's consider the addend = 0 if old_sweep_shift == 0 for this specific check.
+                    // No, the `channel1_completed_addend` is literally `shadow_freq >> shift`. If shift is 0, it's `shadow_freq`.
+
+                    let addend = if old_sweep_shift == 0 {
+                        // If shift is 0, the "addend" in `calculate_sweep_frequency` would be `shadow >> 0`, i.e. `shadow`.
+                        // So for the purpose of this check, we use that.
+                        current_sweep_shadow_freq
+                    } else {
+                        current_sweep_shadow_freq >> old_sweep_shift
+                    };
+
+                    let term1 = current_sweep_shadow_freq;
+                    let term2 = addend;
+                    let term3 = old_direction_was_subtract_bit as u16;
+
+                    // Check if (current_shadow_freq + (current_shadow_freq >> old_shift) + old_negate_bit) > 2047
+                    let sum_for_glitch_check = term1.saturating_add(term2).saturating_add(term3);
+
+                    if sum_for_glitch_check > 2047 {
+                        // self.channel1.disable_for_sweep_bug(); // Use existing method if it just disables
+                        self.channel1.force_disable_channel();
+                    }
                 }
             },
             NR11_ADDR => {
@@ -574,37 +692,111 @@ impl Apu {
                 }
             },
             NR12_ADDR => {
-                let old_period = self.channel1.nr12.envelope_period_val();
-                let old_dir_increase = self.channel1.nr12.envelope_direction_is_increase();
-                let env_was_running = self.channel1.is_envelope_running();
+                let old_nr12_val = self.channel1.nr12.read();
                 let mut live_volume = self.channel1.get_envelope_volume();
+                // let old_envelope_period_timer = self.channel1.get_envelope_period_timer(); // Timer state not directly used for volume change
+
+                // Approximation for SameBoy's 'lock.locked'.
+                // 'lock.locked' is true if envelope period was 0 in the *previous* FS step 7.
+                // If envelope is currently running, it implies it wasn't "locked" before this write.
+                // If old_period was 0, it might have been locked.
+                let old_period_val = old_nr12_val & 7;
+                let can_tick_from_zero_period_if_old_period_was_zero = self.channel1.is_envelope_running();
+
+
+                // Apply NRx2 write (updates nr12 struct in channel1)
                 self.channel1.nr12.write(value);
-                let new_dir_increase = self.channel1.nr12.envelope_direction_is_increase();
-                if old_dir_increase != new_dir_increase { live_volume = 16u8.wrapping_sub(live_volume); }
-                if old_period == 0 && env_was_running { live_volume = live_volume.wrapping_add(1); }
-                else if !old_dir_increase { live_volume = live_volume.wrapping_add(2); }
+                let new_nr12_val = value; // which is self.channel1.nr12.read() now
+
+                // DAC power check (standard, happens after potential volume changes)
+                if !self.channel1.nr12.dac_power() {
+                    self.channel1.force_disable_channel();
+                    // If DAC turned off, no further envelope glitch processing for volume.
+                    // However, SameBoy seems to apply glitches even if DAC is off, then disables.
+                    // For now, let's keep the original position of DAC check (at the very end).
+                }
+
+                let new_period_val = new_nr12_val & 7;
+                let old_dir_increase = (old_nr12_val & 8) != 0;
+                let new_dir_increase = (new_nr12_val & 8) != 0;
+
+                // Simplified: !is_locked_approx. True if old_period was non-zero, OR if old_period was zero but envelope was running.
+                let not_locked_approx = (old_period_val != 0) || can_tick_from_zero_period_if_old_period_was_zero;
+
+                let mut should_tick = (new_period_val != 0) && (old_period_val == 0) && not_locked_approx;
+
+                if (new_nr12_val & 0x0F) == 0x08 && (old_nr12_val & 0x0F) == 0x08 && not_locked_approx {
+                    // This is: new_period is 0, new_dir is increase AND old_period is 0, old_dir is increase
+                    should_tick = true;
+                }
+
+                let direction_inverted = new_dir_increase != old_dir_increase;
+
+                if direction_inverted {
+                    if new_dir_increase { // Direction changed to Increase
+                        if old_period_val == 0 && not_locked_approx {
+                            live_volume = 15u8.wrapping_sub(live_volume); // like ^= 0xF for 0-15 range
+                        } else {
+                            live_volume = 14u8.wrapping_sub(live_volume);
+                        }
+                    } else { // Direction changed to Decrease
+                        live_volume = 16u8.wrapping_sub(live_volume);
+                    }
+                    live_volume &= 0x0F;
+                    should_tick = false; // Inversion overrides ticking due to period change
+                }
+
+                if should_tick {
+                    if new_dir_increase { // Envelope Adding
+                        if live_volume < 15 {
+                            live_volume += 1;
+                        }
+                    } else { // Envelope Subtracting
+                        if live_volume > 0 {
+                            live_volume -= 1;
+                        }
+                    }
+                    // live_volume &= 0x0F; // Already within 0-15 due to checks
+                }
+
                 self.channel1.set_envelope_volume(live_volume);
-                if !self.channel1.nr12.dac_power() { self.channel1.force_disable_channel(); }
+
+                // Final DAC power check (if it was turned off by this NR12 write)
+                if !self.channel1.nr12.dac_power() {
+                    self.channel1.force_disable_channel();
+                }
             },
             NR13_ADDR => self.channel1.nr13.write(value),
             NR14_ADDR => {
                 let prev_len_enabled = self.channel1.nr14.is_length_enabled();
                 let len_counter_was_non_zero = self.channel1.get_length_counter() > 0;
-                self.channel1.nr14.write(value); // NRx4 is updated
-                let new_len_enabled = self.channel1.nr14.is_length_enabled();
-                // Condition for "APU frame sequencer's next step will not clock the length timer"
-                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
 
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
-                    self.channel1.extra_length_clock(trigger_val_in_write);
+                let new_len_enabled_from_value = (value & 0x40) != 0;
+                let trigger_from_value = (value & 0x80) != 0;
+
+                // 1. Length Clock Glitch Check
+                // Occurs if length is being enabled, on a FS step that normally clocks length, and length counter > 0.
+                let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7);
+                if new_len_enabled_from_value && !prev_len_enabled && fs_step_is_length_clocking_type && len_counter_was_non_zero {
+                    self.channel1.extra_length_clock(trigger_from_value); // Pass trigger state from current write
                 }
 
-                if self.channel1.nr14.consume_trigger_flag() { // Checks bit 7 from 'value'
-                    self.channel1.trigger(self.frame_sequencer_step);
-                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
-                    // Load length if length enable (NRx4 bit 6) is set from 0 to 1
-                    // AND the specific frame sequencer timing condition is met.
-                    self.channel1.reload_length_on_enable(self.frame_sequencer_step);
+                // 2. Actual NR14 write (this updates internal nr14 state including trigger flag and length_enable)
+                self.channel1.nr14.write(value);
+
+                // 3. Triggering or Length Enabling Logic
+                if self.channel1.nr14.consume_trigger_flag() { // Checks internal flag set by write(value), effectively 'trigger_from_value'
+                    let lf_div = 0; // Placeholder for actual (div_clock_sync >> 4) & 1 logic
+                    self.channel1.trigger(self.frame_sequencer_step, lf_div);
+                } else {
+                    // If not triggered by this write, but length was just enabled by this write (value had bit 6 set)
+                    // new_len_enabled_from_value is the same as self.channel1.nr14.is_length_enabled() at this point if write was successful
+                    if new_len_enabled_from_value && !prev_len_enabled {
+                        // Reload length counter. This handles:
+                        // - Loading 64 (or 64-data) if it was 0.
+                        // - Applying the "63 instead of 64" rule if applicable (when data is 0 for max length).
+                        self.channel1.reload_length_on_enable(self.frame_sequencer_step);
+                    }
                 }
             },
             NR21_ADDR => {
@@ -613,38 +805,107 @@ impl Apu {
                     self.channel2.reload_length_on_enable(self.frame_sequencer_step);
                 }
             },
-            NR22_ADDR => {
-                let old_period = self.channel2.nr22.envelope_period_val();
-                let old_dir_increase = self.channel2.nr22.envelope_direction_is_increase();
-                let env_was_running = self.channel2.is_envelope_running();
+            NR22_ADDR => { // Apply same NRx2 glitch logic as for NR12
+                let old_nr22_val = self.channel2.nr22.read();
                 let mut live_volume = self.channel2.get_envelope_volume();
+
+                let old_period_val = old_nr22_val & 7;
+                let can_tick_from_zero_period_if_old_period_was_zero = self.channel2.is_envelope_running();
+
                 self.channel2.nr22.write(value);
-                let new_dir_increase = self.channel2.nr22.envelope_direction_is_increase();
-                if old_dir_increase != new_dir_increase { live_volume = 16u8.wrapping_sub(live_volume); }
-                if old_period == 0 && env_was_running { live_volume = live_volume.wrapping_add(1); }
-                else if !old_dir_increase { live_volume = live_volume.wrapping_add(2); }
+                let new_nr22_val = value;
+
+                if !self.channel2.nr22.dac_power() {
+                    self.channel2.force_disable_channel();
+                }
+
+                let new_period_val = new_nr22_val & 7;
+                let old_dir_increase = (old_nr22_val & 8) != 0;
+                let new_dir_increase = (new_nr22_val & 8) != 0;
+
+                let not_locked_approx = (old_period_val != 0) || can_tick_from_zero_period_if_old_period_was_zero;
+
+                let mut should_tick = (new_period_val != 0) && (old_period_val == 0) && not_locked_approx;
+
+                if (new_nr22_val & 0x0F) == 0x08 && (old_nr22_val & 0x0F) == 0x08 && not_locked_approx {
+                    should_tick = true;
+                }
+
+                let direction_inverted = new_dir_increase != old_dir_increase;
+
+                if direction_inverted {
+                    if new_dir_increase {
+                        if old_period_val == 0 && not_locked_approx {
+                            live_volume = 15u8.wrapping_sub(live_volume);
+                        } else {
+                            live_volume = 14u8.wrapping_sub(live_volume);
+                        }
+                    } else {
+                        live_volume = 16u8.wrapping_sub(live_volume);
+                    }
+                    live_volume &= 0x0F;
+                    should_tick = false;
+                }
+
+                if should_tick {
+                    if new_dir_increase {
+                        if live_volume < 15 { live_volume += 1; }
+                    } else {
+                        if live_volume > 0 { live_volume -= 1; }
+                    }
+                }
+
                 self.channel2.set_envelope_volume(live_volume);
-                if !self.channel2.nr22.dac_power() { self.channel2.force_disable_channel(); }
+
+                if !self.channel2.nr22.dac_power() {
+                    self.channel2.force_disable_channel();
+                }
             },
             NR23_ADDR => self.channel2.nr23.write(value),
             NR24_ADDR => {
                 let prev_len_enabled = self.channel2.nr24.is_length_enabled();
                 let len_counter_was_non_zero = self.channel2.get_length_counter() > 0;
-                self.channel2.nr24.write(value); // NRx4 is updated
-                let new_len_enabled = self.channel2.nr24.is_length_enabled();
-                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
 
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
-                    self.channel2.extra_length_clock(trigger_val_in_write);
+                let new_len_enabled_from_value = (value & 0x40) != 0;
+                let trigger_from_value = (value & 0x80) != 0; // Used for extra_length_clock and consume_trigger_flag
+
+                // 1. Length Clock Glitch Check (Corrected logic)
+                let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7);
+                if new_len_enabled_from_value && !prev_len_enabled && fs_step_is_length_clocking_type && len_counter_was_non_zero {
+                    self.channel2.extra_length_clock(trigger_from_value);
                 }
 
-                if self.channel2.nr24.consume_trigger_flag() {
-                    self.channel2.trigger(self.frame_sequencer_step);
-                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
-                    self.channel2.reload_length_on_enable(self.frame_sequencer_step);
+                // 2. Actual NR24 write
+                self.channel2.nr24.write(value);
+
+                // 3. Triggering or Length Enabling Logic
+                if self.channel2.nr24.consume_trigger_flag() { // Checks internal flag set by write(value)
+                    let lf_div = 0; // Placeholder
+                    self.channel2.trigger(self.frame_sequencer_step, lf_div);
+                } else {
+                    if new_len_enabled_from_value && !prev_len_enabled {
+                        self.channel2.reload_length_on_enable(self.frame_sequencer_step);
+                    }
                 }
             },
-            NR30_ADDR => self.channel3.nr30.write(value),
+            NR30_ADDR => {
+                let prev_dac_on = self.channel3.nr30.dac_on();
+                self.channel3.nr30.write(value);
+                let new_dac_on = self.channel3.nr30.dac_on();
+
+                self.channel3.enabled = new_dac_on; // Update channel enabled state based on DAC
+
+                if !new_dac_on {
+                    self.channel3.set_pulsed(false); // Clear pulsed flag if DAC turned off
+                    if prev_dac_on { // If DAC was on and is now turned off
+                        // SameBoy: if (gb->apu.wave_channel.sample_countdown == 0 || gb->apu.wave_channel.wave_form_just_read)
+                        // Our frequency_timer is equivalent to sample_countdown for this check's purpose.
+                        if self.channel3.get_frequency_timer() == 0 || self.channel3.get_wave_form_just_read() {
+                            self.channel3.reload_current_sample_buffer(&self.wave_ram);
+                        }
+                    }
+                }
+            },
             NR31_ADDR => {
                 self.channel3.nr31.write(value);
                 if self.channel3.enabled && self.channel3.nr34.is_length_enabled() {
@@ -663,18 +924,26 @@ impl Apu {
 
                 let prev_len_enabled = self.channel3.nr34.is_length_enabled();
                 let len_counter_was_non_zero = self.channel3.get_length_counter() > 0;
-                self.channel3.nr34.write(value); // NRx4 is updated
-                let new_len_enabled = self.channel3.nr34.is_length_enabled();
-                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
 
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
-                    self.channel3.extra_length_clock(trigger_val_in_write);
+                let new_len_enabled_from_value = (value & 0x40) != 0;
+                let trigger_from_value = (value & 0x80) != 0;
+
+                // 1. Length Clock Glitch Check (Corrected logic)
+                let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7);
+                if new_len_enabled_from_value && !prev_len_enabled && fs_step_is_length_clocking_type && len_counter_was_non_zero {
+                    self.channel3.extra_length_clock(trigger_from_value);
                 }
 
+                // 2. Actual NR34 write
+                self.channel3.nr34.write(value);
+
+                // 3. Triggering or Length Enabling Logic
                 if self.channel3.nr34.consume_trigger_flag() {
                     self.channel3.trigger(&self.wave_ram, self.frame_sequencer_step);
-                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
-                    self.channel3.reload_length_on_enable(self.frame_sequencer_step);
+                } else {
+                    if new_len_enabled_from_value && !prev_len_enabled {
+                        self.channel3.reload_length_on_enable(self.frame_sequencer_step);
+                    }
                 }
             },
             NR41_ADDR => {
@@ -683,35 +952,106 @@ impl Apu {
                     self.channel4.reload_length_on_enable(self.frame_sequencer_step);
                 }
             },
-            NR42_ADDR => {
-                let old_period = self.channel4.nr42.envelope_period_val();
-                let old_dir_increase = self.channel4.nr42.envelope_direction_is_increase();
-                let env_was_running = self.channel4.is_envelope_running();
+            NR42_ADDR => { // Apply same NRx2 glitch logic as for NR12
+                let old_nr42_val = self.channel4.nr42.read();
                 let mut live_volume = self.channel4.get_envelope_volume();
+
+                let old_period_val = old_nr42_val & 7;
+                let can_tick_from_zero_period_if_old_period_was_zero = self.channel4.is_envelope_running();
+
                 self.channel4.nr42.write(value);
-                let new_dir_increase = self.channel4.nr42.envelope_direction_is_increase();
-                if old_dir_increase != new_dir_increase { live_volume = 16u8.wrapping_sub(live_volume); }
-                if old_period == 0 && env_was_running { live_volume = live_volume.wrapping_add(1); }
-                else if !old_dir_increase { live_volume = live_volume.wrapping_add(2); }
+                let new_nr42_val = value;
+
+                if !self.channel4.nr42.dac_power() {
+                    self.channel4.force_disable_channel();
+                }
+
+                let new_period_val = new_nr42_val & 7;
+                let old_dir_increase = (old_nr42_val & 8) != 0;
+                let new_dir_increase = (new_nr42_val & 8) != 0;
+
+                let not_locked_approx = (old_period_val != 0) || can_tick_from_zero_period_if_old_period_was_zero;
+
+                let mut should_tick = (new_period_val != 0) && (old_period_val == 0) && not_locked_approx;
+
+                if (new_nr42_val & 0x0F) == 0x08 && (old_nr42_val & 0x0F) == 0x08 && not_locked_approx {
+                    should_tick = true;
+                }
+
+                let direction_inverted = new_dir_increase != old_dir_increase;
+
+                if direction_inverted {
+                    if new_dir_increase {
+                        if old_period_val == 0 && not_locked_approx {
+                            live_volume = 15u8.wrapping_sub(live_volume);
+                        } else {
+                            live_volume = 14u8.wrapping_sub(live_volume);
+                        }
+                    } else {
+                        live_volume = 16u8.wrapping_sub(live_volume);
+                    }
+                    live_volume &= 0x0F;
+                    should_tick = false;
+                }
+
+                if should_tick {
+                    if new_dir_increase {
+                        if live_volume < 15 { live_volume += 1; }
+                    } else {
+                        if live_volume > 0 { live_volume -= 1; }
+                    }
+                }
+
                 self.channel4.set_envelope_volume(live_volume);
-                if !self.channel4.nr42.dac_power() { self.channel4.force_disable_channel(); }
+
+                if !self.channel4.nr42.dac_power() {
+                    self.channel4.force_disable_channel();
+                }
             },
-            NR43_ADDR => self.channel4.nr43.write(value),
+            NR43_ADDR => {
+                // TODO: Implement SameBoy's NR43 write glitch if necessary.
+                // It involves checking old vs new (div_apu_counter >> shift_amount)
+                // and potentially stepping LFSR if specific model conditions met.
+                // For now, just update the parameters in Channel4.
+
+                self.channel4.nr43.write(value); // Update raw NR43 register struct first
+
+                let new_shift_amount = (value >> 4) & 0x0F;
+                let new_raw_divider_bits = value & 0x07;
+
+                self.channel4.set_lfsr_shift_amount(new_shift_amount);
+                self.channel4.set_lfsr_clock_divider(new_raw_divider_bits);
+
+                // The NR43 write can also affect the lfsr_step_countdown immediately
+                // if the divisor changes. SameBoy seems to allow the current countdown
+                // to continue and the new divisor takes effect on next reload.
+                // However, if the current countdown exceeds the new divisor, it might get
+                // re-adjusted. For now, we assume reload on next natural expiry or trigger.
+            },
             NR44_ADDR => {
                 let prev_len_enabled = self.channel4.nr44.is_length_enabled();
                 let len_counter_was_non_zero = self.channel4.get_length_counter() > 0;
-                self.channel4.nr44.write(value); // NRx4 is updated
-                let new_len_enabled = self.channel4.nr44.is_length_enabled();
-                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
 
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
-                    self.channel4.extra_length_clock(trigger_val_in_write);
+                let new_len_enabled_from_value = (value & 0x40) != 0;
+                let trigger_from_value = (value & 0x80) != 0;
+
+                // 1. Length Clock Glitch Check (Corrected logic)
+                let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7);
+                if new_len_enabled_from_value && !prev_len_enabled && fs_step_is_length_clocking_type && len_counter_was_non_zero {
+                    self.channel4.extra_length_clock(trigger_from_value);
                 }
 
+                // 2. Actual NR44 write
+                self.channel4.nr44.write(value);
+
+                // 3. Triggering or Length Enabling Logic
                 if self.channel4.nr44.consume_trigger_flag() {
-                    self.channel4.trigger(self.frame_sequencer_step);
-                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
-                    self.channel4.reload_length_on_enable(self.frame_sequencer_step);
+                    let lf_div = 0; // Placeholder
+                    self.channel4.trigger(self.frame_sequencer_step, lf_div);
+                } else {
+                    if new_len_enabled_from_value && !prev_len_enabled {
+                        self.channel4.reload_length_on_enable(self.frame_sequencer_step);
+                    }
                 }
             },
             NR50_ADDR => self.nr50.write(value),
@@ -722,10 +1062,17 @@ impl Apu {
                 let new_power_state = self.nr52.is_apu_enabled();
                 if prev_power_state && !new_power_state {
                     self.full_apu_reset_on_power_off();
-                } else if !prev_power_state && new_power_state {
-                    self.frame_sequencer_step = 0;
-                    self.frame_sequencer_counter = CPU_CLOCKS_PER_FRAME_SEQUENCER_TICK;
+                } else if !prev_power_state && new_power_state { // APU turning ON
+                    self.frame_sequencer_step = 0; // Reset frame sequencer step
+                    self.frame_sequencer_counter = CPU_CLOCKS_PER_FRAME_SEQUENCER_TICK; // Reset counter for FS
                     self.reset_power_on_channel_flags();
+
+                    // TODO: Implement full skip_div_event logic based on CPU DIV register state
+                    // For now, as a placeholder, let's assume it's not skipped.
+                    // If it were to be skipped: self.skip_next_frame_sequencer_tick = true;
+                    // This needs info from CPU (DIV register state) at the moment of NR52 write.
+                    // e.g. if cpu.get_div_apu_sync_bit_5_or_4() { self.skip_next_frame_sequencer_tick = true; }
+                    self.skip_next_frame_sequencer_tick = false; // Default placeholder
                 }
             }
             WAVE_PATTERN_RAM_START_ADDR..=WAVE_PATTERN_RAM_END_ADDR => {

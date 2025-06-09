@@ -15,6 +15,7 @@ pub struct Channel2 {
     envelope_running: bool,
     has_been_triggered_since_power_on: bool,
     force_output_zero_for_next_sample: bool,
+    initial_delay_countdown: u8,
 }
 
 impl Channel2 {
@@ -24,20 +25,32 @@ impl Channel2 {
             enabled: false, length_counter: 0, frequency_timer: 0, duty_step: 0,
             envelope_volume: 0, envelope_period_timer: 0, envelope_running: false,
             has_been_triggered_since_power_on: false, force_output_zero_for_next_sample: false,
+            initial_delay_countdown: 0,
         }
     }
 
     pub fn power_on_reset(&mut self) {
         self.has_been_triggered_since_power_on = false;
         self.force_output_zero_for_next_sample = false;
+        self.initial_delay_countdown = 0;
     }
 
-    pub fn trigger(&mut self, current_frame_sequencer_step: u8) {
+    pub fn trigger(&mut self, current_frame_sequencer_step: u8, lf_div: u8) {
+        let was_enabled_before_this_trigger = self.enabled;
+
         if !self.has_been_triggered_since_power_on {
             self.force_output_zero_for_next_sample = true;
             self.has_been_triggered_since_power_on = true;
         }
+
         if self.nr22.dac_power() { self.enabled = true; } else { self.enabled = false; return; }
+
+        if was_enabled_before_this_trigger {
+            self.initial_delay_countdown = 4u8.saturating_sub(lf_div);
+        } else {
+            self.initial_delay_countdown = 6u8.saturating_sub(lf_div);
+        }
+
         if self.length_counter == 0 {
             let length_data = self.nr21.initial_length_timer_val();
             let is_max_length_condition_len = length_data == 0;
@@ -121,7 +134,12 @@ impl Channel2 {
     }
 
     pub fn get_output_volume(&mut self) -> u8 {
+        if self.initial_delay_countdown > 0 {
+            self.initial_delay_countdown -= 1;
+            return 0;
+        }
         if self.force_output_zero_for_next_sample { self.force_output_zero_for_next_sample = false; return 0; }
+
         if !self.enabled || !self.nr22.dac_power() { return 0; }
         let wave_duty = self.nr21.wave_pattern_duty_val();
         let wave_output = match wave_duty {
