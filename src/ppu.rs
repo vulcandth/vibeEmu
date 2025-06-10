@@ -74,6 +74,12 @@ pub struct Ppu {
     pub fetcher_tile_data_base_addr: u16, #[allow(dead_code)] pub fetcher_tile_attributes: u8,
     pub fetcher_tile_line_data_bytes: [u8; 2], pub fetcher_state_cycle: u8,
     pub fetcher_pixel_push_idx: u8, pub screen_x: u8,
+    pixels_to_discard_at_line_start: u8,
+    // Sprite rendering fields
+    sprite_fifo: PixelFifo,
+    current_sprite_to_render_idx: Option<usize>,
+    sprite_fetcher_pixel_push_idx: u8,
+    sprite_pixels_loaded_into_fifo: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -112,6 +118,12 @@ impl Ppu {
             fetcher_tile_data_base_addr: 0, fetcher_tile_attributes: 0,
             fetcher_tile_line_data_bytes: [0; 2], fetcher_state_cycle: 0,
             fetcher_pixel_push_idx: 0, screen_x: 0,
+            pixels_to_discard_at_line_start: 0,
+            // Sprite rendering fields
+            sprite_fifo: PixelFifo::new(8), // Max 8 pixels for one sprite
+            current_sprite_to_render_idx: None,
+            sprite_fetcher_pixel_push_idx: 0,
+            sprite_pixels_loaded_into_fifo: false,
         }
     }
 
@@ -151,7 +163,12 @@ impl Ppu {
         self.fetcher_state = FetcherState::GetTile;
         self.fetcher_state_cycle = 0;
         self.fetcher_pixel_push_idx = 0;
+        self.pixels_to_discard_at_line_start = self.scx % 8;
         self.bg_fifo.clear();
+        self.sprite_fifo.clear();
+        self.current_sprite_to_render_idx = None;
+        self.sprite_fetcher_pixel_push_idx = 0;
+        self.sprite_pixels_loaded_into_fifo = false;
         self.actual_drawing_duration_current_line = 0;
         self.visible_oam_entries.clear();
         self.line_sprite_data.clear();
@@ -211,17 +228,169 @@ impl Ppu {
                 }
             }
             PpuMode::Drawing => {
-                if (self.lcdc & 0x01) != 0 && self.bg_fifo.len() <= 8 {
-                    self.tick_fetcher();
-                }
+                // Sprite Data Loading Logic
+                if (self.lcdc & (1 << 1)) != 0 { // OBJ display enabled
+                    if self.current_sprite_to_render_idx.is_none() {
+                        for (idx, sprite_data) in self.line_sprite_data.iter().enumerate() {
+                            // sprite_data.x_pos is screen coordinate (1-168, 0 means off-screen)
+                            // We start loading when screen_x is at or past where the sprite begins (x_pos - 8)
+                            if sprite_data.x_pos > 0 && self.screen_x >= sprite_data.x_pos.saturating_sub(8) {
+                                self.current_sprite_to_render_idx = Some(idx);
+                                self.sprite_pixels_loaded_into_fifo = false;
+                                self.sprite_fetcher_pixel_push_idx = 0;
+                                self.sprite_fifo.clear(); // Clear for the new sprite
+                                break;
+                            }
+                        }
+                    }
 
-                if self.screen_x < SCREEN_WIDTH as u8 {
-                    if let Some(pixel_data) = self.bg_fifo.pop() {
-                        self.current_scanline_color_indices[self.screen_x as usize] = pixel_data.color_index;
-                        self.current_scanline_pixel_source[self.screen_x as usize] = PixelSource::Background;
-                        self.screen_x += 1;
+                    if let Some(sprite_idx) = self.current_sprite_to_render_idx {
+                        if !self.sprite_pixels_loaded_into_fifo {
+                            let sprite_data = &self.line_sprite_data[sprite_idx];
+                            // Condition to ensure we are in the range to load this sprite.
+                            // x_pos is 1-indexed effectively for screen coordinates.
+                            // An x_pos of 8 means the first pixel is at screen_x = 0.
+                            // An x_pos of 1 means the first pixel is at screen_x = -7 (off-screen).
+                            if sprite_data.x_pos > 0 && self.screen_x >= sprite_data.x_pos.saturating_sub(8) {
+                                while self.sprite_fetcher_pixel_push_idx < 8 && !self.sprite_fifo.is_full() {
+                                    let pixel_color_index = sprite_data.pixels[self.sprite_fetcher_pixel_push_idx as usize];
+                                    // For DMG, non-zero color index means visible pixel.
+                                    // PixelData only stores color_index. Palette is handled at mix time.
+                                    let pixel_data = PixelData { color_index: pixel_color_index };
+                                    // Horizontal flip for sprites is handled when decoding pixels in fetch_sprite_line_data
+                                    // So, pixels array is already in correct screen order.
+                                    if self.sprite_fifo.push(pixel_data).is_ok() {
+                                        self.sprite_fetcher_pixel_push_idx += 1;
+                                    } else {
+                                        break; // FIFO full, wait for next cycle
+                                    }
+                                }
+                                if self.sprite_fetcher_pixel_push_idx == 8 {
+                                    self.sprite_pixels_loaded_into_fifo = true;
+                                }
+                            }
+                        }
                     }
                 }
+
+                // Pixel Popping and Mixing Logic
+                let mut bg_pixel_data: Option<PixelData> = None;
+                let mut sprite_pixel_data: Option<PixelData> = None;
+                let mut final_pixel_data: Option<PixelData> = None;
+                let mut final_pixel_source: PixelSource = PixelSource::Background; // Default
+
+                // Tick BG Fetcher and try to pop BG pixel
+                if (self.lcdc & 0x01) != 0 { // BG display enabled
+                    if self.bg_fifo.len() <= 8 {
+                        self.tick_fetcher();
+                    }
+                    // Try to pop only if screen_x is less than screen width.
+                    // This ensures we don't pop unnecessarily if sprites are still rendering past BG.
+                    if self.screen_x < SCREEN_WIDTH as u8 {
+                         bg_pixel_data = self.bg_fifo.pop();
+                    }
+                } else {
+                    // If BG is disabled, ensure FIFO is empty and doesn't stall PPU
+                    // This case might be implicitly handled by tick_fetcher not running
+                    // and bg_fifo.pop() returning None.
+                    // However, if BG gets disabled mid-line, clear it.
+                    // This is not ideal here, better to handle disabling BG more robustly.
+                    // For now, rely on lcdc check for pop.
+                }
+
+
+                // Try to pop Sprite pixel
+                if (self.lcdc & (1 << 1)) != 0 { // OBJ display enabled
+                    if let Some(sprite_idx) = self.current_sprite_to_render_idx {
+                        let sprite_data = &self.line_sprite_data[sprite_idx];
+                        // Only pop if screen_x is at or past the sprite's first visible pixel column
+                        // and the sprite is not completely off-screen to the left (x_pos > 0)
+                        // and sprite pixels have been loaded.
+                        if sprite_data.x_pos > 0 && self.screen_x >= sprite_data.x_pos.saturating_sub(8) && self.sprite_pixels_loaded_into_fifo {
+                            // Also check if sprite is "active" for this specific screen_x
+                            // A sprite at x_pos=8 is visible from screen_x=0 to screen_x=7
+                            // A sprite at x_pos=X is visible from screen_x=X-8 to screen_x=X-1
+                            if self.screen_x < sprite_data.x_pos { // screen_x is within the 8 pixels of the sprite
+                                sprite_pixel_data = self.sprite_fifo.pop();
+                                if sprite_pixel_data.is_some() && sprite_data.x_pos == 0 { // This check seems redundant due to x_pos > 0 above
+                                    sprite_pixel_data = None; // Effectively hide sprite if x_pos somehow became 0
+                                }
+                            } else {
+                                // screen_x is past the current sprite's range, it should have been consumed or reset.
+                                // This can happen if the BG FIFO was empty and we advanced screen_x with sprite pixels,
+                                // then the sprite finished.
+                            }
+                        }
+                    }
+                }
+
+
+                // Mixing Decision
+                let s_pixel_opt = sprite_pixel_data;
+                let b_pixel_opt = bg_pixel_data;
+
+                if s_pixel_opt.is_some() && s_pixel_opt.as_ref().unwrap().color_index != 0 { // Sprite pixel exists and is not transparent
+                    let sprite_data = &self.line_sprite_data[self.current_sprite_to_render_idx.unwrap()];
+                    let sprite_attr = sprite_data.attributes;
+                    let sprite_has_priority = (sprite_attr & (1 << 7)) == 0; // DMG: 0=OBJ Above BG, 1=OBJ Behind BG
+                    let dmg_palette_reg = if (sprite_attr & (1 << 4)) != 0 { 1 } else { 0 }; // Bit 4: OBP1 if set, OBP0 if clear
+
+                    if sprite_has_priority || (b_pixel_opt.is_some() && b_pixel_opt.as_ref().unwrap().color_index == 0) { // Sprite is above BG or BG is transparent
+                        final_pixel_data = s_pixel_opt;
+                        final_pixel_source = PixelSource::Object { palette_register: dmg_palette_reg };
+                    } else if b_pixel_opt.is_some() { // Sprite is behind non-transparent BG
+                        final_pixel_data = b_pixel_opt;
+                        final_pixel_source = PixelSource::Background;
+                    } else { // BG pixel is None (e.g. BG disabled or FIFO empty), and sprite is behind BG.
+                             // Treat as if BG was transparent color 0.
+                        final_pixel_data = s_pixel_opt; // Sprite shows over "nothing"
+                        final_pixel_source = PixelSource::Object { palette_register: dmg_palette_reg };
+                    }
+                } else if b_pixel_opt.is_some() { // No sprite pixel (or transparent sprite), use BG
+                    final_pixel_data = b_pixel_opt;
+                    final_pixel_source = PixelSource::Background;
+                } else if s_pixel_opt.is_some() && s_pixel_opt.as_ref().unwrap().color_index == 0 { // Transparent sprite over no BG
+                     final_pixel_data = Some(PixelData { color_index: 0 }); // Show background color 0
+                     final_pixel_source = PixelSource::Background;
+                }
+                // If both are None, final_pixel_data remains None. Pushing to framebuffer should handle None.
+
+
+                if self.screen_x < SCREEN_WIDTH as u8 {
+                    if let Some(ref pixel_to_draw) = final_pixel_data {
+                        self.current_scanline_color_indices[self.screen_x as usize] = pixel_to_draw.color_index;
+                        self.current_scanline_pixel_source[self.screen_x as usize] = final_pixel_source;
+                        self.screen_x += 1;
+
+                        // If a sprite pixel was consumed, and its FIFO is now empty, and it was fully loaded:
+                        // Reset current_sprite_to_render_idx to allow next sprite to be picked up.
+                        if s_pixel_opt.is_some() { // A sprite pixel was popped (transparent or not)
+                            if self.sprite_fifo.is_empty() && self.sprite_pixels_loaded_into_fifo {
+                                if let Some(sprite_idx) = self.current_sprite_to_render_idx {
+                                    // Check if this sprite is truly done (screen_x has passed its last pixel)
+                                    let sprite_data = &self.line_sprite_data[sprite_idx];
+                                     // x_pos is 1-indexed like, x_pos=8 means pixels at screen_x = 0..7
+                                    if self.screen_x >= sprite_data.x_pos {
+                                        self.current_sprite_to_render_idx = None;
+                                        self.sprite_pixels_loaded_into_fifo = false;
+                                        self.sprite_fetcher_pixel_push_idx = 0;
+                                        // self.sprite_fifo.clear(); // Already empty
+                                    }
+                                }
+                            }
+                        }
+                    } else if (self.lcdc & 0x01) == 0 && (self.lcdc & (1 << 1)) == 0 {
+                        // If both BG and OBJ are disabled, output color 0
+                        self.current_scanline_color_indices[self.screen_x as usize] = 0;
+                        self.current_scanline_pixel_source[self.screen_x as usize] = PixelSource::Background;
+                        self.screen_x += 1;
+                    } else if bg_pixel_data.is_none() && sprite_pixel_data.is_none() && ((self.lcdc & 0x01) !=0 || (self.lcdc & (1 << 1)) != 0) {
+                        // If one or both layers are enabled, but FIFOs are empty (e.g. fetcher stalled, or pixels discarded by SCX)
+                        // PPU doesn't advance screen_x. It waits for pixels. Loop will continue.
+                        // This 'else if' might not be strictly needed if the main loop structure handles stalls.
+                    }
+                }
+
 
                 let mut transition_to_hblank = false;
                 if self.screen_x >= SCREEN_WIDTH as u8 {
@@ -325,6 +494,17 @@ impl Ppu {
                 self.fetcher_state = FetcherState::PushToFifo;
             }
             FetcherState::PushToFifo => {
+                if self.pixels_to_discard_at_line_start > 0 {
+                    self.pixels_to_discard_at_line_start -= 1;
+                    self.fetcher_pixel_push_idx += 1;
+                    if self.fetcher_pixel_push_idx == 8 {
+                        self.fetcher_pixel_push_idx = 0;
+                        self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8);
+                        self.fetcher_state = FetcherState::GetTile;
+                    }
+                    return;
+                }
+
                 if self.bg_fifo.is_full() { return; }
                 let pixels = self.decode_tile_line_to_pixels(
                     self.fetcher_tile_line_data_bytes[0], self.fetcher_tile_line_data_bytes[1],
