@@ -211,19 +211,23 @@ impl Bus {
 
         let t_cycles = m_cycles * 4;
 
-        // Tick PPU and handle interrupt request
-        // TODO: New PPU interaction needed here - PPU tick, VBlank/STAT interrupt requests
-        // PPU tick might set its `just_entered_hblank` flag.
-        // if let Some(interrupt_type) = self.ppu.tick(t_cycles) { // PPU Removed
-        //     self.request_interrupt(interrupt_type);
-        // }
+        // Tick PPU
+        self.ppu.tick(t_cycles);
 
-        // Check for HDMA trigger based on PPU state
-        // TODO: New PPU interaction needed here - HDMA trigger requires PPU HBlank state
-        // if self.model.is_cgb_family() && self.hdma_active && self.ppu.just_entered_hblank { // PPU Removed
-        //     self.hblank_hdma_pending = true;
-        //     // self.ppu.just_entered_hblank = false; // Bus acknowledged the HBlank signal for HDMA // PPU Removed
-        // }
+        // Handle PPU Interrupt Requests
+        if self.ppu.vblank_interrupt_requested {
+            self.request_interrupt(InterruptType::VBlank);
+            self.ppu.clear_vblank_interrupt_request();
+        }
+        if self.ppu.stat_interrupt_requested {
+            self.request_interrupt(InterruptType::LcdStat);
+            self.ppu.clear_stat_interrupt_request();
+        }
+
+        // Check for HDMA trigger based on PPU state (just_entered_hblank is managed by PPU)
+        if self.model.is_cgb_family() && self.hdma_active && self.ppu.just_entered_hblank {
+            self.hblank_hdma_pending = true;
+        }
 
         // Handle HDMA transfer if pending (one block per HBlank)
         if self.hblank_hdma_pending {
@@ -317,7 +321,7 @@ impl Bus {
                     0xFF0F => self.if_register | 0xE0,
                     0xFF10..=0xFF3F => self.apu.read_byte(addr),
                     0xFF40 => self.ppu.lcdc,
-                    0xFF41 => self.ppu.stat,
+                    0xFF41 => self.ppu.stat, // PPU ensures bit 7 is set.
                     0xFF42 => self.ppu.scy,
                     0xFF43 => self.ppu.scx,
                     0xFF44 => self.ppu.ly,
@@ -472,7 +476,7 @@ impl Bus {
                     0xFF0F => self.if_register | 0xE0,             // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.read_byte(addr),   // APU registers
                     0xFF40 => self.ppu.lcdc,
-                    0xFF41 => self.ppu.stat,
+                    0xFF41 => self.ppu.stat, // PPU ensures bit 7 is set.
                     0xFF42 => self.ppu.scy,
                     0xFF43 => self.ppu.scx,
                     0xFF44 => self.ppu.ly,
@@ -588,12 +592,9 @@ impl Bus {
                         self.if_register = value & 0x1F;
                     } // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.write_byte(addr, value),   // APU registers
-                    0xFF40 => self.ppu.lcdc = value,
+                    0xFF40 => self.ppu.lcdc = value, // TODO: Consider LCDC write side effects (e.g., turning LCD off/on)
                     0xFF41 => { // STAT
-                        // Lower 3 bits are read-only (mode + LYC flag)
-                        // Bit 7 is always 1
-                        self.ppu.stat = (value & 0xF8) | (self.ppu.stat & 0x07) | 0x80;
-                        // TODO: STAT write can trigger interrupt checks
+                        self.ppu.write_stat(value);
                     }
                     0xFF42 => self.ppu.scy = value,
                     0xFF43 => self.ppu.scx = value,
