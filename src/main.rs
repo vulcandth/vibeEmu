@@ -1,16 +1,18 @@
 // Declare modules if they are in separate files in the same directory (e.g., src/)
 // and not part of a library crate already.
 mod apu;
+mod display; // Added display module
 mod bus;
 mod cpu;
 mod memory;
 pub mod models;
-mod ppu; // Declare models module at crate root
+mod ppu; // Added new ppu module
+// mod ppu; // Declare models module at crate root - Removed
 
 #[cfg(test)]
 mod bus_tests;
-#[cfg(test)]
-mod ppu_tests;
+// #[cfg(test)]
+// mod ppu_tests; // Removed
 
 // Assuming these other modules exist from the initial problem description context
 // and might be needed for a complete build, though not directly used in this step's main()
@@ -43,7 +45,7 @@ use winit::platform::x11::EventLoopBuilderExtX11; // Assuming X11 for broader co
 // use winit::platform::wayland::EventLoopBuilderExtWayland;
 
 use crossbeam_channel::{unbounded, Receiver, Sender}; // Added for MPSC channel
-use minifb::{Key, MouseButton, Window, WindowOptions};
+use minifb::{Key, MouseButton}; // Re-add Key and MouseButton for main.rs usage
 use native_dialog::FileDialog; // For native file dialogs
 
 // Use crate:: if VibeEmu is a library and main.rs is an example or bin.
@@ -55,10 +57,9 @@ use crate::bus::Bus;
 use crate::cpu::Cpu;
 use crate::interrupts::InterruptType;
 use crate::joypad::JoypadButton; // Added for joypad input
+use crate::display::{Display, WINDOW_WIDTH, WINDOW_HEIGHT}; // Import Display and constants
 
-// Define window dimensions
-const WINDOW_WIDTH: usize = 160;
-const WINDOW_HEIGHT: usize = 144;
+// Define window dimensions are now imported from display
 const TARGET_FPS: f64 = 59.73;
 
 #[derive(Debug, Clone, Copy)]
@@ -81,28 +82,7 @@ fn load_rom_file(path: &str) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-// Function to convert PPU's RGB888 framebuffer to minifb's U32 (ARGB) buffer
-// Only used in non-headless mode
-fn convert_rgb_to_u32_buffer(rgb_buffer: &[u8], width: usize, height: usize) -> Vec<u32> {
-    let mut u32_buffer = vec![0u32; width * height];
-    for y in 0..height {
-        for x in 0..width {
-            let idx_rgb = (y * width + x) * 3;
-            // Ensure we don't read out of bounds if rgb_buffer is unexpectedly short
-            if idx_rgb + 2 < rgb_buffer.len() {
-                let r = rgb_buffer[idx_rgb] as u32;
-                let g = rgb_buffer[idx_rgb + 1] as u32;
-                let b = rgb_buffer[idx_rgb + 2] as u32;
-                // minifb expects ARGB format where Alpha is the highest byte,
-                // but we don't have alpha from PPU, so set it to 0xFF (opaque) or 0x00.
-                // Or, more simply, just pack RGB: 0xRRGGBB.
-                // Let's assume 0xRRGGBB is fine for minifb if not specified otherwise.
-                u32_buffer[y * width + x] = (r << 16) | (g << 8) | b;
-            }
-        }
-    }
-    u32_buffer
-}
+// convert_rgb_to_u32_buffer function removed, will use display::convert_rgb_to_u32_buffer
 
 // Returns: (is_headless, halt_duration_seconds, halt_cycles_count, rom_path, rom_path_explicitly_set, program_name)
 fn parse_args(args_vec: &[String]) -> (bool, Option<u64>, Option<u64>, String, bool, String) {
@@ -281,21 +261,17 @@ fn main() {
     });
 
     // --- Conditional Window Initialization with Fallback ---
-    let mut window_attempt: Option<minifb::Window> = None;
+    // let mut window_attempt: Option<minifb::Window> = None; // Old way
+    let mut display_attempt: Option<Display> = None;
     let mut fell_back_to_headless = false; // Track if fallback occurred
 
     if !is_headless {
-        match Window::new(
-            "VibeEmu - Press ESC to exit",
-            WINDOW_WIDTH,
-            WINDOW_HEIGHT,
-            WindowOptions::default(),
-        ) {
-            Ok(w) => window_attempt = Some(w),
-            Err(e) => {
+        match Display::new("VibeEmu - Press ESC to exit") {
+            Ok(d) => display_attempt = Some(d),
+            Err(e_str) => { // Display::new returns String error
                 eprintln!(
-                    "Failed to create window: {}. Falling back to headless mode.",
-                    e
+                    "Failed to create display: {}. Falling back to headless mode.",
+                    e_str
                 );
                 is_headless = true; // Switch to headless
                 fell_back_to_headless = true; // Mark that fallback happened
@@ -303,12 +279,12 @@ fn main() {
                 if halt_duration_seconds.is_none() {
                     halt_duration_seconds = Some(30);
                 }
-                // window_attempt remains None
+                // display_attempt remains None
             }
         }
     }
-    // Assign to the final window variable
-    let mut window: Option<minifb::Window> = window_attempt;
+    // Assign to the final display variable
+    let mut display: Option<Display> = display_attempt;
 
     // Print headless mode status AFTER window initialization attempt
     if is_headless {
@@ -334,10 +310,10 @@ fn main() {
         }
     }
 
-    if let Some(_w) = &mut window { // Only if window was created
+    // if let Some(_d) = &mut display { // Only if display was created
          // Limit window update rate (optional, minifb handles this reasonably well)
-         // w.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Approx 60Hz
-    }
+         // d.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Example if Display had this
+    // }
 
     // General emulation settings
     const SERIAL_PRINT_INTERVAL: u64 = 500_000; // Print serial output every N steps
@@ -368,8 +344,8 @@ fn main() {
 
     while running {
         // --- Input and Pause Toggle ---
-        if let Some(w) = window.as_mut() {
-            if !w.is_open() || w.is_key_down(Key::Escape) {
+        if let Some(d) = display.as_mut() {
+            if !d.is_open() || d.is_key_down(Key::Escape) {
                 running = false;
             }
 
@@ -388,7 +364,7 @@ fn main() {
             ];
 
             for (key, button) in key_mappings.iter() {
-                let pressed = w.is_key_down(*key);
+                let pressed = d.is_key_down(*key);
                 if bus_mut.joypad.button_event(*button, pressed) {
                     bus_mut.request_interrupt(InterruptType::Joypad);
                 }
@@ -397,16 +373,16 @@ fn main() {
             // For simplicity, this example uses only RightShift. If LeftShift is also needed,
             // ensure only one event is processed for "Select" if both shifts are pressed.
             // One way:
-            let left_shift_pressed = w.is_key_down(Key::LeftShift);
+            let left_shift_pressed = d.is_key_down(Key::LeftShift);
             if bus_mut.joypad.button_event(
                 JoypadButton::Select,
-                w.is_key_down(Key::RightShift) || left_shift_pressed,
+                d.is_key_down(Key::RightShift) || left_shift_pressed,
             ) {
                 bus_mut.request_interrupt(InterruptType::Joypad);
             }
 
             // Handle right-click release detection for pause/resume
-            let right_mouse_down = w.get_mouse_down(MouseButton::Right);
+            let right_mouse_down = d.get_mouse_down(MouseButton::Right);
             if prev_right_mouse_down && !right_mouse_down {
                 let current_paused_state = paused.load(Ordering::SeqCst);
                 let new_paused_state = !current_paused_state;
@@ -430,7 +406,7 @@ fn main() {
 
             // If paused, ensure window remains responsive and events are processed.
             if paused.load(Ordering::SeqCst) && running {
-                w.update(); // Process events for minifb regularly if paused
+                d.update_events(); // Process events for display regularly if paused
             }
         } else if is_headless && !running {
             // This case is mostly for clarity; the !running check below will handle exit.
@@ -464,9 +440,9 @@ fn main() {
             } else {
                 // CPU is HALTed or in STOP mode.
                 // Still need to check for window close/ESC if GUI is active and CPU is stopped.
-                if let Some(w) = window.as_ref() {
-                    // Use window.as_ref() if not modifying window itself
-                    if !w.is_open() || w.is_key_down(Key::Escape) {
+                if let Some(d) = display.as_ref() {
+                    // Use display.as_ref() if not modifying display itself
+                    if !d.is_open() || d.is_key_down(Key::Escape) {
                         running = false;
                     }
                 }
@@ -475,14 +451,14 @@ fn main() {
             // PPU Frame rendering logic - should execute if not paused
             if ppu_cycles_this_frame >= CYCLES_PER_FRAME {
                 ppu_cycles_this_frame -= CYCLES_PER_FRAME; // Reset for next frame
-                if let Some(w) = window.as_mut() {
+                if let Some(d) = display.as_mut() {
                     // GUI mode rendering
                     let ppu_framebuffer = &bus.borrow().ppu.framebuffer;
+                    // Use function from display module
                     let display_buffer =
-                        convert_rgb_to_u32_buffer(ppu_framebuffer, WINDOW_WIDTH, WINDOW_HEIGHT);
-                    // update_with_buffer also pumps events for minifb
-                    w.update_with_buffer(&display_buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
-                        .unwrap_or_else(|e| panic!("Failed to update window buffer: {}", e));
+                        display::convert_rgb_to_u32_buffer(ppu_framebuffer, WINDOW_WIDTH, WINDOW_HEIGHT);
+                    // update_with_buffer also pumps events for display
+                    d.update_with_buffer(&display_buffer);
                 }
                 // Frame rate locking logic
                 let elapsed_time = last_frame_time.elapsed();

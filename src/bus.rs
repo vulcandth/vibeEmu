@@ -9,7 +9,7 @@ use crate::mbc::{
     CartridgeType, MemoryBankController, NoMBC, MBC1, MBC2, MBC3, MBC30, MBC5, MBC6, MBC7,
 }; // Added MBC30 import
 use crate::memory::Memory;
-use crate::ppu::Ppu;
+use crate::ppu::Ppu; // Added new PPU
 use crate::timer::Timer;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -37,7 +37,7 @@ fn get_ram_size_from_header(ram_header_byte: u8) -> usize {
 pub struct Bus {
     pub mbc: Box<dyn MemoryBankController>, // MBC trait object
     pub memory: Memory,
-    pub ppu: Ppu,
+    pub ppu: Ppu, // Added new PPU field
     pub apu: Apu,
     pub joypad: Joypad, // Added joypad field
     pub timer: Timer,
@@ -67,7 +67,7 @@ pub struct Bus {
     hdma_current_src: u16,
     hdma_current_dest: u16,
     pub hdma_blocks_remaining: u8,
-    hblank_hdma_pending: bool, // Flag to perform one HDMA block transfer
+    pub hblank_hdma_pending: bool, // Flag to perform one HDMA block transfer
 }
 
 impl Bus {
@@ -77,33 +77,24 @@ impl Bus {
         // This function will be called when a GDMA is initiated via HDMA5.
         // For now, it will just consume the blocks conceptually.
 
-        let num_blocks_to_transfer = self.hdma_blocks_remaining; // This was set based on HDMA5 value
+        // The PPU's VRAM, VBK register, etc. will be accessed via the new PPU module.
+        let num_blocks_to_transfer = self.hdma_blocks_remaining;
         if !self.gdma_active || num_blocks_to_transfer == 0 {
-            return; // Should not happen if called correctly
+            return;
         }
 
-        println!(
-            "GDMA: Transferring {} blocks from 0x{:04X} to 0x{:04X} (VRAM Bank {})",
-            num_blocks_to_transfer, self.hdma_current_src, self.hdma_current_dest, self.ppu.vbk
-        );
+        // println!(
+        //     "GDMA: Transferring {} blocks from 0x{:04X} to 0x{:04X} (VRAM Bank {})",
+        //     num_blocks_to_transfer, self.hdma_current_src, self.hdma_current_dest, self.ppu.vbk
+        // );
 
         for _block in 0..num_blocks_to_transfer {
             for i in 0..16 {
-                // Ensure source address does not go out of typical RAM/ROM bounds.
-                // ROM: 0x0000-0x7FFF, WRAM: 0xC000-0xDFFF (or E000-FDFF echo), CartRAM: A000-BFFF
-                // HRAM (FF80-FFFE) is small. OAM (FE00-FE9F) and VRAM (8000-9FFF) are usually not sources.
-                // For simplicity, we assume valid source for now.
                 let byte_to_transfer =
                     self.read_byte_internal(self.hdma_current_src.wrapping_add(i));
-
-                // Destination is VRAM (0x8000-0x9FFF), offset within current VBK bank.
-                let dest_offset = (self.hdma_current_dest.wrapping_add(i)) & 0x1FFF; // Mask to stay within 8KB bank range
-                let current_vbk = self.ppu.vbk as usize;
-
-                if dest_offset < 8192 {
-                    // Ensure offset is within bank bounds
-                    self.ppu.vram[current_vbk][dest_offset as usize] = byte_to_transfer;
-                }
+                // Destination is VRAM (0x8000-0x9FFF)
+                // PPU will handle VRAM banking internally if needed.
+                self.ppu.write_vram(self.hdma_current_dest.wrapping_add(i), byte_to_transfer);
             }
             self.hdma_current_src = self.hdma_current_src.wrapping_add(16);
             self.hdma_current_dest = self.hdma_current_dest.wrapping_add(16);
@@ -181,7 +172,7 @@ impl Bus {
         Self {
             mbc,
             memory: Memory::new(),
-            ppu: Ppu::new(determined_model), // Pass GameBoyModel to Ppu
+            ppu: Ppu::new(determined_model), // Initialize new PPU
             apu: Apu::new(determined_model), // Pass GameBoyModel to Apu
             joypad: Joypad::new(),
             timer: Timer::new(),
@@ -221,33 +212,31 @@ impl Bus {
         let t_cycles = m_cycles * 4;
 
         // Tick PPU and handle interrupt request
+        // TODO: New PPU interaction needed here - PPU tick, VBlank/STAT interrupt requests
         // PPU tick might set its `just_entered_hblank` flag.
-        if let Some(interrupt_type) = self.ppu.tick(t_cycles) {
-            self.request_interrupt(interrupt_type);
-        }
+        // if let Some(interrupt_type) = self.ppu.tick(t_cycles) { // PPU Removed
+        //     self.request_interrupt(interrupt_type);
+        // }
 
         // Check for HDMA trigger based on PPU state
-        if self.model.is_cgb_family() && self.hdma_active && self.ppu.just_entered_hblank {
-            self.hblank_hdma_pending = true;
-            self.ppu.just_entered_hblank = false; // Bus acknowledged the HBlank signal for HDMA
-        }
+        // TODO: New PPU interaction needed here - HDMA trigger requires PPU HBlank state
+        // if self.model.is_cgb_family() && self.hdma_active && self.ppu.just_entered_hblank { // PPU Removed
+        //     self.hblank_hdma_pending = true;
+        //     // self.ppu.just_entered_hblank = false; // Bus acknowledged the HBlank signal for HDMA // PPU Removed
+        // }
 
         // Handle HDMA transfer if pending (one block per HBlank)
         if self.hblank_hdma_pending {
             if self.hdma_blocks_remaining > 0 {
                 // Perform one 16-byte block transfer for HDMA
-                println!(
-                    "HDMA: Transferring 1 block from 0x{:04X} to 0x{:04X} (VRAM Bank {}), {} blocks left",
-                    self.hdma_current_src, self.hdma_current_dest, self.ppu.vbk, self.hdma_blocks_remaining -1
-                );
+                // println!(
+                //     "HDMA: Transferring 1 block from 0x{:04X} to 0x{:04X} (VRAM Bank {}), {} blocks left",
+                //     self.hdma_current_src, self.hdma_current_dest, self.ppu.vbk, self.hdma_blocks_remaining -1
+                // );
                 for i in 0..16 {
                     let byte_to_transfer =
                         self.read_byte_internal(self.hdma_current_src.wrapping_add(i));
-                    let dest_offset = (self.hdma_current_dest.wrapping_add(i)) & 0x1FFF;
-                    let current_vbk = self.ppu.vbk as usize;
-                    if dest_offset < 8192 {
-                        self.ppu.vram[current_vbk][dest_offset as usize] = byte_to_transfer;
-                    }
+                    self.ppu.write_vram(self.hdma_current_dest.wrapping_add(i), byte_to_transfer);
                 }
                 self.hdma_current_src = self.hdma_current_src.wrapping_add(16);
                 self.hdma_current_dest =
@@ -258,14 +247,9 @@ impl Bus {
                 if self.hdma_blocks_remaining == 0 {
                     self.hdma_active = false;
                     self.hdma5 = 0xFF; // HDMA finished
-                } else {
-                    // Update HDMA5 for readback (remaining blocks - 1, bit 7 is 0 because active)
-                    // This was potentially set when HDMA5 was written, but needs to reflect current remaining blocks.
-                    // However, HDMA5 read logic already calculates this from hdma_blocks_remaining.
-                    // self.hdma5 = (self.hdma_blocks_remaining - 1) & 0x7F; // This isn't quite right, HDMA5 holds original len/mode.
                 }
             }
-            self.hblank_hdma_pending = false; // Processed one block for this HBlank signal
+            self.hblank_hdma_pending = false;
         }
 
         // Tick Timer
@@ -273,15 +257,14 @@ impl Bus {
 
         // OAM DMA Transfer Logic (this is separate from HDMA/GDMA)
         if self.oam_dma_active {
+            // TODO: New PPU interaction needed here - OAM DMA writes to PPU's OAM
             if self.oam_dma_cycles_remaining == 160 * 4 {
                 // Check if just initiated
                 let source_base_address = (self.oam_dma_source_address_upper as u16) << 8;
                 for i in 0..160 {
                     // 0xA0 bytes
                     let byte_to_copy = self.read_byte_internal(source_base_address + i as u16);
-                    // Write directly to PPU OAM array, bypassing PPU mode checks
-                    // Ensure index is within bounds (should always be for 0..160 for OAM size of 160)
-                    self.ppu.oam[i as usize] = byte_to_copy;
+                    self.ppu.write_oam(0xFE00 + i as u16, byte_to_copy); // Write to OAM via PPU method
                 }
             }
 
@@ -301,7 +284,7 @@ impl Bus {
     fn read_byte_internal(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x7FFF => self.mbc.read_rom(addr),
-            0x8000..=0x9FFF => self.ppu.read_byte(addr), // VRAM (DMA can read from VRAM)
+            0x8000..=0x9FFF => self.ppu.read_vram(addr), // VRAM (DMA can read from VRAM)
             0xA000..=0xBFFF => self.mbc.read_ram(addr - 0xA000), // Cartridge RAM
             0xC000..=0xDFFF => self.memory.read_byte(addr), // WRAM
             0xE000..=0xFDFF => {
@@ -316,10 +299,8 @@ impl Bus {
             // Reading from 0xFE00..=0xFEFF (OAM and unusable)
             0xFE00..=0xFEFF => {
                 // This range includes OAM (FE00-FE9F) and Unusable (FEA0-FEFF)
-                // DMA source usually isn't OAM itself, but if it were, PPU read is appropriate.
-                // For Unusable, 0xFF is typical.
                 if addr <= 0xFE9F {
-                    self.ppu.read_byte(addr) // OAM
+                    self.ppu.read_oam(addr) // OAM
                 } else {
                     0xFF // Unusable memory
                 }
@@ -335,8 +316,20 @@ impl Bus {
                     0xFF04..=0xFF07 => self.timer.read_byte(addr),
                     0xFF0F => self.if_register | 0xE0,
                     0xFF10..=0xFF3F => self.apu.read_byte(addr),
-                    0xFF40..=0xFF4B => self.ppu.read_byte(addr), // Note: 0xFF46 (DMA reg) read during DMA? Unlikely.
-                    0xFF4D => {
+                    0xFF40 => self.ppu.lcdc,
+                    0xFF41 => self.ppu.stat,
+                    0xFF42 => self.ppu.scy,
+                    0xFF43 => self.ppu.scx,
+                    0xFF44 => self.ppu.ly,
+                    0xFF45 => self.ppu.lyc,
+                    // 0xFF46 is DMA register, Bus handles its write side. Read is often just last written value.
+                    0xFF46 => self.oam_dma_source_address_upper, // Or a specific DMA read behavior if necessary
+                    0xFF47 => self.ppu.bgp,
+                    0xFF48 => self.ppu.obp0,
+                    0xFF49 => self.ppu.obp1,
+                    0xFF4A => self.ppu.wy,
+                    0xFF4B => self.ppu.wx,
+                    0xFF4D => { // KEY1
                         let speed_bit = if self.is_double_speed { 0x80 } else { 0x00 };
                         let prepare_bit = if self.key1_prepare_speed_switch {
                             0x01
@@ -454,7 +447,7 @@ impl Bus {
         // println!("Bus read at 0x{:04X}", addr);
         match addr {
             0x0000..=0x7FFF => self.mbc.read_rom(addr), // ROM area, handled by MBC
-            0x8000..=0x9FFF => self.ppu.read_byte(addr), // VRAM
+            0x8000..=0x9FFF => self.ppu.read_vram(addr), // VRAM
             0xA000..=0xBFFF => self.mbc.read_ram(addr - 0xA000), // Cartridge RAM (External RAM)
             0xC000..=0xDFFF => self.memory.read_byte(addr), // WRAM
             0xE000..=0xFDFF => {
@@ -462,8 +455,7 @@ impl Bus {
                 let mirrored_addr = addr - 0x2000;
                 self.memory.read_byte(mirrored_addr)
             }
-            // REMOVED DUPLICATE 0xC000..=0xDFFF and 0xE000..=0xFDFF
-            0xFE00..=0xFE9F => self.ppu.read_byte(addr), // OAM
+            0xFE00..=0xFE9F => self.ppu.read_oam(addr), // OAM
             0xFEA0..=0xFEFF => {
                 // Unusable memory
                 0xFF
@@ -479,9 +471,24 @@ impl Bus {
                     0xFF04..=0xFF07 => self.timer.read_byte(addr), // Route to Timer
                     0xFF0F => self.if_register | 0xE0,             // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.read_byte(addr),   // APU registers
-                    // Extended PPU range to include VBK (0xFF4F) and CGB Palettes (0xFF68-0xFF6B)
-                    0xFF40..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => self.ppu.read_byte(addr),
-                    0xFF4D => {
+                    0xFF40 => self.ppu.lcdc,
+                    0xFF41 => self.ppu.stat,
+                    0xFF42 => self.ppu.scy,
+                    0xFF43 => self.ppu.scx,
+                    0xFF44 => self.ppu.ly,
+                    0xFF45 => self.ppu.lyc,
+                    0xFF46 => self.oam_dma_source_address_upper, // Read DMA register
+                    0xFF47 => self.ppu.bgp,
+                    0xFF48 => self.ppu.obp0,
+                    0xFF49 => self.ppu.obp1,
+                    0xFF4A => self.ppu.wy,
+                    0xFF4B => self.ppu.wx,
+                    0xFF4F => self.ppu.vbk | 0xFE, // VBK - bit 0 is bank, others read as 1
+                    0xFF68 => self.ppu.bcps_bcpi, // BCPS/BCPI
+                    0xFF69 => self.ppu.bcpd_bgpd, // BCPD/BGPD - TODO: PPU should handle read from current index in bcps_bcpi
+                    0xFF6A => self.ppu.ocps_ocpi, // OCPS/OCPI
+                    0xFF6B => self.ppu.ocpd_obpd, // OCPD/OBPD - TODO: PPU should handle read from current index in ocps_ocpi
+                    0xFF4D => { // KEY1
                         // KEY1 - CGB Speed Switch
                         let speed_bit = if self.is_double_speed { 0x80 } else { 0x00 };
                         let prepare_bit = if self.key1_prepare_speed_switch {
@@ -543,7 +550,7 @@ impl Bus {
         // println!("Bus write at 0x{:04X} with value 0x{:02X}", addr, value);
         match addr {
             0x0000..=0x7FFF => self.mbc.write_rom(addr, value), // ROM area, handled by MBC
-            0x8000..=0x9FFF => self.ppu.write_byte(addr, value), // VRAM
+            0x8000..=0x9FFF => self.ppu.write_vram(addr, value), // VRAM
             0xA000..=0xBFFF => self.mbc.write_ram(addr - 0xA000, value), // Cartridge RAM
             0xC000..=0xDFFF => self.memory.write_byte(addr, value), // WRAM
             0xE000..=0xFDFF => {
@@ -551,8 +558,7 @@ impl Bus {
                 let mirrored_addr = addr - 0x2000;
                 self.memory.write_byte(mirrored_addr, value)
             }
-            // REMOVED DUPLICATE 0xC000..=0xDFFF and 0xE000..=0xFDFF
-            0xFE00..=0xFE9F => self.ppu.write_byte(addr, value), // OAM
+            0xFE00..=0xFE9F => self.ppu.write_oam(addr, value), // OAM
             0xFEA0..=0xFEFF => {
                 // Unusable memory - Do nothing
             }
@@ -582,21 +588,41 @@ impl Bus {
                         self.if_register = value & 0x1F;
                     } // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.write_byte(addr, value),   // APU registers
-                    // PPU registers excluding 0xFF46 (DMA)
-                    0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => {
-                        self.ppu.write_byte(addr, value)
+                    0xFF40 => self.ppu.lcdc = value,
+                    0xFF41 => { // STAT
+                        // Lower 3 bits are read-only (mode + LYC flag)
+                        // Bit 7 is always 1
+                        self.ppu.stat = (value & 0xF8) | (self.ppu.stat & 0x07) | 0x80;
+                        // TODO: STAT write can trigger interrupt checks
                     }
-                    0xFF46 => {
-                        // OAM DMA Start Register
+                    0xFF42 => self.ppu.scy = value,
+                    0xFF43 => self.ppu.scx = value,
+                    // 0xFF44 (LY) is read-only for CPU
+                    0xFF45 => self.ppu.lyc = value,
+                    0xFF46 => { // DMA - OAM DMA Start Register
                         self.oam_dma_source_address_upper = value;
                         self.oam_dma_active = true;
-                        // DMA takes 160 M-cycles (160 * 4 T-cycles)
-                        // The actual data copy happens "instantly" in the current tick_components logic
-                        // when oam_dma_cycles_remaining is set to this initial value.
-                        // The CPU is effectively halted during these cycles.
                         self.oam_dma_cycles_remaining = 160 * 4;
                     }
-                    0xFF4D => {
+                    0xFF47 => self.ppu.bgp = value,
+                    0xFF48 => self.ppu.obp0 = value,
+                    0xFF49 => self.ppu.obp1 = value,
+                    0xFF4A => self.ppu.wy = value,
+                    0xFF4B => self.ppu.wx = value,
+                    0xFF4F => self.ppu.vbk = value & 0x01, // VBK - CGB VRAM Bank Select (only bit 0 is writable)
+                    0xFF68 => self.ppu.bcps_bcpi = value, // BCPS/BCPI
+                    0xFF69 => { // BCPD/BGPD
+                        self.ppu.bcpd_bgpd = value;
+                        // TODO: Write to cgb_background_palette_ram at index from bcps_bcpi
+                        // if (self.ppu.bcps_bcpi & 0x80) { self.ppu.bcps_bcpi = (self.ppu.bcps_bcpi + 1) & 0xBF; } // Auto-increment
+                    }
+                    0xFF6A => self.ppu.ocps_ocpi = value, // OCPS/OCPI
+                    0xFF6B => { // OCPD/OBPD
+                        self.ppu.ocpd_obpd = value;
+                        // TODO: Write to cgb_sprite_palette_ram at index from ocps_ocpi
+                        // if (self.ppu.ocps_ocpi & 0x80) { self.ppu.ocps_ocpi = (self.ppu.ocps_ocpi + 1) & 0xBF; } // Auto-increment
+                    }
+                    0xFF4D => { // KEY1
                         // KEY1 - CGB Speed Switch
                         self.key1_prepare_speed_switch = (value & 0x01) != 0;
                     }
@@ -619,10 +645,12 @@ impl Bus {
                                                          // Source must be in ROM or RAM (0x0000-0x7FFF or 0xA000-0xDFFF)
 
                         // Destination address in VRAM
-                        self.hdma_current_dest = 0x8000
-                            | (((self.hdma3_dest_high & 0x1F) as u16) << 8)
-                            | (self.hdma4_dest_low as u16);
-                        self.hdma_current_dest &= 0x1FF0; // Align to 16 bytes (lower 4 bits are zero) and mask to VRAM range (0x0000-0x1FF0 relative to 0x8000)
+                        // HDMA3 (FF53) provides bits 12-8 of VRAM address (0x1F range).
+                        // HDMA4 (FF54) provides bits 7-4 of VRAM address (0xF0 range).
+                        // Lowest 4 bits are implicitly zero. Resulting offset is 0x0000-0x1FF0.
+                        let dest_offset = (((self.hdma3_dest_high & 0x1F) as u16) << 8)
+                                          | ((self.hdma4_dest_low & 0xF0) as u16);
+                        self.hdma_current_dest = 0x8000 | dest_offset;
 
                         self.hdma_blocks_remaining = (value & 0x7F) + 1; // Number of 16-byte blocks
 
@@ -852,11 +880,12 @@ mod tests {
         // The PPU placeholder read_byte returns 0xFF and prints a message.
         // We can't easily check the println! here without more complex test setup.
         // So we'll just check the returned value.
-        // The PPU now returns the actual LCDC value (0x91 by default)
+        // The PPU now returns the actual LCDC value (0x91 by default) - This will change with stubbed PPU
         cpu.ld_a_hl_mem();
+        // TODO: Update this test once new PPU is integrated. For now, it should read the placeholder value from Bus.
         assert_eq!(
-            cpu.a, 0x91,
-            "Reading from PPU LCDC register should return its default value"
+            cpu.a, 0x91, // Placeholder value for LCDC from Bus read_byte
+            "Reading from PPU LCDC register should return its default value from Bus stub"
         );
     }
 
