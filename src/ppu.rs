@@ -9,8 +9,8 @@ pub const DMG_BLACK: [u8; 3] = [8, 24, 32];
 
 // Constants for PPU
 pub const VRAM_SIZE_CGB: usize = 16 * 1024; // 2 banks of 8KB
-pub const VRAM_SIZE_DMG: usize = 8 * 1024;  // 1 bank of 8KB
-pub const OAM_SIZE: usize = 160;           // Object Attribute Memory
+pub const VRAM_SIZE_DMG: usize = 8 * 1024; // 1 bank of 8KB
+pub const OAM_SIZE: usize = 160; // Object Attribute Memory
 pub const CGB_PALETTE_RAM_SIZE: usize = 64; // Background and Sprite palettes (32 palettes * 2 bytes/color * 4 colors/palette is not right, it's 64 bytes total for CRAM)
 
 pub const SCREEN_WIDTH: usize = 160;
@@ -29,8 +29,8 @@ pub const TOTAL_LINES: u8 = 154; // 144 visible + 10 VBlank
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PpuMode {
-    HBlank = 0, // Mode 0
-    VBlank = 1, // Mode 1
+    HBlank = 0,  // Mode 0
+    VBlank = 1,  // Mode 1
     OamScan = 2, // Mode 2
     Drawing = 3, // Mode 3
 }
@@ -44,7 +44,7 @@ pub enum PixelSource {
 pub struct Ppu {
     // Memory
     pub vram: Vec<u8>, // Video RAM (0x8000-0x9FFF) - Can be 1 or 2 banks for CGB
-    pub oam: [u8; OAM_SIZE],  // Object Attribute Memory (0xFE00-0xFE9F)
+    pub oam: [u8; OAM_SIZE], // Object Attribute Memory (0xFE00-0xFE9F)
 
     // CGB Specific Memory
     pub cgb_background_palette_ram: [u8; CGB_PALETTE_RAM_SIZE], // FF69 - BCPD/BGPD
@@ -67,7 +67,7 @@ pub struct Ppu {
     pub obp1: u8, // Object Palette 1 Data (0xFF49) - DMG
 
     // CGB Specific Registers (values might be passed from Bus or stored if PPU directly handles them)
-    pub vbk: u8,      // VRAM Bank Select (0xFF4F) - CGB only (bit 0)
+    pub vbk: u8,       // VRAM Bank Select (0xFF4F) - CGB only (bit 0)
     pub bcps_bcpi: u8, // Background Palette Index (0xFF68) - CGB only
     pub bcpd_bgpd: u8, // Background Palette Data (0xFF69) - CGB only (written through bcps_bcpi auto-increment)
     pub ocps_ocpi: u8, // Sprite Palette Index (0xFF6A) - CGB only
@@ -75,7 +75,7 @@ pub struct Ppu {
 
     // PPU State
     pub current_mode: PpuMode, // Made public for bus/debugger inspection
-    pub cycles_in_mode: u32, // Cycles accumulated in the current mode for the current line
+    pub cycles_in_mode: u32,   // Cycles accumulated in the current mode for the current line
 
     // Interrupt flags (to be read by the interrupt controller via Bus)
     pub vblank_interrupt_requested: bool,
@@ -127,20 +127,20 @@ pub struct Ppu {
 /// that is visible on the current scanline.
 #[derive(Debug, Clone, Copy)]
 pub struct OamEntryData {
-    pub oam_index: usize,  // Original index in OAM (0-39)
-    pub y_pos: u8,         // Sprite Y position from OAM
-    pub x_pos: u8,         // Sprite X position from OAM
-    pub tile_index: u8,    // Sprite tile index from OAM
-    pub attributes: u8,    // Sprite attributes byte from OAM
+    pub oam_index: usize, // Original index in OAM (0-39)
+    pub y_pos: u8,        // Sprite Y position from OAM
+    pub x_pos: u8,        // Sprite X position from OAM
+    pub tile_index: u8,   // Sprite tile index from OAM
+    pub attributes: u8,   // Sprite attributes byte from OAM
 }
 
 /// Stores the processed pixel data for a single line of a sprite, ready for rendering.
 #[derive(Debug, Clone)] // Clone needed if we copy it around
 pub struct FetchedSpritePixelLine {
-    pub x_pos: u8,         // Screen X-coordinate where the sprite begins
-    pub attributes: u8,    // OAM attributes: palette, priority, flips, CGB bank
-    pub pixels: [u8; 8],   // Array of 8 color indices (0-3) for the sprite line
-    pub oam_index: usize,  // Original OAM index
+    pub x_pos: u8,        // Screen X-coordinate where the sprite begins
+    pub attributes: u8,   // OAM attributes: palette, priority, flips, CGB bank
+    pub pixels: [u8; 8],  // Array of 8 color indices (0-3) for the sprite line
+    pub oam_index: usize, // Original OAM index
 }
 
 // Conceptual BG Rendering Info
@@ -157,7 +157,11 @@ pub struct BgTileInfo {
 
 impl Ppu {
     pub fn new(model: GameBoyModel) -> Self {
-        let vram_size = if model.is_cgb_family() { VRAM_SIZE_CGB } else { VRAM_SIZE_DMG };
+        let vram_size = if model.is_cgb_family() {
+            VRAM_SIZE_CGB
+        } else {
+            VRAM_SIZE_DMG
+        };
         Ppu {
             vram: vec![0; vram_size],
             oam: [0; OAM_SIZE],
@@ -251,8 +255,9 @@ impl Ppu {
     pub fn read_oam(&self, addr: u16) -> u8 {
         // OAM access restrictions:
         // Inaccessible during Mode 2 (OAM Scan) and Mode 3 (Drawing) if LCD is ON.
-        if (self.lcdc & 0x80) != 0 &&
-           (self.current_mode == PpuMode::OamScan || self.current_mode == PpuMode::Drawing) {
+        if (self.lcdc & 0x80) != 0
+            && (self.current_mode == PpuMode::OamScan || self.current_mode == PpuMode::Drawing)
+        {
             return 0xFF;
         }
         // Address is 0xFE00-0xFE9F, so subtract 0xFE00 for index
@@ -262,8 +267,9 @@ impl Ppu {
     pub fn write_oam(&mut self, addr: u16, value: u8) {
         // OAM access restrictions for CPU access:
         // Inaccessible during Mode 2 (OAM Scan) and Mode 3 (Drawing) if LCD is ON.
-        if (self.lcdc & 0x80) != 0 &&
-           (self.current_mode == PpuMode::OamScan || self.current_mode == PpuMode::Drawing) {
+        if (self.lcdc & 0x80) != 0
+            && (self.current_mode == PpuMode::OamScan || self.current_mode == PpuMode::Drawing)
+        {
             // println!("DEBUG: CPU OAM write to {:04X} blocked due to PPU mode {:?} (LCDC On)", addr, self.current_mode);
             return;
         }
@@ -292,14 +298,16 @@ impl Ppu {
         self.just_entered_hblank = false; // Reset at the beginning of each tick
 
         // If LCD is off, PPU is mostly idle
-        if (self.lcdc & 0x80) == 0 { // LCDC Bit 7: LCD Display Enable
+        if (self.lcdc & 0x80) == 0 {
+            // LCDC Bit 7: LCD Display Enable
             self.ly = 0;
             self.cycles_in_mode = 0;
             self.current_mode = PpuMode::HBlank; // Or OAMScan; Pandocs: LY is reset, mode becomes Mode 0.
-            // STAT mode bits should reflect HBlank (00). LYC=LY flag might change.
-            // Preserve interrupt enable bits (3-6) and LYC flag (2). Bit 7 always 1.
+                                                 // STAT mode bits should reflect HBlank (00). LYC=LY flag might change.
+                                                 // Preserve interrupt enable bits (3-6) and LYC flag (2). Bit 7 always 1.
             self.stat = (self.stat & 0xFC) | (PpuMode::HBlank as u8); // Update mode bits
-            if self.ly == self.lyc { // Update LYC=LY coincidence flag
+            if self.ly == self.lyc {
+                // Update LYC=LY coincidence flag
                 self.stat |= 1 << 2;
             } else {
                 self.stat &= !(1 << 2);
@@ -308,7 +316,7 @@ impl Ppu {
 
             self.vblank_interrupt_requested = false;
             self.stat_interrupt_requested = false; // No STAT interrupts when LCD is off (except maybe LYC during power off?)
-                                               // For simplicity, clear STAT interrupts.
+                                                   // For simplicity, clear STAT interrupts.
             return;
         }
 
@@ -345,8 +353,8 @@ impl Ppu {
 
                         let entry_addr = i * 4;
                         // OAM is directly accessible here by the PPU, not via read_oam/write_oam CPU methods.
-                        let y_pos = self.oam[entry_addr];      // Byte 0: Y position
-                        let x_pos = self.oam[entry_addr + 1];  // Byte 1: X position
+                        let y_pos = self.oam[entry_addr]; // Byte 0: Y position
+                        let x_pos = self.oam[entry_addr + 1]; // Byte 1: X position
                         let tile_idx = self.oam[entry_addr + 2]; // Byte 2: Tile Index
                         let attributes = self.oam[entry_addr + 3]; // Byte 3: Attributes
 
@@ -363,7 +371,9 @@ impl Ppu {
                         // This means y_pos directly from OAM is the value to use in this formula.
                         let current_ly_plus_16 = self.ly.wrapping_add(16); // Use wrapping_add for robustness, though unlikely to wrap here.
 
-                        if current_ly_plus_16 >= y_pos && current_ly_plus_16 < y_pos.wrapping_add(sprite_height) {
+                        if current_ly_plus_16 >= y_pos
+                            && current_ly_plus_16 < y_pos.wrapping_add(sprite_height)
+                        {
                             // Sprite is vertically on this scanline.
                             // Also check if sprite is on screen horizontally (X > 0). X=0 means offscreen to the left.
                             // Per Pandocs: "The X coordinate is X + 8, so to place a sprite at the left of the screen at X=0, set its X coordinate to 8."
@@ -372,7 +382,8 @@ impl Ppu {
                             // x_pos = 0 means fully off-screen to the left.
                             // x_pos = 168 (or 160+8) means fully off-screen to the right.
                             // We only add sprites that are at least partially on screen. x_pos > 0 ensures this.
-                            if x_pos > 0 { // Sprite is at least partially on screen horizontally
+                            if x_pos > 0 {
+                                // Sprite is at least partially on screen horizontally
                                 self.visible_oam_entries.push(OamEntryData {
                                     oam_index: i,
                                     y_pos, // Store original OAM Y
@@ -396,17 +407,17 @@ impl Ppu {
                         }
                     });
 
-
                     // Calculate Mode 3 drawing duration based on visible sprites
                     // This should use visible_oam_entries, which are determined by the end of OAM scan.
                     let base_cycles = 172; // Minimum cycles for Mode 3
                     let penalty_per_sprite = 6; // Estimated additional cycles per sprite.
-                                               // This is a simplification. Real PPU timing is more complex (FIFO, etc.)
+                                                // This is a simplification. Real PPU timing is more complex (FIFO, etc.)
 
                     // Max of 10 sprites are in visible_oam_entries due to OAM scan hardware limit
                     let num_visible_sprites = self.visible_oam_entries.len() as u32;
 
-                    let mut calculated_drawing_cycles = base_cycles + (num_visible_sprites * penalty_per_sprite);
+                    let mut calculated_drawing_cycles =
+                        base_cycles + (num_visible_sprites * penalty_per_sprite);
 
                     // Clamp the cycles. Max value of 289 is a rough upper bound, typical is less.
                     // Pan Docs: Mode 3 is "approx. 175 to 290 cycles".
@@ -428,7 +439,8 @@ impl Ppu {
                 // For now, this is a single block. The logic here represents the output for the *entire* scanline.
 
                 // 1. Render Background (and Window, eventually) to current_scanline_color_indices
-                if (self.lcdc & 0x01) != 0 { // LCDC Bit 0: BG Display Enable
+                if (self.lcdc & 0x01) != 0 {
+                    // LCDC Bit 0: BG Display Enable
                     self.render_scanline_bg();
                 } else {
                     // BG is disabled. Fill scanline with color 0.
@@ -454,15 +466,18 @@ impl Ppu {
                 self.line_sprite_data.clear(); // Clear data from previous line
 
                 // LCDC Bit 1: OBJ Display Enable
-                if (self.lcdc & (1 << 1)) != 0 { // Check if sprites are enabled
+                if (self.lcdc & (1 << 1)) != 0 {
+                    // Check if sprites are enabled
                     // visible_oam_entries is already sorted by X-coordinate, then OAM index.
-                    for oam_entry in &self.visible_oam_entries { // Iterate over a slice to avoid borrow issues if needed
+                    for oam_entry in &self.visible_oam_entries {
+                        // Iterate over a slice to avoid borrow issues if needed
                         // Create a copy of oam_entry to pass to fetch_sprite_line_data
                         // This is because visible_oam_entries might be borrowed if fetch_sprite_line_data needs &mut self
                         // However, fetch_sprite_line_data current takes &self, so direct ref should be fine.
                         // Let's try with a direct reference first.
                         // If `oam_entry` is needed later or there are borrow checker issues, clone it: `*oam_entry`
-                        if let Some(fetched_data) = self.fetch_sprite_line_data(oam_entry, self.ly) {
+                        if let Some(fetched_data) = self.fetch_sprite_line_data(oam_entry, self.ly)
+                        {
                             self.line_sprite_data.push(fetched_data);
                         }
                         // Hardware typically can only fetch so many sprites in time, but we've already limited to 10 in OAM scan.
@@ -472,7 +487,8 @@ impl Ppu {
                 // This data will be used for mixing/rendering onto the framebuffer.
 
                 // --- Sprite Pixel Rendering and Mixing ---
-                if (self.lcdc & 0x02) != 0 { // OBJ Display Enable (LCDC Bit 1)
+                if (self.lcdc & 0x02) != 0 {
+                    // OBJ Display Enable (LCDC Bit 1)
                     let is_cgb_mode = self.model.is_cgb_family();
 
                     for sprite_line_info in &self.line_sprite_data {
@@ -482,12 +498,15 @@ impl Ppu {
 
                         for pixel_idx_in_sprite in 0..8 {
                             // Determine actual pixel from sprite data considering X-flip (OAM attribute bit 5)
-                            let current_sprite_pixel_x_in_tile = if (sprite_attributes & 0x20) != 0 { // X-flip
+                            let current_sprite_pixel_x_in_tile = if (sprite_attributes & 0x20) != 0
+                            {
+                                // X-flip
                                 7 - pixel_idx_in_sprite
                             } else {
                                 pixel_idx_in_sprite
                             };
-                            let sprite_color_index = sprite_line_info.pixels[current_sprite_pixel_x_in_tile];
+                            let sprite_color_index =
+                                sprite_line_info.pixels[current_sprite_pixel_x_in_tile];
 
                             // Color index 0 for sprites is transparent
                             if sprite_color_index == 0 {
@@ -496,7 +515,8 @@ impl Ppu {
 
                             // Calculate screen X coordinate for the current sprite pixel
                             // sprite_x_pos_oam is OAM X. Screen X is OAM X - 8.
-                            let screen_x = (sprite_x_pos_oam as i16 - 8) + pixel_idx_in_sprite as i16;
+                            let screen_x =
+                                (sprite_x_pos_oam as i16 - 8) + pixel_idx_in_sprite as i16;
 
                             if screen_x < 0 || screen_x >= SCREEN_WIDTH as i16 {
                                 continue; // Off-screen
@@ -505,10 +525,11 @@ impl Ppu {
 
                             // Priority Logic
                             let bg_priority_over_sprite = (sprite_attributes & 0x80) != 0; // OAM Attribute Bit 7
-                            let bg_pixel_color_index = self.current_scanline_color_indices[screen_x_usize];
+                            let bg_pixel_color_index =
+                                self.current_scanline_color_indices[screen_x_usize];
                             // Get current source to see if another higher-priority sprite (lower OAM index) already drew here
-                            let current_pixel_source = self.current_scanline_pixel_source[screen_x_usize];
-
+                            let current_pixel_source =
+                                self.current_scanline_pixel_source[screen_x_usize];
 
                             let mut can_draw_sprite = false;
 
@@ -522,23 +543,32 @@ impl Ppu {
                                     // If LCDC.0 (BG Display Enable / Master Priority) is 0, Sprites always win over BG.
                                     // If LCDC.0 is 1, then BG Map Attr bit 7 and OAM Bit 7 are checked.
                                     // For now: if BG is enabled (LCDC.0), use OAM bit 7. If BG disabled, sprite wins.
-                                    if (self.lcdc & 0x01) != 0 { // BG Master Priority / Display Enable
-                                        if bg_priority_over_sprite { // OAM bit 7 (BG has priority over this sprite)
-                                            if bg_pixel_color_index == 0 { // BG is transparent color 0
+                                    if (self.lcdc & 0x01) != 0 {
+                                        // BG Master Priority / Display Enable
+                                        if bg_priority_over_sprite {
+                                            // OAM bit 7 (BG has priority over this sprite)
+                                            if bg_pixel_color_index == 0 {
+                                                // BG is transparent color 0
                                                 can_draw_sprite = true;
                                             }
-                                        } else { // Sprite has priority over BG (OAM bit 7 is false)
+                                        } else {
+                                            // Sprite has priority over BG (OAM bit 7 is false)
                                             can_draw_sprite = true;
                                         }
-                                    } else { // BG is disabled, sprite always wins
+                                    } else {
+                                        // BG is disabled, sprite always wins
                                         can_draw_sprite = true;
                                     }
-                                } else { // DMG Mode
-                                    if bg_priority_over_sprite { // OAM Bit 7 (BG has priority)
-                                        if bg_pixel_color_index == 0 { // BG is transparent color 0
+                                } else {
+                                    // DMG Mode
+                                    if bg_priority_over_sprite {
+                                        // OAM Bit 7 (BG has priority)
+                                        if bg_pixel_color_index == 0 {
+                                            // BG is transparent color 0
                                             can_draw_sprite = true;
                                         }
-                                    } else { // Sprite has priority
+                                    } else {
+                                        // Sprite has priority
                                         can_draw_sprite = true;
                                     }
                                 }
@@ -548,10 +578,12 @@ impl Ppu {
                             // 2. BG has priority and its pixel is not color 0.
 
                             if can_draw_sprite {
-                                self.current_scanline_color_indices[screen_x_usize] = sprite_color_index;
-                                self.current_scanline_pixel_source[screen_x_usize] = PixelSource::Object {
-                                    palette_register: dmg_palette_reg_idx,
-                                };
+                                self.current_scanline_color_indices[screen_x_usize] =
+                                    sprite_color_index;
+                                self.current_scanline_pixel_source[screen_x_usize] =
+                                    PixelSource::Object {
+                                        palette_register: dmg_palette_reg_idx,
+                                    };
                             }
                         }
                     }
@@ -562,7 +594,6 @@ impl Ppu {
                 self.apply_dmg_palette_to_framebuffer();
                 // Note: The CGB path inside apply_dmg_palette_to_framebuffer needs to be aware of this change or be CGB specific.
                 // The instructions cover adding a CGB check to bypass this new logic for now.
-
 
                 if self.cycles_in_mode >= self.current_mode3_drawing_cycles {
                     self.cycles_in_mode -= self.current_mode3_drawing_cycles;
@@ -575,7 +606,8 @@ impl Ppu {
             }
             PpuMode::HBlank => {
                 // HBlank duration is what's left of the scanline after OAM scan and Drawing.
-                let expected_hblank_cycles = SCANLINE_CYCLES - OAM_SCAN_CYCLES - self.current_mode3_drawing_cycles;
+                let expected_hblank_cycles =
+                    SCANLINE_CYCLES - OAM_SCAN_CYCLES - self.current_mode3_drawing_cycles;
                 // Ensure expected_hblank_cycles is not negative if current_mode3_drawing_cycles was unexpectedly large.
                 // Though current_mode3_drawing_cycles is clamped, so OAM_SCAN_CYCLES + current_mode3_drawing_cycles should not exceed SCANLINE_CYCLES.
                 // Max current_mode3_drawing_cycles = 289. OAM_SCAN_CYCLES = 80. Sum = 369. SCANLINE_CYCLES = 456. So, hblank is at least 87.
@@ -584,11 +616,13 @@ impl Ppu {
                     self.cycles_in_mode -= expected_hblank_cycles; // Remainder cycles carry over
                     self.ly += 1;
 
-                    if self.ly < SCREEN_HEIGHT as u8 { // 0-143
+                    if self.ly < SCREEN_HEIGHT as u8 {
+                        // 0-143
                         self.current_mode = PpuMode::OamScan;
                         self.stat = (self.stat & 0xF8) | (PpuMode::OamScan as u8);
                         self.visible_oam_entries.clear(); // Clear for the new scanline's OAM scan
-                    } else { // ly == 144, transition to VBlank
+                    } else {
+                        // ly == 144, transition to VBlank
                         self.current_mode = PpuMode::VBlank;
                         self.stat = (self.stat & 0xF8) | (PpuMode::VBlank as u8);
                         self.vblank_interrupt_requested = true;
@@ -601,7 +635,8 @@ impl Ppu {
                     self.cycles_in_mode -= SCANLINE_CYCLES;
                     self.ly += 1;
 
-                    if self.ly == TOTAL_LINES { // LY reaches 154 (144-153 are VBlank lines)
+                    if self.ly == TOTAL_LINES {
+                        // LY reaches 154 (144-153 are VBlank lines)
                         self.ly = 0; // Reset LY
                         self.current_mode = PpuMode::OamScan; // Start new frame
                         self.stat = (self.stat & 0xF8) | (PpuMode::OamScan as u8);
@@ -653,8 +688,8 @@ impl Ppu {
             return true;
         }
         if mode_interrupt_enabled {
-             // For Mode 1 (VBlank), the STAT interrupt can trigger on each line of VBlank if bit 4 is set.
-             // For Mode 0 (HBlank) and Mode 2 (OAM), it triggers when entering the mode if enabled.
+            // For Mode 1 (VBlank), the STAT interrupt can trigger on each line of VBlank if bit 4 is set.
+            // For Mode 0 (HBlank) and Mode 2 (OAM), it triggers when entering the mode if enabled.
             return true;
         }
         false
@@ -712,17 +747,13 @@ impl Ppu {
             return 0xFF;
         }
 
-        let vram_bank_offset = if bank == 1 {
-            VRAM_SIZE_DMG
-        } else {
-            0
-        };
+        let vram_bank_offset = if bank == 1 { VRAM_SIZE_DMG } else { 0 };
 
         let index = (addr as usize - 0x8000) + vram_bank_offset;
         if index < self.vram.len() {
             self.vram[index]
         } else {
-             // This case should ideally not be hit if addresses and banks are calculated correctly.
+            // This case should ideally not be hit if addresses and banks are calculated correctly.
             // eprintln!("Warning: VRAM read out of bounds. Addr: {:#06X}, Bank: {}, Index: {}, VRAM size: {}", addr, bank, index, self.vram.len());
             0xFF
         }
@@ -741,7 +772,11 @@ impl Ppu {
     // ... (ensure all previous Ppu methods like new, read_vram, tick, etc. are preserved above this line)
 
     /// Fetches the pixel data for a single line of a given sprite.
-    fn fetch_sprite_line_data(&self, oam_entry: &OamEntryData, current_ly: u8) -> Option<FetchedSpritePixelLine> {
+    fn fetch_sprite_line_data(
+        &self,
+        oam_entry: &OamEntryData,
+        current_ly: u8,
+    ) -> Option<FetchedSpritePixelLine> {
         let sprite_height = if (self.lcdc & 0x04) != 0 { 16 } else { 8 }; // LCDC Bit 2: OBJ Size
 
         // Determine which line of the sprite we are rendering.
@@ -758,24 +793,29 @@ impl Ppu {
         let y_on_screen_for_compare = current_ly.wrapping_add(16);
         // This check should be redundant if visible_oam_entries was populated correctly,
         // but it's good for safety / clarity.
-        if !(y_on_screen_for_compare >= oam_entry.y_pos && y_on_screen_for_compare < oam_entry.y_pos.wrapping_add(sprite_height)) {
+        if !(y_on_screen_for_compare >= oam_entry.y_pos
+            && y_on_screen_for_compare < oam_entry.y_pos.wrapping_add(sprite_height))
+        {
             return None; // Sprite not on this line (should have been filtered by OAM scan)
         }
 
         let mut line_in_sprite = y_on_screen_for_compare.wrapping_sub(oam_entry.y_pos);
 
         // Handle Y-flip (OAM attribute bit 6)
-        if (oam_entry.attributes & (1 << 6)) != 0 { // Bit 6: Y flip
+        if (oam_entry.attributes & (1 << 6)) != 0 {
+            // Bit 6: Y flip
             line_in_sprite = (sprite_height - 1) - line_in_sprite;
         }
 
         let mut actual_tile_index = oam_entry.tile_index;
         if sprite_height == 16 {
-            if line_in_sprite < 8 { // Top tile of 8x16 sprite
+            if line_in_sprite < 8 {
+                // Top tile of 8x16 sprite
                 actual_tile_index &= 0xFE; // Clear bit 0
-            } else { // Bottom tile of 8x16 sprite
-                actual_tile_index |= 0x01;  // Set bit 0
-                line_in_sprite -= 8;      // Adjust line index for the 8x8 tile
+            } else {
+                // Bottom tile of 8x16 sprite
+                actual_tile_index |= 0x01; // Set bit 0
+                line_in_sprite -= 8; // Adjust line index for the 8x8 tile
             }
         }
         // For 8x8 sprites, actual_tile_index is just oam_entry.tile_index and line_in_sprite is already correct.
@@ -812,11 +852,13 @@ impl Ppu {
 
     // Fetches tile data bytes (plane1, plane2) and CGB attributes for a specific tile line.
     // map_x, map_y are coordinates in the 256x256 BG/Window map.
-    fn fetch_tile_line_data(&self,
-                            tile_map_addr_base: u16,      // e.g., 0x9800 or 0x9C00 for BG/Window
-                            tile_data_addr_base_select: u8, // From LCDC bit 4 (0 or 1)
-                            map_x: u8,
-                            map_y: u8) -> FetchedTileLineData {
+    fn fetch_tile_line_data(
+        &self,
+        tile_map_addr_base: u16, // e.g., 0x9800 or 0x9C00 for BG/Window
+        tile_data_addr_base_select: u8, // From LCDC bit 4 (0 or 1)
+        map_x: u8,
+        map_y: u8,
+    ) -> FetchedTileLineData {
         let mut output = FetchedTileLineData::default();
         let is_cgb = self.model.is_cgb_family();
 
@@ -836,14 +878,17 @@ impl Ppu {
         }
 
         let tile_data_start_addr: u16;
-        if tile_data_addr_base_select == 1 { // Method 0x8000 (unsigned tile numbers)
+        if tile_data_addr_base_select == 1 {
+            // Method 0x8000 (unsigned tile numbers)
             tile_data_start_addr = 0x8000 + (tile_number as u16 * 16);
-        } else { // Method 0x8800 (signed tile numbers, base is 0x9000)
+        } else {
+            // Method 0x8800 (signed tile numbers, base is 0x9000)
             tile_data_start_addr = 0x9000u16.wrapping_add(((tile_number as i8) as i16 * 16) as u16);
         }
 
         let mut line_offset_in_tile = (map_y % 8) as u16;
-        if is_cgb && (output.attributes & (1 << 2)) != 0 { // Bit 2: Vertical Flip (CGB)
+        if is_cgb && (output.attributes & (1 << 2)) != 0 {
+            // Bit 2: Vertical Flip (CGB)
             line_offset_in_tile = 7 - line_offset_in_tile;
         }
         let tile_bytes_offset = line_offset_in_tile * 2; // 2 bytes per line
@@ -859,7 +904,13 @@ impl Ppu {
 
     // Decodes a line of tile data (2 bytes) into 8 pixel color indices (0-3).
     // Handles CGB horizontal flip.
-    fn decode_tile_line_to_pixels(&self, plane1_byte: u8, plane2_byte: u8, cgb_attributes: u8, is_cgb: bool) -> [u8; 8] {
+    fn decode_tile_line_to_pixels(
+        &self,
+        plane1_byte: u8,
+        plane2_byte: u8,
+        cgb_attributes: u8,
+        is_cgb: bool,
+    ) -> [u8; 8] {
         let mut pixels = [0u8; 8];
         let horizontal_flip = is_cgb && (cgb_attributes & (1 << 1)) != 0; // Bit 1: Horizontal Flip (CGB)
 
@@ -867,7 +918,7 @@ impl Ppu {
             let bit_pos = if horizontal_flip { i } else { 7 - i };
             let lsb = (plane1_byte >> bit_pos) & 1;
             let msb = (plane2_byte >> bit_pos) & 1;
-            pixels[if horizontal_flip { 7-i } else { i } as usize] = (msb << 1) | lsb;
+            pixels[if horizontal_flip { 7 - i } else { i } as usize] = (msb << 1) | lsb;
         }
         pixels
     }
@@ -894,7 +945,11 @@ impl Ppu {
         }
 
         // LCDC Bit 3: BG Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)
-        let bg_tile_map_base_addr = if (self.lcdc >> 3) & 0x01 == 0 { 0x9800 } else { 0x9C00 };
+        let bg_tile_map_base_addr = if (self.lcdc >> 3) & 0x01 == 0 {
+            0x9800
+        } else {
+            0x9C00
+        };
         // LCDC Bit 4: BG & Window Tile Data Select (0=8800-97FF, 1=8000-8FFF)
         let bg_win_tile_data_select = (self.lcdc >> 4) & 0x01;
 
@@ -912,30 +967,32 @@ impl Ppu {
             // This is true if x_screen is 0 (start of line), or if the current map_x
             // has crossed into a new 8-pixel tile boundary compared to the last fetch.
             if x_screen == 0 || (map_x / 8) != (fetched_tile_map_x_start / 8) {
-                 // If map_x has wrapped (e.g. from 255 to 0) and we are not at x_screen == 0,
-                 // this also indicates a new tile segment from the beginning of the map.
-                 // This condition (map_x < fetched_tile_map_x_start && x_screen > 0) is implicitly handled
-                 // by (map_x / 8) != (fetched_tile_map_x_start / 8) due to integer division behavior with wrapping.
+                // If map_x has wrapped (e.g. from 255 to 0) and we are not at x_screen == 0,
+                // this also indicates a new tile segment from the beginning of the map.
+                // This condition (map_x < fetched_tile_map_x_start && x_screen > 0) is implicitly handled
+                // by (map_x / 8) != (fetched_tile_map_x_start / 8) due to integer division behavior with wrapping.
 
                 let fetched_data = self.fetch_tile_line_data(
                     bg_tile_map_base_addr,
                     bg_win_tile_data_select,
-                    map_x, map_y, // Use map_x for fetching, which corresponds to the start of the current/next tile
+                    map_x,
+                    map_y, // Use map_x for fetching, which corresponds to the start of the current/next tile
                 );
                 current_tile_pixels = self.decode_tile_line_to_pixels(
                     fetched_data.plane1_byte,
                     fetched_data.plane2_byte,
                     fetched_data.attributes,
-                    is_cgb
+                    is_cgb,
                 );
                 fetched_tile_map_x_start = map_x; // Record the map_x for which these pixels were fetched.
-                                                 // More accurately, this is the map_x of the first pixel in current_tile_pixels.
+                                                  // More accurately, this is the map_x of the first pixel in current_tile_pixels.
             }
 
             // Select the pixel from the 8 fetched pixels of the current tile.
             // (map_x % 8) gives the horizontal index (0-7) within the current tile.
             let pixel_in_tile_index = (map_x % 8) as usize;
-            self.current_scanline_color_indices[x_screen] = current_tile_pixels[pixel_in_tile_index];
+            self.current_scanline_color_indices[x_screen] =
+                current_tile_pixels[pixel_in_tile_index];
         }
     }
 
@@ -980,9 +1037,11 @@ impl Ppu {
                     shade = (self.bgp >> (color_index * 2)) & 0x03;
                 }
                 PixelSource::Object { palette_register } => {
-                    if palette_register == 0 { // OBP0
+                    if palette_register == 0 {
+                        // OBP0
                         shade = (self.obp0 >> (color_index * 2)) & 0x03;
-                    } else { // OBP1
+                    } else {
+                        // OBP1
                         shade = (self.obp1 >> (color_index * 2)) & 0x03;
                     }
                 }

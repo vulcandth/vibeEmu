@@ -34,12 +34,7 @@ impl Display {
     /// Creates a new display window.
     /// Returns `Ok(Display)` on success, or `Err(String)` if window creation fails.
     pub fn new(title: &str) -> Result<Self, String> {
-        match Window::new(
-            title,
-            WINDOW_WIDTH,
-            WINDOW_HEIGHT,
-            WindowOptions::default(),
-        ) {
+        match Window::new(title, WINDOW_WIDTH, WINDOW_HEIGHT, WindowOptions::default()) {
             Ok(w) => Ok(Self { window: Some(w) }),
             Err(e) => Err(format!("Failed to create window: {}", e)),
         }
@@ -83,12 +78,16 @@ impl Display {
 
     /// Gets a list of all keys currently pressed.
     pub fn get_keys_pressed(&self, active_modifiers: minifb::KeyRepeat) -> Option<Vec<Key>> {
-        self.window.as_ref().map(|w| w.get_keys_pressed(active_modifiers))
+        self.window
+            .as_ref()
+            .map(|w| w.get_keys_pressed(active_modifiers))
     }
 
     /// Checks if a specific mouse button is currently pressed.
     pub fn get_mouse_down(&self, button: MouseButton) -> bool {
-        self.window.as_ref().map_or(false, |w| w.get_mouse_down(button))
+        self.window
+            .as_ref()
+            .map_or(false, |w| w.get_mouse_down(button))
     }
 
     // It might be useful to expose other minifb window methods if needed,
