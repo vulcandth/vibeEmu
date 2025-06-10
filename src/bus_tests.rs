@@ -189,7 +189,8 @@ fn test_gdma_transfer_and_completion() {
     // Verify VRAM content (Bank 0 because VBK is 0 by default in PPU state)
     for i in 0..32 {
         assert_eq!(
-            bus.ppu.read_vram(0x8000 + i as u16), i as u8,
+            bus.ppu.read_vram(0x8000 + i as u16),
+            i as u8,
             "VRAM byte {} mismatch after GDMA",
             i
         );
@@ -250,7 +251,12 @@ fn test_hdma_hblank_transfers() {
     assert_eq!(bus.hdma_blocks_remaining, 2);
     assert_eq!(bus.read_byte(0xFF55), 0x01, "HDMA5 status after 1st block");
     for i in 0..16 {
-        assert_eq!(bus.ppu.read_vram(0x8000 + i as u16), i as u8, "HDMA Block 1, byte {}", i);
+        assert_eq!(
+            bus.ppu.read_vram(0x8000 + i as u16),
+            i as u8,
+            "HDMA Block 1, byte {}",
+            i
+        );
     }
 
     // Simulate HBlank 2

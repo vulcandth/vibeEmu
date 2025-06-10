@@ -1,13 +1,13 @@
 // Declare modules if they are in separate files in the same directory (e.g., src/)
 // and not part of a library crate already.
 mod apu;
-mod display; // Added display module
 mod bus;
 mod cpu;
+mod display; // Added display module
 mod memory;
 pub mod models;
 mod ppu; // Added new ppu module
-// mod ppu; // Declare models module at crate root - Removed
+         // mod ppu; // Declare models module at crate root - Removed
 
 #[cfg(test)]
 mod bus_tests;
@@ -40,9 +40,9 @@ use winit::platform::macos::EventLoopBuilderExtMacOS;
 use winit::platform::windows::EventLoopBuilderExtWindows;
 #[cfg(target_os = "linux")]
 use winit::platform::x11::EventLoopBuilderExtX11; // Assuming X11 for broader compatibility on Linux
-// Wayland could also be an option for Linux:
-// #[cfg(target_os = "linux")]
-// use winit::platform::wayland::EventLoopBuilderExtWayland;
+                                                  // Wayland could also be an option for Linux:
+                                                  // #[cfg(target_os = "linux")]
+                                                  // use winit::platform::wayland::EventLoopBuilderExtWayland;
 
 use crossbeam_channel::{unbounded, Receiver, Sender}; // Added for MPSC channel
 use minifb::{Key, MouseButton}; // Re-add Key and MouseButton for main.rs usage
@@ -55,9 +55,9 @@ use crate::apu::CPU_CLOCK_HZ; // Import for audio timing
 use crate::audio::AudioOutput;
 use crate::bus::Bus;
 use crate::cpu::Cpu;
+use crate::display::{Display, WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::interrupts::InterruptType;
-use crate::joypad::JoypadButton; // Added for joypad input
-use crate::display::{Display, WINDOW_WIDTH, WINDOW_HEIGHT}; // Import Display and constants
+use crate::joypad::JoypadButton; // Added for joypad input // Import Display and constants
 
 // Define window dimensions are now imported from display
 const TARGET_FPS: f64 = 59.73;
@@ -268,7 +268,8 @@ fn main() {
     if !is_headless {
         match Display::new("VibeEmu - Press ESC to exit") {
             Ok(d) => display_attempt = Some(d),
-            Err(e_str) => { // Display::new returns String error
+            Err(e_str) => {
+                // Display::new returns String error
                 eprintln!(
                     "Failed to create display: {}. Falling back to headless mode.",
                     e_str
@@ -311,8 +312,8 @@ fn main() {
     }
 
     // if let Some(_d) = &mut display { // Only if display was created
-         // Limit window update rate (optional, minifb handles this reasonably well)
-         // d.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Example if Display had this
+    // Limit window update rate (optional, minifb handles this reasonably well)
+    // d.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Example if Display had this
     // }
 
     // General emulation settings
@@ -455,8 +456,11 @@ fn main() {
                     // GUI mode rendering
                     let ppu_framebuffer = &bus.borrow().ppu.framebuffer;
                     // Use function from display module
-                    let display_buffer =
-                        display::convert_rgb_to_u32_buffer(ppu_framebuffer, WINDOW_WIDTH, WINDOW_HEIGHT);
+                    let display_buffer = display::convert_rgb_to_u32_buffer(
+                        ppu_framebuffer,
+                        WINDOW_WIDTH,
+                        WINDOW_HEIGHT,
+                    );
                     // update_with_buffer also pumps events for display
                     d.update_with_buffer(&display_buffer);
                 }

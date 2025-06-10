@@ -9,10 +9,11 @@ This document outlines the major components, functions, and logic sections that 
 - [x] OAM (Object Attribute Memory): Basic storage is present. Implement access restrictions based on PPU mode.
 - [x] Framebuffer: Currently `Vec<u8>` for RGB888. Ensure correct dimensions and pixel format.
 - [x] `current_scanline_color_indices`: Buffer for 2-bit color indices for the current line.
+- [x] `current_scanline_pixel_source`: Buffer to track if pixel is BG or Sprite (and which sprite palette for DMG).
 
 ## PPU Modes & Timing
 - [ ] **Mode Switching Logic:**
-    - [-] **Implement accurate timing for Mode 0 (HBlank), Mode 1 (VBlank), Mode 2 (OAM Scan), Mode 3 (Drawing)** (Basic state machine and cycle counting implemented; Mode 3 duration is fixed placeholder).
+    - [-] **Implement accurate timing for Mode 0 (HBlank), Mode 1 (VBlank), Mode 2 (OAM Scan), Mode 3 (Drawing)** (Mode 3/HBlank timing is now semi-dynamic based on sprite count. Eventual goal: FIFO-driven cycle accuracy).
     - [x] Manage `cycles_in_mode` and transition between modes correctly.
     - [x] Update `STAT` register (Mode bits) upon mode changes.
 - [ ] **STAT Register (0xFF41):**
@@ -27,8 +28,8 @@ This document outlines the major components, functions, and logic sections that 
     - [x] Implement full read/write logic (via Bus to PPU fields).
     - [-] Use LCDC bits to control PPU operations:
         - [-] Bit 0 (BG Display Enable): Logic in place (rendering conditional, actual white screen if disabled is part of palette mapping).
-        - [-] Bit 1 (OBJ Display Enable): Check placeholder added.
-        - [-] Bit 2 (OBJ Size): Check placeholder (for 8x8 vs 8x16) added.
+        - [x] Bit 1 (OBJ Display Enable): Used for enabling/disabling sprite rendering pipeline.
+        - [x] Bit 2 (OBJ Size): Used in OAM scan and sprite fetching for 8x8 vs 8x16 sprites.
         - [x] Bit 3 (BG Tile Map Display Select): Used by BG tile fetching.
         - [x] Bit 4 (BG & Window Tile Data Select): Used by BG tile fetching.
         - [-] Bit 5 (Window Display Enable): Check placeholder added.
@@ -43,20 +44,24 @@ This document outlines the major components, functions, and logic sections that 
     - [-] Fetch tile data for Background (done), Window (pending).
     - [x] Handle SCX/SCY scrolling for BG (as part of `render_scanline_bg`).
     - [ ] Handle WX/WY for Window positioning.
+    - [ ] Implement dedicated BG/Window pixel fetcher logic (state machine for tile#, data, attributes).
+    - [ ] Implement dedicated Sprite pixel fetcher logic.
 - [ ] **Pixel FIFO:**
-    - [-] Pixel color indices generated directly into a scanline buffer (`current_scanline_color_indices`); full FIFO for cycle accuracy is future work.
-    - [ ] Manage a separate FIFO or merging logic for sprite pixels.
+    - [ ] Implement BG Pixel FIFO.
+    - [ ] Implement Sprite Pixel FIFO.
+    - [ ] Implement FIFO mixing/merging logic for BG and Sprite pixels.
+    - [ ] Drive PPU Mode 3 timing based on Pixel Fetcher and FIFO states.
 - [ ] **Sprite (OBJ) Processing:**
     - **OAM Scan (Mode 2):**
-        - [ ] Scan OAM for sprites visible on the current scanline (up to 10 per line).
-        - [ ] Consider X-priority for CGB when multiple sprites share the same X coordinate.
-        - [ ] Store processed sprite data for Mode 3.
+        - [x] Scan OAM for sprites visible on the current scanline (up to 10 per line, Y-check, X>0, sorted by X then OAM index).
+        - [ ] Consider X-priority for CGB when multiple sprites share the same X coordinate. (Currently sorts by X for DMG, CGB needs OAM X field check)
+        - [x] Store OAM data (index, X, Y, tile, attributes) of visible sprites for Mode 3 processing.
     - **Sprite Fetching:**
-        - [ ] During Mode 3, fetch tile data for visible sprites.
+        - [x] During Mode 3, fetch tile data (pixel color indices 0-3) for visible sprites (handles 8x8/8x16, Y-flip, CGB VRAM bank).
     - **Sprite Rendering:**
-        - [ ] Handle sprite attributes: X/Y position, tile index, palette, priority, X/Y flip.
-        - [ ] Implement 8x8 and 8x16 sprite sizes (controlled by LCDC.2).
-        - [ ] Correctly mix sprite pixels with BG/Window pixels based on priority (OBJ-BG priority bit in OAM flags, CGB BG-to-OAM priority).
+        - [x] Handle sprite attributes: X-position, tile index, DMG palettes (OBP0/1 via OAM attr), DMG priority (OAM attr), X/Y flip.
+        - [x] Implemented 8x8 and 8x16 sprite sizes (controlled by LCDC.2) during OAM scan and fetching.
+        - [x] Correctly mix DMG sprite pixels with BG/Window pixels based on OAM priority attribute and transparency. (CGB BG-to-OAM priority pending full CGB palette/attribute integration in scanline buffer).
 - [ ] **Background (BG) Rendering:**
     - [x] Select correct tile map (LCDC.3). (Used in `render_scanline_bg`)
     - [x] Select correct tile data (LCDC.4). (Used in `render_scanline_bg`)
@@ -69,8 +74,8 @@ This document outlines the major components, functions, and logic sections that 
 
 ## Palettes
 - [ ] **DMG Palette Management:**
-    - [x] BGP (0xFF47) is read for BG palette mapping. Writes handled by Bus. OBP0/1 pending.
-    - [x] Apply DMG BGP palette to BG pixels (writes to framebuffer). Window/Sprite palettes pending.
+    - [x] BGP (0xFF47) is read for BG palette mapping. OBP0 (0xFF48), OBP1 (0xFF49) are read for sprite palette mapping. Writes handled by Bus.
+    - [x] Apply DMG BGP, OBP0, OBP1 palettes to BG & Sprite pixels respectively (writes to framebuffer using combined pixel source buffer). Window palettes pending.
 - [ ] **CGB Palette Management:**
     - [ ] Implement CGB palette RAM (Background and Sprite).
     - [ ] Handle BCPS/BCPI (0xFF68) for BG palette index and auto-increment.

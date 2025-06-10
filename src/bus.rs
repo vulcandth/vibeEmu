@@ -94,7 +94,8 @@ impl Bus {
                     self.read_byte_internal(self.hdma_current_src.wrapping_add(i));
                 // Destination is VRAM (0x8000-0x9FFF)
                 // PPU will handle VRAM banking internally if needed.
-                self.ppu.write_vram(self.hdma_current_dest.wrapping_add(i), byte_to_transfer);
+                self.ppu
+                    .write_vram(self.hdma_current_dest.wrapping_add(i), byte_to_transfer);
             }
             self.hdma_current_src = self.hdma_current_src.wrapping_add(16);
             self.hdma_current_dest = self.hdma_current_dest.wrapping_add(16);
@@ -240,7 +241,8 @@ impl Bus {
                 for i in 0..16 {
                     let byte_to_transfer =
                         self.read_byte_internal(self.hdma_current_src.wrapping_add(i));
-                    self.ppu.write_vram(self.hdma_current_dest.wrapping_add(i), byte_to_transfer);
+                    self.ppu
+                        .write_vram(self.hdma_current_dest.wrapping_add(i), byte_to_transfer);
                 }
                 self.hdma_current_src = self.hdma_current_src.wrapping_add(16);
                 self.hdma_current_dest =
@@ -333,7 +335,8 @@ impl Bus {
                     0xFF49 => self.ppu.obp1,
                     0xFF4A => self.ppu.wy,
                     0xFF4B => self.ppu.wx,
-                    0xFF4D => { // KEY1
+                    0xFF4D => {
+                        // KEY1
                         let speed_bit = if self.is_double_speed { 0x80 } else { 0x00 };
                         let prepare_bit = if self.key1_prepare_speed_switch {
                             0x01
@@ -488,11 +491,12 @@ impl Bus {
                     0xFF4A => self.ppu.wy,
                     0xFF4B => self.ppu.wx,
                     0xFF4F => self.ppu.vbk | 0xFE, // VBK - bit 0 is bank, others read as 1
-                    0xFF68 => self.ppu.bcps_bcpi, // BCPS/BCPI
+                    0xFF68 => self.ppu.bcps_bcpi,  // BCPS/BCPI
                     0xFF69 => self.ppu.bcpd_bgpd, // BCPD/BGPD - TODO: PPU should handle read from current index in bcps_bcpi
                     0xFF6A => self.ppu.ocps_ocpi, // OCPS/OCPI
                     0xFF6B => self.ppu.ocpd_obpd, // OCPD/OBPD - TODO: PPU should handle read from current index in ocps_ocpi
-                    0xFF4D => { // KEY1
+                    0xFF4D => {
+                        // KEY1
                         // KEY1 - CGB Speed Switch
                         let speed_bit = if self.is_double_speed { 0x80 } else { 0x00 };
                         let prepare_bit = if self.key1_prepare_speed_switch {
@@ -593,14 +597,16 @@ impl Bus {
                     } // IF - Interrupt Flag Register
                     0xFF10..=0xFF3F => self.apu.write_byte(addr, value),   // APU registers
                     0xFF40 => self.ppu.lcdc = value, // TODO: Consider LCDC write side effects (e.g., turning LCD off/on)
-                    0xFF41 => { // STAT
+                    0xFF41 => {
+                        // STAT
                         self.ppu.write_stat(value);
                     }
                     0xFF42 => self.ppu.scy = value,
                     0xFF43 => self.ppu.scx = value,
                     // 0xFF44 (LY) is read-only for CPU
                     0xFF45 => self.ppu.lyc = value,
-                    0xFF46 => { // DMA - OAM DMA Start Register
+                    0xFF46 => {
+                        // DMA - OAM DMA Start Register
                         self.oam_dma_source_address_upper = value;
                         self.oam_dma_active = true;
                         self.oam_dma_cycles_remaining = 160 * 4;
@@ -611,19 +617,22 @@ impl Bus {
                     0xFF4A => self.ppu.wy = value,
                     0xFF4B => self.ppu.wx = value,
                     0xFF4F => self.ppu.vbk = value & 0x01, // VBK - CGB VRAM Bank Select (only bit 0 is writable)
-                    0xFF68 => self.ppu.bcps_bcpi = value, // BCPS/BCPI
-                    0xFF69 => { // BCPD/BGPD
+                    0xFF68 => self.ppu.bcps_bcpi = value,  // BCPS/BCPI
+                    0xFF69 => {
+                        // BCPD/BGPD
                         self.ppu.bcpd_bgpd = value;
                         // TODO: Write to cgb_background_palette_ram at index from bcps_bcpi
                         // if (self.ppu.bcps_bcpi & 0x80) { self.ppu.bcps_bcpi = (self.ppu.bcps_bcpi + 1) & 0xBF; } // Auto-increment
                     }
                     0xFF6A => self.ppu.ocps_ocpi = value, // OCPS/OCPI
-                    0xFF6B => { // OCPD/OBPD
+                    0xFF6B => {
+                        // OCPD/OBPD
                         self.ppu.ocpd_obpd = value;
                         // TODO: Write to cgb_sprite_palette_ram at index from ocps_ocpi
                         // if (self.ppu.ocps_ocpi & 0x80) { self.ppu.ocps_ocpi = (self.ppu.ocps_ocpi + 1) & 0xBF; } // Auto-increment
                     }
-                    0xFF4D => { // KEY1
+                    0xFF4D => {
+                        // KEY1
                         // KEY1 - CGB Speed Switch
                         self.key1_prepare_speed_switch = (value & 0x01) != 0;
                     }
@@ -650,7 +659,7 @@ impl Bus {
                         // HDMA4 (FF54) provides bits 7-4 of VRAM address (0xF0 range).
                         // Lowest 4 bits are implicitly zero. Resulting offset is 0x0000-0x1FF0.
                         let dest_offset = (((self.hdma3_dest_high & 0x1F) as u16) << 8)
-                                          | ((self.hdma4_dest_low & 0xF0) as u16);
+                            | ((self.hdma4_dest_low & 0xF0) as u16);
                         self.hdma_current_dest = 0x8000 | dest_offset;
 
                         self.hdma_blocks_remaining = (value & 0x7F) + 1; // Number of 16-byte blocks
@@ -885,7 +894,8 @@ mod tests {
         cpu.ld_a_hl_mem();
         // TODO: Update this test once new PPU is integrated. For now, it should read the placeholder value from Bus.
         assert_eq!(
-            cpu.a, 0x91, // Placeholder value for LCDC from Bus read_byte
+            cpu.a,
+            0x91, // Placeholder value for LCDC from Bus read_byte
             "Reading from PPU LCDC register should return its default value from Bus stub"
         );
     }
