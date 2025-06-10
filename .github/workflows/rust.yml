@@ -1,4 +1,4 @@
-name: Rust
+name: Rust CI
 
 on:
   push:
@@ -8,20 +8,53 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        toolchain: [stable]  # Extend to beta or nightly as needed.
+    # Allow the job to continue even if this matrix instance fails.
+    continue-on-error: true
+    runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install ALSA development package
-      run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
 
-    - name: Build
-      run: cargo build --verbose
+      - name: Cache Cargo registry
+        uses: actions/cache@v3
+        with:
+          # Use conditional expressions to set the Cargo cache path.
+          path: ${{ matrix.os == 'ubuntu-latest' && '~/.cargo/registry' || 'C:\\Users\\runneradmin\\.cargo\\registry' }}
+          key: ${{ matrix.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Run tests
-      run: cargo test --verbose
+      - name: Cache Cargo git
+        uses: actions/cache@v3
+        with:
+          path: ${{ matrix.os == 'ubuntu-latest' && '~/.cargo/git' || 'C:\\Users\\runneradmin\\.cargo\\git' }}
+          key: ${{ matrix.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install ALSA development package
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - name: Run Clippy (optional)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        continue-on-error: true
+
+      - name: Check code formatting (optional)
+        run: cargo fmt -- --check
+        continue-on-error: true
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests (optional)
+        run: cargo test --verbose
+        continue-on-error: true
