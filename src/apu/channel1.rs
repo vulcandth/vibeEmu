@@ -14,15 +14,15 @@ pub struct Channel1 {
     envelope_volume: u8,
     envelope_period_timer: u8,
     envelope_running: bool,
-    sweep_calculate_countdown: u8, // Renamed from sweep_period_timer
+    sweep_calculate_countdown: u8,
     sweep_shadow_frequency: u16,
     sweep_enabled: bool,
     sweep_calculated_overflow_this_step: bool,
     has_been_triggered_since_power_on: bool,
     force_output_zero_for_next_sample: bool,
     subtraction_sweep_calculated_since_trigger: bool,
-    initial_delay_countdown: u8, // For SameBoy's trigger initial sample delay
-    channel_1_restart_hold: bool, // For sweep trigger behavior
+    initial_delay_countdown: u8,
+    channel_1_restart_hold: bool,
 }
 
 impl Channel1 {
@@ -48,41 +48,28 @@ impl Channel1 {
         self.channel_1_restart_hold = false;
     }
 
-    // lf_div is (main_clock_cycles / 16) & 1, effectively. (0 or 1)
-    // length_enabled_from_nrx4: The state of bit 6 of the NRx4 value causing this trigger.
     pub fn trigger(&mut self, current_frame_sequencer_step: u8, lf_div: u8, length_enabled_from_nrx4: bool) {
-        let was_enabled_before_this_trigger = self.enabled; // Check before self.enabled might be set true
+        let was_enabled_before_this_trigger = self.enabled;
 
         self.subtraction_sweep_calculated_since_trigger = false;
         if !self.has_been_triggered_since_power_on {
-            self.force_output_zero_for_next_sample = true; // This is a separate power-on specific quirk
+            self.force_output_zero_for_next_sample = true;
             self.has_been_triggered_since_power_on = true;
         }
 
-        // Standard DAC power check; if off, channel doesn't enable.
         if self.nr12.dac_power() { self.enabled = true; } else { self.enabled = false; return; }
 
-        // SameBoy's initial sample delay logic
-        // delay = (was_active ? 4 : 6) - lf_div;
-        // lf_div is 0 or 1. If lf_div is 1, delay is shorter.
         if was_enabled_before_this_trigger {
             self.initial_delay_countdown = 4u8.saturating_sub(lf_div);
         } else {
             self.initial_delay_countdown = 6u8.saturating_sub(lf_div);
         }
-        // Ensure countdown is at least 1 if it becomes 0 due to lf_div, though SameBoy uses it as is.
-        // E.g. 4-1 = 3 samples delayed. If initial_delay_countdown is 0, no delay.
 
         if self.length_counter == 0 {
             let length_data = self.nr11.initial_length_timer_val();
             let is_max_length_condition_len = length_data == 0;
             let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
-
-            // Glitch: If length timer is reloaded when FS is due to clock length on the *next* step (i.e. current step is 0,2,4,6),
-            // and length is being enabled by the NRx4 write, and it's max length, load 63.
-            let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6); // Correct for "next step will clock"
-
-            // Use the length_enabled_from_nrx4 passed in, which reflects the NRx4 value causing the trigger
+            let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
             if next_fs_step_will_not_clock_length && length_enabled_from_nrx4 && is_max_length_condition_len {
                 actual_load_val_len = 63;
             }
@@ -105,24 +92,19 @@ impl Channel1 {
         self.envelope_running = self.nr12.dac_power() && env_period_raw != 0;
         self.sweep_shadow_frequency = period_val;
         let sweep_period_raw = self.nr10.sweep_period();
-        // Initialize sweep_calculate_countdown
         self.sweep_calculate_countdown = if sweep_period_raw == 0 { 8 } else { sweep_period_raw };
         self.sweep_enabled = sweep_period_raw != 0 || self.nr10.sweep_shift_val() != 0;
-        self.channel_1_restart_hold = true; // Set on trigger
-        self.sweep_calculated_overflow_this_step = false; // Reset this flag on trigger
+        self.channel_1_restart_hold = true;
+        self.sweep_calculated_overflow_this_step = false;
 
-        // Initial sweep calculation if shift > 0
         if self.sweep_enabled && self.nr10.sweep_shift_val() != 0 {
             let new_freq = self.calculate_sweep_frequency();
             if new_freq > 2047 {
-                // If channel_1_restart_hold is true, channel is NOT disabled by this initial overflow.
-                // Frequency is not updated either.
-                if !self.channel_1_restart_hold { // Should always be true here due to above line, but for clarity
+                if !self.channel_1_restart_hold {
                     self.enabled = false;
                 }
                 self.sweep_calculated_overflow_this_step = true;
             }
-            // No frequency update here even if not overflowed; only on clock_sweep ticks.
         }
     }
 
@@ -169,75 +151,33 @@ impl Channel1 {
 
     pub fn clock_sweep(&mut self) {
         if !self.sweep_enabled || !self.nr12.dac_power() { return; }
-
         if self.sweep_calculate_countdown > 0 {
             self.sweep_calculate_countdown -= 1;
         }
-
         if self.sweep_calculate_countdown == 0 {
             let sweep_period_raw = self.nr10.sweep_period();
             self.sweep_calculate_countdown = if sweep_period_raw == 0 { 8 } else { sweep_period_raw };
-
-            if !self.enabled { return; } // Don't run if channel got disabled by other means
-
-            // If the sweep period is zero, the sweep timer is reloaded with 8,
-            // but the sweep calculation doesn't occur.
-            if sweep_period_raw == 0 {
-                return;
-            }
-
-            // Only if sweep is enabled and shift is non-zero can frequency change
-            // and overflow checks/updates happen.
-            // However, the subtraction flag might need to be set even if shift is 0,
-            // if a calculation was *attempted* with subtract direction.
-            // But sweep calculation only has effect if shift > 0.
-            // So, if shift is 0, new_freq is same as shadow_freq.
-
-            // Set subtraction flag before shadow frequency potentially changes
-            // This flag is for the NR10 negate bug.
+            if !self.enabled { return; }
+            if sweep_period_raw == 0 { return; }
             if self.nr10.sweep_shift_val() != 0 && !self.nr10.sweep_direction_is_increase() {
                 self.subtraction_sweep_calculated_since_trigger = true;
             }
-
             let new_freq = self.calculate_sweep_frequency();
-
             if new_freq > 2047 {
                 self.enabled = false;
                 self.sweep_calculated_overflow_this_step = true;
                 return;
             }
-
-            // If sweep shift is 0, the frequency doesn't change.
-            // No need to update registers or do the second overflow check.
-            if self.nr10.sweep_shift_val() == 0 {
-                // self.sweep_calculated_overflow_this_step = false; // Do not clear if set by trigger
-                return;
-            }
-
-            // At this point: shift > 0 and new_freq <= 2047 (first calculation passed or was held)
-
+            if self.nr10.sweep_shift_val() == 0 { return; }
             let performing_update_after_hold = self.channel_1_restart_hold;
-            if self.channel_1_restart_hold {
-                self.channel_1_restart_hold = false; // Consume hold
-            }
-
-            // If restart_hold was active, and first calc overflowed (new_freq > 2047),
-            // we don't update frequency or disable channel from *that* first calc.
-            // The channel remains enabled, shadow_freq is old, but overflow_this_step might be true.
-            // If we are here due to hold, and first calc overflowed, new_freq is bad.
-            // We should effectively skip update if initial calc (on trigger) overflowed while hold was active.
+            if self.channel_1_restart_hold { self.channel_1_restart_hold = false; }
             if performing_update_after_hold && self.sweep_calculated_overflow_this_step {
-                 // Initial trigger calc overflowed, hold was active. Do not update frequency.
-                 // Channel remains enabled. sweep_calculated_overflow_this_step remains true.
+                // No frequency update
             } else {
-                // Normal operation or initial trigger calc did not overflow.
                 self.sweep_shadow_frequency = new_freq;
                 self.nr13.write((new_freq & 0xFF) as u8);
                 self.nr14.write_frequency_msb(((new_freq >> 8) & 0x07) as u8);
-
-                self.sweep_calculated_overflow_this_step = false; // Successful update
-
-                // Perform the second overflow check using the new shadow frequency
+                self.sweep_calculated_overflow_this_step = false;
                 let final_check_freq = self.calculate_sweep_frequency();
                 if final_check_freq > 2047 {
                     self.enabled = false;
@@ -247,15 +187,10 @@ impl Channel1 {
         }
     }
 
-    // Getter for sweep_shadow_frequency needed for NR10 negate glitch logic in apu.rs
     pub(super) fn get_sweep_shadow_frequency(&self) -> u16 { self.sweep_shadow_frequency }
-    // pub(super) fn has_subtraction_sweep_calculated(&self) -> bool { self.subtraction_sweep_calculated_since_trigger } // Unused
-    // pub(super) fn disable_for_sweep_bug(&mut self) { self.enabled = false; } // Unused
-
     pub(super) fn is_envelope_running(&self) -> bool { self.envelope_running }
     pub(super) fn get_envelope_volume(&self) -> u8 { self.envelope_volume }
     pub(super) fn set_envelope_volume(&mut self, vol: u8) { self.envelope_volume = vol & 0x0F; }
-    // pub(super) fn get_envelope_period_timer(&self) -> u8 { self.envelope_period_timer } // Unused
     pub(super) fn force_disable_channel(&mut self) { self.enabled = false; }
 
     pub fn tick(&mut self) {
@@ -273,18 +208,14 @@ impl Channel1 {
     }
 
     pub fn get_output_volume(&mut self) -> u8 {
-        // Initial trigger delay countdown
         if self.initial_delay_countdown > 0 {
             self.initial_delay_countdown -= 1;
             return 0;
         }
-
-        // Power-on specific first sample quirk
         if self.force_output_zero_for_next_sample {
             self.force_output_zero_for_next_sample = false;
             return 0;
         }
-
         if !self.enabled || !self.nr12.dac_power() || self.sweep_calculated_overflow_this_step { return 0; }
         let wave_duty = self.nr11.wave_pattern_duty_val();
         let wave_output = match wave_duty {
@@ -296,24 +227,4 @@ impl Channel1 {
         };
         if wave_output == 1 { self.envelope_volume } else { 0 }
     }
-
-    // pub fn reload_length_on_enable(&mut self, current_frame_sequencer_step: u8) { // Now unused
-    //     // Channel is not explicitly enabled here by just loading length,
-    //     // its status depends on trigger or if it was already enabled.
-    //     // DAC power is a prerequisite for sound output, not for length counter loading.
-
-    //     let length_data = self.nr11.initial_length_timer_val(); // 0-63
-    //     let is_max_length_condition_len = length_data == 0;
-    //     let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
-
-    //     // Apply the "set to 63 instead of 64" obscure behavior.
-    //     // Condition: Next Frame Sequencer step doesn't clock length (current_frame_sequencer_step is 0, 2, 4, or 6),
-    //     // AND length is enabled in NR14, AND NR11's length data was 0 (meaning max length).
-    //     let fs_condition_met = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
-    //     // self.nr14.is_length_enabled() should be true if this path is taken from apu.rs
-    //     if fs_condition_met && self.nr14.is_length_enabled() && is_max_length_condition_len {
-    //         actual_load_val_len = 63;
-    //     }
-    //     self.length_counter = actual_load_val_len;
-    // }
 }

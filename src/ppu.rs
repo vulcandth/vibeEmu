@@ -1,5 +1,6 @@
 // src/ppu.rs
 use crate::interrupts::InterruptType;
+use crate::models::GameBoyModel; // Added GameBoyModel import
 use image::{ImageBuffer, ImageError};
 
 // CGB utility colors
@@ -47,7 +48,8 @@ pub const MODE_OAM_SCAN: u8 = 2;
 pub const MODE_DRAWING: u8 = 3;
 
 pub struct Ppu {
-    pub system_mode: crate::bus::SystemMode, // Added CGB mode tracking
+    // pub system_mode: crate::bus::SystemMode, // Replaced by model
+    pub model: GameBoyModel, // Added model field
     pub vram: [[u8; 8192]; 2],               // Two VRAM banks for CGB
     pub oam: [u8; 160],
     pub framebuffer: Vec<u8>,
@@ -76,7 +78,7 @@ pub struct Ppu {
 }
 
 impl Ppu {
-    pub fn new(system_mode: crate::bus::SystemMode) -> Self {
+    pub fn new(model: GameBoyModel) -> Self { // Changed parameter
         let initial_ly = 0;
         let initial_lyc = 0;
         let mut initial_stat = MODE_OAM_SCAN;
@@ -101,7 +103,7 @@ impl Ppu {
             obp1: 0xFF,
             wy: 0,
             wx: 0,
-            system_mode,                     // Store the passed system_mode
+            model,                           // Store the passed model
             cgb_bg_palette_ram: [0xFF; 64],  // Initialize CGB BG palettes (e.g., to 0xFF)
             cgb_obj_palette_ram: [0xFF; 64], // Initialize CGB OBJ palettes (e.g., to 0xFF)
             bcps: 0x00,                      // Initialize BCPS
@@ -284,7 +286,7 @@ impl Ppu {
         // DMG Mode Specific: If LCDC Bit 0 is off, BG/Window are white (color 0 of BGP). Sprites can still draw.
         // In CGB Mode, LCDC Bit 0 is BG-to-OBJ Master Priority, not a display disable for BG/Win.
         let bg_is_blank_dmg =
-            self.system_mode == crate::bus::SystemMode::DMG && (self.lcdc & (1 << 0)) == 0;
+            self.model.is_dmg_family() && (self.lcdc & (1 << 0)) == 0;
 
         if bg_is_blank_dmg {
             let dmg_color_0_idx = (self.bgp >> (0 * 2)) & 0b11; // Color for index 0 from BGP
@@ -337,7 +339,7 @@ impl Ppu {
                 let mut bg_y_flip: bool = false;
                 let mut bg_priority: bool = false;
 
-                if self.system_mode == crate::bus::SystemMode::CGB {
+                if self.model.is_cgb_family() {
                     let tile_attributes = self.vram[1][tile_index_map_addr];
                     bg_cgb_palette_idx = tile_attributes & 0x07;
                     bg_tile_data_bank = if (tile_attributes & (1 << 3)) != 0 {
@@ -384,7 +386,7 @@ impl Ppu {
                 let color_num = (color_bit0 << 1) | color_bit1;
 
                 let final_color: [u8; 3];
-                if self.system_mode == crate::bus::SystemMode::CGB {
+                if self.model.is_cgb_family() {
                     let palette_ram_base_idx =
                         (bg_cgb_palette_idx as usize * 8) + (color_num as usize * 2);
                     if palette_ram_base_idx + 1 < self.cgb_bg_palette_ram.len() {
@@ -441,7 +443,7 @@ impl Ppu {
                         let mut win_y_flip: bool = false;
                         let mut win_priority: bool = false;
 
-                        if self.system_mode == crate::bus::SystemMode::CGB {
+                        if self.model.is_cgb_family() {
                             let win_attributes = self.vram[1][tile_index_map_addr_win];
                             win_cgb_palette_idx = win_attributes & 0x07;
                             win_tile_data_bank = if (win_attributes & (1 << 3)) != 0 {
@@ -482,7 +484,7 @@ impl Ppu {
                             | ((byte1_win >> pixel_x_in_tile_bit_pos_win) & 1);
 
                         let final_color_win: [u8; 3];
-                        if self.system_mode == crate::bus::SystemMode::CGB {
+                        if self.model.is_cgb_family() {
                             let palette_ram_base_idx =
                                 (win_cgb_palette_idx as usize * 8) + (color_num_win as usize * 2);
                             if palette_ram_base_idx + 1 < self.cgb_bg_palette_ram.len() {
@@ -579,17 +581,27 @@ impl Ppu {
                 }
             }
 
-            match self.system_mode {
-                crate::bus::SystemMode::DMG => {
-                    candidate_sprites.sort_by(|a, b| {
+            if self.model.is_dmg_family() { // Includes SGB which uses OAM index for priority too
+                 candidate_sprites.sort_by(|a, b| {
+                        a.sprite_x_oam
+                            .cmp(&b.sprite_x_oam)
+                            .then_with(|| a.oam_idx.cmp(&b.oam_idx)) // DMG/SGB priority by X-coord then OAM index
+                    });
+            } else { // CGB family uses OAM index only for tie-breaking with X coord (effectively OAM index for overlapping at same X)
+                // SameBoy sorts by X coordinate for CGB too, then OAM index.
+                // The key difference is how priority is handled later with BG.
+                // For CGB, sprite-to-sprite priority is just OAM index (lower index wins for same X).
+                // Let's use a simpler sort for CGB that just prioritizes OAM index for now,
+                // as the rendering loop processes from right to left (higher X first).
+                // Sorting by OAM index means lower OAM index sprites are processed later, thus drawn on top.
+                // candidate_sprites.sort_by_key(|s| s.oam_idx);
+                // Sameboy sorts CGB by X-coordinate only.
+                // Let's keep DMG sort for now, as it works for CGB too if priority is handled pixel-wise
+                 candidate_sprites.sort_by(|a, b| {
                         a.sprite_x_oam
                             .cmp(&b.sprite_x_oam)
                             .then_with(|| a.oam_idx.cmp(&b.oam_idx))
                     });
-                }
-                crate::bus::SystemMode::CGB => {
-                    candidate_sprites.sort_by_key(|s| s.oam_idx);
-                }
             }
 
             for sprite_info in candidate_sprites.iter().rev() {
@@ -603,7 +615,7 @@ impl Ppu {
                 let tile_data_offset_in_bank_sprite = sprite_info.tile_index_resolved as usize * 16;
                 let tile_row_data_addr_in_bank_sprite =
                     tile_data_offset_in_bank_sprite + (tile_row_y_for_vram as usize * 2);
-                let active_sprite_vram_bank = if self.system_mode == crate::bus::SystemMode::CGB {
+                let active_sprite_vram_bank = if self.model.is_cgb_family() {
                     sprite_info.cgb_vram_bank
                 } else {
                     0
@@ -642,7 +654,7 @@ impl Ppu {
                     }
 
                     let final_sprite_color_rgb: [u8; 3]; // Removed 'mut'
-                    if self.system_mode == crate::bus::SystemMode::CGB {
+                    if self.model.is_cgb_family() {
                         let palette_ram_base_idx = (sprite_info.cgb_palette_idx as usize * 8)
                             + (color_num_sprite as usize * 2);
                         if palette_ram_base_idx + 1 < self.cgb_obj_palette_ram.len() {
@@ -661,27 +673,26 @@ impl Ppu {
 
                     let mut draw_sprite_pixel = true;
                     let bg_color_idx = self.bg_color_index_buffer[screen_pixel_x as usize];
-                    let bg_win_display_enabled_dmg = self.system_mode
-                        == crate::bus::SystemMode::DMG
-                        && (self.lcdc & (1 << 0)) != 0;
-                    if self.system_mode == crate::bus::SystemMode::CGB {
-                        if (self.lcdc & (1 << 0)) == 0 {
+
+                    if self.model.is_cgb_family() {
+                        // CGB Priority Logic
+                        // LCDC bit 0: BG-to-OBJ Master Priority (0=BG wins, 1=OAM prio attr wins)
+                        if (self.lcdc & (1 << 0)) == 0 { // BG Master Priority (BG always wins over sprites if not color 0)
                             if bg_color_idx != 0 {
                                 draw_sprite_pixel = false;
                             }
-                        } else {
-                            if self.bg_priority_buffer[screen_pixel_x as usize] && bg_color_idx != 0
-                            {
+                        } else { // OAM Priority Attribute decides
+                            if self.bg_priority_buffer[screen_pixel_x as usize] && bg_color_idx != 0 { // BG tile attribute has priority
                                 draw_sprite_pixel = false;
-                            } else if !sprite_info.sprite_has_priority_over_bg && bg_color_idx != 0
-                            {
+                            } else if !sprite_info.sprite_has_priority_over_bg && bg_color_idx != 0 { // Sprite attribute OAM[val&0x80]==1 means BG wins
                                 draw_sprite_pixel = false;
                             }
                         }
-                    } else {
+                    } else { // DMG Priority Logic
+                        let bg_win_display_enabled_dmg = (self.lcdc & (1 << 0)) != 0; // LCDC Bit 0 for BG/Win display
                         if bg_win_display_enabled_dmg
-                            && !sprite_info.sprite_has_priority_over_bg
-                            && bg_color_idx != 0
+                            && !sprite_info.sprite_has_priority_over_bg // Sprite attribute OAM[val&0x80]==1 means BG wins
+                            && bg_color_idx != 0 // BG is not transparent
                         {
                             draw_sprite_pixel = false;
                         }
@@ -720,7 +731,7 @@ impl Ppu {
             0x8000..=0x9FFF => {
                 // Already checked for VRAM restrictions above if mode == MODE_DRAWING
                 let relative_addr = (addr - 0x8000) as usize;
-                if self.system_mode == crate::bus::SystemMode::CGB {
+                if self.model.is_cgb_family() {
                     let bank = self.vbk as usize;
                     self.vram[bank][relative_addr]
                 } else {
@@ -800,7 +811,7 @@ impl Ppu {
             0x8000..=0x9FFF => {
                 // Already checked for VRAM restrictions above if mode == MODE_DRAWING
                 let relative_addr = (addr - 0x8000) as usize;
-                if self.system_mode == crate::bus::SystemMode::CGB {
+                if self.model.is_cgb_family() {
                     let bank = self.vbk as usize;
                     self.vram[bank][relative_addr] = value;
                 } else {
@@ -840,7 +851,7 @@ impl Ppu {
             0xFF4B => self.wx = value,
             0xFF4F => {
                 // VBK - CGB VRAM Bank Select
-                if self.system_mode == crate::bus::SystemMode::CGB {
+                if self.model.is_cgb_family() {
                     self.vbk = value & 1; // Only bit 0 is writable
                 }
                 // In DMG mode, writes to VBK are ignored.

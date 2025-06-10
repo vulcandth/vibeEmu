@@ -23,7 +23,8 @@ const HALTED_IDLE_M_CYCLES: u32 = 1;      // M-cycles when halted and no interru
 // Default M-cycles for a regular instruction if not specified otherwise (for this subtask's simplification)
 // const DEFAULT_OPCODE_M_CYCLES: u32 = 4; // Removed as unused
 
-use crate::bus::{Bus, SystemMode}; // Added SystemMode
+use crate::bus::Bus; // SystemMode removed
+use crate::models::GameBoyModel; // Added GameBoyModel
 // Removed: use crate::interrupts::InterruptType; // Will be moved into test module
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -592,10 +593,10 @@ pub struct Cpu {
 
 impl Cpu {
     pub fn new(bus: Rc<RefCell<Bus>>) -> Self {
-        let system_mode = bus.borrow().get_system_mode();
-        let (a, f, b, c, d, e, h, l) = match system_mode {
-            SystemMode::DMG => (0x01, 0xB0, 0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D),
-            SystemMode::CGB => (0x11, 0x80, 0x00, 0x00, 0xFF, 0x56, 0x00, 0x0D),
+        let model = bus.borrow().get_model(); // Changed to get_model()
+        let (a, f, b, c, d, e, h, l) = match model {
+            GameBoyModel::DMG | GameBoyModel::SGB | GameBoyModel::SGB2 => (0x01, 0xB0, 0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D),
+            _ => (0x11, 0x80, 0x00, 0x00, 0xFF, 0x56, 0x00, 0x0D), // Default to CGB values for CGB family and AGB
         };
 
         Cpu {
@@ -1772,10 +1773,10 @@ pub fn stop(&mut self) {
     // - Consumes the 2 bytes for the instruction (0x10 and the following 0x00).
     // This is a placeholder and does not implement CGB speed switching or
     // specific DMG STOP mode details.
-    let system_mode = self.bus.borrow().get_system_mode();
+    let model = self.bus.borrow().get_model();
     let key1_prepared = self.bus.borrow().get_key1_prepare_speed_switch();
 
-    if system_mode == SystemMode::CGB && key1_prepared {
+    if model.is_cgb_family() && key1_prepared {
         self.bus.borrow_mut().toggle_speed_mode();
         self.bus.borrow_mut().set_key1_prepare_speed_switch(false);
         // For CGB speed switch, CPU does not halt.
@@ -2852,6 +2853,7 @@ pub fn step(&mut self) -> u32 {
 mod tests {
     use super::*; // Imports Cpu, flag constants, etc.
     use crate::bus::Bus; // Required for Bus::new()
+    use crate::models::GameBoyModel; // Added for tests
     use crate::interrupts::InterruptType; // Moved import here for test usage
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -2865,20 +2867,22 @@ mod tests {
         };
     }
 
-    fn setup_cpu_with_mode(mode: SystemMode) -> Cpu {
-        // Provide dummy ROM data. For CGB, set the CGB flag.
+    fn setup_cpu_with_model(model: GameBoyModel) -> Cpu { // Renamed and model type changed
+        // Provide dummy ROM data. For CGB family, set the CGB flag.
         let mut rom_data = vec![0; 0x8000]; // Ensure enough size for header
         rom_data[0x0147] = 0x00; // NoMBC cartridge type
         rom_data[0x0149] = 0x02; // 8KB RAM size
-        if mode == SystemMode::CGB {
+        if model.is_cgb_family() { // Check CGB family
             rom_data[0x0143] = 0x80; // CGB supported/required
+        } else {
+            rom_data[0x0143] = 0x00; // DMG/SGB mode
         }
         let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
         Cpu::new(bus)
     }
 
-    fn setup_cpu() -> Cpu { // Default to CGB for existing tests, or adjust as needed
-        setup_cpu_with_mode(SystemMode::CGB)
+    fn setup_cpu() -> Cpu { // Default to a CGB model for existing tests, or adjust as needed
+        setup_cpu_with_model(GameBoyModel::CGBD) // Using CGB-D as a generic CGB for tests
     }
 
 
@@ -2897,7 +2901,7 @@ mod tests {
 
         #[test]
         fn test_initial_register_values_cgb() {
-            let cpu = setup_cpu_with_mode(SystemMode::CGB);
+            let cpu = setup_cpu_with_model(GameBoyModel::CGBD); // Test with a CGB model
 
             assert_eq!(cpu.a, 0x11, "CGB Initial A register value incorrect");
             assert_eq!(cpu.f, 0x80, "CGB Initial F register value incorrect"); // Z=1,N=0,H=0,C=0
@@ -2916,7 +2920,7 @@ mod tests {
 
         #[test]
         fn test_initial_register_values_dmg() {
-            let cpu = setup_cpu_with_mode(SystemMode::DMG);
+            let cpu = setup_cpu_with_model(GameBoyModel::DMG); // Test with DMG model
 
             assert_eq!(cpu.a, 0x01, "DMG Initial A register value incorrect");
             assert_eq!(cpu.f, 0xB0, "DMG Initial F register value incorrect"); // Z=1,N=0,H=1,C=1
@@ -6050,7 +6054,13 @@ mod tests {
             let mut rom_data_ret_wrap = vec![0; 0x8000];
             rom_data_ret_wrap[0x0147] = 0x00; // NoMBC
             rom_data_ret_wrap[0x0149] = 0x02; // 8KB RAM
-            rom_data_ret_wrap[0x0143] = if cpu.bus.borrow().get_system_mode() == SystemMode::CGB { 0x80 } else { 0x00 };
+            // Determine CGB flag based on the model of the *original* cpu instance for consistency
+            let current_model = cpu.bus.borrow().get_model();
+            if current_model.is_cgb_family() {
+                rom_data_ret_wrap[0x0143] = 0x80;
+            } else {
+                rom_data_ret_wrap[0x0143] = 0x00;
+            }
             rom_data_ret_wrap[0x0000] = (return_addr_3 >> 8) as u8; // Pre-set PCH in ROM[0x0000]
 
             let bus_ret_wrap = Rc::new(RefCell::new(Bus::new(rom_data_ret_wrap)));

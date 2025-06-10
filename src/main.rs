@@ -5,6 +5,7 @@ mod bus;
 mod cpu;
 mod memory;
 mod ppu;
+pub mod models; // Declare models module at crate root
 
 #[cfg(test)]
 mod bus_tests;
@@ -201,7 +202,7 @@ fn main() {
     // Create the Bus, wrapped in Rc and RefCell for shared mutable access
     let mut bus = Rc::new(RefCell::new(Bus::new(rom_data)));
     bus.borrow_mut().load_save_files(&rom_path);
-    println!("Determined System Mode: {:?}", bus.borrow().get_system_mode()); // Added logging
+    println!("Determined Game Boy Model: {:?}", bus.borrow().get_model()); // Changed to get_model
 
     // Create the Cpu, passing a clone of the Rc-wrapped bus
     let mut cpu = Cpu::new(bus.clone());
