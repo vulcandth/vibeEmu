@@ -268,7 +268,7 @@ impl Bus {
                 for i in 0..160 {
                     // 0xA0 bytes
                     let byte_to_copy = self.read_byte_internal(source_base_address + i as u16);
-                    self.ppu.write_oam(0xFE00 + i as u16, byte_to_copy); // Write to OAM via PPU method
+                    self.ppu.write_oam_dma(0xFE00 + i as u16, byte_to_copy); // Write to OAM via PPU DMA method
                 }
             }
 

@@ -1,5 +1,12 @@
 use crate::models::GameBoyModel;
 
+// DMG Palette Colors (example, can be adjusted)
+// Using a common greenish palette.
+pub const DMG_WHITE: [u8; 3] = [224, 248, 208];
+pub const DMG_LIGHT_GRAY: [u8; 3] = [136, 192, 112];
+pub const DMG_DARK_GRAY: [u8; 3] = [52, 104, 86];
+pub const DMG_BLACK: [u8; 3] = [8, 24, 32];
+
 // Constants for PPU
 pub const VRAM_SIZE_CGB: usize = 16 * 1024; // 2 banks of 8KB
 pub const VRAM_SIZE_DMG: usize = 8 * 1024;  // 1 bank of 8KB
@@ -79,6 +86,10 @@ pub struct Ppu {
     // Framebuffer to store rendered pixels
     pub framebuffer: Vec<u8>, // Stores RGB888, 160*144*3 bytes
 
+    // Temporary buffer for the current scanline's raw 2-bit color indices
+    // This will be filled by background, window, and sprite rendering logic.
+    pub current_scanline_color_indices: [u8; SCREEN_WIDTH],
+
     // Internal state based on SameBoy for more detailed emulation later
     // For now, these are placeholders or simplified.
 
@@ -146,6 +157,7 @@ impl Ppu {
             just_entered_hblank: false,
 
             framebuffer: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 3], // RGB888
+            current_scanline_color_indices: [0; SCREEN_WIDTH],
 
             model,
         }
@@ -155,6 +167,12 @@ impl Ppu {
     // These will need to respect PPU modes and CGB banking later.
 
     pub fn read_vram(&self, addr: u16) -> u8 {
+        // VRAM access restrictions:
+        // Inaccessible during Mode 3 (Drawing) if LCD is ON.
+        if (self.lcdc & 0x80) != 0 && self.current_mode == PpuMode::Drawing {
+            return 0xFF;
+        }
+
         let vram_bank_offset = if self.model.is_cgb_family() && (self.vbk & 0x01) == 1 {
             VRAM_SIZE_DMG // Bank 1 is the second 8KB chunk
         } else {
@@ -170,6 +188,12 @@ impl Ppu {
     }
 
     pub fn write_vram(&mut self, addr: u16, value: u8) {
+        // VRAM access restrictions:
+        // Inaccessible during Mode 3 (Drawing) if LCD is ON.
+        if (self.lcdc & 0x80) != 0 && self.current_mode == PpuMode::Drawing {
+            return;
+        }
+
         let vram_bank_offset = if self.model.is_cgb_family() && (self.vbk & 0x01) == 1 {
             VRAM_SIZE_DMG
         } else {
@@ -182,12 +206,39 @@ impl Ppu {
     }
 
     pub fn read_oam(&self, addr: u16) -> u8 {
+        // OAM access restrictions:
+        // Inaccessible during Mode 2 (OAM Scan) and Mode 3 (Drawing) if LCD is ON.
+        if (self.lcdc & 0x80) != 0 &&
+           (self.current_mode == PpuMode::OamScan || self.current_mode == PpuMode::Drawing) {
+            return 0xFF;
+        }
         // Address is 0xFE00-0xFE9F, so subtract 0xFE00 for index
         self.oam[addr as usize - 0xFE00]
     }
 
     pub fn write_oam(&mut self, addr: u16, value: u8) {
+        // OAM access restrictions for CPU access:
+        // Inaccessible during Mode 2 (OAM Scan) and Mode 3 (Drawing) if LCD is ON.
+        if (self.lcdc & 0x80) != 0 &&
+           (self.current_mode == PpuMode::OamScan || self.current_mode == PpuMode::Drawing) {
+            // println!("DEBUG: CPU OAM write to {:04X} blocked due to PPU mode {:?} (LCDC On)", addr, self.current_mode);
+            return;
+        }
+        // println!("DEBUG: CPU OAM write to {:04X} with value {:02X} allowed. Mode: {:?}, LCDC: {:02X}", addr, value, self.current_mode, self.lcdc);
         self.oam[addr as usize - 0xFE00] = value;
+    }
+
+    // Special OAM write method for DMA, bypassing PPU mode restrictions.
+    pub fn write_oam_dma(&mut self, addr: u16, value: u8) {
+        // DMA has direct access to OAM, regardless of PPU mode.
+        // Ensure address is within OAM range, though DMA logic should already handle this.
+        let oam_index = addr as usize - 0xFE00;
+        if oam_index < OAM_SIZE {
+            self.oam[oam_index] = value;
+        } else {
+            // This should not happen if DMA source address and length are correct.
+            // eprintln!("DMA OAM write out of bounds: {:04X}", addr);
+        }
     }
 
     // TODO: Implement CGB palette RAM read/write methods
@@ -227,27 +278,76 @@ impl Ppu {
                     self.cycles_in_mode -= OAM_SCAN_CYCLES;
                     self.current_mode = PpuMode::Drawing;
                     self.stat = (self.stat & 0xF8) | (PpuMode::Drawing as u8);
+                    // TODO: LCDC Bit 1: If OBJ Display Enable is off, OAM scan might behave differently or OBJ data isn't prepared.
+                    // For now, OAM scan always happens if LCD is on. OBJ rendering itself will be skipped in Drawing mode.
+                    // TODO: LCDC Bit 2: OBJ Size (8x8 or 8x16) would be relevant for OAM scan if it pre-fetches/validates OAM entries.
                 }
             }
             PpuMode::Drawing => {
+                // Actual pixel rendering would happen across these ~172+ cycles.
+                // For now, this is a single block. The logic here represents the output for the *entire* scanline.
+
+                // 1. Render Background (and Window, eventually) to current_scanline_color_indices
+                if (self.lcdc & 0x01) != 0 { // LCDC Bit 0: BG Display Enable
+                    self.render_scanline_bg();
+                } else {
+                    // BG is disabled. Fill scanline with color 0.
+                    // This will typically map to white via BGP.
+                    for i in 0..SCREEN_WIDTH {
+                        self.current_scanline_color_indices[i] = 0;
+                    }
+                }
+
+                // TODO: Window rendering would overwrite parts of current_scanline_color_indices here.
+                // --- Window Rendering ---
+                // LCDC Bit 5: Window Display Enable
+                if (self.lcdc & (1 << 5)) != 0 {
+                    // TODO: Window rendering logic would go here.
+                    // This involves checking if the current scanline self.ly is >= self.wy.
+                    // And if the current pixel's x coordinate is >= self.wx - 7.
+                    // PPU_TODO: Window internal line counter should only increment if Window Display is enabled (LCDC Bit 5).
+                    // TODO: LCDC Bit 6: Window Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF) would be used here for tile map.
+                    // LCDC Bit 4 (BG & Window Tile Data Select) is also used for Window tile data.
+                }
+
+                // --- OBJ Rendering ---
+                // LCDC Bit 1: OBJ Display Enable
+                if (self.lcdc & (1 << 1)) != 0 {
+                    // TODO: OBJ rendering logic would go here.
+                    // This involves iterating through OAM entries found during OamScan,
+                    // checking visibility, priority, and fetching tile data.
+                    // TODO: LCDC Bit 2: Check OBJ Size (8x8 or 8x16) for fetching OBJ tile data.
+                }
+
+                // 2. Apply Palettes and Render Sprites to Framebuffer
+                // For now, only DMG BG palette. CGB and sprites will come later.
+                if !self.model.is_cgb_family() { // Only apply DMG palette logic if not CGB
+                    self.apply_dmg_bg_palette_to_framebuffer();
+                } else {
+                    // TODO: CGB palette logic will be different
+                    // For now, to see CGB BG output, we can do a temporary grayscale mapping for CGB indices
+                    for x in 0..SCREEN_WIDTH {
+                        let color_index = self.current_scanline_color_indices[x];
+                        let shade_val = match color_index {
+                            0 => DMG_WHITE,
+                            1 => DMG_LIGHT_GRAY,
+                            2 => DMG_DARK_GRAY,
+                            _ => DMG_BLACK,
+                        };
+                        let fb_idx = (self.ly as usize * SCREEN_WIDTH + x) * 3;
+                        self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&shade_val);
+                    }
+                }
+                // TODO: Sprite rendering would happen here, potentially overwriting BG/Window pixels in framebuffer.
+
+
                 if self.cycles_in_mode >= DRAWING_CYCLES {
                     self.cycles_in_mode -= DRAWING_CYCLES;
                     self.current_mode = PpuMode::HBlank;
                     self.stat = (self.stat & 0xF8) | (PpuMode::HBlank as u8);
                     self.just_entered_hblank = true;
-                    // TODO: HBlank HDMA Hook Placeholder / Render scanline
-
-                    // Conceptual call for the first pixel of the scanline
-                    if (self.lcdc & 0x01) != 0 { // If BG is enabled (Bit 0: BG and Window Display)
-                        // We are not iterating all pixels yet, just showing conceptual logic for pixel (0, self.ly)
-                        let _bg_info = self.get_bg_tile_info(0); // x_on_screen = 0
-                        // println!(
-                        //     "LY: {}, Mode: {:?}, CyclesInMode: {} - Fetch BG Tile for (0, {}): TileNum: {}, DataAddr1: {:#06X}, AttrAddr: {:#06X}, Attr: {:#04X}",
-                        //     self.ly, self.current_mode, self.cycles_in_mode, self.ly,
-                        //     _bg_info.tile_number, _bg_info.tile_data_addr_plane1,
-                        //     _bg_info.attributes_addr, _bg_info.attributes
-                        // );
-                    }
+                    // TODO: HBlank HDMA Hook Placeholder.
+                    // Actual transfer to an external screen buffer might happen here or after VBLANK.
                 }
             }
             PpuMode::HBlank => {
@@ -367,95 +467,11 @@ impl Ppu {
     // Helper function for conceptual BG rendering logic
     // Takes x_on_screen (0-159) to determine which tile column to access.
     // y_on_screen is implicitly self.ly
-    fn get_bg_tile_info(&self, x_on_screen: u8) -> BgTileInfo {
-        let mut info = BgTileInfo::default();
-
-        // 1. Read LCDC bits
-        // bg_display_enable: (self.lcdc & 0x01) != 0; // Checked before calling this function
-        let bg_tile_map_select = (self.lcdc >> 3) & 0x01; // Bit 3: BG Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)
-        let bg_tile_data_select = (self.lcdc >> 4) & 0x01; // Bit 4: BG & Window Tile Data Select (0=8800-97FF, 1=8000-8FFF)
-
-        // 2. Calculate coordinates
-        let bg_map_y = self.ly.wrapping_add(self.scy); // Y coordinate in the full 256x256 BG map
-        let bg_map_x = x_on_screen.wrapping_add(self.scx); // X coordinate in the full 256x256 BG map
-
-        let tile_row_in_map = (bg_map_y / 8) as u16; // Which row of tiles in the 32x32 tile map
-        let tile_col_in_map = (bg_map_x / 8) as u16; // Which column of tiles in the 32x32 tile map
-
-        // 3. Determine Tile Map Address (where the tile number is stored)
-        let tile_map_base_addr: u16 = if bg_tile_map_select == 0 { 0x9800 } else { 0x9C00 };
-        info.tile_number_map_addr = tile_map_base_addr + (tile_row_in_map * 32) + tile_col_in_map;
-
-        // 4. Fetch Tile Number
-        // read_vram already handles VRAM banking for CGB based on self.vbk (which should be 0 for BG map numbers)
-        // For CGB attributes, a different bank is used.
-        let _current_vbk = self.vbk; // Save current VBK if we need to tamper with it for attributes
-        // Ensure VBK is 0 for reading tile numbers and BG tile data (unless attributes change it, which is later)
-        // This is a bit of a simplification; actual CGB hardware might have dedicated paths or priorities.
-        // For now, assume BG tile numbers are always in bank 0.
-        // self.vbk = 0; // Temporarily set VBK to 0 if it were mutable here. PPU read_vram uses self.vbk.
-        // Since read_vram is &self, we can't change self.vbk here.
-        // This implies that for BG tile numbers, self.vbk should be 0.
-        // And for BG tile data, it should also be 0 unless CGB attributes specify bank 1 for tile data.
-
-        // If CGB mode, BG Map Attributes determine VRAM bank for tile data (and tile number itself is bank 0)
-        // For now, we assume tile_number is from VRAM Bank 0.
-        info.tile_number = self.read_vram_bank_agnostic(info.tile_number_map_addr, 0);
-
-
-        // 5. CGB Tile Attributes
-        if self.model.is_cgb_family() {
-            // Attributes are in VRAM Bank 1, at the same offset as tile numbers in Bank 0.
-            // The address info.tile_number_map_addr is already 0x9800-0x9FFF.
-            // No need to add VRAM_SIZE_DMG if read_vram_bank_agnostic handles it.
-            info.attributes_addr = info.tile_number_map_addr; // The address is the same, bank is different.
-            info.attributes = self.read_vram_bank_agnostic(info.attributes_addr, 1);
-        }
-
-        // For CGB, the attributes byte contains:
-        // Bit 0: BG-to-OAM Priority (0=Normal, 1=BG Priority)
-        // Bit 1: Vertical Flip
-        // Bit 2: Horizontal Flip
-        // Bit 3: Tile VRAM Bank (0=Bank 0, 1=Bank 1) - for the tile data itself
-        // Bits 4-6: BG Palette Number
-        // Bit 7: Not used (or BG-to-OAM Priority for DMG compatibility, but CGB uses bit 0)
-
-        let _tile_data_vram_bank = if self.model.is_cgb_family() {
-            (info.attributes >> 3) & 0x01 // Use bank from attributes for CGB
-        } else {
-            0 // DMG always uses bank 0 for tile data
-        };
-
-        // 6. Determine Tile Data Address
-        let tile_data_start_addr: u16;
-        if bg_tile_data_select == 1 { // Method 0x8000 (unsigned tile numbers)
-            tile_data_start_addr = 0x8000 + (info.tile_number as u16 * 16);
-        } else { // Method 0x8800 (signed tile numbers, base is 0x9000 for positive, 0x8800 for negative)
-            // tile_number is u8. As i8, it's -128 to 127.
-            // Effective address: 0x9000 + (tile_number_as_i8 * 16)
-            tile_data_start_addr = 0x9000u16.wrapping_add(((info.tile_number as i8) as i16 * 16) as u16);
-        }
-
-        // Calculate specific line data address within the tile
-        let mut line_offset_in_tile = (bg_map_y % 8) as u16;
-        if self.model.is_cgb_family() && (info.attributes & 0x04) != 0 { // Vertical flip for CGB
-            line_offset_in_tile = 7 - line_offset_in_tile;
-        }
-        let tile_bytes_offset = line_offset_in_tile * 2; // 2 bytes per line (plane1 and plane2)
-
-        info.tile_data_addr_plane1 = tile_data_start_addr + tile_bytes_offset;
-        info.tile_data_addr_plane2 = info.tile_data_addr_plane1 + 1;
-
-        // The actual read of tile data bytes would use:
-        // byte1 = self.read_vram_bank_agnostic(info.tile_data_addr_plane1, tile_data_vram_bank);
-        // byte2 = self.read_vram_bank_agnostic(info.tile_data_addr_plane2, tile_data_vram_bank);
-        // Horizontal flip (info.attributes & 0x02 != 0 for CGB) would be applied when forming pixels from these bytes.
-
-        // Restore VBK if it was changed - not needed due to read_vram_bank_agnostic
-        // if self.model.is_cgb_family() { self.vbk = current_vbk; }
-
-        info
-    }
+    // This function assumes LCDC Bit 0 (BG Display Enable) is already checked and true.
+    // fn get_bg_tile_info(&self, x_on_screen: u8) -> BgTileInfo { // Original function signature
+    // This function is being replaced by fetch_tile_line_data and render_scanline_bg
+    // The logic from get_bg_tile_info is being integrated into fetch_tile_line_data.
+    // }
 
     // Helper to read from a specific VRAM bank, bypassing the PPU's current vbk state.
     // This is useful for fetching CGB attributes or specific tile data banks.
@@ -478,6 +494,165 @@ impl Ppu {
              // This case should ideally not be hit if addresses and banks are calculated correctly.
             // eprintln!("Warning: VRAM read out of bounds. Addr: {:#06X}, Bank: {}, Index: {}, VRAM size: {}", addr, bank, index, self.vram.len());
             0xFF
+        }
+    }
+}
+
+// Struct to hold fetched tile data bytes and attributes for a single tile line
+#[derive(Debug, Default, Clone, Copy)]
+struct FetchedTileLineData {
+    plane1_byte: u8,
+    plane2_byte: u8,
+    attributes: u8, // CGB attributes, 0 for DMG
+}
+
+impl Ppu {
+    // ... (ensure all previous Ppu methods like new, read_vram, tick, etc. are preserved above this line)
+
+    // Fetches tile data bytes (plane1, plane2) and CGB attributes for a specific tile line.
+    // map_x, map_y are coordinates in the 256x256 BG/Window map.
+    fn fetch_tile_line_data(&self,
+                            tile_map_addr_base: u16,      // e.g., 0x9800 or 0x9C00 for BG/Window
+                            tile_data_addr_base_select: u8, // From LCDC bit 4 (0 or 1)
+                            map_x: u8,
+                            map_y: u8) -> FetchedTileLineData {
+        let mut output = FetchedTileLineData::default();
+        let is_cgb = self.model.is_cgb_family();
+
+        let tile_row_in_map = (map_y / 8) as u16;
+        let tile_col_in_map = (map_x / 8) as u16;
+
+        let tile_number_map_addr = tile_map_addr_base + (tile_row_in_map * 32) + tile_col_in_map;
+
+        // Tile number is always read from VRAM Bank 0 for BG/Window map
+        let tile_number = self.read_vram_bank_agnostic(tile_number_map_addr, 0);
+
+        let mut tile_data_vram_bank = 0;
+        if is_cgb {
+            // Attributes are in VRAM Bank 1, at the same offset as tile numbers in Bank 0.
+            output.attributes = self.read_vram_bank_agnostic(tile_number_map_addr, 1);
+            tile_data_vram_bank = (output.attributes >> 3) & 0x01; // Bit 3: Tile VRAM Bank (CGB)
+        }
+
+        let tile_data_start_addr: u16;
+        if tile_data_addr_base_select == 1 { // Method 0x8000 (unsigned tile numbers)
+            tile_data_start_addr = 0x8000 + (tile_number as u16 * 16);
+        } else { // Method 0x8800 (signed tile numbers, base is 0x9000)
+            tile_data_start_addr = 0x9000u16.wrapping_add(((tile_number as i8) as i16 * 16) as u16);
+        }
+
+        let mut line_offset_in_tile = (map_y % 8) as u16;
+        if is_cgb && (output.attributes & (1 << 2)) != 0 { // Bit 2: Vertical Flip (CGB)
+            line_offset_in_tile = 7 - line_offset_in_tile;
+        }
+        let tile_bytes_offset = line_offset_in_tile * 2; // 2 bytes per line
+
+        let data_addr_plane1 = tile_data_start_addr + tile_bytes_offset;
+        let data_addr_plane2 = data_addr_plane1 + 1;
+
+        output.plane1_byte = self.read_vram_bank_agnostic(data_addr_plane1, tile_data_vram_bank);
+        output.plane2_byte = self.read_vram_bank_agnostic(data_addr_plane2, tile_data_vram_bank);
+
+        output
+    }
+
+    // Decodes a line of tile data (2 bytes) into 8 pixel color indices (0-3).
+    // Handles CGB horizontal flip.
+    fn decode_tile_line_to_pixels(&self, plane1_byte: u8, plane2_byte: u8, cgb_attributes: u8, is_cgb: bool) -> [u8; 8] {
+        let mut pixels = [0u8; 8];
+        let horizontal_flip = is_cgb && (cgb_attributes & (1 << 1)) != 0; // Bit 1: Horizontal Flip (CGB)
+
+        for i in 0..8 {
+            let bit_pos = if horizontal_flip { i } else { 7 - i };
+            let lsb = (plane1_byte >> bit_pos) & 1;
+            let msb = (plane2_byte >> bit_pos) & 1;
+            pixels[if horizontal_flip { 7-i } else { i } as usize] = (msb << 1) | lsb;
+        }
+        pixels
+    }
+
+    // Renders the background for the current scanline (self.ly) into self.current_scanline_color_indices.
+    fn render_scanline_bg(&mut self) {
+        // LCDC Bit 3: BG Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)
+        let bg_tile_map_base_addr = if (self.lcdc >> 3) & 0x01 == 0 { 0x9800 } else { 0x9C00 };
+        // LCDC Bit 4: BG & Window Tile Data Select (0=8800-97FF, 1=8000-8FFF)
+        let bg_win_tile_data_select = (self.lcdc >> 4) & 0x01;
+
+        let is_cgb = self.model.is_cgb_family();
+        let mut current_tile_pixels = [0u8; 8];
+        // Keep track of the map X coordinate for which the current_tile_pixels were fetched.
+        // Initialize to a value that ensures the first tile is fetched.
+        let mut fetched_tile_map_x_start = 255 - 7; // Ensures (map_x / 8) is different initially or forces fetch.
+
+        for x_screen in 0..SCREEN_WIDTH {
+            let map_x = self.scx.wrapping_add(x_screen as u8);
+            let map_y = self.scy.wrapping_add(self.ly);
+
+            // Check if we need to fetch a new tile's line data.
+            // This is true if x_screen is 0 (start of line), or if the current map_x
+            // has crossed into a new 8-pixel tile boundary compared to the last fetch.
+            if x_screen == 0 || (map_x / 8) != (fetched_tile_map_x_start / 8) {
+                 // If map_x has wrapped (e.g. from 255 to 0) and we are not at x_screen == 0,
+                 // this also indicates a new tile segment from the beginning of the map.
+                 // This condition (map_x < fetched_tile_map_x_start && x_screen > 0) is implicitly handled
+                 // by (map_x / 8) != (fetched_tile_map_x_start / 8) due to integer division behavior with wrapping.
+
+                let fetched_data = self.fetch_tile_line_data(
+                    bg_tile_map_base_addr,
+                    bg_win_tile_data_select,
+                    map_x, map_y, // Use map_x for fetching, which corresponds to the start of the current/next tile
+                );
+                current_tile_pixels = self.decode_tile_line_to_pixels(
+                    fetched_data.plane1_byte,
+                    fetched_data.plane2_byte,
+                    fetched_data.attributes,
+                    is_cgb
+                );
+                fetched_tile_map_x_start = map_x; // Record the map_x for which these pixels were fetched.
+                                                 // More accurately, this is the map_x of the first pixel in current_tile_pixels.
+            }
+
+            // Select the pixel from the 8 fetched pixels of the current tile.
+            // (map_x % 8) gives the horizontal index (0-7) within the current tile.
+            let pixel_in_tile_index = (map_x % 8) as usize;
+            self.current_scanline_color_indices[x_screen] = current_tile_pixels[pixel_in_tile_index];
+        }
+    }
+
+    // Applies DMG BGP palette to the current_scanline_color_indices and writes to framebuffer.
+    // This is for DMG mode. CGB mode will have its own palette logic.
+    fn apply_dmg_bg_palette_to_framebuffer(&mut self) {
+        // Ensure self.ly is within the valid screen height to prevent panic
+        if self.ly >= SCREEN_HEIGHT as u8 {
+            return; // Should not happen during normal drawing modes
+        }
+
+        for x in 0..SCREEN_WIDTH {
+            let color_index = self.current_scanline_color_indices[x]; // Value from 0-3
+
+            // Extract the 2-bit shade from BGP (0xFF47)
+            // Color index 0: Bits 1-0 of BGP
+            // Color index 1: Bits 3-2 of BGP
+            // Color index 2: Bits 5-4 of BGP
+            // Color index 3: Bits 7-6 of BGP
+            let shade = (self.bgp >> (color_index * 2)) & 0x03;
+
+            let rgb_color = match shade {
+                0 => DMG_WHITE,
+                1 => DMG_LIGHT_GRAY,
+                2 => DMG_DARK_GRAY,
+                3 => DMG_BLACK,
+                _ => unreachable!(), // shade is always 0-3
+            };
+
+            let fb_idx = (self.ly as usize * SCREEN_WIDTH + x) * 3;
+            if fb_idx + 2 < self.framebuffer.len() {
+                self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&rgb_color);
+            } else {
+                // This should ideally not happen if framebuffer is correctly sized
+                // and ly/x are within bounds.
+                // eprintln!("Framebuffer write out of bounds: LY={}, X={}, fb_idx={}", self.ly, x, fb_idx);
+            }
         }
     }
 }
