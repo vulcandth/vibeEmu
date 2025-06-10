@@ -19,6 +19,7 @@ pub const SCANLINE_CYCLES: u32 = 456;
 // pub const VBLANK_LINES: u8 = 10; // Not directly used, TOTAL_LINES implies this
 // pub const VBLANK_DURATION_CYCLES: u32 = SCANLINE_CYCLES * VBLANK_LINES as u32; // Not directly used
 pub const TOTAL_LINES: u8 = 154;
+pub const FAILSAFE_MAX_MODE3_CYCLES: u32 = 340; // Max cycles for Mode 3 before force quit if screen_x stuck
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -78,6 +79,8 @@ pub struct Ppu {
     // Sprite rendering fields
     sprite_fifo: PixelFifo,
     current_sprite_to_render_idx: Option<usize>,
+    #[allow(dead_code)] // May not be fully used by placeholder, but good for future
+    window_internal_line_counter: u8,
     sprite_fetcher_pixel_push_idx: u8,
     sprite_pixels_loaded_into_fifo: bool,
 }
@@ -122,6 +125,7 @@ impl Ppu {
             // Sprite rendering fields
             sprite_fifo: PixelFifo::new(8), // Max 8 pixels for one sprite
             current_sprite_to_render_idx: None,
+            window_internal_line_counter: 0,
             sprite_fetcher_pixel_push_idx: 0,
             sprite_pixels_loaded_into_fifo: false,
         }
@@ -185,7 +189,9 @@ impl Ppu {
             if self.ly == self.lyc { self.stat |= 1 << 2; } else { self.stat &= !(1 << 2); }
             self.stat |= 0x80;
             self.vblank_interrupt_requested = false; self.stat_interrupt_requested = false;
-            self.reset_scanline_state();
+            self.reset_scanline_state(); // Resets screen_x, fetcher states, fifos
+            // If LCD turns off, window counter should also reset for a clean start.
+            self.window_internal_line_counter = 0;
             return;
         }
 
@@ -279,25 +285,30 @@ impl Ppu {
                 let mut final_pixel_data: Option<PixelData> = None;
                 let mut final_pixel_source: PixelSource = PixelSource::Background; // Default
 
-                // Tick BG Fetcher and try to pop BG pixel
-                if (self.lcdc & 0x01) != 0 { // BG display enabled
-                    if self.bg_fifo.len() <= 8 {
-                        self.tick_fetcher();
-                    }
-                    // Try to pop only if screen_x is less than screen width.
-                    // This ensures we don't pop unnecessarily if sprites are still rendering past BG.
-                    if self.screen_x < SCREEN_WIDTH as u8 {
-                         bg_pixel_data = self.bg_fifo.pop();
-                    }
-                } else {
-                    // If BG is disabled, ensure FIFO is empty and doesn't stall PPU
-                    // This case might be implicitly handled by tick_fetcher not running
-                    // and bg_fifo.pop() returning None.
-                    // However, if BG gets disabled mid-line, clear it.
-                    // This is not ideal here, better to handle disabling BG more robustly.
-                    // For now, rely on lcdc check for pop.
-                }
+                let master_bg_win_enable = (self.lcdc & 0x01) != 0; // LCDC Bit 0
+                let window_display_enabled = (self.lcdc & (1 << 5)) != 0; // LCDC Bit 5
+                let window_active_here = window_display_enabled &&
+                                          self.ly >= self.wy &&
+                                          self.screen_x >= self.wx.saturating_sub(7);
 
+                if window_active_here {
+                    if master_bg_win_enable {
+                        // Window is active for this pixel and master BG/Win switch is on.
+                        // Placeholder: Output color 0 for window area.
+                        // LCDC Bit 6 (Window Tile Map) would be used here if fetching real window tiles.
+                        bg_pixel_data = Some(PixelData { color_index: 0 });
+                        final_pixel_source = PixelSource::Background; // Use BG palette for this dummy pixel
+                        // Note: BG fetcher might still run "underneath". A real impl would pause/switch fetcher.
+                    } else {
+                        // Window active, but master BG/Win switch is off. Window shows nothing.
+                        bg_pixel_data = None;
+                    }
+                } else if master_bg_win_enable { // BG display enabled (and not covered by window)
+                    if self.bg_fifo.len() <= 8 { self.tick_fetcher(); }
+                    if self.screen_x < SCREEN_WIDTH as u8 { bg_pixel_data = self.bg_fifo.pop(); }
+                } else { // Master BG/Win disabled, and not window pixel (or window also off due to master)
+                    bg_pixel_data = None;
+                }
 
                 // Try to pop Sprite pixel
                 if (self.lcdc & (1 << 1)) != 0 { // OBJ display enabled
@@ -394,11 +405,14 @@ impl Ppu {
 
                 let mut transition_to_hblank = false;
                 if self.screen_x >= SCREEN_WIDTH as u8 {
-                    self.actual_drawing_duration_current_line = self.cycles_in_mode;
+                    // Normal completion by drawing all pixels
+                    self.actual_drawing_duration_current_line = self.cycles_in_mode; // Record actual cycles spent
                     transition_to_hblank = true;
-                } else if self.cycles_in_mode >= self.current_mode3_drawing_cycles {
-                    self.actual_drawing_duration_current_line = self.current_mode3_drawing_cycles;
+                } else if self.cycles_in_mode >= FAILSAFE_MAX_MODE3_CYCLES {
+                    // Failsafe: screen_x is stuck, and we've exceeded a generous cycle limit.
+                    self.actual_drawing_duration_current_line = self.cycles_in_mode; // Record actual cycles spent
                     transition_to_hblank = true;
+                    // eprintln!("PPU Warning: Mode 3 force quit at LY={}, screen_x={}, cycles={}", self.ly, self.screen_x, self.cycles_in_mode);
                 }
 
                 if transition_to_hblank {
@@ -420,6 +434,27 @@ impl Ppu {
                     let cycles_spillover = self.cycles_in_mode.saturating_sub(expected_hblank_cycles);
                     self.cycles_in_mode = cycles_spillover;
 
+                    // Manage window_internal_line_counter for the *next* line's context (which starts after this HBlank)
+                    // This counter should increment for each scanline the window is visible on.
+                    if (self.lcdc & (1 << 5)) != 0 && self.ly >= self.wy && self.ly < (SCREEN_HEIGHT as u8).saturating_sub(1) {
+                        // If window is enabled, and current LY was part of the window (and not the very last visible line)
+                        // Condition for incrementing: current line is WY, or (current line > WY AND previous line was not WY start)
+                        // This logic aims to increment for each line the window is displayed on.
+                        // It resets to 0 if the window becomes active on this line (self.ly == self.wy).
+                        // Or if the window became active on a previous line and this is a continuation.
+                        if self.ly == self.wy { // First line of window
+                            self.window_internal_line_counter = 0;
+                        } else { // Subsequent lines of window
+                             // Check if previous line was still in window, to avoid incrementing if WY changed mid-frame making this the new "first" line
+                            if self.ly > self.wy && self.ly.saturating_sub(1) >= self.wy { // ensure ly-1 didn't wrap and was also >= wy
+                                self.window_internal_line_counter = self.window_internal_line_counter.saturating_add(1);
+                            } else { // This implies ly > wy but ly-1 < wy, meaning WY must have changed to be self.ly. So treat as first line.
+                                self.window_internal_line_counter = 0;
+                            }
+                        }
+                    } // If window not enabled, or LY not in window range, counter state persists or is reset at frame boundary/WY change by other logic.
+
+
                     self.ly += 1;
                     if self.ly < SCREEN_HEIGHT as u8 {
                         self.reset_scanline_state();
@@ -440,6 +475,7 @@ impl Ppu {
 
                     if self.ly == TOTAL_LINES {
                         self.ly = 0;
+                        self.window_internal_line_counter = 0; // Reset for new frame
                         self.reset_scanline_state();
                         self.current_mode = PpuMode::OamScan;
                         self.stat = (self.stat & 0xF8) | (PpuMode::OamScan as u8);
