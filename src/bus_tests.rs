@@ -3,13 +3,15 @@
 
 #![allow(dead_code)]
 
-use crate::bus::{Bus, SystemMode};
+use crate::bus::Bus;
+use crate::models::GameBoyModel; // Import GameBoyModel
+
 // Helper to create a Bus instance with a simple ROM
-fn setup_bus(rom_data_option: Option<Vec<u8>>, system_mode_override: Option<SystemMode>) -> Bus {
-    let mode = system_mode_override.unwrap_or(SystemMode::DMG);
+fn setup_bus(rom_data_option: Option<Vec<u8>>, model_override: Option<GameBoyModel>) -> Bus {
+    let model = model_override.unwrap_or(GameBoyModel::DMG); // Use GameBoyModel
     let rom = rom_data_option.unwrap_or_else(|| {
         let mut r = vec![0u8; 0x200]; // Increased size for more WRAM testing space if needed
-        if mode == SystemMode::CGB {
+        if model.is_cgb_family() { // Use is_cgb_family()
             r[0x0143] = 0x80; // CGB mode
         } else {
             r[0x0143] = 0x00; // DMG mode
@@ -21,8 +23,8 @@ fn setup_bus(rom_data_option: Option<Vec<u8>>, system_mode_override: Option<Syst
     Bus::new(rom)
 }
 
-fn setup_bus_dmg() -> Bus { setup_bus(None, Some(SystemMode::DMG)) }
-fn setup_bus_cgb() -> Bus { setup_bus(None, Some(SystemMode::CGB)) }
+fn setup_bus_dmg() -> Bus { setup_bus(None, Some(GameBoyModel::DMG)) }
+fn setup_bus_cgb() -> Bus { setup_bus(None, Some(GameBoyModel::CGBD)) } // Using CGBD as a default CGB
 
 
 #[test]

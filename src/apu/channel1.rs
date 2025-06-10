@@ -14,13 +14,15 @@ pub struct Channel1 {
     envelope_volume: u8,
     envelope_period_timer: u8,
     envelope_running: bool,
-    sweep_period_timer: u8,
+    sweep_calculate_countdown: u8,
     sweep_shadow_frequency: u16,
     sweep_enabled: bool,
     sweep_calculated_overflow_this_step: bool,
     has_been_triggered_since_power_on: bool,
     force_output_zero_for_next_sample: bool,
     subtraction_sweep_calculated_since_trigger: bool,
+    initial_delay_countdown: u8,
+    channel_1_restart_hold: bool,
 }
 
 impl Channel1 {
@@ -29,10 +31,12 @@ impl Channel1 {
             nr10: Nr10::new(), nr11: Nr11::new(), nr12: Nr12::new(), nr13: Nr13::new(), nr14: Nr14::new(),
             enabled: false, length_counter: 0, frequency_timer: 0, duty_step: 0,
             envelope_volume: 0, envelope_period_timer: 0, envelope_running: false,
-            sweep_period_timer: 0, sweep_shadow_frequency: 0, sweep_enabled: false,
+            sweep_calculate_countdown: 0, sweep_shadow_frequency: 0, sweep_enabled: false,
             sweep_calculated_overflow_this_step: false,
             has_been_triggered_since_power_on: false, force_output_zero_for_next_sample: false,
             subtraction_sweep_calculated_since_trigger: false,
+            initial_delay_countdown: 0,
+            channel_1_restart_hold: false,
         }
     }
 
@@ -40,22 +44,33 @@ impl Channel1 {
         self.has_been_triggered_since_power_on = false;
         self.force_output_zero_for_next_sample = false;
         self.subtraction_sweep_calculated_since_trigger = false;
+        self.initial_delay_countdown = 0;
+        self.channel_1_restart_hold = false;
     }
 
-    pub fn trigger(&mut self, current_frame_sequencer_step: u8) {
+    pub fn trigger(&mut self, current_frame_sequencer_step: u8, lf_div: u8, length_enabled_from_nrx4: bool) {
+        let was_enabled_before_this_trigger = self.enabled;
+
         self.subtraction_sweep_calculated_since_trigger = false;
         if !self.has_been_triggered_since_power_on {
             self.force_output_zero_for_next_sample = true;
             self.has_been_triggered_since_power_on = true;
         }
+
         if self.nr12.dac_power() { self.enabled = true; } else { self.enabled = false; return; }
+
+        if was_enabled_before_this_trigger {
+            self.initial_delay_countdown = 4u8.saturating_sub(lf_div);
+        } else {
+            self.initial_delay_countdown = 6u8.saturating_sub(lf_div);
+        }
+
         if self.length_counter == 0 {
             let length_data = self.nr11.initial_length_timer_val();
             let is_max_length_condition_len = length_data == 0;
             let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
             let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
-            let length_is_enabled_on_trigger = self.nr14.is_length_enabled();
-            if next_fs_step_will_not_clock_length && length_is_enabled_on_trigger && is_max_length_condition_len {
+            if next_fs_step_will_not_clock_length && length_enabled_from_nrx4 && is_max_length_condition_len {
                 actual_load_val_len = 63;
             }
             self.length_counter = actual_load_val_len;
@@ -77,12 +92,19 @@ impl Channel1 {
         self.envelope_running = self.nr12.dac_power() && env_period_raw != 0;
         self.sweep_shadow_frequency = period_val;
         let sweep_period_raw = self.nr10.sweep_period();
-        self.sweep_period_timer = if sweep_period_raw == 0 { 8 } else { sweep_period_raw };
+        self.sweep_calculate_countdown = if sweep_period_raw == 0 { 8 } else { sweep_period_raw };
         self.sweep_enabled = sweep_period_raw != 0 || self.nr10.sweep_shift_val() != 0;
+        self.channel_1_restart_hold = true;
         self.sweep_calculated_overflow_this_step = false;
+
         if self.sweep_enabled && self.nr10.sweep_shift_val() != 0 {
             let new_freq = self.calculate_sweep_frequency();
-            if new_freq > 2047 { self.enabled = false; self.sweep_calculated_overflow_this_step = true; }
+            if new_freq > 2047 {
+                if !self.channel_1_restart_hold {
+                    self.enabled = false;
+                }
+                self.sweep_calculated_overflow_this_step = true;
+            }
         }
     }
 
@@ -129,31 +151,43 @@ impl Channel1 {
 
     pub fn clock_sweep(&mut self) {
         if !self.sweep_enabled || !self.nr12.dac_power() { return; }
-        let sweep_period_raw = self.nr10.sweep_period();
-        if sweep_period_raw == 0 { return; }
-        self.sweep_period_timer -= 1;
-        if self.sweep_period_timer == 0 {
-            self.sweep_period_timer = sweep_period_raw;
-            let _ = self.calculate_sweep_frequency();
-            if !self.nr10.sweep_direction_is_increase() {
+        if self.sweep_calculate_countdown > 0 {
+            self.sweep_calculate_countdown -= 1;
+        }
+        if self.sweep_calculate_countdown == 0 {
+            let sweep_period_raw = self.nr10.sweep_period();
+            self.sweep_calculate_countdown = if sweep_period_raw == 0 { 8 } else { sweep_period_raw };
+            if !self.enabled { return; }
+            if sweep_period_raw == 0 { return; }
+            if self.nr10.sweep_shift_val() != 0 && !self.nr10.sweep_direction_is_increase() {
                 self.subtraction_sweep_calculated_since_trigger = true;
             }
             let new_freq = self.calculate_sweep_frequency();
-            if new_freq > 2047 { self.enabled = false; self.sweep_calculated_overflow_this_step = true; return; }
-            self.sweep_calculated_overflow_this_step = false;
-            if self.nr10.sweep_shift_val() != 0 {
+            if new_freq > 2047 {
+                self.enabled = false;
+                self.sweep_calculated_overflow_this_step = true;
+                return;
+            }
+            if self.nr10.sweep_shift_val() == 0 { return; }
+            let performing_update_after_hold = self.channel_1_restart_hold;
+            if self.channel_1_restart_hold { self.channel_1_restart_hold = false; }
+            if performing_update_after_hold && self.sweep_calculated_overflow_this_step {
+                // No frequency update
+            } else {
                 self.sweep_shadow_frequency = new_freq;
                 self.nr13.write((new_freq & 0xFF) as u8);
                 self.nr14.write_frequency_msb(((new_freq >> 8) & 0x07) as u8);
+                self.sweep_calculated_overflow_this_step = false;
                 let final_check_freq = self.calculate_sweep_frequency();
-                if final_check_freq > 2047 { self.enabled = false; self.sweep_calculated_overflow_this_step = true; }
+                if final_check_freq > 2047 {
+                    self.enabled = false;
+                    self.sweep_calculated_overflow_this_step = true;
+                }
             }
         }
     }
 
-    pub(super) fn has_subtraction_sweep_calculated(&self) -> bool { self.subtraction_sweep_calculated_since_trigger }
-    pub(super) fn disable_for_sweep_bug(&mut self) { self.enabled = false; }
-
+    pub(super) fn get_sweep_shadow_frequency(&self) -> u16 { self.sweep_shadow_frequency }
     pub(super) fn is_envelope_running(&self) -> bool { self.envelope_running }
     pub(super) fn get_envelope_volume(&self) -> u8 { self.envelope_volume }
     pub(super) fn set_envelope_volume(&mut self, vol: u8) { self.envelope_volume = vol & 0x0F; }
@@ -174,7 +208,14 @@ impl Channel1 {
     }
 
     pub fn get_output_volume(&mut self) -> u8 {
-        if self.force_output_zero_for_next_sample { self.force_output_zero_for_next_sample = false; return 0; }
+        if self.initial_delay_countdown > 0 {
+            self.initial_delay_countdown -= 1;
+            return 0;
+        }
+        if self.force_output_zero_for_next_sample {
+            self.force_output_zero_for_next_sample = false;
+            return 0;
+        }
         if !self.enabled || !self.nr12.dac_power() || self.sweep_calculated_overflow_this_step { return 0; }
         let wave_duty = self.nr11.wave_pattern_duty_val();
         let wave_output = match wave_duty {
@@ -185,25 +226,5 @@ impl Channel1 {
             _ => 0,
         };
         if wave_output == 1 { self.envelope_volume } else { 0 }
-    }
-
-    pub fn reload_length_on_enable(&mut self, current_frame_sequencer_step: u8) {
-        // Channel is not explicitly enabled here by just loading length,
-        // its status depends on trigger or if it was already enabled.
-        // DAC power is a prerequisite for sound output, not for length counter loading.
-
-        let length_data = self.nr11.initial_length_timer_val(); // 0-63
-        let is_max_length_condition_len = length_data == 0;
-        let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
-
-        // Apply the "set to 63 instead of 64" obscure behavior.
-        // Condition: Next Frame Sequencer step doesn't clock length (current_frame_sequencer_step is 0, 2, 4, or 6),
-        // AND length is enabled in NR14, AND NR11's length data was 0 (meaning max length).
-        let fs_condition_met = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
-        // self.nr14.is_length_enabled() should be true if this path is taken from apu.rs
-        if fs_condition_met && self.nr14.is_length_enabled() && is_max_length_condition_len {
-            actual_load_val_len = 63;
-        }
-        self.length_counter = actual_load_val_len;
     }
 }

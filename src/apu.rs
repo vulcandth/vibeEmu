@@ -1,4 +1,5 @@
 // src/apu.rs
+use crate::models::GameBoyModel;
 
 pub mod channel1;
 pub mod channel2;
@@ -317,12 +318,12 @@ impl Nr52 {
     fn new() -> Self { Self::default() }
     fn is_apu_enabled(&self) -> bool { self.all_sound_on }
     fn read(&self) -> u8 {
-        (if self.all_sound_on { 0x80 } else { 0x00 }) | // Power bit
-        0x70 | // Unused bits read as 1
-        (if self.ch4_status { 0x08 } else { 0x00 }) | // Channel 4 status
-        (if self.ch3_status { 0x04 } else { 0x00 }) | // Channel 3 status
-        (if self.ch2_status { 0x02 } else { 0x00 }) | // Channel 2 status
-        (if self.ch1_status { 0x01 } else { 0x00 })   // Channel 1 status
+        (if self.all_sound_on { 0x80 } else { 0x00 }) |
+        0x70 |
+        (if self.ch4_status { 0x08 } else { 0x00 }) |
+        (if self.ch3_status { 0x04 } else { 0x00 }) |
+        (if self.ch2_status { 0x02 } else { 0x00 }) |
+        (if self.ch1_status { 0x01 } else { 0x00 })
     }
     fn write(&mut self, value: u8) { self.all_sound_on = (value >> 7) & 0x01 != 0; }
     fn update_status_bits(&mut self, ch1_on: bool, ch2_on: bool, ch3_on: bool, ch4_on: bool) {
@@ -386,10 +387,14 @@ pub struct Apu {
     frame_sequencer_step: u8,
     hpf_capacitor_left: f32,
     hpf_capacitor_right: f32,
+    skip_next_frame_sequencer_tick: bool,
+    model: GameBoyModel,
+    lf_div: u8,
+    apu_cycle_counter: u32,
 }
 
 impl Apu {
-    pub fn new() -> Self {
+    pub fn new(model: GameBoyModel) -> Self {
         let mut apu = Self {
             channel1: Channel1::new(),
             channel2: Channel2::new(),
@@ -403,6 +408,10 @@ impl Apu {
             frame_sequencer_step: 0,
             hpf_capacitor_left: 0.0,
             hpf_capacitor_right: 0.0,
+            skip_next_frame_sequencer_tick: false,
+            model,
+            lf_div: 1,
+            apu_cycle_counter: 0,
         };
         apu.reset_power_on_channel_flags();
         apu
@@ -411,8 +420,6 @@ impl Apu {
     fn reset_power_on_channel_flags(&mut self) {
         self.channel1.power_on_reset();
         self.channel2.power_on_reset();
-        // self.channel3.power_on_reset();
-        // self.channel4.power_on_reset();
     }
 
     fn full_apu_reset_on_power_off(&mut self) {
@@ -420,41 +427,57 @@ impl Apu {
         self.channel2 = Channel2::new();
         self.channel3 = Channel3::new();
         self.channel4 = Channel4::new();
-
-        // Reset NR50 to 0x00
-        self.nr50.so1_volume = 0;
-        self.nr50.vin_so1_enable = false;
-        self.nr50.so2_volume = 0;
-        self.nr50.vin_so2_enable = false;
-
-        // Reset NR51 to 0x00
-        self.nr51.ch1_to_so1 = false;
-        self.nr51.ch2_to_so1 = false;
-        self.nr51.ch3_to_so1 = false;
-        self.nr51.ch4_to_so1 = false;
-        self.nr51.ch1_to_so2 = false;
-        self.nr51.ch2_to_so2 = false;
-        self.nr51.ch3_to_so2 = false;
-        self.nr51.ch4_to_so2 = false;
-
+        self.nr50.so1_volume = 0; self.nr50.vin_so1_enable = false;
+        self.nr50.so2_volume = 0; self.nr50.vin_so2_enable = false;
+        self.nr51.ch1_to_so1 = false; self.nr51.ch2_to_so1 = false;
+        self.nr51.ch3_to_so1 = false; self.nr51.ch4_to_so1 = false;
+        self.nr51.ch1_to_so2 = false; self.nr51.ch2_to_so2 = false;
+        self.nr51.ch3_to_so2 = false; self.nr51.ch4_to_so2 = false;
         self.frame_sequencer_step = 0;
         self.frame_sequencer_counter = CPU_CLOCKS_PER_FRAME_SEQUENCER_TICK;
-        self.hpf_capacitor_left = 0.0;
-        self.hpf_capacitor_right = 0.0;
+        self.hpf_capacitor_left = 0.0; self.hpf_capacitor_right = 0.0;
         self.nr52.update_status_bits(false,false,false,false);
     }
 
     pub fn tick(&mut self, cpu_t_cycles: u32) {
+        let num_two_t_cycle_pairs = cpu_t_cycles / 2;
+        if (num_two_t_cycle_pairs & 1) != 0 {
+            self.lf_div ^=1;
+        }
+        self.apu_cycle_counter = self.apu_cycle_counter.wrapping_add(cpu_t_cycles);
+
         self.frame_sequencer_counter += cpu_t_cycles;
         while self.frame_sequencer_counter >= CPU_CLOCKS_PER_FRAME_SEQUENCER_TICK {
             self.frame_sequencer_counter -= CPU_CLOCKS_PER_FRAME_SEQUENCER_TICK;
-            self.clock_frame_sequencer();
+
+            if self.skip_next_frame_sequencer_tick {
+                self.skip_next_frame_sequencer_tick = false;
+                self.frame_sequencer_step = (self.frame_sequencer_step + 1) % 8;
+                 self.nr52.update_status_bits(
+                    self.channel1.enabled, self.channel2.enabled,
+                    self.channel3.enabled, self.channel4.enabled
+                );
+            } else {
+                self.clock_frame_sequencer();
+            }
         }
 
         if self.nr52.is_apu_enabled() {
+            if self.channel4.dmg_delayed_start_countdown > 0 {
+                let decrement = cpu_t_cycles.min(self.channel4.dmg_delayed_start_countdown as u32) as u8;
+                self.channel4.dmg_delayed_start_countdown -= decrement;
+                if self.channel4.dmg_delayed_start_countdown == 0 {
+                    // Perform re-trigger logic if needed (e.g., call trigger again with a flag)
+                }
+            }
+
             for _ in 0..cpu_t_cycles {
-                self.channel1.tick(); self.channel2.tick();
-                self.channel3.tick(&self.wave_ram); self.channel4.tick();
+                self.channel1.tick();
+                self.channel2.tick();
+                self.channel3.tick(&self.wave_ram);
+                if self.channel4.dmg_delayed_start_countdown == 0 {
+                    self.channel4.tick();
+                }
             }
         }
     }
@@ -462,15 +485,18 @@ impl Apu {
     fn clock_frame_sequencer(&mut self) {
         let apu_on = self.nr52.is_apu_enabled();
         if apu_on {
-            if self.frame_sequencer_step % 2 == 0 {
-                self.channel1.clock_length(); self.channel2.clock_length();
-                self.channel3.clock_length(); self.channel4.clock_length();
+            if self.frame_sequencer_step % 2 != 0 {
+                self.channel1.clock_length();
+                self.channel2.clock_length();
+                self.channel3.clock_length();
+                self.channel4.clock_length();
             }
-            if self.frame_sequencer_step == 2 || self.frame_sequencer_step == 6 {
+            if self.frame_sequencer_step == 3 || self.frame_sequencer_step == 7 {
                 self.channel1.clock_sweep();
             }
             if self.frame_sequencer_step == 7 {
-                self.channel1.clock_envelope(); self.channel2.clock_envelope();
+                self.channel1.clock_envelope();
+                self.channel2.clock_envelope();
                 self.channel4.clock_envelope();
             }
         }
@@ -483,47 +509,37 @@ impl Apu {
 
     pub fn get_mixed_audio_samples(&mut self) -> (f32, f32) {
         if !self.nr52.is_apu_enabled() { return (0.0, 0.0); }
-
         let ch1_s = self.channel1.get_output_volume();
         let ch2_s = self.channel2.get_output_volume();
         let ch3_s = self.channel3.get_output_sample();
         let ch4_s = self.channel4.get_output_volume();
-
         let dac_conv = |val: u8, dac_is_on: bool| if dac_is_on { 1.0 - (val as f32 / 7.5) } else { 0.0 };
         let dac1 = dac_conv(ch1_s, self.channel1.nr12.dac_power());
         let dac2 = dac_conv(ch2_s, self.channel2.nr22.dac_power());
         let dac3 = dac_conv(ch3_s, self.channel3.nr30.dac_on());
         let dac4 = dac_conv(ch4_s, self.channel4.nr42.dac_power());
-
         let mut so1_mix = 0.0; let mut so2_mix = 0.0;
         if self.nr51.ch1_to_so1 { so1_mix += dac1; } if self.nr51.ch1_to_so2 { so2_mix += dac1; }
         if self.nr51.ch2_to_so1 { so1_mix += dac2; } if self.nr51.ch2_to_so2 { so2_mix += dac2; }
         if self.nr51.ch3_to_so1 { so1_mix += dac3; } if self.nr51.ch3_to_so2 { so2_mix += dac3; }
         if self.nr51.ch4_to_so1 { so1_mix += dac4; } if self.nr51.ch4_to_so2 { so2_mix += dac4; }
-
         let vol_factor = |vol: u8| (vol.wrapping_add(1)) as f32 / 8.0;
         let mut final_so1 = so1_mix * vol_factor(self.nr50.so1_output_level());
         let mut final_so2 = so2_mix * vol_factor(self.nr50.so2_output_level());
-
         final_so1 /= 4.0; final_so2 /= 4.0;
-
         let charge_factor = 0.999958_f32;
         let any_dac_on = self.channel1.nr12.dac_power() || self.channel2.nr22.dac_power() ||
                          self.channel3.nr30.dac_on() || self.channel4.nr42.dac_power();
-
         let hpf_out_so1 = final_so1 - self.hpf_capacitor_left;
         if any_dac_on { self.hpf_capacitor_left = final_so1 - hpf_out_so1 * charge_factor; }
         else { self.hpf_capacitor_left = 0.0; }
-
         let hpf_out_so2 = final_so2 - self.hpf_capacitor_right;
         if any_dac_on { self.hpf_capacitor_right = final_so2 - hpf_out_so2 * charge_factor; }
         else { self.hpf_capacitor_right = 0.0; }
-
         (hpf_out_so1, hpf_out_so2)
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
-        let _apu_on = self.nr52.is_apu_enabled();
         match addr {
             NR10_ADDR => self.channel1.nr10.read(), NR11_ADDR => self.channel1.nr11.read(),
             NR12_ADDR => self.channel1.nr12.read(), NR13_ADDR => self.channel1.nr13.read(),
@@ -537,181 +553,81 @@ impl Apu {
             NR43_ADDR => self.channel4.nr43.read(), NR44_ADDR => self.channel4.nr44.read(),
             NR50_ADDR => self.nr50.read(), NR51_ADDR => self.nr51.read(), NR52_ADDR => self.nr52.read(),
             WAVE_PATTERN_RAM_START_ADDR..=WAVE_PATTERN_RAM_END_ADDR => {
-                if self.channel3.enabled {
-                    // CGB behavior: accesses redirect to the byte currently being read
-                    let idx = self.channel3.current_wave_ram_byte_index();
-                    self.wave_ram[idx]
+                if self.channel3.is_active() {
+                    if self.model.is_agb_family() { return 0xFF; }
+                    if self.model.is_dmg_family() && !self.channel3.get_wave_form_just_read() { return 0xFF; }
+                    let current_idx = self.channel3.current_wave_ram_byte_index();
+                    return self.wave_ram[current_idx % self.wave_ram.len()];
                 } else {
-                    self.wave_ram[(addr - WAVE_PATTERN_RAM_START_ADDR) as usize]
+                    return self.wave_ram[(addr - WAVE_PATTERN_RAM_START_ADDR) as usize];
                 }
             }
-            _ => {
-                debug!("APU read from unhandled/unmapped address: {:#06X}", addr);
-                0xFF
-            }
+            _ => { debug!("APU read from unhandled/unmapped address: {:#06X}", addr); 0xFF }
         }
     }
 
     pub fn write_byte(&mut self, addr: u16, value: u8) {
-        let apu_was_enabled = self.nr52.is_apu_enabled();
-        if !apu_was_enabled && addr != NR52_ADDR { return; }
-
-        let trigger_val_in_write = (value >> 7) & 0x01 != 0;
+        let apu_power_is_currently_off = !self.nr52.is_apu_enabled();
+        if apu_power_is_currently_off {
+            let is_nr52_write = addr == NR52_ADDR;
+            let is_wave_ram_write = addr >= WAVE_PATTERN_RAM_START_ADDR && addr <= WAVE_PATTERN_RAM_END_ADDR;
+            let is_allowed_nrx1_write_on_dmg = if self.model.is_dmg_family() {
+                matches!(addr, NR11_ADDR | NR21_ADDR | NR31_ADDR | NR41_ADDR)
+            } else { false };
+            if !(is_nr52_write || is_wave_ram_write || is_allowed_nrx1_write_on_dmg) { return; }
+        }
 
         match addr {
-            NR10_ADDR => {
-                let prev_sweep_direction_was_subtraction = !self.channel1.nr10.sweep_direction_is_increase();
-                self.channel1.nr10.write(value);
-                let new_sweep_direction_is_addition = self.channel1.nr10.sweep_direction_is_increase();
-                if prev_sweep_direction_was_subtraction && new_sweep_direction_is_addition && self.channel1.has_subtraction_sweep_calculated() {
-                    self.channel1.disable_for_sweep_bug();
-                }
-            },
-            NR11_ADDR => {
-                self.channel1.nr11.write(value);
-                if self.channel1.enabled && self.channel1.nr14.is_length_enabled() {
-                    self.channel1.reload_length_on_enable(self.frame_sequencer_step);
-                }
-            },
-            NR12_ADDR => {
-                let old_period = self.channel1.nr12.envelope_period_val();
-                let old_dir_increase = self.channel1.nr12.envelope_direction_is_increase();
-                let env_was_running = self.channel1.is_envelope_running();
-                let mut live_volume = self.channel1.get_envelope_volume();
-                self.channel1.nr12.write(value);
-                let new_dir_increase = self.channel1.nr12.envelope_direction_is_increase();
-                if old_dir_increase != new_dir_increase { live_volume = 16u8.wrapping_sub(live_volume); }
-                if old_period == 0 && env_was_running { live_volume = live_volume.wrapping_add(1); }
-                else if !old_dir_increase { live_volume = live_volume.wrapping_add(2); }
-                self.channel1.set_envelope_volume(live_volume);
-                if !self.channel1.nr12.dac_power() { self.channel1.force_disable_channel(); }
-            },
+            NR10_ADDR => { let old_nr10_val = self.channel1.nr10.read(); let current_sweep_shadow_freq = self.channel1.get_sweep_shadow_frequency(); let old_sweep_shift = old_nr10_val & 0x07; let old_direction_was_subtract_bit = (old_nr10_val >> 3) & 1; self.channel1.nr10.write(value); let new_direction_is_add = (value & 0x08) == 0; if new_direction_is_add { let addend = if old_sweep_shift == 0 { current_sweep_shadow_freq } else { current_sweep_shadow_freq >> old_sweep_shift }; let sum_for_glitch_check = current_sweep_shadow_freq.saturating_add(addend).saturating_add(old_direction_was_subtract_bit as u16); if sum_for_glitch_check > 2047 { self.channel1.force_disable_channel(); } } },
+            NR11_ADDR => self.channel1.nr11.write(value),
+            NR12_ADDR => { let old_nr12_val = self.channel1.nr12.read(); let mut live_volume = self.channel1.get_envelope_volume(); let old_period_val = old_nr12_val & 7; let can_tick_from_zero_period_if_old_period_was_zero = self.channel1.is_envelope_running(); self.channel1.nr12.write(value); let new_nr12_val = value; if !self.channel1.nr12.dac_power() { self.channel1.force_disable_channel(); } let new_period_val = new_nr12_val & 7; let old_dir_increase = (old_nr12_val & 8) != 0; let new_dir_increase = (new_nr12_val & 8) != 0; let not_locked_approx = (old_period_val != 0) || can_tick_from_zero_period_if_old_period_was_zero; let mut should_tick = (new_period_val != 0) && (old_period_val == 0) && not_locked_approx; if (new_nr12_val & 0x0F) == 0x08 && (old_nr12_val & 0x0F) == 0x08 && not_locked_approx { should_tick = true; } let direction_inverted = new_dir_increase != old_dir_increase; if direction_inverted { if new_dir_increase { if old_period_val == 0 && not_locked_approx { live_volume = 15u8.wrapping_sub(live_volume); } else { live_volume = 14u8.wrapping_sub(live_volume); } } else { live_volume = 16u8.wrapping_sub(live_volume); } live_volume &= 0x0F; should_tick = false; } if should_tick { if new_dir_increase { if live_volume < 15 { live_volume += 1; } } else { if live_volume > 0 { live_volume -= 1; } } } self.channel1.set_envelope_volume(live_volume); if !self.channel1.nr12.dac_power() { self.channel1.force_disable_channel(); } },
             NR13_ADDR => self.channel1.nr13.write(value),
-            NR14_ADDR => {
-                let prev_len_enabled = self.channel1.nr14.is_length_enabled();
-                let len_counter_was_non_zero = self.channel1.get_length_counter() > 0;
-                self.channel1.nr14.write(value); // NRx4 is updated
-                let new_len_enabled = self.channel1.nr14.is_length_enabled();
-                // Condition for "APU frame sequencer's next step will not clock the length timer"
-                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
-
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
-                    self.channel1.extra_length_clock(trigger_val_in_write);
-                }
-
-                if self.channel1.nr14.consume_trigger_flag() { // Checks bit 7 from 'value'
-                    self.channel1.trigger(self.frame_sequencer_step);
-                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
-                    // Load length if length enable (NRx4 bit 6) is set from 0 to 1
-                    // AND the specific frame sequencer timing condition is met.
-                    self.channel1.reload_length_on_enable(self.frame_sequencer_step);
-                }
-            },
-            NR21_ADDR => {
-                self.channel2.nr21.write(value);
-                if self.channel2.enabled && self.channel2.nr24.is_length_enabled() {
-                    self.channel2.reload_length_on_enable(self.frame_sequencer_step);
-                }
-            },
-            NR22_ADDR => {
-                let old_period = self.channel2.nr22.envelope_period_val();
-                let old_dir_increase = self.channel2.nr22.envelope_direction_is_increase();
-                let env_was_running = self.channel2.is_envelope_running();
-                let mut live_volume = self.channel2.get_envelope_volume();
-                self.channel2.nr22.write(value);
-                let new_dir_increase = self.channel2.nr22.envelope_direction_is_increase();
-                if old_dir_increase != new_dir_increase { live_volume = 16u8.wrapping_sub(live_volume); }
-                if old_period == 0 && env_was_running { live_volume = live_volume.wrapping_add(1); }
-                else if !old_dir_increase { live_volume = live_volume.wrapping_add(2); }
-                self.channel2.set_envelope_volume(live_volume);
-                if !self.channel2.nr22.dac_power() { self.channel2.force_disable_channel(); }
-            },
+            NR14_ADDR => { let prev_len_enabled = self.channel1.nr14.is_length_enabled(); let len_counter_was_non_zero = self.channel1.get_length_counter() > 0; let new_len_enabled_from_value = (value & 0x40) != 0; let trigger_from_value = (value & 0x80) != 0; self.channel1.nr14.write(value);  let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7); if new_len_enabled_from_value && !prev_len_enabled && fs_step_is_length_clocking_type && len_counter_was_non_zero { self.channel1.extra_length_clock(trigger_from_value); } if self.channel1.nr14.consume_trigger_flag() { self.channel1.trigger(self.frame_sequencer_step, self.lf_div, new_len_enabled_from_value); } },
+            NR21_ADDR => self.channel2.nr21.write(value),
+            NR22_ADDR => { let old_nr22_val = self.channel2.nr22.read(); let mut live_volume = self.channel2.get_envelope_volume(); let old_period_val = old_nr22_val & 7; let can_tick_from_zero_period_if_old_period_was_zero = self.channel2.is_envelope_running(); self.channel2.nr22.write(value); let new_nr22_val = value; if !self.channel2.nr22.dac_power() { self.channel2.force_disable_channel(); } let new_period_val = new_nr22_val & 7; let old_dir_increase = (old_nr22_val & 8) != 0; let new_dir_increase = (new_nr22_val & 8) != 0; let not_locked_approx = (old_period_val != 0) || can_tick_from_zero_period_if_old_period_was_zero; let mut should_tick = (new_period_val != 0) && (old_period_val == 0) && not_locked_approx; if (new_nr22_val & 0x0F) == 0x08 && (old_nr22_val & 0x0F) == 0x08 && not_locked_approx { should_tick = true; } let direction_inverted = new_dir_increase != old_dir_increase; if direction_inverted { if new_dir_increase { if old_period_val == 0 && not_locked_approx { live_volume = 15u8.wrapping_sub(live_volume); } else { live_volume = 14u8.wrapping_sub(live_volume); } } else { live_volume = 16u8.wrapping_sub(live_volume); } live_volume &= 0x0F; should_tick = false;  } if should_tick { if new_dir_increase { if live_volume < 15 { live_volume += 1; } } else { if live_volume > 0 { live_volume -= 1; } } } self.channel2.set_envelope_volume(live_volume); if !self.channel2.nr22.dac_power() { self.channel2.force_disable_channel(); } },
             NR23_ADDR => self.channel2.nr23.write(value),
-            NR24_ADDR => {
-                let prev_len_enabled = self.channel2.nr24.is_length_enabled();
-                let len_counter_was_non_zero = self.channel2.get_length_counter() > 0;
-                self.channel2.nr24.write(value); // NRx4 is updated
-                let new_len_enabled = self.channel2.nr24.is_length_enabled();
-                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
-
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
-                    self.channel2.extra_length_clock(trigger_val_in_write);
-                }
-
-                if self.channel2.nr24.consume_trigger_flag() {
-                    self.channel2.trigger(self.frame_sequencer_step);
-                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
-                    self.channel2.reload_length_on_enable(self.frame_sequencer_step);
-                }
-            },
-            NR30_ADDR => self.channel3.nr30.write(value),
-            NR31_ADDR => {
-                self.channel3.nr31.write(value);
-                if self.channel3.enabled && self.channel3.nr34.is_length_enabled() {
-                    self.channel3.reload_length_on_enable(self.frame_sequencer_step);
-                }
-            },
+            NR24_ADDR => { let prev_len_enabled = self.channel2.nr24.is_length_enabled(); let len_counter_was_non_zero = self.channel2.get_length_counter() > 0; let new_len_enabled_from_value = (value & 0x40) != 0; let trigger_from_value = (value & 0x80) != 0; self.channel2.nr24.write(value); let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7); if new_len_enabled_from_value && !prev_len_enabled && fs_step_is_length_clocking_type && len_counter_was_non_zero { self.channel2.extra_length_clock(trigger_from_value); } if self.channel2.nr24.consume_trigger_flag() { self.channel2.trigger(self.frame_sequencer_step, self.lf_div, new_len_enabled_from_value); } },
+            NR30_ADDR => { let prev_dac_on = self.channel3.nr30.dac_on(); self.channel3.nr30.write(value); let new_dac_on = self.channel3.nr30.dac_on(); self.channel3.enabled = new_dac_on; if !new_dac_on { self.channel3.set_pulsed(false); if prev_dac_on { if self.channel3.get_frequency_timer() == 0 || self.channel3.get_wave_form_just_read() { self.channel3.reload_current_sample_buffer(&self.wave_ram); } } } },
+            NR31_ADDR => self.channel3.nr31.write(value),
             NR32_ADDR => self.channel3.nr32.write(value),
             NR33_ADDR => self.channel3.nr33.write(value),
-            NR34_ADDR => {
-                let ch3_was_active_for_corruption_check = self.channel3.enabled && self.channel3.nr30.dac_on();
-                let trigger_is_being_set_for_corruption_check = (value >> 7) & 0x01 != 0;
-                if trigger_is_being_set_for_corruption_check && ch3_was_active_for_corruption_check {
-                    self.channel3.nr30.write(0x00);
-                    self.channel3.nr30.write(0x80);
-                }
+            NR34_ADDR => { let ch3_was_active_for_corruption_check = self.channel3.enabled && self.channel3.nr30.dac_on(); let trigger_is_being_set_for_corruption_check = (value >> 7) & 0x01 != 0; if trigger_is_being_set_for_corruption_check && ch3_was_active_for_corruption_check { self.channel3.nr30.write(0x00); self.channel3.nr30.write(0x80); } let prev_len_enabled = self.channel3.nr34.is_length_enabled(); let len_counter_was_non_zero = self.channel3.get_length_counter() > 0; let new_len_enabled_from_value = (value & 0x40) != 0; let trigger_from_value = (value & 0x80) != 0; self.channel3.nr34.write(value); let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7); if new_len_enabled_from_value && !prev_len_enabled && fs_step_is_length_clocking_type && len_counter_was_non_zero { self.channel3.extra_length_clock(trigger_from_value); } if self.channel3.nr34.consume_trigger_flag() { self.channel3.trigger(&self.wave_ram, self.frame_sequencer_step, new_len_enabled_from_value); } },
+            NR41_ADDR => self.channel4.nr41.write(value),
+            NR42_ADDR => { let old_nr42_val = self.channel4.nr42.read(); let mut live_volume = self.channel4.get_envelope_volume(); let old_period_val = old_nr42_val & 7; let can_tick_from_zero_period_if_old_period_was_zero = self.channel4.is_envelope_running(); self.channel4.nr42.write(value); let new_nr42_val = value; if !self.channel4.nr42.dac_power() { self.channel4.force_disable_channel(); } let new_period_val = new_nr42_val & 7; let old_dir_increase = (old_nr42_val & 8) != 0; let new_dir_increase = (new_nr42_val & 8) != 0; let not_locked_approx = (old_period_val != 0) || can_tick_from_zero_period_if_old_period_was_zero; let mut should_tick = (new_period_val != 0) && (old_period_val == 0) && not_locked_approx; if (new_nr42_val & 0x0F) == 0x08 && (old_nr42_val & 0x0F) == 0x08 && not_locked_approx { should_tick = true; } let direction_inverted = new_dir_increase != old_dir_increase; if direction_inverted { if new_dir_increase { if old_period_val == 0 && not_locked_approx { live_volume = 15u8.wrapping_sub(live_volume); } else { live_volume = 14u8.wrapping_sub(live_volume); } } else { live_volume = 16u8.wrapping_sub(live_volume); } live_volume &= 0x0F; should_tick = false; } if should_tick { if new_dir_increase { if live_volume < 15 { live_volume += 1; } } else { if live_volume > 0 { live_volume -= 1; } } } self.channel4.set_envelope_volume(live_volume); if !self.channel4.nr42.dac_power() { self.channel4.force_disable_channel(); } },
 
-                let prev_len_enabled = self.channel3.nr34.is_length_enabled();
-                let len_counter_was_non_zero = self.channel3.get_length_counter() > 0;
-                self.channel3.nr34.write(value); // NRx4 is updated
-                let new_len_enabled = self.channel3.nr34.is_length_enabled();
-                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
+            NR43_ADDR => {
+                let current_div_apu_counter = self.channel4.get_div_apu_counter();
+                let old_shift_amount = self.channel4.get_lfsr_shift_amount();
+                let old_bit = (current_div_apu_counter >> old_shift_amount) & 1;
 
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
-                    self.channel3.extra_length_clock(trigger_val_in_write);
-                }
+                self.channel4.nr43.write(value);
+                let new_shift_amount = self.channel4.nr43.clock_shift();
+                self.channel4.set_lfsr_shift_amount(new_shift_amount);
+                self.channel4.set_lfsr_clock_divider_from_raw(self.channel4.nr43.clock_divider_val());
 
-                if self.channel3.nr34.consume_trigger_flag() {
-                    self.channel3.trigger(&self.wave_ram, self.frame_sequencer_step);
-                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
-                    self.channel3.reload_length_on_enable(self.frame_sequencer_step);
+                let new_bit = (current_div_apu_counter >> new_shift_amount) & 1;
+
+                if new_bit != 0 && (old_bit == 0 || self.model.is_cgb_c_or_older()) {
+                    if self.model.is_cgb_c_or_older() {
+                        self.channel4.set_force_narrow_lfsr_for_glitch(true);
+                        self.channel4.step_lfsr();
+                        self.channel4.set_force_narrow_lfsr_for_glitch(false);
+                    } else {
+                        self.channel4.step_lfsr();
+                    }
                 }
             },
-            NR41_ADDR => {
-                self.channel4.nr41.write(value);
-                if self.channel4.enabled && self.channel4.nr44.is_length_enabled() {
-                    self.channel4.reload_length_on_enable(self.frame_sequencer_step);
-                }
-            },
-            NR42_ADDR => {
-                let old_period = self.channel4.nr42.envelope_period_val();
-                let old_dir_increase = self.channel4.nr42.envelope_direction_is_increase();
-                let env_was_running = self.channel4.is_envelope_running();
-                let mut live_volume = self.channel4.get_envelope_volume();
-                self.channel4.nr42.write(value);
-                let new_dir_increase = self.channel4.nr42.envelope_direction_is_increase();
-                if old_dir_increase != new_dir_increase { live_volume = 16u8.wrapping_sub(live_volume); }
-                if old_period == 0 && env_was_running { live_volume = live_volume.wrapping_add(1); }
-                else if !old_dir_increase { live_volume = live_volume.wrapping_add(2); }
-                self.channel4.set_envelope_volume(live_volume);
-                if !self.channel4.nr42.dac_power() { self.channel4.force_disable_channel(); }
-            },
-            NR43_ADDR => self.channel4.nr43.write(value),
             NR44_ADDR => {
                 let prev_len_enabled = self.channel4.nr44.is_length_enabled();
                 let len_counter_was_non_zero = self.channel4.get_length_counter() > 0;
-                self.channel4.nr44.write(value); // NRx4 is updated
-                let new_len_enabled = self.channel4.nr44.is_length_enabled();
-                let frame_sequencer_condition_met = matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6);
-
-                if frame_sequencer_condition_met && !prev_len_enabled && new_len_enabled && len_counter_was_non_zero {
-                    self.channel4.extra_length_clock(trigger_val_in_write);
+                let new_len_enabled_from_value = (value & 0x40) != 0;
+                self.channel4.nr44.write(value);
+                let fs_step_is_length_clocking_type = matches!(self.frame_sequencer_step, 1 | 3 | 5 | 7);
+                if new_len_enabled_from_value && !prev_len_enabled && fs_step_is_length_clocking_type && len_counter_was_non_zero {
+                    self.channel4.extra_length_clock((value & 0x80) != 0);
                 }
-
                 if self.channel4.nr44.consume_trigger_flag() {
-                    self.channel4.trigger(self.frame_sequencer_step);
-                } else if !prev_len_enabled && new_len_enabled && frame_sequencer_condition_met {
-                    self.channel4.reload_length_on_enable(self.frame_sequencer_step);
+                    self.channel4.trigger(self.frame_sequencer_step, self.lf_div, self.model, self.apu_cycle_counter, new_len_enabled_from_value);
                 }
             },
             NR50_ADDR => self.nr50.write(value),
@@ -720,20 +636,20 @@ impl Apu {
                 let prev_power_state = self.nr52.is_apu_enabled();
                 self.nr52.write(value);
                 let new_power_state = self.nr52.is_apu_enabled();
-                if prev_power_state && !new_power_state {
-                    self.full_apu_reset_on_power_off();
-                } else if !prev_power_state && new_power_state {
+                if prev_power_state && !new_power_state { self.full_apu_reset_on_power_off(); }
+                else if !prev_power_state && new_power_state {
                     self.frame_sequencer_step = 0;
                     self.frame_sequencer_counter = CPU_CLOCKS_PER_FRAME_SEQUENCER_TICK;
                     self.reset_power_on_channel_flags();
+                    self.skip_next_frame_sequencer_tick = false;
                 }
             }
             WAVE_PATTERN_RAM_START_ADDR..=WAVE_PATTERN_RAM_END_ADDR => {
-                let ch3_is_active = self.channel3.enabled;
-                if ch3_is_active {
-                    // CGB behavior: redirect to byte currently being read
-                    let idx = self.channel3.current_wave_ram_byte_index();
-                    self.wave_ram[idx] = value;
+                if self.channel3.is_active() {
+                    if self.model.is_agb_family() { return; }
+                    if self.model.is_dmg_family() && !self.channel3.get_wave_form_just_read() { return; }
+                    let current_idx = self.channel3.current_wave_ram_byte_index();
+                    self.wave_ram[current_idx % self.wave_ram.len()] = value;
                 } else {
                     self.wave_ram[(addr - WAVE_PATTERN_RAM_START_ADDR) as usize] = value;
                 }

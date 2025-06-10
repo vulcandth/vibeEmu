@@ -5,17 +5,17 @@
 #![allow(dead_code)]
 
 use crate::ppu::{Ppu, MODE_HBLANK, MODE_VBLANK, MODE_OAM_SCAN, MODE_DRAWING, DMG_PALETTE, SCANLINE_CYCLES, OAM_SCAN_CYCLES, DRAWING_CYCLES, HBLANK_CYCLES};
-use crate::bus::SystemMode;
+use crate::models::GameBoyModel; // Import GameBoyModel
 use crate::interrupts::InterruptType;
 
-// Helper to create a PPU instance, optionally with a specific SystemMode
-fn setup_ppu(system_mode_override: Option<SystemMode>) -> Ppu {
-    let mode = system_mode_override.unwrap_or(SystemMode::DMG);
-    Ppu::new(mode)
+// Helper to create a PPU instance, optionally with a specific GameBoyModel
+fn setup_ppu(model_override: Option<GameBoyModel>) -> Ppu { // Changed SystemMode to GameBoyModel
+    let model = model_override.unwrap_or(GameBoyModel::DMG); // Use GameBoyModel
+    Ppu::new(model)
 }
 
-fn setup_ppu_dmg() -> Ppu { Ppu::new(SystemMode::DMG) }
-fn setup_ppu_cgb() -> Ppu { Ppu::new(SystemMode::CGB) }
+fn setup_ppu_dmg() -> Ppu { Ppu::new(GameBoyModel::DMG) }
+fn setup_ppu_cgb() -> Ppu { Ppu::new(GameBoyModel::CGBD) } // Using CGBD as a default CGB model
 
 fn compare_pixel(fb: &[u8], x: usize, y: usize, width: usize, expected_rgb: &[u8; 3], message: &str) {
     let idx = (y * width + x) * 3;
@@ -31,11 +31,11 @@ fn test_ppu_initialization_values() {
     assert_eq!(ppu_dmg.stat & 0b11, MODE_OAM_SCAN, "Initial STAT mode (ignoring LYC and bit 7)");
     assert_eq!(ppu_dmg.ly, 0, "Initial LY");
     assert_eq!(ppu_dmg.bgp, 0xFC, "Initial BGP");
-    assert_eq!(ppu_dmg.system_mode, SystemMode::DMG, "System mode should be DMG");
+    assert_eq!(ppu_dmg.model, GameBoyModel::DMG, "System mode should be DMG"); // Changed system_mode to model
     if ppu_dmg.ly == ppu_dmg.lyc { assert_ne!(ppu_dmg.stat & (1 << 2), 0, "LYC=LY flag if ly==lyc"); }
 
     let ppu_cgb = setup_ppu_cgb();
-    assert_eq!(ppu_cgb.system_mode, SystemMode::CGB, "System mode should be CGB");
+    assert_eq!(ppu_cgb.model, GameBoyModel::CGBD, "System mode should be CGBD"); // Changed system_mode to model, and SystemMode::CGB to GameBoyModel::CGBD
     assert_eq!(ppu_cgb.vbk, 0, "Initial VBK for CGB");
     assert_eq!(ppu_cgb.bcps, 0, "Initial BCPS for CGB");
     assert_eq!(ppu_cgb.ocps, 0, "Initial OCPS for CGB");

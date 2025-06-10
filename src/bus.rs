@@ -1,10 +1,6 @@
 // src/bus.rs
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SystemMode {
-    DMG,
-    CGB,
-}
+use crate::models; // Use models from crate root
 
 use crate::apu::Apu;
 use crate::memory::Memory;
@@ -40,7 +36,8 @@ pub struct Bus {
     pub apu: Apu,
     pub joypad: Joypad, // Added joypad field
     pub timer: Timer,
-    pub system_mode: SystemMode, // Added system_mode field
+    // pub system_mode: SystemMode, // Replaced by model
+    pub model: models::GameBoyModel, // Added model field
     pub is_double_speed: bool,
     pub key1_prepare_speed_switch: bool,
     // rom_data is now primarily owned by the MBC. Bus might not need its own copy
@@ -115,15 +112,20 @@ impl Bus {
     }
 
     pub fn new(rom_data: Vec<u8>) -> Self {
-        let mut determined_mode = SystemMode::DMG;
-        if rom_data.len() >= 0x0144 { // Check for CGB flag existence
-            let cgb_flag = rom_data[0x0143];
-            if cgb_flag == 0x80 || cgb_flag == 0xC0 {
-                determined_mode = SystemMode::CGB;
-            }
-        }
+        // Determine GameBoyModel based on ROM header (0x0143)
+        let cgb_flag = if rom_data.len() > 0x0143 { rom_data[0x0143] } else { 0x00 };
+        let determined_model = if cgb_flag == 0x80 || cgb_flag == 0xC0 {
+            // TODO: Further differentiate CGB revisions based on more info if available/needed
+            // For now, CGB0-CGBE are distinct values, but detection might be complex.
+            // Defaulting to a generic CGB or a specific common one like CGB-D/E.
+            models::GameBoyModel::GenericCGB
+        } else {
+            // Could check for SGB indicator (0x0146 == 0x03 and 0x014B == 0x33) here too.
+            // For now, default non-CGB to DMG.
+            models::GameBoyModel::DMG
+        };
 
-        let cartridge_type_byte = if rom_data.len() >= 0x0148 {
+        let cartridge_type_byte = if rom_data.len() > 0x0147 { // Corrected index check
             rom_data[0x0147]
         } else {
             0x00 // Default to ROM ONLY if header is too short
@@ -138,40 +140,29 @@ impl Bus {
         };
         let ram_size = get_ram_size_from_header(ram_header_byte);
 
-        // The Bus struct still holds cartridge_type_byte for potential debugging/info.
-        // rom_data is cloned into the MBC. The Bus itself might not need to store rom_data directly
-        // if all cartridge access (ROM and RAM) goes through the MBC.
-        // For now, Bus::new takes rom_data, passes it to MBC, and Bus doesn't keep its own copy in the struct.
-        // If Bus needs rom_data for other header parsing (e.g. title), it should do so here before moving/cloning.
-
         let mbc: Box<dyn MemoryBankController> = match mbc_type {
             CartridgeType::NoMBC => Box::new(NoMBC::new(rom_data.clone(), ram_size)),
             CartridgeType::MBC1 => Box::new(MBC1::new(rom_data.clone(), ram_size)),
-            CartridgeType::MBC2 => Box::new(MBC2::new(rom_data.clone())), // ram_size from header is ignored by MBC2
+            CartridgeType::MBC2 => Box::new(MBC2::new(rom_data.clone())),
             CartridgeType::MBC3 => Box::new(MBC3::new(rom_data.clone(), ram_size)),
             CartridgeType::MBC5 => Box::new(MBC5::new(rom_data.clone(), ram_size, cartridge_type_byte)),
             CartridgeType::MBC6 => Box::new(MBC6::new(rom_data.clone(), ram_size, cartridge_type_byte)),
             CartridgeType::MBC7 => Box::new(MBC7::new(rom_data.clone(), ram_size, cartridge_type_byte)),
             CartridgeType::MBC30 => Box::new(MBC30::new(rom_data.clone(), ram_size, cartridge_type_byte)),
             CartridgeType::Unknown(byte) => {
-                println!("Warning: Unknown cartridge type 0x{:02X}. Defaulting to NoMBC for now.", byte);
-                Box::new(NoMBC::new(rom_data.clone(), ram_size)) // Fallback to NoMBC
+                println!("Warning: Unknown cartridge type 0x{:02X}. Defaulting to NoMBC.", byte);
+                Box::new(NoMBC::new(rom_data.clone(), ram_size))
             }
-            // The CartridgeType::Unknown variant should cover all other cases.
-            // If CartridgeType enum becomes non-exhaustive in the future or from_byte changes,
-            // this might need revisiting. For now, assume Unknown covers all unlisted byte values.
         };
 
-        let ppu_system_mode = determined_mode; // Capture for clarity if needed, or use directly
-
         Self {
-            mbc, // Store the initialized MBC
+            mbc,
             memory: Memory::new(),
-            ppu: Ppu::new(ppu_system_mode), // Pass system_mode to Ppu
-            apu: Apu::new(),
-            joypad: Joypad::new(), // Initialize joypad
+            ppu: Ppu::new(determined_model), // Pass GameBoyModel to Ppu
+            apu: Apu::new(determined_model), // Pass GameBoyModel to Apu
+            joypad: Joypad::new(),
             timer: Timer::new(),
-            system_mode: determined_mode,
+            model: determined_model,
             is_double_speed: false,
             key1_prepare_speed_switch: false,
             // rom_data field removed from Bus struct, MBC is the owner now
@@ -213,7 +204,7 @@ impl Bus {
         }
 
         // Check for HDMA trigger based on PPU state
-        if self.system_mode == SystemMode::CGB && self.hdma_active && self.ppu.just_entered_hblank {
+        if self.model.is_cgb_family() && self.hdma_active && self.ppu.just_entered_hblank {
             self.hblank_hdma_pending = true;
             self.ppu.just_entered_hblank = false; // Bus acknowledged the HBlank signal for HDMA
         }
@@ -332,8 +323,11 @@ impl Bus {
         }
     }
 
-    pub fn get_system_mode(&self) -> SystemMode {
-        self.system_mode
+    // pub fn get_system_mode(&self) -> SystemMode { // Replaced by get_model
+    //     self.system_mode
+    // }
+    pub fn get_model(&self) -> models::GameBoyModel {
+        self.model
     }
 
     #[allow(dead_code)] // Added to address unused method warning
@@ -546,7 +540,7 @@ impl Bus {
                     0xFF53 => self.hdma3_dest_high = value & 0x1F, // Upper 3 bits ignored (dest in 0x8000-0x9FFF)
                     0xFF54 => self.hdma4_dest_low = value & 0xF0,  // Lower 4 bits ignored
                     0xFF55 => { // HDMA5 - DMA Control/Start
-                        if self.system_mode == SystemMode::DMG { return; } // CGB Only feature
+                        if !self.model.is_cgb_family() { return; } // CGB Only feature
 
                         // Source address
                         self.hdma_current_src = ((self.hdma1_src_high as u16) << 8) | (self.hdma2_src_low as u16);
@@ -879,30 +873,30 @@ mod tests {
         let mut rom_cgb1 = vec![0u8; 0x150];
         rom_cgb1[0x0143] = 0x80;
         let bus_cgb1 = Bus::new(rom_cgb1);
-        assert_eq!(bus_cgb1.get_system_mode(), SystemMode::CGB, "Failed CGB mode (0x80)");
+        assert_eq!(bus_cgb1.get_model(), models::GameBoyModel::GenericCGB, "Failed CGB mode (0x80)");
 
         // Test CGB mode selection (0xC0)
         let mut rom_cgb2 = vec![0u8; 0x150];
         rom_cgb2[0x0143] = 0xC0;
         let bus_cgb2 = Bus::new(rom_cgb2);
-        assert_eq!(bus_cgb2.get_system_mode(), SystemMode::CGB, "Failed CGB mode (0xC0)");
+        assert_eq!(bus_cgb2.get_model(), models::GameBoyModel::GenericCGB, "Failed CGB mode (0xC0)");
 
         // Test DMG mode selection (0x00)
         let mut rom_dmg = vec![0u8; 0x150];
         rom_dmg[0x0143] = 0x00;
         let bus_dmg = Bus::new(rom_dmg);
-        assert_eq!(bus_dmg.get_system_mode(), SystemMode::DMG, "Failed DMG mode (0x00)");
+        assert_eq!(bus_dmg.get_model(), models::GameBoyModel::DMG, "Failed DMG mode (0x00)");
 
         // Test DMG mode selection (other value)
         let mut rom_dmg_other = vec![0u8; 0x150];
         rom_dmg_other[0x0143] = 0x40; // Some other non-CGB value
         let bus_dmg_other = Bus::new(rom_dmg_other);
-        assert_eq!(bus_dmg_other.get_system_mode(), SystemMode::DMG, "Failed DMG mode (other)");
+        assert_eq!(bus_dmg_other.get_model(), models::GameBoyModel::DMG, "Failed DMG mode (other)");
 
         // Test short ROM (less than 0x0144 bytes) defaults to DMG
         let short_rom = vec![0u8; 0x100];
         let bus_short_rom = Bus::new(short_rom);
-        assert_eq!(bus_short_rom.get_system_mode(), SystemMode::DMG, "Short ROM should default to DMG");
+        assert_eq!(bus_short_rom.get_model(), models::GameBoyModel::DMG, "Short ROM should default to DMG");
     }
 
     #[test]
