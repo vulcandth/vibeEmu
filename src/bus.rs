@@ -3,12 +3,14 @@
 use crate::models; // Use models from crate root
 
 use crate::apu::Apu;
-use crate::memory::Memory;
-use crate::ppu::Ppu;
 use crate::interrupts::InterruptType;
 use crate::joypad::Joypad; // Added Joypad
+use crate::mbc::{
+    CartridgeType, MemoryBankController, NoMBC, MBC1, MBC2, MBC3, MBC30, MBC5, MBC6, MBC7,
+}; // Added MBC30 import
+use crate::memory::Memory;
+use crate::ppu::Ppu;
 use crate::timer::Timer;
-use crate::mbc::{MemoryBankController, CartridgeType, NoMBC, MBC1, MBC2, MBC3, MBC5, MBC6, MBC7, MBC30}; // Added MBC30 import
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -16,14 +18,17 @@ use std::path::Path;
 // Helper function to determine RAM size from cartridge header
 fn get_ram_size_from_header(ram_header_byte: u8) -> usize {
     match ram_header_byte {
-        0x00 => 0,        // No RAM
-        0x01 => 2 * 1024, // 2KB
-        0x02 => 8 * 1024, // 8KB
-        0x03 => 32 * 1024, // 32KB (4 banks of 8KB)
+        0x00 => 0,          // No RAM
+        0x01 => 2 * 1024,   // 2KB
+        0x02 => 8 * 1024,   // 8KB
+        0x03 => 32 * 1024,  // 32KB (4 banks of 8KB)
         0x04 => 128 * 1024, // 128KB (16 banks of 8KB)
-        0x05 => 64 * 1024, // 64KB (8 banks of 8KB)
+        0x05 => 64 * 1024,  // 64KB (8 banks of 8KB)
         _ => {
-            println!("Warning: Unknown RAM size code 0x{:02X}. Defaulting to 0 RAM.", ram_header_byte);
+            println!(
+                "Warning: Unknown RAM size code 0x{:02X}. Defaulting to 0 RAM.",
+                ram_header_byte
+            );
             0 // Default to no RAM for unknown codes
         }
     }
@@ -44,9 +49,9 @@ pub struct Bus {
     // if all ROM access goes via MBC. For now, Bus::new still receives it for header parsing.
     // Let's remove rom_data from Bus struct if MBC handles it.
     // pub rom_data: Vec<u8>,
-    pub serial_output: Vec<u8>, // Added for serial output capture
+    pub serial_output: Vec<u8>,        // Added for serial output capture
     pub interrupt_enable_register: u8, // IE Register (0xFFFF)
-    pub if_register: u8, // Interrupt Flag Register (0xFF0F)
+    pub if_register: u8,               // Interrupt Flag Register (0xFF0F)
     pub oam_dma_active: bool,
     pub oam_dma_cycles_remaining: u32,
     pub oam_dma_source_address_upper: u8,
@@ -88,13 +93,15 @@ impl Bus {
                 // ROM: 0x0000-0x7FFF, WRAM: 0xC000-0xDFFF (or E000-FDFF echo), CartRAM: A000-BFFF
                 // HRAM (FF80-FFFE) is small. OAM (FE00-FE9F) and VRAM (8000-9FFF) are usually not sources.
                 // For simplicity, we assume valid source for now.
-                let byte_to_transfer = self.read_byte_internal(self.hdma_current_src.wrapping_add(i));
+                let byte_to_transfer =
+                    self.read_byte_internal(self.hdma_current_src.wrapping_add(i));
 
                 // Destination is VRAM (0x8000-0x9FFF), offset within current VBK bank.
                 let dest_offset = (self.hdma_current_dest.wrapping_add(i)) & 0x1FFF; // Mask to stay within 8KB bank range
                 let current_vbk = self.ppu.vbk as usize;
 
-                if dest_offset < 8192 { // Ensure offset is within bank bounds
+                if dest_offset < 8192 {
+                    // Ensure offset is within bank bounds
                     self.ppu.vram[current_vbk][dest_offset as usize] = byte_to_transfer;
                 }
             }
@@ -113,7 +120,11 @@ impl Bus {
 
     pub fn new(rom_data: Vec<u8>) -> Self {
         // Determine GameBoyModel based on ROM header (0x0143)
-        let cgb_flag = if rom_data.len() > 0x0143 { rom_data[0x0143] } else { 0x00 };
+        let cgb_flag = if rom_data.len() > 0x0143 {
+            rom_data[0x0143]
+        } else {
+            0x00
+        };
         let determined_model = if cgb_flag == 0x80 || cgb_flag == 0xC0 {
             // TODO: Further differentiate CGB revisions based on more info if available/needed
             // For now, CGB0-CGBE are distinct values, but detection might be complex.
@@ -125,7 +136,8 @@ impl Bus {
             models::GameBoyModel::DMG
         };
 
-        let cartridge_type_byte = if rom_data.len() > 0x0147 { // Corrected index check
+        let cartridge_type_byte = if rom_data.len() > 0x0147 {
+            // Corrected index check
             rom_data[0x0147]
         } else {
             0x00 // Default to ROM ONLY if header is too short
@@ -145,12 +157,23 @@ impl Bus {
             CartridgeType::MBC1 => Box::new(MBC1::new(rom_data.clone(), ram_size)),
             CartridgeType::MBC2 => Box::new(MBC2::new(rom_data.clone())),
             CartridgeType::MBC3 => Box::new(MBC3::new(rom_data.clone(), ram_size)),
-            CartridgeType::MBC5 => Box::new(MBC5::new(rom_data.clone(), ram_size, cartridge_type_byte)),
-            CartridgeType::MBC6 => Box::new(MBC6::new(rom_data.clone(), ram_size, cartridge_type_byte)),
-            CartridgeType::MBC7 => Box::new(MBC7::new(rom_data.clone(), ram_size, cartridge_type_byte)),
-            CartridgeType::MBC30 => Box::new(MBC30::new(rom_data.clone(), ram_size, cartridge_type_byte)),
+            CartridgeType::MBC5 => {
+                Box::new(MBC5::new(rom_data.clone(), ram_size, cartridge_type_byte))
+            }
+            CartridgeType::MBC6 => {
+                Box::new(MBC6::new(rom_data.clone(), ram_size, cartridge_type_byte))
+            }
+            CartridgeType::MBC7 => {
+                Box::new(MBC7::new(rom_data.clone(), ram_size, cartridge_type_byte))
+            }
+            CartridgeType::MBC30 => {
+                Box::new(MBC30::new(rom_data.clone(), ram_size, cartridge_type_byte))
+            }
             CartridgeType::Unknown(byte) => {
-                println!("Warning: Unknown cartridge type 0x{:02X}. Defaulting to NoMBC.", byte);
+                println!(
+                    "Warning: Unknown cartridge type 0x{:02X}. Defaulting to NoMBC.",
+                    byte
+                );
                 Box::new(NoMBC::new(rom_data.clone(), ram_size))
             }
         };
@@ -167,9 +190,9 @@ impl Bus {
             key1_prepare_speed_switch: false,
             // rom_data field removed from Bus struct, MBC is the owner now
             // cartridge_type_byte, // Field removed
-            serial_output: Vec::new(), // Initialize serial_output
+            serial_output: Vec::new(),    // Initialize serial_output
             interrupt_enable_register: 0, // Default value for IE
-            if_register: 0x00, // Default value for IF
+            if_register: 0x00,            // Default value for IF
             oam_dma_active: false,
             oam_dma_cycles_remaining: 0,
             oam_dma_source_address_upper: 0,
@@ -218,7 +241,8 @@ impl Bus {
                     self.hdma_current_src, self.hdma_current_dest, self.ppu.vbk, self.hdma_blocks_remaining -1
                 );
                 for i in 0..16 {
-                    let byte_to_transfer = self.read_byte_internal(self.hdma_current_src.wrapping_add(i));
+                    let byte_to_transfer =
+                        self.read_byte_internal(self.hdma_current_src.wrapping_add(i));
                     let dest_offset = (self.hdma_current_dest.wrapping_add(i)) & 0x1FFF;
                     let current_vbk = self.ppu.vbk as usize;
                     if dest_offset < 8192 {
@@ -226,7 +250,8 @@ impl Bus {
                     }
                 }
                 self.hdma_current_src = self.hdma_current_src.wrapping_add(16);
-                self.hdma_current_dest = 0x8000 | (self.hdma_current_dest.wrapping_add(16) & 0x1FF0);
+                self.hdma_current_dest =
+                    0x8000 | (self.hdma_current_dest.wrapping_add(16) & 0x1FF0);
 
                 self.hdma_blocks_remaining -= 1;
 
@@ -248,9 +273,11 @@ impl Bus {
 
         // OAM DMA Transfer Logic (this is separate from HDMA/GDMA)
         if self.oam_dma_active {
-            if self.oam_dma_cycles_remaining == 160 * 4 { // Check if just initiated
+            if self.oam_dma_cycles_remaining == 160 * 4 {
+                // Check if just initiated
                 let source_base_address = (self.oam_dma_source_address_upper as u16) << 8;
-                for i in 0..160 { // 0xA0 bytes
+                for i in 0..160 {
+                    // 0xA0 bytes
                     let byte_to_copy = self.read_byte_internal(source_base_address + i as u16);
                     // Write directly to PPU OAM array, bypassing PPU mode checks
                     // Ensure index is within bounds (should always be for 0..160 for OAM size of 160)
@@ -277,7 +304,8 @@ impl Bus {
             0x8000..=0x9FFF => self.ppu.read_byte(addr), // VRAM (DMA can read from VRAM)
             0xA000..=0xBFFF => self.mbc.read_ram(addr - 0xA000), // Cartridge RAM
             0xC000..=0xDFFF => self.memory.read_byte(addr), // WRAM
-            0xE000..=0xFDFF => { // Echo RAM
+            0xE000..=0xFDFF => {
+                // Echo RAM
                 let mirrored_addr = addr - 0x2000;
                 self.memory.read_byte(mirrored_addr)
             }
@@ -287,9 +315,9 @@ impl Bus {
             // If DMA could source from OAM or I/O, those cases would need to be added.
             // Reading from 0xFE00..=0xFEFF (OAM and unusable)
             0xFE00..=0xFEFF => {
-                 // This range includes OAM (FE00-FE9F) and Unusable (FEA0-FEFF)
-                 // DMA source usually isn't OAM itself, but if it were, PPU read is appropriate.
-                 // For Unusable, 0xFF is typical.
+                // This range includes OAM (FE00-FE9F) and Unusable (FEA0-FEFF)
+                // DMA source usually isn't OAM itself, but if it were, PPU read is appropriate.
+                // For Unusable, 0xFF is typical.
                 if addr <= 0xFE9F {
                     self.ppu.read_byte(addr) // OAM
                 } else {
@@ -310,7 +338,11 @@ impl Bus {
                     0xFF40..=0xFF4B => self.ppu.read_byte(addr), // Note: 0xFF46 (DMA reg) read during DMA? Unlikely.
                     0xFF4D => {
                         let speed_bit = if self.is_double_speed { 0x80 } else { 0x00 };
-                        let prepare_bit = if self.key1_prepare_speed_switch { 0x01 } else { 0x00 };
+                        let prepare_bit = if self.key1_prepare_speed_switch {
+                            0x01
+                        } else {
+                            0x00
+                        };
                         speed_bit | prepare_bit | 0x7E
                     }
                     0xFF4C | 0xFF4E..=0xFF4F => 0xFF,
@@ -318,8 +350,8 @@ impl Bus {
                 }
             }
             0xFF80..=0xFFFE => self.memory.read_byte(addr), // HRAM
-            0xFFFF => self.interrupt_enable_register, // IE Register
-            // _ => 0xFF, // Default for any unmapped reads
+            0xFFFF => self.interrupt_enable_register,       // IE Register
+                                                             // _ => 0xFF, // Default for any unmapped reads
         }
     }
 
@@ -377,15 +409,31 @@ impl Bus {
     pub fn save_save_files(&self, rom_path: &str) {
         if let Some(ram) = self.mbc.get_ram() {
             let save_path = Path::new(rom_path).with_extension("sav");
-            if let Ok(mut file) = OpenOptions::new().create(true).write(true).truncate(true).open(save_path) {
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(save_path)
+            {
                 let _ = file.write_all(ram);
             }
         }
 
         if let Some(rtc) = self.mbc.get_rtc() {
             let rtc_path = Path::new(rom_path).with_extension("rtc");
-            if let Ok(mut file) = OpenOptions::new().create(true).write(true).truncate(true).open(rtc_path) {
-                let buf = [rtc.seconds, rtc.minutes, rtc.hours, rtc.day_counter_low, rtc.day_counter_high];
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(rtc_path)
+            {
+                let buf = [
+                    rtc.seconds,
+                    rtc.minutes,
+                    rtc.hours,
+                    rtc.day_counter_low,
+                    rtc.day_counter_high,
+                ];
                 let _ = file.write_all(&buf);
             }
         }
@@ -429,13 +477,18 @@ impl Bus {
                         0xFF
                     }
                     0xFF04..=0xFF07 => self.timer.read_byte(addr), // Route to Timer
-                    0xFF0F => self.if_register | 0xE0, // IF - Interrupt Flag Register
-                    0xFF10..=0xFF3F => self.apu.read_byte(addr), // APU registers
+                    0xFF0F => self.if_register | 0xE0,             // IF - Interrupt Flag Register
+                    0xFF10..=0xFF3F => self.apu.read_byte(addr),   // APU registers
                     // Extended PPU range to include VBK (0xFF4F) and CGB Palettes (0xFF68-0xFF6B)
                     0xFF40..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => self.ppu.read_byte(addr),
-                    0xFF4D => { // KEY1 - CGB Speed Switch
+                    0xFF4D => {
+                        // KEY1 - CGB Speed Switch
                         let speed_bit = if self.is_double_speed { 0x80 } else { 0x00 };
-                        let prepare_bit = if self.key1_prepare_speed_switch { 0x01 } else { 0x00 };
+                        let prepare_bit = if self.key1_prepare_speed_switch {
+                            0x01
+                        } else {
+                            0x00
+                        };
                         speed_bit | prepare_bit | 0x7E // Other bits are 1
                     }
                     // 0xFF4C is defined as "Unused" by Pandocs for DMG, CGB.
@@ -447,11 +500,14 @@ impl Bus {
                     0xFF52 => self.hdma2_src_low,
                     0xFF53 => self.hdma3_dest_high,
                     0xFF54 => self.hdma4_dest_low,
-                    0xFF55 => { // HDMA5 - DMA Status
-                        if self.hdma_active { // Active HDMA
+                    0xFF55 => {
+                        // HDMA5 - DMA Status
+                        if self.hdma_active {
+                            // Active HDMA
                             // Bit 7 is 0, lower 7 bits are (blocks_remaining - 1)
                             (self.hdma_blocks_remaining.saturating_sub(1)) & 0x7F
-                        } else { // Inactive HDMA (or after GDMA)
+                        } else {
+                            // Inactive HDMA (or after GDMA)
                             0xFF
                         }
                     }
@@ -460,16 +516,16 @@ impl Bus {
                         // SVBK (FF70) etc. would be here too if not part of a larger unmapped range
                         0xFF // Placeholder for other CGB I/O regs
                     }
-                    _ => 0xFF // Default for unmapped I/O in 0xFFxx range
+                    _ => 0xFF, // Default for unmapped I/O in 0xFFxx range
                 }
             }
             0xFF80..=0xFFFE => self.memory.read_byte(addr), // HRAM
-            0xFFFF => self.interrupt_enable_register, // IE Register
-            // _ => {
-            //     // This should ideally not be reached if all ranges are covered
-            //     // panic!("Read from unhandled Bus address: {:#04X}", addr);
-            //     0xFF // Default for any unmapped reads not explicitly handled
-            // }
+            0xFFFF => self.interrupt_enable_register,       // IE Register
+                                                             // _ => {
+                                                             //     // This should ideally not be reached if all ranges are covered
+                                                             //     // panic!("Read from unhandled Bus address: {:#04X}", addr);
+                                                             //     0xFF // Default for any unmapped reads not explicitly handled
+                                                             // }
         }
     }
 
@@ -504,12 +560,17 @@ impl Bus {
                 // I/O Registers
                 match addr {
                     0xFF00 => self.joypad.write_p1(value), // Joypad write
-                    0xFF01..=0xFF02 => { // Serial Data Transfer
-                        if addr == 0xFF01 { // SB: Serial Transfer Data
+                    0xFF01..=0xFF02 => {
+                        // Serial Data Transfer
+                        if addr == 0xFF01 {
+                            // SB: Serial Transfer Data
                             // For now, we just append the byte to our serial_output vector
                             // This allows us to capture and inspect what the game is trying to "print"
                             // A full implementation would involve timing, control bits from 0xFF02 (SC), etc.
-                            println!("Serial port (0xFF01) received byte: 0x{:02X} ('{}')", value, value as char);
+                            println!(
+                                "Serial port (0xFF01) received byte: 0x{:02X} ('{}')",
+                                value, value as char
+                            );
                             self.serial_output.push(value);
                         }
                         // 0xFF02 (SC - Serial Transfer Control) is not fully handled here yet.
@@ -517,20 +578,26 @@ impl Bus {
                         // For now, we only capture data written to SB (0xFF01).
                     }
                     0xFF04..=0xFF07 => self.timer.write_byte(addr, value), // Route to Timer
-                    0xFF0F => { self.if_register = value & 0x1F; }, // IF - Interrupt Flag Register
-                    0xFF10..=0xFF3F => self.apu.write_byte(addr, value), // APU registers
+                    0xFF0F => {
+                        self.if_register = value & 0x1F;
+                    } // IF - Interrupt Flag Register
+                    0xFF10..=0xFF3F => self.apu.write_byte(addr, value),   // APU registers
                     // PPU registers excluding 0xFF46 (DMA)
-                    0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => self.ppu.write_byte(addr, value),
-                    0xFF46 => { // OAM DMA Start Register
+                    0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF68..=0xFF6B => {
+                        self.ppu.write_byte(addr, value)
+                    }
+                    0xFF46 => {
+                        // OAM DMA Start Register
                         self.oam_dma_source_address_upper = value;
                         self.oam_dma_active = true;
                         // DMA takes 160 M-cycles (160 * 4 T-cycles)
                         // The actual data copy happens "instantly" in the current tick_components logic
                         // when oam_dma_cycles_remaining is set to this initial value.
                         // The CPU is effectively halted during these cycles.
-                        self.oam_dma_cycles_remaining = 160 * 4; 
-                    },
-                    0xFF4D => { // KEY1 - CGB Speed Switch
+                        self.oam_dma_cycles_remaining = 160 * 4;
+                    }
+                    0xFF4D => {
+                        // KEY1 - CGB Speed Switch
                         self.key1_prepare_speed_switch = (value & 0x01) != 0;
                     }
                     0xFF4C | 0xFF4E => { /* Unmapped or Read-only */ }
@@ -539,22 +606,30 @@ impl Bus {
                     0xFF52 => self.hdma2_src_low = value & 0xF0, // Lower 4 bits ignored
                     0xFF53 => self.hdma3_dest_high = value & 0x1F, // Upper 3 bits ignored (dest in 0x8000-0x9FFF)
                     0xFF54 => self.hdma4_dest_low = value & 0xF0,  // Lower 4 bits ignored
-                    0xFF55 => { // HDMA5 - DMA Control/Start
-                        if !self.model.is_cgb_family() { return; } // CGB Only feature
+                    0xFF55 => {
+                        // HDMA5 - DMA Control/Start
+                        if !self.model.is_cgb_family() {
+                            return;
+                        } // CGB Only feature
 
                         // Source address
-                        self.hdma_current_src = ((self.hdma1_src_high as u16) << 8) | (self.hdma2_src_low as u16);
+                        self.hdma_current_src =
+                            ((self.hdma1_src_high as u16) << 8) | (self.hdma2_src_low as u16);
                         self.hdma_current_src &= 0xFFF0; // Align to 16 bytes (lower 4 bits are zero)
-                        // Source must be in ROM or RAM (0x0000-0x7FFF or 0xA000-0xDFFF)
+                                                         // Source must be in ROM or RAM (0x0000-0x7FFF or 0xA000-0xDFFF)
 
                         // Destination address in VRAM
-                        self.hdma_current_dest = 0x8000 | (((self.hdma3_dest_high & 0x1F) as u16) << 8) | (self.hdma4_dest_low as u16);
+                        self.hdma_current_dest = 0x8000
+                            | (((self.hdma3_dest_high & 0x1F) as u16) << 8)
+                            | (self.hdma4_dest_low as u16);
                         self.hdma_current_dest &= 0x1FF0; // Align to 16 bytes (lower 4 bits are zero) and mask to VRAM range (0x0000-0x1FF0 relative to 0x8000)
 
                         self.hdma_blocks_remaining = (value & 0x7F) + 1; // Number of 16-byte blocks
 
-                        if (value & 0x80) == 0 { // GDMA (General Purpose DMA)
-                            if self.hdma_active { // Writing 0 to bit 7 of HDMA5 when HDMA is active should have no effect (HDMA continues)
+                        if (value & 0x80) == 0 {
+                            // GDMA (General Purpose DMA)
+                            if self.hdma_active {
+                                // Writing 0 to bit 7 of HDMA5 when HDMA is active should have no effect (HDMA continues)
                                 // This interpretation might vary. Some sources say it might stop HDMA.
                                 // Pandocs: "writing to FF55 can start a new transfer, or terminate an active HDMA transfer."
                                 // "If HDMA is active, writing to FF55 with bit 7 cleared will end the HDMA transfer."
@@ -563,9 +638,11 @@ impl Bus {
                             }
                             self.gdma_active = true;
                             self.perform_gdma_transfer(); // Execute GDMA immediately
-                            // perform_gdma_transfer will set hdma5 to 0xFF and gdma_active to false.
-                        } else { // HDMA (H-Blank DMA)
-                            if self.hdma_active { // Request to stop current HDMA
+                                                          // perform_gdma_transfer will set hdma5 to 0xFF and gdma_active to false.
+                        } else {
+                            // HDMA (H-Blank DMA)
+                            if self.hdma_active {
+                                // Request to stop current HDMA
                                 self.hdma_active = false;
                                 // HDMA5 read will now show remaining length with bit 7 as 1.
                                 // The value written to HDMA5 (value & 0x7F) is the new "length" for HDMA5 reads.
@@ -575,23 +652,24 @@ impl Bus {
                                 // So if we stop it, HDMA5 should read as 0xFF.
                                 // Let's ensure self.hdma5 reflects this for reads.
                                 self.hdma5 = 0xFF; // When HDMA is stopped, it reads as inactive.
-                            } else { // Start new HDMA
+                            } else {
+                                // Start new HDMA
                                 self.hdma_active = true;
                                 self.hdma5 = value; // Store for readback (active flag will be based on hdma_active)
-                                // Transfer will occur in HBlank periods.
+                                                    // Transfer will occur in HBlank periods.
                             }
                         }
                     }
                     // Other I/O (0xFF56-0xFF67, 0xFF6C-0xFF7F)
-                     _ => { /* Writes to other unhandled I/O regs are ignored */ }
+                    _ => { /* Writes to other unhandled I/O regs are ignored */ }
                 }
             }
             0xFF80..=0xFFFE => self.memory.write_byte(addr, value), // HRAM
-            0xFFFF => self.interrupt_enable_register = value, // IE Register
-            // _ => {
-            //     // This should ideally not be reached if all ranges are covered
-            //     // panic!("Write to unhandled Bus address: {:#04X}", addr);
-            // }
+            0xFFFF => self.interrupt_enable_register = value,       // IE Register
+                                                                     // _ => {
+                                                                     //     // This should ideally not be reached if all ranges are covered
+                                                                     //     // panic!("Write to unhandled Bus address: {:#04X}", addr);
+                                                                     // }
         }
     }
 
@@ -620,9 +698,9 @@ mod tests {
     // For this specific project structure, Bus is defined in src/bus.rs,
     // and this test module is also in src/bus.rs. So `super::Bus` or `Bus` (via `super::*`) should work.
     use crate::cpu::Cpu; // Assuming cpu.rs is in crate root
-    use std::rc::Rc;
     use std::cell::RefCell;
     use std::env;
+    use std::rc::Rc;
 
     fn setup_test_env() -> (Cpu, Rc<RefCell<Bus>>) {
         // Provide dummy ROM data for Bus creation
@@ -652,7 +730,11 @@ mod tests {
         // The method ld_nn_mem_a takes addr_lo, addr_hi
         cpu.ld_nn_mem_a((wram_addr & 0xFF) as u8, (wram_addr >> 8) as u8);
 
-        assert_eq!(bus.borrow().read_byte(wram_addr), 0xAB, "Value in WRAM via bus is incorrect");
+        assert_eq!(
+            bus.borrow().read_byte(wram_addr),
+            0xAB,
+            "Value in WRAM via bus is incorrect"
+        );
         assert_eq!(cpu.pc, 0x0100 + 3, "PC increment for LD (nn),A is wrong");
     }
 
@@ -668,7 +750,10 @@ mod tests {
         cpu.pc = 0x0150; // Dummy PC
         cpu.ld_a_nn_mem((wram_addr & 0xFF) as u8, (wram_addr >> 8) as u8);
 
-        assert_eq!(cpu.a, expected_val, "Value read into A from WRAM via bus is incorrect");
+        assert_eq!(
+            cpu.a, expected_val,
+            "Value read into A from WRAM via bus is incorrect"
+        );
         assert_eq!(cpu.pc, 0x0150 + 3, "PC increment for LD A,(nn) is wrong");
     }
 
@@ -686,7 +771,11 @@ mod tests {
 
         cpu.ld_hl_mem_a(); // This uses the write_hl_mem helper
 
-        assert_eq!(bus.borrow().read_byte(hram_addr), 0xBE, "Value in HRAM via bus is incorrect");
+        assert_eq!(
+            bus.borrow().read_byte(hram_addr),
+            0xBE,
+            "Value in HRAM via bus is incorrect"
+        );
         assert_eq!(cpu.pc, 0x0200 + 1, "PC increment for LD (HL),A is wrong");
     }
 
@@ -705,7 +794,10 @@ mod tests {
 
         cpu.ld_a_hl_mem(); // This uses the read_hl_mem helper
 
-        assert_eq!(cpu.a, expected_val, "Value read into A from HRAM via bus is incorrect");
+        assert_eq!(
+            cpu.a, expected_val,
+            "Value read into A from HRAM via bus is incorrect"
+        );
         assert_eq!(cpu.pc, 0x0250 + 1, "PC increment for LD A,(HL) is wrong");
     }
 
@@ -723,8 +815,16 @@ mod tests {
                        // Memory at 0xDFFD should be C (0x34)
 
         assert_eq!(cpu.sp, 0xDFFD, "SP after PUSH BC is wrong");
-        assert_eq!(bus.borrow().read_byte(0xDFFE), 0x12, "Value for B on stack (WRAM) is incorrect");
-        assert_eq!(bus.borrow().read_byte(0xDFFD), 0x34, "Value for C on stack (WRAM) is incorrect");
+        assert_eq!(
+            bus.borrow().read_byte(0xDFFE),
+            0x12,
+            "Value for B on stack (WRAM) is incorrect"
+        );
+        assert_eq!(
+            bus.borrow().read_byte(0xDFFD),
+            0x34,
+            "Value for C on stack (WRAM) is incorrect"
+        );
         assert_eq!(cpu.pc, 0x0300 + 1);
 
         // Now POP DE (values should be what was pushed for BC)
@@ -754,7 +854,10 @@ mod tests {
         // So we'll just check the returned value.
         // The PPU now returns the actual LCDC value (0x91 by default)
         cpu.ld_a_hl_mem();
-        assert_eq!(cpu.a, 0x91, "Reading from PPU LCDC register should return its default value");
+        assert_eq!(
+            cpu.a, 0x91,
+            "Reading from PPU LCDC register should return its default value"
+        );
     }
 
     #[test]
@@ -778,7 +881,10 @@ mod tests {
         // With the current APU implementation the write is ignored because the
         // APU is powered off by default, so the register reads as 0.
         let read_back_val = bus.borrow().read_byte(apu_ch1_vol_addr);
-        assert_eq!(read_back_val, 0x00, "Reading NR12 after write while APU is disabled should return 0");
+        assert_eq!(
+            read_back_val, 0x00,
+            "Reading NR12 after write while APU is disabled should return 0"
+        );
     }
 
     #[test]
@@ -794,7 +900,11 @@ mod tests {
         let bus_with_specific_rom = Rc::new(RefCell::new(Bus::new(test_rom_data.clone()))); // Use clone if test_rom_data is needed later for asserts
 
         // 1. Reading from an address within the bounds of rom_data returns the correct byte.
-        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x0000), 0xAA, "Read from ROM start incorrect");
+        assert_eq!(
+            bus_with_specific_rom.borrow().read_byte(0x0000),
+            0xAA,
+            "Read from ROM start incorrect"
+        );
 
         // We used 0x100 in setup_test_env, but this test creates its own Bus instance.
         // Let's re-evaluate the address for 0xBB based on test_rom_data.
@@ -814,7 +924,11 @@ mod tests {
         let mid_rom_addr = 0x00A5;
         // test_rom_data is currently all zeros except for 0x00, 0x1FE, 0x1FF.
         // So, reading from 0x00A5 should return 0.
-        assert_eq!(bus_with_specific_rom.borrow().read_byte(mid_rom_addr), 0x00, "Read from middle of ROM (unset byte) incorrect");
+        assert_eq!(
+            bus_with_specific_rom.borrow().read_byte(mid_rom_addr),
+            0x00,
+            "Read from middle of ROM (unset byte) incorrect"
+        );
 
         // Let's set a value in the middle of test_rom_data and test it
         // We need to recreate the bus if we modify test_rom_data after Bus::new
@@ -822,24 +936,55 @@ mod tests {
         // For simplicity, let's just use the values already set.
 
         // 2. Reading from an address just at the end of rom_data returns the correct byte.
-        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x01FE), 0xCC, "Read from ROM near end incorrect");
-        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x01FF), 0xDD, "Read from ROM end incorrect");
+        assert_eq!(
+            bus_with_specific_rom.borrow().read_byte(0x01FE),
+            0xCC,
+            "Read from ROM near end incorrect"
+        );
+        assert_eq!(
+            bus_with_specific_rom.borrow().read_byte(0x01FF),
+            0xDD,
+            "Read from ROM end incorrect"
+        );
 
         // 3. Reading from an address within 0x0000..=0x7FFF but outside the bounds of loaded rom_data returns 0xFF.
         // test_rom_data has size 0x200 (512 bytes). So addresses from 0x0200 up to 0x7FFF are out of bounds.
-        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x0200), 0xFF, "Read from ROM out of bounds (start) incorrect");
-        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x3000), 0xFF, "Read from ROM out of bounds (middle) incorrect");
-        assert_eq!(bus_with_specific_rom.borrow().read_byte(0x7FFF), 0xFF, "Read from ROM out of bounds (end of range) incorrect");
+        assert_eq!(
+            bus_with_specific_rom.borrow().read_byte(0x0200),
+            0xFF,
+            "Read from ROM out of bounds (start) incorrect"
+        );
+        assert_eq!(
+            bus_with_specific_rom.borrow().read_byte(0x3000),
+            0xFF,
+            "Read from ROM out of bounds (middle) incorrect"
+        );
+        assert_eq!(
+            bus_with_specific_rom.borrow().read_byte(0x7FFF),
+            0xFF,
+            "Read from ROM out of bounds (end of range) incorrect"
+        );
 
         // Test reading from original setup_test_env bus to ensure its rom_data is used.
         let (_cpu, bus_from_setup) = setup_test_env(); // This bus has rom_data vec![0; 0x100]
-        // So, bus_from_setup.rom_data[0] should be 0.
-        // And bus_from_setup.rom_data[0xFF] should be 0.
-        // And bus_from_setup.rom_data[0x100] should be out of bounds (0xFF).
-        assert_eq!(bus_from_setup.borrow().read_byte(0x0000), 0x00, "Read from setup_test_env ROM (start) incorrect");
-        assert_eq!(bus_from_setup.borrow().read_byte(0x00FF), 0x00, "Read from setup_test_env ROM (end) incorrect");
-        assert_eq!(bus_from_setup.borrow().read_byte(0x0100), 0xFF, "Read from setup_test_env ROM (out of bounds) incorrect");
-
+                                                       // So, bus_from_setup.rom_data[0] should be 0.
+                                                       // And bus_from_setup.rom_data[0xFF] should be 0.
+                                                       // And bus_from_setup.rom_data[0x100] should be out of bounds (0xFF).
+        assert_eq!(
+            bus_from_setup.borrow().read_byte(0x0000),
+            0x00,
+            "Read from setup_test_env ROM (start) incorrect"
+        );
+        assert_eq!(
+            bus_from_setup.borrow().read_byte(0x00FF),
+            0x00,
+            "Read from setup_test_env ROM (end) incorrect"
+        );
+        assert_eq!(
+            bus_from_setup.borrow().read_byte(0x0100),
+            0xFF,
+            "Read from setup_test_env ROM (out of bounds) incorrect"
+        );
     }
 
     #[test]
@@ -853,7 +998,11 @@ mod tests {
         bus.write_byte(0xFF01, b's');
         bus.write_byte(0xFF01, b't');
 
-        assert_eq!(bus.get_serial_output_string(), "Test", "Serial output string incorrect after initial write");
+        assert_eq!(
+            bus.get_serial_output_string(),
+            "Test",
+            "Serial output string incorrect after initial write"
+        );
 
         // Write more bytes
         bus.write_byte(0xFF01, b' ');
@@ -861,10 +1010,17 @@ mod tests {
         bus.write_byte(0xFF01, b'2');
         bus.write_byte(0xFF01, b'3');
 
-        assert_eq!(bus.get_serial_output_string(), "Test 123", "Serial output string incorrect after further writes");
+        assert_eq!(
+            bus.get_serial_output_string(),
+            "Test 123",
+            "Serial output string incorrect after further writes"
+        );
 
         // Check internal Vec<u8> directly
-        assert_eq!(bus.serial_output, vec![b'T', b'e', b's', b't', b' ', b'1', b'2', b'3']);
+        assert_eq!(
+            bus.serial_output,
+            vec![b'T', b'e', b's', b't', b' ', b'1', b'2', b'3']
+        );
     }
 
     #[test]
@@ -873,30 +1029,50 @@ mod tests {
         let mut rom_cgb1 = vec![0u8; 0x150];
         rom_cgb1[0x0143] = 0x80;
         let bus_cgb1 = Bus::new(rom_cgb1);
-        assert_eq!(bus_cgb1.get_model(), models::GameBoyModel::GenericCGB, "Failed CGB mode (0x80)");
+        assert_eq!(
+            bus_cgb1.get_model(),
+            models::GameBoyModel::GenericCGB,
+            "Failed CGB mode (0x80)"
+        );
 
         // Test CGB mode selection (0xC0)
         let mut rom_cgb2 = vec![0u8; 0x150];
         rom_cgb2[0x0143] = 0xC0;
         let bus_cgb2 = Bus::new(rom_cgb2);
-        assert_eq!(bus_cgb2.get_model(), models::GameBoyModel::GenericCGB, "Failed CGB mode (0xC0)");
+        assert_eq!(
+            bus_cgb2.get_model(),
+            models::GameBoyModel::GenericCGB,
+            "Failed CGB mode (0xC0)"
+        );
 
         // Test DMG mode selection (0x00)
         let mut rom_dmg = vec![0u8; 0x150];
         rom_dmg[0x0143] = 0x00;
         let bus_dmg = Bus::new(rom_dmg);
-        assert_eq!(bus_dmg.get_model(), models::GameBoyModel::DMG, "Failed DMG mode (0x00)");
+        assert_eq!(
+            bus_dmg.get_model(),
+            models::GameBoyModel::DMG,
+            "Failed DMG mode (0x00)"
+        );
 
         // Test DMG mode selection (other value)
         let mut rom_dmg_other = vec![0u8; 0x150];
         rom_dmg_other[0x0143] = 0x40; // Some other non-CGB value
         let bus_dmg_other = Bus::new(rom_dmg_other);
-        assert_eq!(bus_dmg_other.get_model(), models::GameBoyModel::DMG, "Failed DMG mode (other)");
+        assert_eq!(
+            bus_dmg_other.get_model(),
+            models::GameBoyModel::DMG,
+            "Failed DMG mode (other)"
+        );
 
         // Test short ROM (less than 0x0144 bytes) defaults to DMG
         let short_rom = vec![0u8; 0x100];
         let bus_short_rom = Bus::new(short_rom);
-        assert_eq!(bus_short_rom.get_model(), models::GameBoyModel::DMG, "Short ROM should default to DMG");
+        assert_eq!(
+            bus_short_rom.get_model(),
+            models::GameBoyModel::DMG,
+            "Short ROM should default to DMG"
+        );
     }
 
     #[test]
@@ -905,34 +1081,68 @@ mod tests {
         let mut bus = Bus::new(rom_data);
 
         // Initial state
-        assert!(!bus.get_is_double_speed(), "Initial is_double_speed should be false");
-        assert!(!bus.get_key1_prepare_speed_switch(), "Initial key1_prepare_speed_switch should be false");
+        assert!(
+            !bus.get_is_double_speed(),
+            "Initial is_double_speed should be false"
+        );
+        assert!(
+            !bus.get_key1_prepare_speed_switch(),
+            "Initial key1_prepare_speed_switch should be false"
+        );
         // KEY1 read: speed_bit (0) | prepare_bit (0) | 0x7E = 0x7E
         assert_eq!(bus.read_byte(0xFF4D), 0x7E, "Initial KEY1 read incorrect");
 
         // Write to KEY1 to set prepare_speed_switch
         bus.write_byte(0xFF4D, 0x01); // Bit 0 set
-        assert!(bus.get_key1_prepare_speed_switch(), "key1_prepare_speed_switch should be true after writing 0x01");
+        assert!(
+            bus.get_key1_prepare_speed_switch(),
+            "key1_prepare_speed_switch should be true after writing 0x01"
+        );
         // KEY1 read: speed_bit (0) | prepare_bit (1) | 0x7E = 0x7F
-        assert_eq!(bus.read_byte(0xFF4D), 0x7F, "KEY1 read after setting prepare bit incorrect");
+        assert_eq!(
+            bus.read_byte(0xFF4D),
+            0x7F,
+            "KEY1 read after setting prepare bit incorrect"
+        );
 
         // Write to KEY1 to clear prepare_speed_switch
         bus.write_byte(0xFF4D, 0xFE); // Bit 0 clear (value & 0x01 == 0)
-        assert!(!bus.get_key1_prepare_speed_switch(), "key1_prepare_speed_switch should be false after writing 0xFE");
+        assert!(
+            !bus.get_key1_prepare_speed_switch(),
+            "key1_prepare_speed_switch should be false after writing 0xFE"
+        );
         // KEY1 read: speed_bit (0) | prepare_bit (0) | 0x7E = 0x7E
-        assert_eq!(bus.read_byte(0xFF4D), 0x7E, "KEY1 read after clearing prepare bit incorrect");
+        assert_eq!(
+            bus.read_byte(0xFF4D),
+            0x7E,
+            "KEY1 read after clearing prepare bit incorrect"
+        );
 
         // Toggle speed mode (internal state change)
         bus.toggle_speed_mode();
-        assert!(bus.get_is_double_speed(), "is_double_speed should be true after toggle");
+        assert!(
+            bus.get_is_double_speed(),
+            "is_double_speed should be true after toggle"
+        );
         // KEY1 read: speed_bit (0x80) | prepare_bit (0) | 0x7E = 0xFE
-        assert_eq!(bus.read_byte(0xFF4D), 0xFE, "KEY1 read after toggling speed mode incorrect");
+        assert_eq!(
+            bus.read_byte(0xFF4D),
+            0xFE,
+            "KEY1 read after toggling speed mode incorrect"
+        );
 
         // Set prepare switch again while in double speed
         bus.write_byte(0xFF4D, 0x01);
-        assert!(bus.get_key1_prepare_speed_switch(), "key1_prepare_speed_switch should be true again");
+        assert!(
+            bus.get_key1_prepare_speed_switch(),
+            "key1_prepare_speed_switch should be true again"
+        );
         // KEY1 read: speed_bit (0x80) | prepare_bit (1) | 0x7E = 0xFF
-        assert_eq!(bus.read_byte(0xFF4D), 0xFF, "KEY1 read with double speed and prepare bit set incorrect");
+        assert_eq!(
+            bus.read_byte(0xFF4D),
+            0xFF,
+            "KEY1 read with double speed and prepare bit set incorrect"
+        );
     }
 
     #[test]
@@ -948,7 +1158,9 @@ mod tests {
         bus.save_save_files(rom_path.to_str().unwrap());
 
         if let Some(ram) = bus.mbc.get_ram_mut() {
-            for b in ram.iter_mut() { *b = 0; }
+            for b in ram.iter_mut() {
+                *b = 0;
+            }
         }
 
         bus.load_save_files(rom_path.to_str().unwrap());

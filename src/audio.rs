@@ -15,7 +15,11 @@ impl AudioOutput {
             Some(d) => d,
             None => {
                 eprintln!("No output audio device available. Audio disabled.");
-                return Self { sender: None, sample_rate: 44100, channels: 2 };
+                return Self {
+                    sender: None,
+                    sample_rate: 44100,
+                    channels: 2,
+                };
             }
         };
 
@@ -23,11 +27,19 @@ impl AudioOutput {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Failed to get default output config: {e}");
-                match device.supported_output_configs().ok().and_then(|mut cfgs| cfgs.next()) {
+                match device
+                    .supported_output_configs()
+                    .ok()
+                    .and_then(|mut cfgs| cfgs.next())
+                {
                     Some(range) => range.with_max_sample_rate(),
                     None => {
                         eprintln!("No supported audio configs. Audio disabled.");
-                        return Self { sender: None, sample_rate: 44100, channels: 2 };
+                        return Self {
+                            sender: None,
+                            sample_rate: 44100,
+                            channels: 2,
+                        };
                     }
                 }
             }
@@ -41,15 +53,30 @@ impl AudioOutput {
         let (tx, rx) = crossbeam_channel::bounded::<(f32, f32)>(2048);
         let err_fn = |err| eprintln!("Audio stream error: {err}");
         let stream_result = match sample_format {
-            cpal::SampleFormat::F32 => device.build_output_stream(&config, move |data: &mut [f32], _| {
-                write_samples(data, channels, &rx);
-            }, err_fn, None),
-            cpal::SampleFormat::I16 => device.build_output_stream(&config, move |data: &mut [i16], _| {
-                write_samples(data, channels, &rx);
-            }, err_fn, None),
-            cpal::SampleFormat::U16 => device.build_output_stream(&config, move |data: &mut [u16], _| {
-                write_samples(data, channels, &rx);
-            }, err_fn, None),
+            cpal::SampleFormat::F32 => device.build_output_stream(
+                &config,
+                move |data: &mut [f32], _| {
+                    write_samples(data, channels, &rx);
+                },
+                err_fn,
+                None,
+            ),
+            cpal::SampleFormat::I16 => device.build_output_stream(
+                &config,
+                move |data: &mut [i16], _| {
+                    write_samples(data, channels, &rx);
+                },
+                err_fn,
+                None,
+            ),
+            cpal::SampleFormat::U16 => device.build_output_stream(
+                &config,
+                move |data: &mut [u16], _| {
+                    write_samples(data, channels, &rx);
+                },
+                err_fn,
+                None,
+            ),
             _ => unreachable!(),
         };
 
@@ -57,26 +84,44 @@ impl AudioOutput {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Failed to build audio stream: {e}");
-                return Self { sender: None, sample_rate, channels };
+                return Self {
+                    sender: None,
+                    sample_rate,
+                    channels,
+                };
             }
         };
 
         if let Err(e) = stream.play() {
             eprintln!("Failed to play audio stream: {e}");
-            return Self { sender: None, sample_rate, channels };
+            return Self {
+                sender: None,
+                sample_rate,
+                channels,
+            };
         }
 
         // Stream will run until process exit.
         std::mem::forget(stream);
-        Self { sender: Some(tx), sample_rate, channels }
+        Self {
+            sender: Some(tx),
+            sample_rate,
+            channels,
+        }
     }
 
-    pub fn is_enabled(&self) -> bool { self.sender.is_some() }
+    pub fn is_enabled(&self) -> bool {
+        self.sender.is_some()
+    }
 
-    pub fn sample_rate(&self) -> u32 { self.sample_rate }
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
 
     #[allow(dead_code)]
-    pub fn channels(&self) -> u16 { self.channels }
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
 
     pub fn push_sample(&self, left: f32, right: f32) {
         if let Some(tx) = &self.sender {

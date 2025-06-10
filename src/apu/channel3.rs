@@ -20,15 +20,28 @@ pub struct Channel3 {
 impl Channel3 {
     pub fn new() -> Self {
         Self {
-            nr30: Nr30::new(), nr31: Nr31::new(), nr32: Nr32::new(), nr33: Nr33::new(), nr34: Nr34::new(),
-            enabled: false, length_counter: 0, frequency_timer: 0, sample_index: 0, current_sample_buffer: 0,
+            nr30: Nr30::new(),
+            nr31: Nr31::new(),
+            nr32: Nr32::new(),
+            nr33: Nr33::new(),
+            nr34: Nr34::new(),
+            enabled: false,
+            length_counter: 0,
+            frequency_timer: 0,
+            sample_index: 0,
+            current_sample_buffer: 0,
             wave_form_just_read: false,
             pulsed: false,
             bugged_read_countdown: 0,
         }
     }
 
-    pub fn trigger(&mut self, wave_ram: &[u8;16], current_frame_sequencer_step: u8, length_enabled_from_nrx4: bool) {
+    pub fn trigger(
+        &mut self,
+        wave_ram: &[u8; 16],
+        current_frame_sequencer_step: u8,
+        length_enabled_from_nrx4: bool,
+    ) {
         self.enabled = self.nr30.dac_on();
         self.wave_form_just_read = false;
         self.pulsed = true;
@@ -36,9 +49,17 @@ impl Channel3 {
         if self.length_counter == 0 {
             let length_data = self.nr31.sound_length_val();
             let is_max_length_condition = length_data == 0;
-            let mut actual_load_val = if is_max_length_condition { 256 } else { 256 - (length_data as u16) };
-            let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
-            if next_fs_step_will_not_clock_length && length_enabled_from_nrx4 && is_max_length_condition {
+            let mut actual_load_val = if is_max_length_condition {
+                256
+            } else {
+                256 - (length_data as u16)
+            };
+            let next_fs_step_will_not_clock_length =
+                matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
+            if next_fs_step_will_not_clock_length
+                && length_enabled_from_nrx4
+                && is_max_length_condition
+            {
                 actual_load_val = 255;
             }
             self.length_counter = actual_load_val;
@@ -48,9 +69,9 @@ impl Channel3 {
         let freq_msb = self.nr34.frequency_msb_val() as u16;
         let period_val = (freq_msb << 8) | freq_lsb;
         if period_val <= 2049 {
-             self.frequency_timer = (2049u16.saturating_sub(period_val)) * 2;
+            self.frequency_timer = (2049u16.saturating_sub(period_val)) * 2;
         } else {
-             self.frequency_timer = 0;
+            self.frequency_timer = 0;
         }
         self.sample_index = 0;
 
@@ -60,10 +81,14 @@ impl Channel3 {
             self.wave_form_just_read = true;
         }
 
-        if !self.nr30.dac_on() { self.enabled = false; }
+        if !self.nr30.dac_on() {
+            self.enabled = false;
+        }
     }
 
-    pub fn get_length_counter(&self) -> u16 { self.length_counter }
+    pub fn get_length_counter(&self) -> u16 {
+        self.length_counter
+    }
 
     pub fn extra_length_clock(&mut self, trigger_is_set_in_nrx4: bool) {
         if self.length_counter > 0 {
@@ -77,7 +102,9 @@ impl Channel3 {
     pub fn clock_length(&mut self) {
         if self.nr34.is_length_enabled() && self.length_counter > 0 {
             self.length_counter -= 1;
-            if self.length_counter == 0 { self.enabled = false; }
+            if self.length_counter == 0 {
+                self.enabled = false;
+            }
         }
     }
 
@@ -112,7 +139,9 @@ impl Channel3 {
     }
 
     pub fn get_output_sample(&self) -> u8 {
-        if !self.enabled || !self.nr30.dac_on() { return 0; }
+        if !self.enabled || !self.nr30.dac_on() {
+            return 0;
+        }
         let output_nibble = self.current_sample_buffer;
         let shifted_nibble = output_nibble >> self.nr32.get_volume_shift();
         shifted_nibble
@@ -144,7 +173,7 @@ impl Channel3 {
         self.enabled && self.nr30.dac_on()
     }
 
-    pub(super) fn reload_current_sample_buffer(&mut self, wave_ram: &[u8;16]) {
+    pub(super) fn reload_current_sample_buffer(&mut self, wave_ram: &[u8; 16]) {
         let byte_index = (self.sample_index / 2) as usize;
         if byte_index < wave_ram.len() {
             let sample_byte = wave_ram[byte_index];

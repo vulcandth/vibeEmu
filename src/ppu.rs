@@ -49,8 +49,8 @@ pub const MODE_DRAWING: u8 = 3;
 
 pub struct Ppu {
     // pub system_mode: crate::bus::SystemMode, // Replaced by model
-    pub model: GameBoyModel, // Added model field
-    pub vram: [[u8; 8192]; 2],               // Two VRAM banks for CGB
+    pub model: GameBoyModel,   // Added model field
+    pub vram: [[u8; 8192]; 2], // Two VRAM banks for CGB
     pub oam: [u8; 160],
     pub framebuffer: Vec<u8>,
     pub cycles: u32,
@@ -78,7 +78,8 @@ pub struct Ppu {
 }
 
 impl Ppu {
-    pub fn new(model: GameBoyModel) -> Self { // Changed parameter
+    pub fn new(model: GameBoyModel) -> Self {
+        // Changed parameter
         let initial_ly = 0;
         let initial_lyc = 0;
         let mut initial_stat = MODE_OAM_SCAN;
@@ -162,7 +163,7 @@ impl Ppu {
                 // If LY is not already 0, reset it and PPU state
                 self.ly = 0;
                 self.cycles = 0; // Reset cycle count
-                // When LCD is disabled the PPU enters Mode 0 (HBlank)
+                                 // When LCD is disabled the PPU enters Mode 0 (HBlank)
                 if self.set_mode(MODE_HBLANK).is_some() {
                     lcd_stat_occurred_this_call = true;
                 }
@@ -285,8 +286,7 @@ impl Ppu {
 
         // DMG Mode Specific: If LCDC Bit 0 is off, BG/Window are white (color 0 of BGP). Sprites can still draw.
         // In CGB Mode, LCDC Bit 0 is BG-to-OBJ Master Priority, not a display disable for BG/Win.
-        let bg_is_blank_dmg =
-            self.model.is_dmg_family() && (self.lcdc & (1 << 0)) == 0;
+        let bg_is_blank_dmg = self.model.is_dmg_family() && (self.lcdc & (1 << 0)) == 0;
 
         if bg_is_blank_dmg {
             let dmg_color_0_idx = (self.bgp >> (0 * 2)) & 0b11; // Color for index 0 from BGP
@@ -581,13 +581,15 @@ impl Ppu {
                 }
             }
 
-            if self.model.is_dmg_family() { // Includes SGB which uses OAM index for priority too
-                 candidate_sprites.sort_by(|a, b| {
-                        a.sprite_x_oam
-                            .cmp(&b.sprite_x_oam)
-                            .then_with(|| a.oam_idx.cmp(&b.oam_idx)) // DMG/SGB priority by X-coord then OAM index
-                    });
-            } else { // CGB family uses OAM index only for tie-breaking with X coord (effectively OAM index for overlapping at same X)
+            if self.model.is_dmg_family() {
+                // Includes SGB which uses OAM index for priority too
+                candidate_sprites.sort_by(|a, b| {
+                    a.sprite_x_oam
+                        .cmp(&b.sprite_x_oam)
+                        .then_with(|| a.oam_idx.cmp(&b.oam_idx)) // DMG/SGB priority by X-coord then OAM index
+                });
+            } else {
+                // CGB family uses OAM index only for tie-breaking with X coord (effectively OAM index for overlapping at same X)
                 // SameBoy sorts by X coordinate for CGB too, then OAM index.
                 // The key difference is how priority is handled later with BG.
                 // For CGB, sprite-to-sprite priority is just OAM index (lower index wins for same X).
@@ -597,11 +599,11 @@ impl Ppu {
                 // candidate_sprites.sort_by_key(|s| s.oam_idx);
                 // Sameboy sorts CGB by X-coordinate only.
                 // Let's keep DMG sort for now, as it works for CGB too if priority is handled pixel-wise
-                 candidate_sprites.sort_by(|a, b| {
-                        a.sprite_x_oam
-                            .cmp(&b.sprite_x_oam)
-                            .then_with(|| a.oam_idx.cmp(&b.oam_idx))
-                    });
+                candidate_sprites.sort_by(|a, b| {
+                    a.sprite_x_oam
+                        .cmp(&b.sprite_x_oam)
+                        .then_with(|| a.oam_idx.cmp(&b.oam_idx))
+                });
             }
 
             for sprite_info in candidate_sprites.iter().rev() {
@@ -677,22 +679,30 @@ impl Ppu {
                     if self.model.is_cgb_family() {
                         // CGB Priority Logic
                         // LCDC bit 0: BG-to-OBJ Master Priority (0=BG wins, 1=OAM prio attr wins)
-                        if (self.lcdc & (1 << 0)) == 0 { // BG Master Priority (BG always wins over sprites if not color 0)
+                        if (self.lcdc & (1 << 0)) == 0 {
+                            // BG Master Priority (BG always wins over sprites if not color 0)
                             if bg_color_idx != 0 {
                                 draw_sprite_pixel = false;
                             }
-                        } else { // OAM Priority Attribute decides
-                            if self.bg_priority_buffer[screen_pixel_x as usize] && bg_color_idx != 0 { // BG tile attribute has priority
+                        } else {
+                            // OAM Priority Attribute decides
+                            if self.bg_priority_buffer[screen_pixel_x as usize] && bg_color_idx != 0
+                            {
+                                // BG tile attribute has priority
                                 draw_sprite_pixel = false;
-                            } else if !sprite_info.sprite_has_priority_over_bg && bg_color_idx != 0 { // Sprite attribute OAM[val&0x80]==1 means BG wins
+                            } else if !sprite_info.sprite_has_priority_over_bg && bg_color_idx != 0
+                            {
+                                // Sprite attribute OAM[val&0x80]==1 means BG wins
                                 draw_sprite_pixel = false;
                             }
                         }
-                    } else { // DMG Priority Logic
+                    } else {
+                        // DMG Priority Logic
                         let bg_win_display_enabled_dmg = (self.lcdc & (1 << 0)) != 0; // LCDC Bit 0 for BG/Win display
                         if bg_win_display_enabled_dmg
                             && !sprite_info.sprite_has_priority_over_bg // Sprite attribute OAM[val&0x80]==1 means BG wins
-                            && bg_color_idx != 0 // BG is not transparent
+                            && bg_color_idx != 0
+                        // BG is not transparent
                         {
                             draw_sprite_pixel = false;
                         }

@@ -9,8 +9,10 @@ pub const JOYPAD_IRQ_BIT: u8 = 4;
 pub enum InterruptType {
     VBlank,
     LcdStat,
-    #[allow(dead_code)] Timer,
-    #[allow(dead_code)] Serial,
+    #[allow(dead_code)]
+    Timer,
+    #[allow(dead_code)]
+    Serial,
     Joypad,
 }
 

@@ -4,8 +4,8 @@ mod apu;
 mod bus;
 mod cpu;
 mod memory;
-mod ppu;
-pub mod models; // Declare models module at crate root
+pub mod models;
+mod ppu; // Declare models module at crate root
 
 #[cfg(test)]
 mod bus_tests;
@@ -14,47 +14,47 @@ mod ppu_tests;
 
 // Assuming these other modules exist from the initial problem description context
 // and might be needed for a complete build, though not directly used in this step's main()
+mod audio;
 mod interrupts;
 mod joypad;
 mod mbc; // Added MBC module
 mod serial;
 mod timer;
-mod audio;
 
+use std::cell::RefCell;
 use std::env; // For command-line arguments
 use std::fs::File; // Added for file operations
 use std::io::{Read, Result}; // Added for file operations and Result type
-use std::time::Instant; // Added for time tracking
 use std::rc::Rc;
-use std::cell::RefCell;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread; // For std::thread::sleep and spawning
+use std::sync::Arc;
+use std::thread;
+use std::time::Instant; // Added for time tracking // For std::thread::sleep and spawning
 
 use eframe::egui; // For egui integration
+#[cfg(target_os = "macos")]
+use winit::platform::macos::EventLoopBuilderExtMacOS;
 #[cfg(target_os = "windows")]
 use winit::platform::windows::EventLoopBuilderExtWindows;
 #[cfg(target_os = "linux")]
 use winit::platform::x11::EventLoopBuilderExtX11; // Assuming X11 for broader compatibility on Linux
-#[cfg(target_os = "macos")]
-use winit::platform::macos::EventLoopBuilderExtMacOS;
 // Wayland could also be an option for Linux:
 // #[cfg(target_os = "linux")]
 // use winit::platform::wayland::EventLoopBuilderExtWayland;
 
-use minifb::{Key, Window, WindowOptions, MouseButton};
-use crossbeam_channel::{unbounded, Sender, Receiver}; // Added for MPSC channel
+use crossbeam_channel::{unbounded, Receiver, Sender}; // Added for MPSC channel
+use minifb::{Key, MouseButton, Window, WindowOptions};
 use native_dialog::FileDialog; // For native file dialogs
 
 // Use crate:: if VibeEmu is a library and main.rs is an example or bin.
 // If main.rs is part of the library itself (e.g. src/main.rs in a binary crate),
 // then `crate::` is appropriate.
+use crate::apu::CPU_CLOCK_HZ; // Import for audio timing
+use crate::audio::AudioOutput;
+use crate::bus::Bus;
 use crate::cpu::Cpu;
 use crate::interrupts::InterruptType;
-use crate::bus::Bus;
-use crate::apu::CPU_CLOCK_HZ; // Import for audio timing
 use crate::joypad::JoypadButton; // Added for joypad input
-use crate::audio::AudioOutput;
 
 // Define window dimensions
 const WINDOW_WIDTH: usize = 160;
@@ -111,8 +111,10 @@ fn parse_args(args_vec: &[String]) -> (bool, Option<u64>, Option<u64>, String, b
     let mut halt_cycles_count: Option<u64> = None;
     let mut rom_path = "roms/blargg/cpu_instrs/cpu_instrs.gb".to_string(); // Default ROM path
     let mut rom_path_explicitly_set = false;
-    let program_name = args_vec.get(0).cloned().unwrap_or_else(|| "VibeEmu".to_string());
-
+    let program_name = args_vec
+        .get(0)
+        .cloned()
+        .unwrap_or_else(|| "VibeEmu".to_string());
 
     let mut i = 1; // Start after program name
     while i < args_vec.len() {
@@ -164,7 +166,14 @@ fn parse_args(args_vec: &[String]) -> (bool, Option<u64>, Option<u64>, String, b
         halt_duration_seconds = Some(30);
     }
 
-    (is_headless, halt_duration_seconds, halt_cycles_count, rom_path, rom_path_explicitly_set, program_name)
+    (
+        is_headless,
+        halt_duration_seconds,
+        halt_cycles_count,
+        rom_path,
+        rom_path_explicitly_set,
+        program_name,
+    )
 }
 
 fn main() {
@@ -172,17 +181,20 @@ fn main() {
 
     let args_vec: Vec<String> = env::args().collect();
     let (
-        mut is_headless, // Make mutable to allow fallback
+        mut is_headless,           // Make mutable to allow fallback
         mut halt_duration_seconds, // Make mutable for fallback
         halt_cycles_count,
         rom_path,
         rom_path_explicitly_set,
-        program_name
+        program_name,
     ) = parse_args(&args_vec);
 
     // Initial message about ROM and potential GUI mode usage.
     if !is_headless && !rom_path_explicitly_set {
-        println!("Usage: {} <path_to_rom> [--headless] [--halt-time <seconds>] [--halt-cycles <cycles>]", program_name);
+        println!(
+            "Usage: {} <path_to_rom> [--headless] [--halt-time <seconds>] [--halt-cycles <cycles>]",
+            program_name
+        );
         println!("Defaulting to ROM: {}", rom_path);
     }
     println!("Loading ROM from: {}", rom_path);
@@ -218,12 +230,17 @@ fn main() {
     cpu.pc = 0x0100;
     // TODO: Implement proper boot ROM behavior or make this configurable.
 
-    println!("Initial CPU state: PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}", cpu.pc, cpu.sp, cpu.a, cpu.f);
+    println!(
+        "Initial CPU state: PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}",
+        cpu.pc, cpu.sp, cpu.a, cpu.f
+    );
 
     // Channels for communication between main thread and other threads
-    let (command_sender, command_receiver): (Sender<EmulatorCommand>, Receiver<EmulatorCommand>) = unbounded();
+    let (command_sender, command_receiver): (Sender<EmulatorCommand>, Receiver<EmulatorCommand>) =
+        unbounded();
     let (rom_path_sender, rom_path_receiver_main): (Sender<String>, Receiver<String>) = unbounded();
-    let (context_menu_cmd_sender, context_menu_cmd_receiver_for_app) = unbounded::<ContextMenuCommand>();
+    let (context_menu_cmd_sender, context_menu_cmd_receiver_for_app) =
+        unbounded::<ContextMenuCommand>();
 
     // --- Persistent Egui Context Menu Thread ---
     let command_sender_clone_for_egui_thread = command_sender.clone();
@@ -250,11 +267,13 @@ fn main() {
         if let Err(e) = eframe::run_native(
             "VibeEmu_ContextMenuApp", // Unique name for the app
             native_options,
-            Box::new(|_cc| Box::new(ContextMenuApp::new(
-                command_sender_clone_for_egui_thread,
-                rom_path_sender_clone_for_egui_thread,
-                context_menu_cmd_receiver_for_app // Pass the receiver here
-            )))
+            Box::new(|_cc| {
+                Box::new(ContextMenuApp::new(
+                    command_sender_clone_for_egui_thread,
+                    rom_path_sender_clone_for_egui_thread,
+                    context_menu_cmd_receiver_for_app, // Pass the receiver here
+                ))
+            }),
         ) {
             eprintln!("Persistent Egui context menu thread failed: {:?}", e);
         }
@@ -274,10 +293,13 @@ fn main() {
         ) {
             Ok(w) => window_attempt = Some(w),
             Err(e) => {
-                eprintln!("Failed to create window: {}. Falling back to headless mode.", e);
+                eprintln!(
+                    "Failed to create window: {}. Falling back to headless mode.",
+                    e
+                );
                 is_headless = true; // Switch to headless
                 fell_back_to_headless = true; // Mark that fallback happened
-                // Apply default headless halt time if no other time is set
+                                              // Apply default headless halt time if no other time is set
                 if halt_duration_seconds.is_none() {
                     halt_duration_seconds = Some(30);
                 }
@@ -304,20 +326,22 @@ fn main() {
             println!("Halt cycles set to {}.", cycles);
         }
         if !rom_path_explicitly_set {
-             // This message might be redundant if already printed, but context dependent.
-            println!("No ROM path provided for headless mode. Defaulting to: {}", rom_path);
+            // This message might be redundant if already printed, but context dependent.
+            println!(
+                "No ROM path provided for headless mode. Defaulting to: {}",
+                rom_path
+            );
         }
     }
 
-
     if let Some(_w) = &mut window { // Only if window was created
-        // Limit window update rate (optional, minifb handles this reasonably well)
-        // w.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Approx 60Hz
+         // Limit window update rate (optional, minifb handles this reasonably well)
+         // w.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Approx 60Hz
     }
 
     // General emulation settings
     const SERIAL_PRINT_INTERVAL: u64 = 500_000; // Print serial output every N steps
-    // MAX_STEPS_HEADLESS has been removed. Functionality is covered by --halt-cycles or --halt-time.
+                                                // MAX_STEPS_HEADLESS has been removed. Functionality is covered by --halt-cycles or --halt-time.
 
     // Main emulation loop
     let mut emulation_steps: u64 = 0; // Total CPU steps executed
@@ -325,9 +349,9 @@ fn main() {
     let start_time = Instant::now(); // Record start time, used if halt_duration_seconds is Some
     let mut prev_right_mouse_down = false; // For right-click detection
     let paused = Arc::new(AtomicBool::new(false)); // For pause state
-    // egui_context_menu_active and egui_context_menu_has_run_once are removed
-    // command_sender, command_receiver, rom_path_sender, rom_path_receiver_main,
-    // and context_menu_cmd_sender are now all declared before the persistent egui thread.
+                                                   // egui_context_menu_active and egui_context_menu_has_run_once are removed
+                                                   // command_sender, command_receiver, rom_path_sender, rom_path_receiver_main,
+                                                   // and context_menu_cmd_sender are now all declared before the persistent egui thread.
 
     // PPU timing: Game Boy PPU runs at a fixed speed.
     // Total PPU cycles per frame = Scanlines (154) * Cycles per scanline (456)
@@ -374,8 +398,11 @@ fn main() {
             // ensure only one event is processed for "Select" if both shifts are pressed.
             // One way:
             let left_shift_pressed = w.is_key_down(Key::LeftShift);
-            if bus_mut.joypad.button_event(JoypadButton::Select, w.is_key_down(Key::RightShift) || left_shift_pressed) {
-                 bus_mut.request_interrupt(InterruptType::Joypad);
+            if bus_mut.joypad.button_event(
+                JoypadButton::Select,
+                w.is_key_down(Key::RightShift) || left_shift_pressed,
+            ) {
+                bus_mut.request_interrupt(InterruptType::Joypad);
             }
 
             // Handle right-click release detection for pause/resume
@@ -385,13 +412,15 @@ fn main() {
                 let new_paused_state = !current_paused_state;
                 paused.store(new_paused_state, Ordering::SeqCst);
 
-                if new_paused_state { // Emulator is now PAUSED
+                if new_paused_state {
+                    // Emulator is now PAUSED
                     println!("Emulator paused. Showing context menu.");
                     // Send Show command to the egui thread
                     if let Err(e) = context_menu_cmd_sender.send(ContextMenuCommand::Show) {
                         eprintln!("Failed to send Show command to context menu: {:?}", e);
                     }
-                } else { // Emulator is now RESUMED
+                } else {
+                    // Emulator is now RESUMED
                     println!("Emulator resumed.");
                     // Current design: menu hides itself upon action or cancel.
                     // Explicitly hiding here is deferred.
@@ -407,7 +436,8 @@ fn main() {
             // This case is mostly for clarity; the !running check below will handle exit.
         }
 
-        if !running { // Check if ESC or window closed from input handling above
+        if !running {
+            // Check if ESC or window closed from input handling above
             break;
         }
 
@@ -426,15 +456,17 @@ fn main() {
                     audio_cycle_counter += t_cycles_for_step;
                     if audio_cycle_counter >= cpu_cycles_per_audio_sample {
                         audio_cycle_counter -= cpu_cycles_per_audio_sample;
-                        let (left_sample, right_sample) = bus.borrow_mut().apu.get_mixed_audio_samples();
+                        let (left_sample, right_sample) =
+                            bus.borrow_mut().apu.get_mixed_audio_samples();
                         audio_output.push_sample(left_sample, right_sample);
                     }
                 }
             } else {
                 // CPU is HALTed or in STOP mode.
                 // Still need to check for window close/ESC if GUI is active and CPU is stopped.
-                 if let Some(w) = window.as_ref() { // Use window.as_ref() if not modifying window itself
-                     if !w.is_open() || w.is_key_down(Key::Escape) {
+                if let Some(w) = window.as_ref() {
+                    // Use window.as_ref() if not modifying window itself
+                    if !w.is_open() || w.is_key_down(Key::Escape) {
                         running = false;
                     }
                 }
@@ -443,13 +475,11 @@ fn main() {
             // PPU Frame rendering logic - should execute if not paused
             if ppu_cycles_this_frame >= CYCLES_PER_FRAME {
                 ppu_cycles_this_frame -= CYCLES_PER_FRAME; // Reset for next frame
-                if let Some(w) = window.as_mut() { // GUI mode rendering
+                if let Some(w) = window.as_mut() {
+                    // GUI mode rendering
                     let ppu_framebuffer = &bus.borrow().ppu.framebuffer;
-                    let display_buffer = convert_rgb_to_u32_buffer(
-                        ppu_framebuffer,
-                        WINDOW_WIDTH,
-                        WINDOW_HEIGHT,
-                    );
+                    let display_buffer =
+                        convert_rgb_to_u32_buffer(ppu_framebuffer, WINDOW_WIDTH, WINDOW_HEIGHT);
                     // update_with_buffer also pumps events for minifb
                     w.update_with_buffer(&display_buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
                         .unwrap_or_else(|e| panic!("Failed to update window buffer: {}", e));
@@ -462,18 +492,21 @@ fn main() {
                 last_frame_time = std::time::Instant::now();
             }
             emulation_steps += 1; // Increment emulation steps only when not paused
-        } else { // Emulator is paused
+        } else {
+            // Emulator is paused
             thread::sleep(std::time::Duration::from_millis(10)); // Prevent busy loop
         }
 
         // Periodic logging and headless checks (common to both modes, but some actions are headless-specific)
-        if emulation_steps % SERIAL_PRINT_INTERVAL == 0 || !running { // Also print on last step
+        if emulation_steps % SERIAL_PRINT_INTERVAL == 0 || !running {
+            // Also print on last step
             let serial_data = bus.borrow().get_serial_output_string();
             if !serial_data.is_empty() {
                 println!("Serial Output (step {}):\n{}", emulation_steps, serial_data);
             }
-            if emulation_steps % (SERIAL_PRINT_INTERVAL * 10) == 0 || !running { // Less frequent full state print unless exiting
-                 println!("Current CPU state (step {}): PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
+            if emulation_steps % (SERIAL_PRINT_INTERVAL * 10) == 0 || !running {
+                // Less frequent full state print unless exiting
+                println!("Current CPU state (step {}): PC=0x{:04X}, SP=0x{:04X}, A=0x{:02X}, F=0x{:02X}, B=0x{:02X}, C=0x{:02X}, D=0x{:02X}, E=0x{:02X}, H=0x{:02X}, L=0x{:02X}",
                          emulation_steps, cpu.pc, cpu.sp, cpu.a, cpu.f, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l);
             }
 
@@ -482,12 +515,17 @@ fn main() {
             if let Some(duration_limit_secs) = halt_duration_seconds {
                 let elapsed = start_time.elapsed();
                 if elapsed.as_secs() >= duration_limit_secs {
-                    println!("Time limit of {} seconds reached. (Elapsed: {}s)", duration_limit_secs, elapsed.as_secs());
+                    println!(
+                        "Time limit of {} seconds reached. (Elapsed: {}s)",
+                        duration_limit_secs,
+                        elapsed.as_secs()
+                    );
                     running = false;
                 }
             }
 
-            if running { // Only check if not already stopped by time limit
+            if running {
+                // Only check if not already stopped by time limit
                 if let Some(limit) = halt_cycles_count {
                     // Note: emulation_steps is now only incremented when not paused.
                     // So, this cycle limit will apply to actual emulated cycles.
@@ -524,7 +562,8 @@ fn main() {
                     // needs to be moved to the same scope as `command_receiver`.
                     // I will make this change in the part where the thread is spawned.
 
-                    match rom_path_receiver_main.recv() { // Using the correctly scoped receiver
+                    match rom_path_receiver_main.recv() {
+                        // Using the correctly scoped receiver
                         Ok(new_rom_path_str) => {
                             println!("Attempting to load new ROM: {}", new_rom_path_str);
                             match load_rom_file(&new_rom_path_str) {
@@ -542,7 +581,10 @@ fn main() {
                                     println!("Successfully loaded new ROM and reset emulator.");
                                 }
                                 Err(e) => {
-                                    eprintln!("Failed to load new ROM file '{}': {}", new_rom_path_str, e);
+                                    eprintln!(
+                                        "Failed to load new ROM file '{}': {}",
+                                        new_rom_path_str, e
+                                    );
                                 }
                             }
                         }
@@ -556,7 +598,7 @@ fn main() {
                     // Using the original rom_path determined at startup
                     match load_rom_file(&rom_path) {
                         Ok(original_rom_data_vec) => {
-                            bus = Rc::new(RefCell::new(Bus::new(original_rom_data_vec))); 
+                            bus = Rc::new(RefCell::new(Bus::new(original_rom_data_vec)));
                             bus.borrow_mut().load_save_files(&rom_path);
                             cpu = Cpu::new(bus.clone());
                             cpu.pc = 0x0100; // Reset PC
@@ -586,9 +628,11 @@ fn main() {
     println!("Total emulation steps: {}", emulation_steps);
     if is_headless {
         let elapsed_total = start_time.elapsed();
-        println!("Total execution time (headless): {:.3}s", elapsed_total.as_secs_f64());
+        println!(
+            "Total execution time (headless): {:.3}s",
+            elapsed_total.as_secs_f64()
+        );
     }
-
 
     // Final serial output check
     let serial_data = bus.borrow().get_serial_output_string();
@@ -638,16 +682,16 @@ impl eframe::App for ContextMenuApp {
                     self.is_visible = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus); // Bring to front
-                    self.status_message = Some("Select an action.".to_string()); // Reset status
-                }
-                // ContextMenuCommand::Hide could be handled here if needed
+                    self.status_message = Some("Select an action.".to_string());
+                    // Reset status
+                } // ContextMenuCommand::Hide could be handled here if needed
             }
         }
 
         if self.is_visible {
             egui::Window::new("Context Menu")
                 .collapsible(false) // Optional: prevent user from collapsing it
-                .resizable(false)   // Optional: prevent user from resizing it
+                .resizable(false) // Optional: prevent user from resizing it
                 .show(ctx, |ui| {
                     if let Some(message) = &self.status_message {
                         ui.label(message);
@@ -663,18 +707,27 @@ impl eframe::App for ContextMenuApp {
                         match dialog_result {
                             Ok(Some(path_buf)) => {
                                 if let Some(path_str) = path_buf.to_str() {
-                                    self.rom_path_sender.send(path_str.to_string()).unwrap_or_else(|e| {
-                                        eprintln!("Failed to send ROM path: {:?}", e);
-                                        self.status_message = Some(format!("Error sending path: {:?}", e));
-                                    });
-                                    self.command_sender.send(EmulatorCommand::LoadRom).unwrap_or_else(|e| {
-                                        eprintln!("Failed to send LoadRom command: {:?}", e);
-                                    });
-                                    self.status_message = Some(format!("ROM selected: {}", path_buf.file_name().unwrap_or_default().to_string_lossy()));
+                                    self.rom_path_sender
+                                        .send(path_str.to_string())
+                                        .unwrap_or_else(|e| {
+                                            eprintln!("Failed to send ROM path: {:?}", e);
+                                            self.status_message =
+                                                Some(format!("Error sending path: {:?}", e));
+                                        });
+                                    self.command_sender
+                                        .send(EmulatorCommand::LoadRom)
+                                        .unwrap_or_else(|e| {
+                                            eprintln!("Failed to send LoadRom command: {:?}", e);
+                                        });
+                                    self.status_message = Some(format!(
+                                        "ROM selected: {}",
+                                        path_buf.file_name().unwrap_or_default().to_string_lossy()
+                                    ));
                                     self.is_visible = false;
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                                 } else {
-                                    self.status_message = Some("Selected path is not valid UTF-8.".to_string());
+                                    self.status_message =
+                                        Some("Selected path is not valid UTF-8.".to_string());
                                 }
                             }
                             Ok(None) => {
@@ -688,9 +741,11 @@ impl eframe::App for ContextMenuApp {
                     }
 
                     if ui.button("Reset Emulator").clicked() {
-                        self.command_sender.send(EmulatorCommand::ResetEmulator).unwrap_or_else(|e| {
-                            eprintln!("Failed to send ResetEmulator command: {:?}", e);
-                        });
+                        self.command_sender
+                            .send(EmulatorCommand::ResetEmulator)
+                            .unwrap_or_else(|e| {
+                                eprintln!("Failed to send ResetEmulator command: {:?}", e);
+                            });
                         self.is_visible = false;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                     }

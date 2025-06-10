@@ -19,13 +19,13 @@ const INTERRUPT_FLAG_REGISTER_ADDR: u16 = 0xFF0F; // IF Register
 const INTERRUPT_ENABLE_REGISTER_ADDR: u16 = 0xFFFF; // IE Register
 
 const INTERRUPT_SERVICE_M_CYCLES: u32 = 5; // M-cycles for interrupt dispatch
-const HALTED_IDLE_M_CYCLES: u32 = 1;      // M-cycles when halted and no interrupt
-// Default M-cycles for a regular instruction if not specified otherwise (for this subtask's simplification)
-// const DEFAULT_OPCODE_M_CYCLES: u32 = 4; // Removed as unused
+const HALTED_IDLE_M_CYCLES: u32 = 1; // M-cycles when halted and no interrupt
+                                     // Default M-cycles for a regular instruction if not specified otherwise (for this subtask's simplification)
+                                     // const DEFAULT_OPCODE_M_CYCLES: u32 = 4; // Removed as unused
 
 use crate::bus::Bus; // SystemMode removed
 use crate::models::GameBoyModel; // Added GameBoyModel
-// Removed: use crate::interrupts::InterruptType; // Will be moved into test module
+                                 // Removed: use crate::interrupts::InterruptType; // Will be moved into test module
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -57,22 +57,22 @@ impl Timing {
 
 // Timings are in M-cycles (T-states / 4)
 pub static OPCODE_TIMINGS: [Timing; 256] = [
-    Timing::Fixed(1), // 0x00 NOP
-    Timing::Fixed(3), // 0x01 LD BC,d16
-    Timing::Fixed(2), // 0x02 LD (BC),A
-    Timing::Fixed(2), // 0x03 INC BC
-    Timing::Fixed(1), // 0x04 INC B
-    Timing::Fixed(1), // 0x05 DEC B
-    Timing::Fixed(2), // 0x06 LD B,d8
-    Timing::Fixed(1), // 0x07 RLCA
-    Timing::Fixed(5), // 0x08 LD (a16),SP
-    Timing::Fixed(2), // 0x09 ADD HL,BC
-    Timing::Fixed(2), // 0x0A LD A,(BC)
-    Timing::Fixed(2), // 0x0B DEC BC
-    Timing::Fixed(1), // 0x0C INC C
-    Timing::Fixed(1), // 0x0D DEC C
-    Timing::Fixed(2), // 0x0E LD C,d8
-    Timing::Fixed(1), // 0x0F RRCA
+    Timing::Fixed(1),          // 0x00 NOP
+    Timing::Fixed(3),          // 0x01 LD BC,d16
+    Timing::Fixed(2),          // 0x02 LD (BC),A
+    Timing::Fixed(2),          // 0x03 INC BC
+    Timing::Fixed(1),          // 0x04 INC B
+    Timing::Fixed(1),          // 0x05 DEC B
+    Timing::Fixed(2),          // 0x06 LD B,d8
+    Timing::Fixed(1),          // 0x07 RLCA
+    Timing::Fixed(5),          // 0x08 LD (a16),SP
+    Timing::Fixed(2),          // 0x09 ADD HL,BC
+    Timing::Fixed(2),          // 0x0A LD A,(BC)
+    Timing::Fixed(2),          // 0x0B DEC BC
+    Timing::Fixed(1),          // 0x0C INC C
+    Timing::Fixed(1),          // 0x0D DEC C
+    Timing::Fixed(2),          // 0x0E LD C,d8
+    Timing::Fixed(1),          // 0x0F RRCA
     Timing::Fixed(1), // 0x10 STOP d8 (0x10 00) - simplified to 1 M-cycle for STOP, though it can vary. JSON says 4 T-states.
     Timing::Fixed(3), // 0x11 LD DE,d16
     Timing::Fixed(2), // 0x12 LD (DE),A
@@ -586,8 +586,8 @@ pub struct Cpu {
     pub pc: u16,
     pub sp: u16,
     bus: Rc<RefCell<Bus>>,
-    pub ime: bool,      // Interrupt Master Enable flag
-    pub is_halted: bool, // CPU is halted
+    pub ime: bool,          // Interrupt Master Enable flag
+    pub is_halted: bool,    // CPU is halted
     pub in_stop_mode: bool, // Added for STOP mode distinction
 }
 
@@ -595,7 +595,9 @@ impl Cpu {
     pub fn new(bus: Rc<RefCell<Bus>>) -> Self {
         let model = bus.borrow().get_model(); // Changed to get_model()
         let (a, f, b, c, d, e, h, l) = match model {
-            GameBoyModel::DMG | GameBoyModel::SGB | GameBoyModel::SGB2 => (0x01, 0xB0, 0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D),
+            GameBoyModel::DMG | GameBoyModel::SGB | GameBoyModel::SGB2 => {
+                (0x01, 0xB0, 0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D)
+            }
             _ => (0x11, 0x80, 0x00, 0x00, 0xFF, 0x56, 0x00, 0x0D), // Default to CGB values for CGB family and AGB
         };
 
@@ -638,76 +640,237 @@ impl Cpu {
 
     // LD r, r'
     // LD A, r'
-    pub fn ld_a_a(&mut self) { self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_a_b(&mut self) { self.a = self.b; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_a_c(&mut self) { self.a = self.c; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_a_d(&mut self) { self.a = self.d; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_a_e(&mut self) { self.a = self.e; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_a_h(&mut self) { self.a = self.h; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_a_l(&mut self) { self.a = self.l; self.pc = self.pc.wrapping_add(1); }
+    pub fn ld_a_a(&mut self) {
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_a_b(&mut self) {
+        self.a = self.b;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_a_c(&mut self) {
+        self.a = self.c;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_a_d(&mut self) {
+        self.a = self.d;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_a_e(&mut self) {
+        self.a = self.e;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_a_h(&mut self) {
+        self.a = self.h;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_a_l(&mut self) {
+        self.a = self.l;
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // LD B, r'
-    pub fn ld_b_a(&mut self) { self.b = self.a; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_b_b(&mut self) { self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_b_c(&mut self) { self.b = self.c; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_b_d(&mut self) { self.b = self.d; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_b_e(&mut self) { self.b = self.e; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_b_h(&mut self) { self.b = self.h; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_b_l(&mut self) { self.b = self.l; self.pc = self.pc.wrapping_add(1); }
+    pub fn ld_b_a(&mut self) {
+        self.b = self.a;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_b_b(&mut self) {
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_b_c(&mut self) {
+        self.b = self.c;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_b_d(&mut self) {
+        self.b = self.d;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_b_e(&mut self) {
+        self.b = self.e;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_b_h(&mut self) {
+        self.b = self.h;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_b_l(&mut self) {
+        self.b = self.l;
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // LD C, r'
-    pub fn ld_c_a(&mut self) { self.c = self.a; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_c_b(&mut self) { self.c = self.b; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_c_c(&mut self) { self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_c_d(&mut self) { self.c = self.d; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_c_e(&mut self) { self.c = self.e; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_c_h(&mut self) { self.c = self.h; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_c_l(&mut self) { self.c = self.l; self.pc = self.pc.wrapping_add(1); }
+    pub fn ld_c_a(&mut self) {
+        self.c = self.a;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_c_b(&mut self) {
+        self.c = self.b;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_c_c(&mut self) {
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_c_d(&mut self) {
+        self.c = self.d;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_c_e(&mut self) {
+        self.c = self.e;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_c_h(&mut self) {
+        self.c = self.h;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_c_l(&mut self) {
+        self.c = self.l;
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // LD D, r'
-    pub fn ld_d_a(&mut self) { self.d = self.a; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_d_b(&mut self) { self.d = self.b; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_d_c(&mut self) { self.d = self.c; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_d_d(&mut self) { self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_d_e(&mut self) { self.d = self.e; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_d_h(&mut self) { self.d = self.h; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_d_l(&mut self) { self.d = self.l; self.pc = self.pc.wrapping_add(1); }
+    pub fn ld_d_a(&mut self) {
+        self.d = self.a;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_d_b(&mut self) {
+        self.d = self.b;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_d_c(&mut self) {
+        self.d = self.c;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_d_d(&mut self) {
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_d_e(&mut self) {
+        self.d = self.e;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_d_h(&mut self) {
+        self.d = self.h;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_d_l(&mut self) {
+        self.d = self.l;
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // LD E, r'
-    pub fn ld_e_a(&mut self) { self.e = self.a; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_e_b(&mut self) { self.e = self.b; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_e_c(&mut self) { self.e = self.c; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_e_d(&mut self) { self.e = self.d; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_e_e(&mut self) { self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_e_h(&mut self) { self.e = self.h; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_e_l(&mut self) { self.e = self.l; self.pc = self.pc.wrapping_add(1); }
+    pub fn ld_e_a(&mut self) {
+        self.e = self.a;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_e_b(&mut self) {
+        self.e = self.b;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_e_c(&mut self) {
+        self.e = self.c;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_e_d(&mut self) {
+        self.e = self.d;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_e_e(&mut self) {
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_e_h(&mut self) {
+        self.e = self.h;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_e_l(&mut self) {
+        self.e = self.l;
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // LD H, r'
-    pub fn ld_h_a(&mut self) { self.h = self.a; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_h_b(&mut self) { self.h = self.b; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_h_c(&mut self) { self.h = self.c; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_h_d(&mut self) { self.h = self.d; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_h_e(&mut self) { self.h = self.e; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_h_h(&mut self) { self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_h_l(&mut self) { self.h = self.l; self.pc = self.pc.wrapping_add(1); }
+    pub fn ld_h_a(&mut self) {
+        self.h = self.a;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_h_b(&mut self) {
+        self.h = self.b;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_h_c(&mut self) {
+        self.h = self.c;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_h_d(&mut self) {
+        self.h = self.d;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_h_e(&mut self) {
+        self.h = self.e;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_h_h(&mut self) {
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_h_l(&mut self) {
+        self.h = self.l;
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // LD L, r'
-    pub fn ld_l_a(&mut self) { self.l = self.a; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_l_b(&mut self) { self.l = self.b; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_l_c(&mut self) { self.l = self.c; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_l_d(&mut self) { self.l = self.d; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_l_e(&mut self) { self.l = self.e; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_l_h(&mut self) { self.l = self.h; self.pc = self.pc.wrapping_add(1); }
-    pub fn ld_l_l(&mut self) { self.pc = self.pc.wrapping_add(1); }
+    pub fn ld_l_a(&mut self) {
+        self.l = self.a;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_l_b(&mut self) {
+        self.l = self.b;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_l_c(&mut self) {
+        self.l = self.c;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_l_d(&mut self) {
+        self.l = self.d;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_l_e(&mut self) {
+        self.l = self.e;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_l_h(&mut self) {
+        self.l = self.h;
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn ld_l_l(&mut self) {
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // LD r, n
-    pub fn ld_a_n(&mut self, value: u8) { self.a = value; self.pc = self.pc.wrapping_add(2); }
-    pub fn ld_b_n(&mut self, value: u8) { self.b = value; self.pc = self.pc.wrapping_add(2); }
-    pub fn ld_c_n(&mut self, value: u8) { self.c = value; self.pc = self.pc.wrapping_add(2); }
-    pub fn ld_d_n(&mut self, value: u8) { self.d = value; self.pc = self.pc.wrapping_add(2); }
-    pub fn ld_e_n(&mut self, value: u8) { self.e = value; self.pc = self.pc.wrapping_add(2); }
-    pub fn ld_h_n(&mut self, value: u8) { self.h = value; self.pc = self.pc.wrapping_add(2); }
-    pub fn ld_l_n(&mut self, value: u8) { self.l = value; self.pc = self.pc.wrapping_add(2); }
+    pub fn ld_a_n(&mut self, value: u8) {
+        self.a = value;
+        self.pc = self.pc.wrapping_add(2);
+    }
+    pub fn ld_b_n(&mut self, value: u8) {
+        self.b = value;
+        self.pc = self.pc.wrapping_add(2);
+    }
+    pub fn ld_c_n(&mut self, value: u8) {
+        self.c = value;
+        self.pc = self.pc.wrapping_add(2);
+    }
+    pub fn ld_d_n(&mut self, value: u8) {
+        self.d = value;
+        self.pc = self.pc.wrapping_add(2);
+    }
+    pub fn ld_e_n(&mut self, value: u8) {
+        self.e = value;
+        self.pc = self.pc.wrapping_add(2);
+    }
+    pub fn ld_h_n(&mut self, value: u8) {
+        self.h = value;
+        self.pc = self.pc.wrapping_add(2);
+    }
+    pub fn ld_l_n(&mut self, value: u8) {
+        self.l = value;
+        self.pc = self.pc.wrapping_add(2);
+    }
 
     // LD r, (HL)
     fn read_hl_mem(&self) -> u8 {
@@ -762,7 +925,10 @@ impl Cpu {
         let address = ((self.h as u16) << 8) | (self.l as u16);
         self.bus.borrow_mut().write_byte(address, value);
     }
-    pub fn ld_hl_mem_a(&mut self) { self.write_hl_mem(self.a); self.pc = self.pc.wrapping_add(1); }
+    pub fn ld_hl_mem_a(&mut self) {
+        self.write_hl_mem(self.a);
+        self.pc = self.pc.wrapping_add(1);
+    }
     // LD (HL), B
     pub fn ld_hl_mem_b(&mut self) {
         self.write_hl_mem(self.b);
@@ -799,7 +965,7 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(1);
         // No flags are affected by this instruction.
     }
-    
+
     // LD (HL), n
     pub fn ld_hl_mem_n(&mut self, value: u8) {
         self.write_hl_mem(value);
@@ -928,8 +1094,12 @@ impl Cpu {
     // LD (nn), SP
     pub fn ld_nn_mem_sp(&mut self, addr_lo: u8, addr_hi: u8) {
         let address = ((addr_hi as u16) << 8) | (addr_lo as u16);
-        self.bus.borrow_mut().write_byte(address, (self.sp & 0xFF) as u8); // Store SP low byte
-        self.bus.borrow_mut().write_byte(address.wrapping_add(1), (self.sp >> 8) as u8); // Store SP high byte
+        self.bus
+            .borrow_mut()
+            .write_byte(address, (self.sp & 0xFF) as u8); // Store SP low byte
+        self.bus
+            .borrow_mut()
+            .write_byte(address.wrapping_add(1), (self.sp >> 8) as u8); // Store SP high byte
         self.pc = self.pc.wrapping_add(3);
     }
 
@@ -1013,13 +1183,34 @@ impl Cpu {
     }
 
     // ADD A, r
-    pub fn add_a_a(&mut self) { self.perform_add_a(self.a); self.pc = self.pc.wrapping_add(1); }
-    pub fn add_a_b(&mut self) { self.perform_add_a(self.b); self.pc = self.pc.wrapping_add(1); }
-    pub fn add_a_c(&mut self) { self.perform_add_a(self.c); self.pc = self.pc.wrapping_add(1); }
-    pub fn add_a_d(&mut self) { self.perform_add_a(self.d); self.pc = self.pc.wrapping_add(1); }
-    pub fn add_a_e(&mut self) { self.perform_add_a(self.e); self.pc = self.pc.wrapping_add(1); }
-    pub fn add_a_h(&mut self) { self.perform_add_a(self.h); self.pc = self.pc.wrapping_add(1); }
-    pub fn add_a_l(&mut self) { self.perform_add_a(self.l); self.pc = self.pc.wrapping_add(1); }
+    pub fn add_a_a(&mut self) {
+        self.perform_add_a(self.a);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn add_a_b(&mut self) {
+        self.perform_add_a(self.b);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn add_a_c(&mut self) {
+        self.perform_add_a(self.c);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn add_a_d(&mut self) {
+        self.perform_add_a(self.d);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn add_a_e(&mut self) {
+        self.perform_add_a(self.e);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn add_a_h(&mut self) {
+        self.perform_add_a(self.h);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn add_a_l(&mut self) {
+        self.perform_add_a(self.l);
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // ADD A, n
     pub fn add_a_n(&mut self, value: u8) {
@@ -1040,19 +1231,50 @@ impl Cpu {
         let result = original_a.wrapping_add(value).wrapping_add(carry_in);
         self.set_flag_z(result == 0);
         self.set_flag_n(false); // N is 0 for ADC
-        self.set_flag_h((original_a & 0x0F).wrapping_add(value & 0x0F).wrapping_add(carry_in) > 0x0F);
-        self.set_flag_c((original_a as u16).wrapping_add(value as u16).wrapping_add(carry_in as u16) > 0xFF);
+        self.set_flag_h(
+            (original_a & 0x0F)
+                .wrapping_add(value & 0x0F)
+                .wrapping_add(carry_in)
+                > 0x0F,
+        );
+        self.set_flag_c(
+            (original_a as u16)
+                .wrapping_add(value as u16)
+                .wrapping_add(carry_in as u16)
+                > 0xFF,
+        );
         self.a = result;
     }
 
     // ADC A, r
-    pub fn adc_a_a(&mut self) { self.perform_adc_a(self.a); self.pc = self.pc.wrapping_add(1); }
-    pub fn adc_a_b(&mut self) { self.perform_adc_a(self.b); self.pc = self.pc.wrapping_add(1); }
-    pub fn adc_a_c(&mut self) { self.perform_adc_a(self.c); self.pc = self.pc.wrapping_add(1); }
-    pub fn adc_a_d(&mut self) { self.perform_adc_a(self.d); self.pc = self.pc.wrapping_add(1); }
-    pub fn adc_a_e(&mut self) { self.perform_adc_a(self.e); self.pc = self.pc.wrapping_add(1); }
-    pub fn adc_a_h(&mut self) { self.perform_adc_a(self.h); self.pc = self.pc.wrapping_add(1); }
-    pub fn adc_a_l(&mut self) { self.perform_adc_a(self.l); self.pc = self.pc.wrapping_add(1); }
+    pub fn adc_a_a(&mut self) {
+        self.perform_adc_a(self.a);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn adc_a_b(&mut self) {
+        self.perform_adc_a(self.b);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn adc_a_c(&mut self) {
+        self.perform_adc_a(self.c);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn adc_a_d(&mut self) {
+        self.perform_adc_a(self.d);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn adc_a_e(&mut self) {
+        self.perform_adc_a(self.e);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn adc_a_h(&mut self) {
+        self.perform_adc_a(self.h);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn adc_a_l(&mut self) {
+        self.perform_adc_a(self.l);
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // ADC A, n
     pub fn adc_a_n(&mut self, value: u8) {
@@ -1078,13 +1300,34 @@ impl Cpu {
     }
 
     // SUB A, r
-    pub fn sub_a_a(&mut self) { self.perform_sub_a(self.a); self.pc = self.pc.wrapping_add(1); }
-    pub fn sub_a_b(&mut self) { self.perform_sub_a(self.b); self.pc = self.pc.wrapping_add(1); }
-    pub fn sub_a_c(&mut self) { self.perform_sub_a(self.c); self.pc = self.pc.wrapping_add(1); }
-    pub fn sub_a_d(&mut self) { self.perform_sub_a(self.d); self.pc = self.pc.wrapping_add(1); }
-    pub fn sub_a_e(&mut self) { self.perform_sub_a(self.e); self.pc = self.pc.wrapping_add(1); }
-    pub fn sub_a_h(&mut self) { self.perform_sub_a(self.h); self.pc = self.pc.wrapping_add(1); }
-    pub fn sub_a_l(&mut self) { self.perform_sub_a(self.l); self.pc = self.pc.wrapping_add(1); }
+    pub fn sub_a_a(&mut self) {
+        self.perform_sub_a(self.a);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sub_a_b(&mut self) {
+        self.perform_sub_a(self.b);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sub_a_c(&mut self) {
+        self.perform_sub_a(self.c);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sub_a_d(&mut self) {
+        self.perform_sub_a(self.d);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sub_a_e(&mut self) {
+        self.perform_sub_a(self.e);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sub_a_h(&mut self) {
+        self.perform_sub_a(self.h);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sub_a_l(&mut self) {
+        self.perform_sub_a(self.l);
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // SUB A, n
     pub fn sub_a_n(&mut self, value: u8) {
@@ -1107,18 +1350,39 @@ impl Cpu {
 
         self.set_flag_z(self.a == 0);
         self.set_flag_n(true);
-        self.set_flag_h( (original_a & 0x0F) < (value & 0x0F) + carry_val );
-        self.set_flag_c( (original_a as u16) < (value as u16) + (carry_val as u16) );
+        self.set_flag_h((original_a & 0x0F) < (value & 0x0F) + carry_val);
+        self.set_flag_c((original_a as u16) < (value as u16) + (carry_val as u16));
     }
 
     // SBC A, r
-    pub fn sbc_a_a(&mut self) { self.perform_sbc_a(self.a); self.pc = self.pc.wrapping_add(1); }
-    pub fn sbc_a_b(&mut self) { self.perform_sbc_a(self.b); self.pc = self.pc.wrapping_add(1); }
-    pub fn sbc_a_c(&mut self) { self.perform_sbc_a(self.c); self.pc = self.pc.wrapping_add(1); }
-    pub fn sbc_a_d(&mut self) { self.perform_sbc_a(self.d); self.pc = self.pc.wrapping_add(1); }
-    pub fn sbc_a_e(&mut self) { self.perform_sbc_a(self.e); self.pc = self.pc.wrapping_add(1); }
-    pub fn sbc_a_h(&mut self) { self.perform_sbc_a(self.h); self.pc = self.pc.wrapping_add(1); }
-    pub fn sbc_a_l(&mut self) { self.perform_sbc_a(self.l); self.pc = self.pc.wrapping_add(1); }
+    pub fn sbc_a_a(&mut self) {
+        self.perform_sbc_a(self.a);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sbc_a_b(&mut self) {
+        self.perform_sbc_a(self.b);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sbc_a_c(&mut self) {
+        self.perform_sbc_a(self.c);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sbc_a_d(&mut self) {
+        self.perform_sbc_a(self.d);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sbc_a_e(&mut self) {
+        self.perform_sbc_a(self.e);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sbc_a_h(&mut self) {
+        self.perform_sbc_a(self.h);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn sbc_a_l(&mut self) {
+        self.perform_sbc_a(self.l);
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // SBC A, n
     pub fn sbc_a_n(&mut self, value: u8) {
@@ -1142,13 +1406,34 @@ impl Cpu {
     }
 
     // AND A, r
-    pub fn and_a_a(&mut self) { self.perform_and_a(self.a); self.pc = self.pc.wrapping_add(1); }
-    pub fn and_a_b(&mut self) { self.perform_and_a(self.b); self.pc = self.pc.wrapping_add(1); }
-    pub fn and_a_c(&mut self) { self.perform_and_a(self.c); self.pc = self.pc.wrapping_add(1); }
-    pub fn and_a_d(&mut self) { self.perform_and_a(self.d); self.pc = self.pc.wrapping_add(1); }
-    pub fn and_a_e(&mut self) { self.perform_and_a(self.e); self.pc = self.pc.wrapping_add(1); }
-    pub fn and_a_h(&mut self) { self.perform_and_a(self.h); self.pc = self.pc.wrapping_add(1); }
-    pub fn and_a_l(&mut self) { self.perform_and_a(self.l); self.pc = self.pc.wrapping_add(1); }
+    pub fn and_a_a(&mut self) {
+        self.perform_and_a(self.a);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn and_a_b(&mut self) {
+        self.perform_and_a(self.b);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn and_a_c(&mut self) {
+        self.perform_and_a(self.c);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn and_a_d(&mut self) {
+        self.perform_and_a(self.d);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn and_a_e(&mut self) {
+        self.perform_and_a(self.e);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn and_a_h(&mut self) {
+        self.perform_and_a(self.h);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn and_a_l(&mut self) {
+        self.perform_and_a(self.l);
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // AND A, n
     pub fn and_a_n(&mut self, value: u8) {
@@ -1172,13 +1457,34 @@ impl Cpu {
     }
 
     // OR A, r
-    pub fn or_a_a(&mut self) { self.perform_or_a(self.a); self.pc = self.pc.wrapping_add(1); }
-    pub fn or_a_b(&mut self) { self.perform_or_a(self.b); self.pc = self.pc.wrapping_add(1); }
-    pub fn or_a_c(&mut self) { self.perform_or_a(self.c); self.pc = self.pc.wrapping_add(1); }
-    pub fn or_a_d(&mut self) { self.perform_or_a(self.d); self.pc = self.pc.wrapping_add(1); }
-    pub fn or_a_e(&mut self) { self.perform_or_a(self.e); self.pc = self.pc.wrapping_add(1); }
-    pub fn or_a_h(&mut self) { self.perform_or_a(self.h); self.pc = self.pc.wrapping_add(1); }
-    pub fn or_a_l(&mut self) { self.perform_or_a(self.l); self.pc = self.pc.wrapping_add(1); }
+    pub fn or_a_a(&mut self) {
+        self.perform_or_a(self.a);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn or_a_b(&mut self) {
+        self.perform_or_a(self.b);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn or_a_c(&mut self) {
+        self.perform_or_a(self.c);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn or_a_d(&mut self) {
+        self.perform_or_a(self.d);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn or_a_e(&mut self) {
+        self.perform_or_a(self.e);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn or_a_h(&mut self) {
+        self.perform_or_a(self.h);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn or_a_l(&mut self) {
+        self.perform_or_a(self.l);
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // OR A, n
     pub fn or_a_n(&mut self, value: u8) {
@@ -1202,13 +1508,34 @@ impl Cpu {
     }
 
     // XOR A, r
-    pub fn xor_a_a(&mut self) { self.perform_xor_a(self.a); self.pc = self.pc.wrapping_add(1); }
-    pub fn xor_a_b(&mut self) { self.perform_xor_a(self.b); self.pc = self.pc.wrapping_add(1); }
-    pub fn xor_a_c(&mut self) { self.perform_xor_a(self.c); self.pc = self.pc.wrapping_add(1); }
-    pub fn xor_a_d(&mut self) { self.perform_xor_a(self.d); self.pc = self.pc.wrapping_add(1); }
-    pub fn xor_a_e(&mut self) { self.perform_xor_a(self.e); self.pc = self.pc.wrapping_add(1); }
-    pub fn xor_a_h(&mut self) { self.perform_xor_a(self.h); self.pc = self.pc.wrapping_add(1); }
-    pub fn xor_a_l(&mut self) { self.perform_xor_a(self.l); self.pc = self.pc.wrapping_add(1); }
+    pub fn xor_a_a(&mut self) {
+        self.perform_xor_a(self.a);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn xor_a_b(&mut self) {
+        self.perform_xor_a(self.b);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn xor_a_c(&mut self) {
+        self.perform_xor_a(self.c);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn xor_a_d(&mut self) {
+        self.perform_xor_a(self.d);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn xor_a_e(&mut self) {
+        self.perform_xor_a(self.e);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn xor_a_h(&mut self) {
+        self.perform_xor_a(self.h);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn xor_a_l(&mut self) {
+        self.perform_xor_a(self.l);
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // XOR A, n
     pub fn xor_a_n(&mut self, value: u8) {
@@ -1233,13 +1560,34 @@ impl Cpu {
     }
 
     // CP A, r
-    pub fn cp_a_a(&mut self) { self.perform_cp_a(self.a); self.pc = self.pc.wrapping_add(1); }
-    pub fn cp_a_b(&mut self) { self.perform_cp_a(self.b); self.pc = self.pc.wrapping_add(1); }
-    pub fn cp_a_c(&mut self) { self.perform_cp_a(self.c); self.pc = self.pc.wrapping_add(1); }
-    pub fn cp_a_d(&mut self) { self.perform_cp_a(self.d); self.pc = self.pc.wrapping_add(1); }
-    pub fn cp_a_e(&mut self) { self.perform_cp_a(self.e); self.pc = self.pc.wrapping_add(1); }
-    pub fn cp_a_h(&mut self) { self.perform_cp_a(self.h); self.pc = self.pc.wrapping_add(1); }
-    pub fn cp_a_l(&mut self) { self.perform_cp_a(self.l); self.pc = self.pc.wrapping_add(1); }
+    pub fn cp_a_a(&mut self) {
+        self.perform_cp_a(self.a);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn cp_a_b(&mut self) {
+        self.perform_cp_a(self.b);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn cp_a_c(&mut self) {
+        self.perform_cp_a(self.c);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn cp_a_d(&mut self) {
+        self.perform_cp_a(self.d);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn cp_a_e(&mut self) {
+        self.perform_cp_a(self.e);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn cp_a_h(&mut self) {
+        self.perform_cp_a(self.h);
+        self.pc = self.pc.wrapping_add(1);
+    }
+    pub fn cp_a_l(&mut self) {
+        self.perform_cp_a(self.l);
+        self.pc = self.pc.wrapping_add(1);
+    }
 
     // CP A, n
     pub fn cp_a_n(&mut self, value: u8) {
@@ -1678,7 +2026,8 @@ impl Cpu {
             adjust |= 0x06;
         }
 
-        if !self.is_flag_n() { // last operation was addition
+        if !self.is_flag_n() {
+            // last operation was addition
             if (a_val & 0x0F) > 0x09 || self.is_flag_h() {
                 adjust |= 0x06;
             }
@@ -1686,7 +2035,8 @@ impl Cpu {
                 adjust |= 0x60;
             }
             a_val = a_val.wrapping_add(adjust);
-        } else { // last operation was subtraction
+        } else {
+            // last operation was subtraction
             a_val = a_val.wrapping_sub(adjust);
         }
 
@@ -1695,7 +2045,7 @@ impl Cpu {
         // The provided logic (adjust >= 0x60) is common in GB emulators.
         // It means C is set if the upper nibble adjustment occurred OR if C was already set (and N=0, a_val > 0x99)
         if (adjust & 0x60) != 0 {
-             self.set_flag_c(true);
+            self.set_flag_c(true);
         }
         // If adjust didn't include 0x60, C flag is NOT cleared by DAA. It retains its value from previous op or earlier DAA setting.
         // However, the common interpretation is that DAA *can* set C, but doesn't clear it if not set by DAA's own logic.
@@ -1754,42 +2104,42 @@ impl Cpu {
             // Normal halt behavior:
             self.is_halted = true;
             self.in_stop_mode = false; // HALT is not STOP
-            // The HALT instruction is 1 byte long. PC should advance past it.
+                                       // The HALT instruction is 1 byte long. PC should advance past it.
             self.pc = self.pc.wrapping_add(1);
         }
     }
 
-pub fn stop(&mut self) {
-    // STOP instruction (0x10 0x00)
-    // This instruction is primarily used for CGB speed switching.
-    // A full implementation would check KEY1 (0xFF4D) and manage CPU speed.
-    // It also has specific behaviors related to LCD state and P1 joypad register.
-    // For DMG, it's a low-power mode exited by button press (P10-P13 low).
-    //
-    // Current simplified behavior:
-    // - Treats STOP as a way to enter a HALT-like state.
-    // - The CPU will set `is_halted = true` and can be woken by interrupts
-    //   as per the logic in the `step()` function.
-    // - Consumes the 2 bytes for the instruction (0x10 and the following 0x00).
-    // This is a placeholder and does not implement CGB speed switching or
-    // specific DMG STOP mode details.
-    let model = self.bus.borrow().get_model();
-    let key1_prepared = self.bus.borrow().get_key1_prepare_speed_switch();
+    pub fn stop(&mut self) {
+        // STOP instruction (0x10 0x00)
+        // This instruction is primarily used for CGB speed switching.
+        // A full implementation would check KEY1 (0xFF4D) and manage CPU speed.
+        // It also has specific behaviors related to LCD state and P1 joypad register.
+        // For DMG, it's a low-power mode exited by button press (P10-P13 low).
+        //
+        // Current simplified behavior:
+        // - Treats STOP as a way to enter a HALT-like state.
+        // - The CPU will set `is_halted = true` and can be woken by interrupts
+        //   as per the logic in the `step()` function.
+        // - Consumes the 2 bytes for the instruction (0x10 and the following 0x00).
+        // This is a placeholder and does not implement CGB speed switching or
+        // specific DMG STOP mode details.
+        let model = self.bus.borrow().get_model();
+        let key1_prepared = self.bus.borrow().get_key1_prepare_speed_switch();
 
-    if model.is_cgb_family() && key1_prepared {
-        self.bus.borrow_mut().toggle_speed_mode();
-        self.bus.borrow_mut().set_key1_prepare_speed_switch(false);
-        // For CGB speed switch, CPU does not halt.
-        self.is_halted = false;
-        self.in_stop_mode = false;
-    } else {
-        // For DMG STOP, or CGB STOP without speed switch prepare, CPU halts.
-        self.is_halted = true;
-        self.in_stop_mode = true;
+        if model.is_cgb_family() && key1_prepared {
+            self.bus.borrow_mut().toggle_speed_mode();
+            self.bus.borrow_mut().set_key1_prepare_speed_switch(false);
+            // For CGB speed switch, CPU does not halt.
+            self.is_halted = false;
+            self.in_stop_mode = false;
+        } else {
+            // For DMG STOP, or CGB STOP without speed switch prepare, CPU halts.
+            self.is_halted = true;
+            self.in_stop_mode = true;
+        }
+        // STOP is a 2-byte instruction (0x10 0x00). PC must advance by 2.
+        self.pc = self.pc.wrapping_add(2);
     }
-    // STOP is a 2-byte instruction (0x10 0x00). PC must advance by 2.
-    self.pc = self.pc.wrapping_add(2);
-}
 
     pub fn di(&mut self) {
         self.ime = false;
@@ -1834,9 +2184,13 @@ pub fn stop(&mut self) {
 
         // Push return address onto stack
         self.sp = self.sp.wrapping_sub(1);
-        self.bus.borrow_mut().write_byte(self.sp, (return_addr >> 8) as u8); // High byte
+        self.bus
+            .borrow_mut()
+            .write_byte(self.sp, (return_addr >> 8) as u8); // High byte
         self.sp = self.sp.wrapping_sub(1);
-        self.bus.borrow_mut().write_byte(self.sp, (return_addr & 0xFF) as u8); // Low byte
+        self.bus
+            .borrow_mut()
+            .write_byte(self.sp, (return_addr & 0xFF) as u8); // Low byte
 
         // Jump to the new address
         let call_address = ((addr_hi as u16) << 8) | (addr_lo as u16);
@@ -1876,23 +2230,43 @@ pub fn stop(&mut self) {
 
         // Push return address onto stack
         self.sp = self.sp.wrapping_sub(1);
-        self.bus.borrow_mut().write_byte(self.sp, (return_addr >> 8) as u8); // High byte
+        self.bus
+            .borrow_mut()
+            .write_byte(self.sp, (return_addr >> 8) as u8); // High byte
         self.sp = self.sp.wrapping_sub(1);
-        self.bus.borrow_mut().write_byte(self.sp, (return_addr & 0xFF) as u8); // Low byte
+        self.bus
+            .borrow_mut()
+            .write_byte(self.sp, (return_addr & 0xFF) as u8); // Low byte
 
         // Jump to the target address
         self.pc = target_addr;
         // No flags are affected by this instruction.
     }
 
-    pub fn rst_00h(&mut self) { self.rst_n(0x0000); }
-    pub fn rst_08h(&mut self) { self.rst_n(0x0008); }
-    pub fn rst_10h(&mut self) { self.rst_n(0x0010); }
-    pub fn rst_18h(&mut self) { self.rst_n(0x0018); }
-    pub fn rst_20h(&mut self) { self.rst_n(0x0020); }
-    pub fn rst_28h(&mut self) { self.rst_n(0x0028); }
-    pub fn rst_30h(&mut self) { self.rst_n(0x0030); }
-    pub fn rst_38h(&mut self) { self.rst_n(0x0038); }
+    pub fn rst_00h(&mut self) {
+        self.rst_n(0x0000);
+    }
+    pub fn rst_08h(&mut self) {
+        self.rst_n(0x0008);
+    }
+    pub fn rst_10h(&mut self) {
+        self.rst_n(0x0010);
+    }
+    pub fn rst_18h(&mut self) {
+        self.rst_n(0x0018);
+    }
+    pub fn rst_20h(&mut self) {
+        self.rst_n(0x0020);
+    }
+    pub fn rst_28h(&mut self) {
+        self.rst_n(0x0028);
+    }
+    pub fn rst_30h(&mut self) {
+        self.rst_n(0x0030);
+    }
+    pub fn rst_38h(&mut self) {
+        self.rst_n(0x0038);
+    }
 
     // CB-prefixed instructions
     // Helper for RLC operation, updates flags and returns new value
@@ -2021,13 +2395,27 @@ pub fn stop(&mut self) {
     }
 
     // RLC r8 instructions
-    fn rlc_b_cb(&mut self) { self.b = self.rlc_val(self.b); }
-    fn rlc_c_cb(&mut self) { self.c = self.rlc_val(self.c); }
-    fn rlc_d_cb(&mut self) { self.d = self.rlc_val(self.d); }
-    fn rlc_e_cb(&mut self) { self.e = self.rlc_val(self.e); }
-    fn rlc_h_cb(&mut self) { self.h = self.rlc_val(self.h); }
-    fn rlc_l_cb(&mut self) { self.l = self.rlc_val(self.l); }
-    fn rlc_a_cb(&mut self) { self.a = self.rlc_val(self.a); }
+    fn rlc_b_cb(&mut self) {
+        self.b = self.rlc_val(self.b);
+    }
+    fn rlc_c_cb(&mut self) {
+        self.c = self.rlc_val(self.c);
+    }
+    fn rlc_d_cb(&mut self) {
+        self.d = self.rlc_val(self.d);
+    }
+    fn rlc_e_cb(&mut self) {
+        self.e = self.rlc_val(self.e);
+    }
+    fn rlc_h_cb(&mut self) {
+        self.h = self.rlc_val(self.h);
+    }
+    fn rlc_l_cb(&mut self) {
+        self.l = self.rlc_val(self.l);
+    }
+    fn rlc_a_cb(&mut self) {
+        self.a = self.rlc_val(self.a);
+    }
     fn rlc_hl_mem_cb(&mut self) {
         let value = self.read_hl_mem();
         let result = self.rlc_val(value);
@@ -2035,13 +2423,27 @@ pub fn stop(&mut self) {
     }
 
     // RRC r8 instructions
-    fn rrc_b_cb(&mut self) { self.b = self.rrc_val(self.b); }
-    fn rrc_c_cb(&mut self) { self.c = self.rrc_val(self.c); }
-    fn rrc_d_cb(&mut self) { self.d = self.rrc_val(self.d); }
-    fn rrc_e_cb(&mut self) { self.e = self.rrc_val(self.e); }
-    fn rrc_h_cb(&mut self) { self.h = self.rrc_val(self.h); }
-    fn rrc_l_cb(&mut self) { self.l = self.rrc_val(self.l); }
-    fn rrc_a_cb(&mut self) { self.a = self.rrc_val(self.a); }
+    fn rrc_b_cb(&mut self) {
+        self.b = self.rrc_val(self.b);
+    }
+    fn rrc_c_cb(&mut self) {
+        self.c = self.rrc_val(self.c);
+    }
+    fn rrc_d_cb(&mut self) {
+        self.d = self.rrc_val(self.d);
+    }
+    fn rrc_e_cb(&mut self) {
+        self.e = self.rrc_val(self.e);
+    }
+    fn rrc_h_cb(&mut self) {
+        self.h = self.rrc_val(self.h);
+    }
+    fn rrc_l_cb(&mut self) {
+        self.l = self.rrc_val(self.l);
+    }
+    fn rrc_a_cb(&mut self) {
+        self.a = self.rrc_val(self.a);
+    }
     fn rrc_hl_mem_cb(&mut self) {
         let value = self.read_hl_mem();
         let result = self.rrc_val(value);
@@ -2049,13 +2451,27 @@ pub fn stop(&mut self) {
     }
 
     // RL r8 instructions
-    fn rl_b_cb(&mut self) { self.b = self.rl_val(self.b); }
-    fn rl_c_cb(&mut self) { self.c = self.rl_val(self.c); }
-    fn rl_d_cb(&mut self) { self.d = self.rl_val(self.d); }
-    fn rl_e_cb(&mut self) { self.e = self.rl_val(self.e); }
-    fn rl_h_cb(&mut self) { self.h = self.rl_val(self.h); }
-    fn rl_l_cb(&mut self) { self.l = self.rl_val(self.l); }
-    fn rl_a_cb(&mut self) { self.a = self.rl_val(self.a); }
+    fn rl_b_cb(&mut self) {
+        self.b = self.rl_val(self.b);
+    }
+    fn rl_c_cb(&mut self) {
+        self.c = self.rl_val(self.c);
+    }
+    fn rl_d_cb(&mut self) {
+        self.d = self.rl_val(self.d);
+    }
+    fn rl_e_cb(&mut self) {
+        self.e = self.rl_val(self.e);
+    }
+    fn rl_h_cb(&mut self) {
+        self.h = self.rl_val(self.h);
+    }
+    fn rl_l_cb(&mut self) {
+        self.l = self.rl_val(self.l);
+    }
+    fn rl_a_cb(&mut self) {
+        self.a = self.rl_val(self.a);
+    }
     fn rl_hl_mem_cb(&mut self) {
         let value = self.read_hl_mem();
         let result = self.rl_val(value);
@@ -2063,13 +2479,27 @@ pub fn stop(&mut self) {
     }
 
     // RR r8 instructions
-    fn rr_b_cb(&mut self) { self.b = self.rr_val(self.b); }
-    fn rr_c_cb(&mut self) { self.c = self.rr_val(self.c); }
-    fn rr_d_cb(&mut self) { self.d = self.rr_val(self.d); }
-    fn rr_e_cb(&mut self) { self.e = self.rr_val(self.e); }
-    fn rr_h_cb(&mut self) { self.h = self.rr_val(self.h); }
-    fn rr_l_cb(&mut self) { self.l = self.rr_val(self.l); }
-    fn rr_a_cb(&mut self) { self.a = self.rr_val(self.a); }
+    fn rr_b_cb(&mut self) {
+        self.b = self.rr_val(self.b);
+    }
+    fn rr_c_cb(&mut self) {
+        self.c = self.rr_val(self.c);
+    }
+    fn rr_d_cb(&mut self) {
+        self.d = self.rr_val(self.d);
+    }
+    fn rr_e_cb(&mut self) {
+        self.e = self.rr_val(self.e);
+    }
+    fn rr_h_cb(&mut self) {
+        self.h = self.rr_val(self.h);
+    }
+    fn rr_l_cb(&mut self) {
+        self.l = self.rr_val(self.l);
+    }
+    fn rr_a_cb(&mut self) {
+        self.a = self.rr_val(self.a);
+    }
     fn rr_hl_mem_cb(&mut self) {
         let value = self.read_hl_mem();
         let result = self.rr_val(value);
@@ -2077,13 +2507,27 @@ pub fn stop(&mut self) {
     }
 
     // SLA r8 instructions
-    fn sla_b_cb(&mut self) { self.b = self.sla_val(self.b); }
-    fn sla_c_cb(&mut self) { self.c = self.sla_val(self.c); }
-    fn sla_d_cb(&mut self) { self.d = self.sla_val(self.d); }
-    fn sla_e_cb(&mut self) { self.e = self.sla_val(self.e); }
-    fn sla_h_cb(&mut self) { self.h = self.sla_val(self.h); }
-    fn sla_l_cb(&mut self) { self.l = self.sla_val(self.l); }
-    fn sla_a_cb(&mut self) { self.a = self.sla_val(self.a); }
+    fn sla_b_cb(&mut self) {
+        self.b = self.sla_val(self.b);
+    }
+    fn sla_c_cb(&mut self) {
+        self.c = self.sla_val(self.c);
+    }
+    fn sla_d_cb(&mut self) {
+        self.d = self.sla_val(self.d);
+    }
+    fn sla_e_cb(&mut self) {
+        self.e = self.sla_val(self.e);
+    }
+    fn sla_h_cb(&mut self) {
+        self.h = self.sla_val(self.h);
+    }
+    fn sla_l_cb(&mut self) {
+        self.l = self.sla_val(self.l);
+    }
+    fn sla_a_cb(&mut self) {
+        self.a = self.sla_val(self.a);
+    }
     fn sla_hl_mem_cb(&mut self) {
         let value = self.read_hl_mem();
         let result = self.sla_val(value);
@@ -2091,13 +2535,27 @@ pub fn stop(&mut self) {
     }
 
     // SRA r8 instructions
-    fn sra_b_cb(&mut self) { self.b = self.sra_val(self.b); }
-    fn sra_c_cb(&mut self) { self.c = self.sra_val(self.c); }
-    fn sra_d_cb(&mut self) { self.d = self.sra_val(self.d); }
-    fn sra_e_cb(&mut self) { self.e = self.sra_val(self.e); }
-    fn sra_h_cb(&mut self) { self.h = self.sra_val(self.h); }
-    fn sra_l_cb(&mut self) { self.l = self.sra_val(self.l); }
-    fn sra_a_cb(&mut self) { self.a = self.sra_val(self.a); }
+    fn sra_b_cb(&mut self) {
+        self.b = self.sra_val(self.b);
+    }
+    fn sra_c_cb(&mut self) {
+        self.c = self.sra_val(self.c);
+    }
+    fn sra_d_cb(&mut self) {
+        self.d = self.sra_val(self.d);
+    }
+    fn sra_e_cb(&mut self) {
+        self.e = self.sra_val(self.e);
+    }
+    fn sra_h_cb(&mut self) {
+        self.h = self.sra_val(self.h);
+    }
+    fn sra_l_cb(&mut self) {
+        self.l = self.sra_val(self.l);
+    }
+    fn sra_a_cb(&mut self) {
+        self.a = self.sra_val(self.a);
+    }
     fn sra_hl_mem_cb(&mut self) {
         let value = self.read_hl_mem();
         let result = self.sra_val(value);
@@ -2105,13 +2563,27 @@ pub fn stop(&mut self) {
     }
 
     // SWAP r8 instructions
-    fn swap_b_cb(&mut self) { self.b = self.swap_val(self.b); }
-    fn swap_c_cb(&mut self) { self.c = self.swap_val(self.c); }
-    fn swap_d_cb(&mut self) { self.d = self.swap_val(self.d); }
-    fn swap_e_cb(&mut self) { self.e = self.swap_val(self.e); }
-    fn swap_h_cb(&mut self) { self.h = self.swap_val(self.h); }
-    fn swap_l_cb(&mut self) { self.l = self.swap_val(self.l); }
-    fn swap_a_cb(&mut self) { self.a = self.swap_val(self.a); }
+    fn swap_b_cb(&mut self) {
+        self.b = self.swap_val(self.b);
+    }
+    fn swap_c_cb(&mut self) {
+        self.c = self.swap_val(self.c);
+    }
+    fn swap_d_cb(&mut self) {
+        self.d = self.swap_val(self.d);
+    }
+    fn swap_e_cb(&mut self) {
+        self.e = self.swap_val(self.e);
+    }
+    fn swap_h_cb(&mut self) {
+        self.h = self.swap_val(self.h);
+    }
+    fn swap_l_cb(&mut self) {
+        self.l = self.swap_val(self.l);
+    }
+    fn swap_a_cb(&mut self) {
+        self.a = self.swap_val(self.a);
+    }
     fn swap_hl_mem_cb(&mut self) {
         let value = self.read_hl_mem();
         let result = self.swap_val(value);
@@ -2119,13 +2591,27 @@ pub fn stop(&mut self) {
     }
 
     // SRL r8 instructions
-    fn srl_b_cb(&mut self) { self.b = self.srl_val(self.b); }
-    fn srl_c_cb(&mut self) { self.c = self.srl_val(self.c); }
-    fn srl_d_cb(&mut self) { self.d = self.srl_val(self.d); }
-    fn srl_e_cb(&mut self) { self.e = self.srl_val(self.e); }
-    fn srl_h_cb(&mut self) { self.h = self.srl_val(self.h); }
-    fn srl_l_cb(&mut self) { self.l = self.srl_val(self.l); }
-    fn srl_a_cb(&mut self) { self.a = self.srl_val(self.a); }
+    fn srl_b_cb(&mut self) {
+        self.b = self.srl_val(self.b);
+    }
+    fn srl_c_cb(&mut self) {
+        self.c = self.srl_val(self.c);
+    }
+    fn srl_d_cb(&mut self) {
+        self.d = self.srl_val(self.d);
+    }
+    fn srl_e_cb(&mut self) {
+        self.e = self.srl_val(self.e);
+    }
+    fn srl_h_cb(&mut self) {
+        self.h = self.srl_val(self.h);
+    }
+    fn srl_l_cb(&mut self) {
+        self.l = self.srl_val(self.l);
+    }
+    fn srl_a_cb(&mut self) {
+        self.a = self.srl_val(self.a);
+    }
     fn srl_hl_mem_cb(&mut self) {
         let value = self.read_hl_mem();
         let result = self.srl_val(value);
@@ -2301,9 +2787,13 @@ pub fn stop(&mut self) {
         self.bus.borrow_mut().clear_interrupt_flag(interrupt_bit);
 
         self.sp = self.sp.wrapping_sub(1);
-        self.bus.borrow_mut().write_byte(self.sp, (self.pc >> 8) as u8); // Push PCH
+        self.bus
+            .borrow_mut()
+            .write_byte(self.sp, (self.pc >> 8) as u8); // Push PCH
         self.sp = self.sp.wrapping_sub(1);
-        self.bus.borrow_mut().write_byte(self.sp, (self.pc & 0xFF) as u8); // Push PCL
+        self.bus
+            .borrow_mut()
+            .write_byte(self.sp, (self.pc & 0xFF) as u8); // Push PCL
 
         self.pc = handler_addr;
     }
@@ -2346,515 +2836,937 @@ pub fn stop(&mut self) {
         None
     }
 
+    pub fn step(&mut self) -> u32 {
+        let ie_val = self.bus.borrow().read_byte(INTERRUPT_ENABLE_REGISTER_ADDR);
+        let if_val = self.bus.borrow().read_byte(INTERRUPT_FLAG_REGISTER_ADDR);
+        let pending_and_enabled_interrupts = ie_val & if_val & 0x1F;
 
-pub fn step(&mut self) -> u32 {
-    let ie_val = self.bus.borrow().read_byte(INTERRUPT_ENABLE_REGISTER_ADDR);
-    let if_val = self.bus.borrow().read_byte(INTERRUPT_FLAG_REGISTER_ADDR);
-    let pending_and_enabled_interrupts = ie_val & if_val & 0x1F;
-
-    if self.ime && pending_and_enabled_interrupts != 0 {
-        if let Some(interrupt_m_cycles) = self.check_and_handle_interrupts() {
-            return interrupt_m_cycles;
+        if self.ime && pending_and_enabled_interrupts != 0 {
+            if let Some(interrupt_m_cycles) = self.check_and_handle_interrupts() {
+                return interrupt_m_cycles;
+            }
         }
-    }
 
-    let opcode_at_pc_if_halt_check = self.bus.borrow().read_byte(self.pc);
-    if opcode_at_pc_if_halt_check == 0x76 && !self.ime && pending_and_enabled_interrupts != 0 {
-        // HALT bug "skip" behavior: PC advances, HALT's usual effect is skipped.
-        self.pc = self.pc.wrapping_add(1);
-        self.is_halted = false;
-        // Execution continues to fetch the instruction *after* HALT.
-        // To match test expectation that PC is only incremented once (effectively skipping HALT)
-        // and not executing the following instruction in this same step.
-        // HALT bug effectively takes 1 M-cycle (the NOP that is "executed" instead).
-        return OPCODE_TIMINGS[0x00].unwrap_fixed().into(); // Use NOP's timing for HALT bug "skip"
-    }
-
-    if self.is_halted {
-        if pending_and_enabled_interrupts != 0 {
-            // Interrupt pending, CPU wakes up from normal HALT.
+        let opcode_at_pc_if_halt_check = self.bus.borrow().read_byte(self.pc);
+        if opcode_at_pc_if_halt_check == 0x76 && !self.ime && pending_and_enabled_interrupts != 0 {
+            // HALT bug "skip" behavior: PC advances, HALT's usual effect is skipped.
+            self.pc = self.pc.wrapping_add(1);
             self.is_halted = false;
-            // PC was already advanced by the normal HALT instruction.
-        } else {
-            // Still halted, no pending interrupts to wake it.
-            return HALTED_IDLE_M_CYCLES;
+            // Execution continues to fetch the instruction *after* HALT.
+            // To match test expectation that PC is only incremented once (effectively skipping HALT)
+            // and not executing the following instruction in this same step.
+            // HALT bug effectively takes 1 M-cycle (the NOP that is "executed" instead).
+            return OPCODE_TIMINGS[0x00].unwrap_fixed().into(); // Use NOP's timing for HALT bug "skip"
         }
-    }
 
-    let opcode = self.bus.borrow().read_byte(self.pc);
-    let timing_info = OPCODE_TIMINGS[opcode as usize];
+        if self.is_halted {
+            if pending_and_enabled_interrupts != 0 {
+                // Interrupt pending, CPU wakes up from normal HALT.
+                self.is_halted = false;
+                // PC was already advanced by the normal HALT instruction.
+            } else {
+                // Still halted, no pending interrupts to wake it.
+                return HALTED_IDLE_M_CYCLES;
+            }
+        }
 
-    let cycles: u8 = match opcode {
-        0x00 => { self.nop(); timing_info.unwrap_fixed() }
-        0x01 => {
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            self.ld_bc_nn(lo, hi);
-            timing_info.unwrap_fixed()
-        }
-        0x02 => { self.ld_bc_mem_a(); timing_info.unwrap_fixed() }
-        0x03 => { self.inc_bc(); timing_info.unwrap_fixed() }
-        0x04 => { self.inc_b(); timing_info.unwrap_fixed() }
-        0x05 => { self.dec_b(); timing_info.unwrap_fixed() }
-        0x06 => {
-            let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.ld_b_n(n);
-            timing_info.unwrap_fixed()
-        }
-        0x07 => { self.rlca(); timing_info.unwrap_fixed() }
-        0x08 => {
-            let addr_lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let addr_hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            self.ld_nn_mem_sp(addr_lo, addr_hi);
-            timing_info.unwrap_fixed()
-        }
-        0x09 => { self.add_hl_bc(); timing_info.unwrap_fixed() }
-        0x0A => { self.ld_a_bc_mem(); timing_info.unwrap_fixed() }
-        0x0B => { self.dec_bc(); timing_info.unwrap_fixed() }
-        0x0C => { self.inc_c(); timing_info.unwrap_fixed() }
-        0x0D => { self.dec_c(); timing_info.unwrap_fixed() }
-        0x0E => {
-            let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.ld_c_n(n);
-            timing_info.unwrap_fixed()
-        }
-        0x0F => { self.rrca(); timing_info.unwrap_fixed() }
-        0x10 => { self.stop(); timing_info.unwrap_fixed() } // STOP timing can be complex, 1 is simplified.
-        0x11 => {
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            self.ld_de_nn(lo, hi);
-            timing_info.unwrap_fixed()
-        }
-        0x12 => { self.ld_de_mem_a(); timing_info.unwrap_fixed() }
-        0x13 => { self.inc_de(); timing_info.unwrap_fixed() }
-        0x14 => { self.inc_d(); timing_info.unwrap_fixed() }
-        0x15 => { self.dec_d(); timing_info.unwrap_fixed() }
-        0x16 => {
-            let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.ld_d_n(n);
-            timing_info.unwrap_fixed()
-        }
-        0x17 => { self.rla(); timing_info.unwrap_fixed() }
-        0x18 => { // JR r8
-            let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.jr_e8(offset); // jr_e8 handles PC update
-            timing_info.unwrap_fixed()
-        }
-        0x19 => { self.add_hl_de(); timing_info.unwrap_fixed() }
-        0x1A => { self.ld_a_de_mem(); timing_info.unwrap_fixed() }
-        0x1B => { self.dec_de(); timing_info.unwrap_fixed() }
-        0x1C => { self.inc_e(); timing_info.unwrap_fixed() }
-        0x1D => { self.dec_e(); timing_info.unwrap_fixed() }
-        0x1E => {
-            let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.ld_e_n(n);
-            timing_info.unwrap_fixed()
-        }
-        0x1F => { self.rra(); timing_info.unwrap_fixed() }
-        0x20 => { // JR NZ, r8
-            let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let condition = !self.is_flag_z();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    let current_pc_val = self.pc;
-                    let pc_after_instruction = current_pc_val.wrapping_add(2);
-                    self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
-                    ct
-                } else {
-                    self.pc = self.pc.wrapping_add(2);
-                    cf
-                }
-            } else { panic!("Incorrect timing for JR NZ"); }
-        }
-        0x21 => {
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            self.ld_hl_nn(lo, hi);
-            timing_info.unwrap_fixed()
-        }
-        0x22 => { self.ldi_hl_mem_a(); timing_info.unwrap_fixed() }
-        0x23 => { self.inc_hl(); timing_info.unwrap_fixed() }
-        0x24 => { self.inc_h(); timing_info.unwrap_fixed() }
-        0x25 => { self.dec_h(); timing_info.unwrap_fixed() }
-        0x26 => {
-            let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.ld_h_n(n);
-            timing_info.unwrap_fixed()
-        }
-        0x27 => { self.daa(); timing_info.unwrap_fixed() }
-        0x28 => { // JR Z, r8
-            let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let condition = self.is_flag_z();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    let current_pc_val = self.pc;
-                    let pc_after_instruction = current_pc_val.wrapping_add(2);
-                    self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
-                    ct
-                } else {
-                    self.pc = self.pc.wrapping_add(2);
-                    cf
-                }
-            } else { panic!("Incorrect timing for JR Z"); }
-        }
-        0x29 => { self.add_hl_hl(); timing_info.unwrap_fixed() }
-        0x2A => { self.ldi_a_hl_mem(); timing_info.unwrap_fixed() }
-        0x2B => { self.dec_hl(); timing_info.unwrap_fixed() }
-        0x2C => { self.inc_l(); timing_info.unwrap_fixed() }
-        0x2D => { self.dec_l(); timing_info.unwrap_fixed() }
-        0x2E => {
-            let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.ld_l_n(n);
-            timing_info.unwrap_fixed()
-        }
-        0x2F => { self.cpl(); timing_info.unwrap_fixed() }
-        0x30 => { // JR NC, r8
-            let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let condition = !self.is_flag_c();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    let current_pc_val = self.pc;
-                    let pc_after_instruction = current_pc_val.wrapping_add(2);
-                    self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
-                    ct
-                } else {
-                    self.pc = self.pc.wrapping_add(2);
-                    cf
-                }
-            } else { panic!("Incorrect timing for JR NC"); }
-        }
-        0x31 => {
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            self.ld_sp_nn(lo, hi);
-            timing_info.unwrap_fixed()
-        }
-        0x32 => { self.ldd_hl_mem_a(); timing_info.unwrap_fixed() }
-        0x33 => { self.inc_sp(); timing_info.unwrap_fixed() }
-        0x34 => { self.inc_hl_mem(); timing_info.unwrap_fixed() }
-        0x35 => { self.dec_hl_mem(); timing_info.unwrap_fixed() }
-        0x36 => {
-            let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.ld_hl_mem_n(n);
-            timing_info.unwrap_fixed()
-        }
-        0x37 => { self.scf(); timing_info.unwrap_fixed() }
-        0x38 => { // JR C, r8
-            let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let condition = self.is_flag_c();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    let current_pc_val = self.pc;
-                    let pc_after_instruction = current_pc_val.wrapping_add(2);
-                    self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
-                    ct
-                } else {
-                    self.pc = self.pc.wrapping_add(2);
-                    cf
-                }
-            } else { panic!("Incorrect timing for JR C"); }
-        }
-        0x39 => { self.add_hl_sp(); timing_info.unwrap_fixed() }
-        0x3A => { self.ldd_a_hl_mem(); timing_info.unwrap_fixed() }
-        0x3B => { self.dec_sp(); timing_info.unwrap_fixed() }
-        0x3C => { self.inc_a(); timing_info.unwrap_fixed() }
-        0x3D => { self.dec_a(); timing_info.unwrap_fixed() }
-        0x3E => {
-            let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.ld_a_n(n);
-            timing_info.unwrap_fixed()
-        }
-        0x3F => { self.ccf(); timing_info.unwrap_fixed() }
-        0x40..=0x75 => { // LD r, r' ; LD r, (HL); LD (HL), r
-            match opcode {
-                0x40 => self.ld_b_b(), 0x41 => self.ld_b_c(), 0x42 => self.ld_b_d(), 0x43 => self.ld_b_e(),
-                0x44 => self.ld_b_h(), 0x45 => self.ld_b_l(), 0x46 => self.ld_b_hl_mem(), 0x47 => self.ld_b_a(),
-                0x48 => self.ld_c_b(), 0x49 => self.ld_c_c(), 0x4A => self.ld_c_d(), 0x4B => self.ld_c_e(),
-                0x4C => self.ld_c_h(), 0x4D => self.ld_c_l(), 0x4E => self.ld_c_hl_mem(), 0x4F => self.ld_c_a(),
-                0x50 => self.ld_d_b(), 0x51 => self.ld_d_c(), 0x52 => self.ld_d_d(), 0x53 => self.ld_d_e(),
-                0x54 => self.ld_d_h(), 0x55 => self.ld_d_l(), 0x56 => self.ld_d_hl_mem(), 0x57 => self.ld_d_a(),
-                0x58 => self.ld_e_b(), 0x59 => self.ld_e_c(), 0x5A => self.ld_e_d(), 0x5B => self.ld_e_e(),
-                0x5C => self.ld_e_h(), 0x5D => self.ld_e_l(), 0x5E => self.ld_e_hl_mem(), 0x5F => self.ld_e_a(),
-                0x60 => self.ld_h_b(), 0x61 => self.ld_h_c(), 0x62 => self.ld_h_d(), 0x63 => self.ld_h_e(),
-                0x64 => self.ld_h_h(), 0x65 => self.ld_h_l(), 0x66 => self.ld_h_hl_mem(), 0x67 => self.ld_h_a(),
-                0x68 => self.ld_l_b(), 0x69 => self.ld_l_c(), 0x6A => self.ld_l_d(), 0x6B => self.ld_l_e(),
-                0x6C => self.ld_l_h(), 0x6D => self.ld_l_l(), 0x6E => self.ld_l_hl_mem(), 0x6F => self.ld_l_a(),
-                0x70 => self.ld_hl_mem_b(), 0x71 => self.ld_hl_mem_c(), 0x72 => self.ld_hl_mem_d(), 0x73 => self.ld_hl_mem_e(),
-                0x74 => self.ld_hl_mem_h(), 0x75 => self.ld_hl_mem_l(),
-                _ => unreachable!(), // Should be covered by range
+        let opcode = self.bus.borrow().read_byte(self.pc);
+        let timing_info = OPCODE_TIMINGS[opcode as usize];
+
+        let cycles: u8 = match opcode {
+            0x00 => {
+                self.nop();
+                timing_info.unwrap_fixed()
             }
-            timing_info.unwrap_fixed()
-        }
-        0x76 => { self.halt(); timing_info.unwrap_fixed() } // HALT itself updates PC if not bugged
-        0x77 => { self.ld_hl_mem_a(); timing_info.unwrap_fixed() }
-        0x78..=0x7F => { // LD A, r ; LD A, (HL)
-             match opcode {
-                0x78 => self.ld_a_b(), 0x79 => self.ld_a_c(), 0x7A => self.ld_a_d(), 0x7B => self.ld_a_e(),
-                0x7C => self.ld_a_h(), 0x7D => self.ld_a_l(), 0x7E => self.ld_a_hl_mem(), 0x7F => self.ld_a_a(),
-                _ => unreachable!(),
-             }
-             timing_info.unwrap_fixed()
-        }
-        0x80..=0xBF => { // ALU A, r; ALU A, (HL); ALU A, n
-            match opcode {
-                0x80 => self.add_a_b(), 0x81 => self.add_a_c(), 0x82 => self.add_a_d(), 0x83 => self.add_a_e(),
-                0x84 => self.add_a_h(), 0x85 => self.add_a_l(), 0x86 => self.add_a_hl_mem(), 0x87 => self.add_a_a(),
-                0x88 => self.adc_a_b(), 0x89 => self.adc_a_c(), 0x8A => self.adc_a_d(), 0x8B => self.adc_a_e(),
-                0x8C => self.adc_a_h(), 0x8D => self.adc_a_l(), 0x8E => self.adc_a_hl_mem(), 0x8F => self.adc_a_a(),
-                0x90 => self.sub_a_b(), 0x91 => self.sub_a_c(), 0x92 => self.sub_a_d(), 0x93 => self.sub_a_e(),
-                0x94 => self.sub_a_h(), 0x95 => self.sub_a_l(), 0x96 => self.sub_a_hl_mem(), 0x97 => self.sub_a_a(),
-                0x98 => self.sbc_a_b(), 0x99 => self.sbc_a_c(), 0x9A => self.sbc_a_d(), 0x9B => self.sbc_a_e(),
-                0x9C => self.sbc_a_h(), 0x9D => self.sbc_a_l(), 0x9E => self.sbc_a_hl_mem(), 0x9F => self.sbc_a_a(),
-                0xA0 => self.and_a_b(), 0xA1 => self.and_a_c(), 0xA2 => self.and_a_d(), 0xA3 => self.and_a_e(),
-                0xA4 => self.and_a_h(), 0xA5 => self.and_a_l(), 0xA6 => self.and_a_hl_mem(), 0xA7 => self.and_a_a(),
-                0xA8 => self.xor_a_b(), 0xA9 => self.xor_a_c(), 0xAA => self.xor_a_d(), 0xAB => self.xor_a_e(),
-                0xAC => self.xor_a_h(), 0xAD => self.xor_a_l(), 0xAE => self.xor_a_hl_mem(), 0xAF => self.xor_a_a(),
-                0xB0 => self.or_a_b(), 0xB1 => self.or_a_c(), 0xB2 => self.or_a_d(), 0xB3 => self.or_a_e(),
-                0xB4 => self.or_a_h(), 0xB5 => self.or_a_l(), 0xB6 => self.or_a_hl_mem(), 0xB7 => self.or_a_a(),
-                0xB8 => self.cp_a_b(), 0xB9 => self.cp_a_c(), 0xBA => self.cp_a_d(), 0xBB => self.cp_a_e(),
-                0xBC => self.cp_a_h(), 0xBD => self.cp_a_l(), 0xBE => self.cp_a_hl_mem(), 0xBF => self.cp_a_a(),
-                _ => unreachable!(),
+            0x01 => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_bc_nn(lo, hi);
+                timing_info.unwrap_fixed()
             }
-            timing_info.unwrap_fixed()
-        }
-        0xC0 => { // RET NZ
-            let condition = !self.is_flag_z();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.ret(); // ret handles PC update from stack
-                    ct
+            0x02 => {
+                self.ld_bc_mem_a();
+                timing_info.unwrap_fixed()
+            }
+            0x03 => {
+                self.inc_bc();
+                timing_info.unwrap_fixed()
+            }
+            0x04 => {
+                self.inc_b();
+                timing_info.unwrap_fixed()
+            }
+            0x05 => {
+                self.dec_b();
+                timing_info.unwrap_fixed()
+            }
+            0x06 => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_b_n(n);
+                timing_info.unwrap_fixed()
+            }
+            0x07 => {
+                self.rlca();
+                timing_info.unwrap_fixed()
+            }
+            0x08 => {
+                let addr_lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let addr_hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_nn_mem_sp(addr_lo, addr_hi);
+                timing_info.unwrap_fixed()
+            }
+            0x09 => {
+                self.add_hl_bc();
+                timing_info.unwrap_fixed()
+            }
+            0x0A => {
+                self.ld_a_bc_mem();
+                timing_info.unwrap_fixed()
+            }
+            0x0B => {
+                self.dec_bc();
+                timing_info.unwrap_fixed()
+            }
+            0x0C => {
+                self.inc_c();
+                timing_info.unwrap_fixed()
+            }
+            0x0D => {
+                self.dec_c();
+                timing_info.unwrap_fixed()
+            }
+            0x0E => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_c_n(n);
+                timing_info.unwrap_fixed()
+            }
+            0x0F => {
+                self.rrca();
+                timing_info.unwrap_fixed()
+            }
+            0x10 => {
+                self.stop();
+                timing_info.unwrap_fixed()
+            } // STOP timing can be complex, 1 is simplified.
+            0x11 => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_de_nn(lo, hi);
+                timing_info.unwrap_fixed()
+            }
+            0x12 => {
+                self.ld_de_mem_a();
+                timing_info.unwrap_fixed()
+            }
+            0x13 => {
+                self.inc_de();
+                timing_info.unwrap_fixed()
+            }
+            0x14 => {
+                self.inc_d();
+                timing_info.unwrap_fixed()
+            }
+            0x15 => {
+                self.dec_d();
+                timing_info.unwrap_fixed()
+            }
+            0x16 => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_d_n(n);
+                timing_info.unwrap_fixed()
+            }
+            0x17 => {
+                self.rla();
+                timing_info.unwrap_fixed()
+            }
+            0x18 => {
+                // JR r8
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.jr_e8(offset); // jr_e8 handles PC update
+                timing_info.unwrap_fixed()
+            }
+            0x19 => {
+                self.add_hl_de();
+                timing_info.unwrap_fixed()
+            }
+            0x1A => {
+                self.ld_a_de_mem();
+                timing_info.unwrap_fixed()
+            }
+            0x1B => {
+                self.dec_de();
+                timing_info.unwrap_fixed()
+            }
+            0x1C => {
+                self.inc_e();
+                timing_info.unwrap_fixed()
+            }
+            0x1D => {
+                self.dec_e();
+                timing_info.unwrap_fixed()
+            }
+            0x1E => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_e_n(n);
+                timing_info.unwrap_fixed()
+            }
+            0x1F => {
+                self.rra();
+                timing_info.unwrap_fixed()
+            }
+            0x20 => {
+                // JR NZ, r8
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let condition = !self.is_flag_z();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        let current_pc_val = self.pc;
+                        let pc_after_instruction = current_pc_val.wrapping_add(2);
+                        self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(2);
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(1); // consumes only 1 byte for opcode
-                    cf
+                    panic!("Incorrect timing for JR NZ");
                 }
-            } else { panic!("Incorrect timing for RET NZ"); }
-        }
-        0xC1 => { self.pop_bc(); timing_info.unwrap_fixed() }
-        0xC2 => { // JP NZ,a16
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            let condition = !self.is_flag_z();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.pc = ((hi as u16) << 8) | (lo as u16);
-                    ct
+            }
+            0x21 => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_hl_nn(lo, hi);
+                timing_info.unwrap_fixed()
+            }
+            0x22 => {
+                self.ldi_hl_mem_a();
+                timing_info.unwrap_fixed()
+            }
+            0x23 => {
+                self.inc_hl();
+                timing_info.unwrap_fixed()
+            }
+            0x24 => {
+                self.inc_h();
+                timing_info.unwrap_fixed()
+            }
+            0x25 => {
+                self.dec_h();
+                timing_info.unwrap_fixed()
+            }
+            0x26 => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_h_n(n);
+                timing_info.unwrap_fixed()
+            }
+            0x27 => {
+                self.daa();
+                timing_info.unwrap_fixed()
+            }
+            0x28 => {
+                // JR Z, r8
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let condition = self.is_flag_z();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        let current_pc_val = self.pc;
+                        let pc_after_instruction = current_pc_val.wrapping_add(2);
+                        self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(2);
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(3);
-                    cf
+                    panic!("Incorrect timing for JR Z");
                 }
-            } else { panic!("Incorrect timing for JP NZ,a16"); }
-        }
-        0xC3 => { // JP a16
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            self.jp_nn(lo, hi); // jp_nn updates PC
-            timing_info.unwrap_fixed()
-        }
-        0xC4 => { // CALL NZ,a16
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            let condition = !self.is_flag_z();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.call_nn(lo, hi); // call_nn handles PC update & stack
-                    ct
+            }
+            0x29 => {
+                self.add_hl_hl();
+                timing_info.unwrap_fixed()
+            }
+            0x2A => {
+                self.ldi_a_hl_mem();
+                timing_info.unwrap_fixed()
+            }
+            0x2B => {
+                self.dec_hl();
+                timing_info.unwrap_fixed()
+            }
+            0x2C => {
+                self.inc_l();
+                timing_info.unwrap_fixed()
+            }
+            0x2D => {
+                self.dec_l();
+                timing_info.unwrap_fixed()
+            }
+            0x2E => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_l_n(n);
+                timing_info.unwrap_fixed()
+            }
+            0x2F => {
+                self.cpl();
+                timing_info.unwrap_fixed()
+            }
+            0x30 => {
+                // JR NC, r8
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let condition = !self.is_flag_c();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        let current_pc_val = self.pc;
+                        let pc_after_instruction = current_pc_val.wrapping_add(2);
+                        self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(2);
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(3);
-                    cf
+                    panic!("Incorrect timing for JR NC");
                 }
-            } else { panic!("Incorrect timing for CALL NZ,a16"); }
-        }
-        0xC5 => { self.push_bc(); timing_info.unwrap_fixed() }
-        0xC6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.add_a_n(val); timing_info.unwrap_fixed() }
-        0xC7 => { self.rst_00h(); timing_info.unwrap_fixed() }
-        0xC8 => { // RET Z
-            let condition = self.is_flag_z();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.ret();
-                    ct
+            }
+            0x31 => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_sp_nn(lo, hi);
+                timing_info.unwrap_fixed()
+            }
+            0x32 => {
+                self.ldd_hl_mem_a();
+                timing_info.unwrap_fixed()
+            }
+            0x33 => {
+                self.inc_sp();
+                timing_info.unwrap_fixed()
+            }
+            0x34 => {
+                self.inc_hl_mem();
+                timing_info.unwrap_fixed()
+            }
+            0x35 => {
+                self.dec_hl_mem();
+                timing_info.unwrap_fixed()
+            }
+            0x36 => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_hl_mem_n(n);
+                timing_info.unwrap_fixed()
+            }
+            0x37 => {
+                self.scf();
+                timing_info.unwrap_fixed()
+            }
+            0x38 => {
+                // JR C, r8
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let condition = self.is_flag_c();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        let current_pc_val = self.pc;
+                        let pc_after_instruction = current_pc_val.wrapping_add(2);
+                        self.pc = pc_after_instruction.wrapping_add((offset as i8) as i16 as u16);
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(2);
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(1);
-                    cf
+                    panic!("Incorrect timing for JR C");
                 }
-            } else { panic!("Incorrect timing for RET Z"); }
-        }
-        0xC9 => { self.ret(); timing_info.unwrap_fixed() }
-        0xCA => { // JP Z,a16
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            let condition = self.is_flag_z();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.pc = ((hi as u16) << 8) | (lo as u16);
-                    ct
+            }
+            0x39 => {
+                self.add_hl_sp();
+                timing_info.unwrap_fixed()
+            }
+            0x3A => {
+                self.ldd_a_hl_mem();
+                timing_info.unwrap_fixed()
+            }
+            0x3B => {
+                self.dec_sp();
+                timing_info.unwrap_fixed()
+            }
+            0x3C => {
+                self.inc_a();
+                timing_info.unwrap_fixed()
+            }
+            0x3D => {
+                self.dec_a();
+                timing_info.unwrap_fixed()
+            }
+            0x3E => {
+                let n = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_a_n(n);
+                timing_info.unwrap_fixed()
+            }
+            0x3F => {
+                self.ccf();
+                timing_info.unwrap_fixed()
+            }
+            0x40..=0x75 => {
+                // LD r, r' ; LD r, (HL); LD (HL), r
+                match opcode {
+                    0x40 => self.ld_b_b(),
+                    0x41 => self.ld_b_c(),
+                    0x42 => self.ld_b_d(),
+                    0x43 => self.ld_b_e(),
+                    0x44 => self.ld_b_h(),
+                    0x45 => self.ld_b_l(),
+                    0x46 => self.ld_b_hl_mem(),
+                    0x47 => self.ld_b_a(),
+                    0x48 => self.ld_c_b(),
+                    0x49 => self.ld_c_c(),
+                    0x4A => self.ld_c_d(),
+                    0x4B => self.ld_c_e(),
+                    0x4C => self.ld_c_h(),
+                    0x4D => self.ld_c_l(),
+                    0x4E => self.ld_c_hl_mem(),
+                    0x4F => self.ld_c_a(),
+                    0x50 => self.ld_d_b(),
+                    0x51 => self.ld_d_c(),
+                    0x52 => self.ld_d_d(),
+                    0x53 => self.ld_d_e(),
+                    0x54 => self.ld_d_h(),
+                    0x55 => self.ld_d_l(),
+                    0x56 => self.ld_d_hl_mem(),
+                    0x57 => self.ld_d_a(),
+                    0x58 => self.ld_e_b(),
+                    0x59 => self.ld_e_c(),
+                    0x5A => self.ld_e_d(),
+                    0x5B => self.ld_e_e(),
+                    0x5C => self.ld_e_h(),
+                    0x5D => self.ld_e_l(),
+                    0x5E => self.ld_e_hl_mem(),
+                    0x5F => self.ld_e_a(),
+                    0x60 => self.ld_h_b(),
+                    0x61 => self.ld_h_c(),
+                    0x62 => self.ld_h_d(),
+                    0x63 => self.ld_h_e(),
+                    0x64 => self.ld_h_h(),
+                    0x65 => self.ld_h_l(),
+                    0x66 => self.ld_h_hl_mem(),
+                    0x67 => self.ld_h_a(),
+                    0x68 => self.ld_l_b(),
+                    0x69 => self.ld_l_c(),
+                    0x6A => self.ld_l_d(),
+                    0x6B => self.ld_l_e(),
+                    0x6C => self.ld_l_h(),
+                    0x6D => self.ld_l_l(),
+                    0x6E => self.ld_l_hl_mem(),
+                    0x6F => self.ld_l_a(),
+                    0x70 => self.ld_hl_mem_b(),
+                    0x71 => self.ld_hl_mem_c(),
+                    0x72 => self.ld_hl_mem_d(),
+                    0x73 => self.ld_hl_mem_e(),
+                    0x74 => self.ld_hl_mem_h(),
+                    0x75 => self.ld_hl_mem_l(),
+                    _ => unreachable!(), // Should be covered by range
+                }
+                timing_info.unwrap_fixed()
+            }
+            0x76 => {
+                self.halt();
+                timing_info.unwrap_fixed()
+            } // HALT itself updates PC if not bugged
+            0x77 => {
+                self.ld_hl_mem_a();
+                timing_info.unwrap_fixed()
+            }
+            0x78..=0x7F => {
+                // LD A, r ; LD A, (HL)
+                match opcode {
+                    0x78 => self.ld_a_b(),
+                    0x79 => self.ld_a_c(),
+                    0x7A => self.ld_a_d(),
+                    0x7B => self.ld_a_e(),
+                    0x7C => self.ld_a_h(),
+                    0x7D => self.ld_a_l(),
+                    0x7E => self.ld_a_hl_mem(),
+                    0x7F => self.ld_a_a(),
+                    _ => unreachable!(),
+                }
+                timing_info.unwrap_fixed()
+            }
+            0x80..=0xBF => {
+                // ALU A, r; ALU A, (HL); ALU A, n
+                match opcode {
+                    0x80 => self.add_a_b(),
+                    0x81 => self.add_a_c(),
+                    0x82 => self.add_a_d(),
+                    0x83 => self.add_a_e(),
+                    0x84 => self.add_a_h(),
+                    0x85 => self.add_a_l(),
+                    0x86 => self.add_a_hl_mem(),
+                    0x87 => self.add_a_a(),
+                    0x88 => self.adc_a_b(),
+                    0x89 => self.adc_a_c(),
+                    0x8A => self.adc_a_d(),
+                    0x8B => self.adc_a_e(),
+                    0x8C => self.adc_a_h(),
+                    0x8D => self.adc_a_l(),
+                    0x8E => self.adc_a_hl_mem(),
+                    0x8F => self.adc_a_a(),
+                    0x90 => self.sub_a_b(),
+                    0x91 => self.sub_a_c(),
+                    0x92 => self.sub_a_d(),
+                    0x93 => self.sub_a_e(),
+                    0x94 => self.sub_a_h(),
+                    0x95 => self.sub_a_l(),
+                    0x96 => self.sub_a_hl_mem(),
+                    0x97 => self.sub_a_a(),
+                    0x98 => self.sbc_a_b(),
+                    0x99 => self.sbc_a_c(),
+                    0x9A => self.sbc_a_d(),
+                    0x9B => self.sbc_a_e(),
+                    0x9C => self.sbc_a_h(),
+                    0x9D => self.sbc_a_l(),
+                    0x9E => self.sbc_a_hl_mem(),
+                    0x9F => self.sbc_a_a(),
+                    0xA0 => self.and_a_b(),
+                    0xA1 => self.and_a_c(),
+                    0xA2 => self.and_a_d(),
+                    0xA3 => self.and_a_e(),
+                    0xA4 => self.and_a_h(),
+                    0xA5 => self.and_a_l(),
+                    0xA6 => self.and_a_hl_mem(),
+                    0xA7 => self.and_a_a(),
+                    0xA8 => self.xor_a_b(),
+                    0xA9 => self.xor_a_c(),
+                    0xAA => self.xor_a_d(),
+                    0xAB => self.xor_a_e(),
+                    0xAC => self.xor_a_h(),
+                    0xAD => self.xor_a_l(),
+                    0xAE => self.xor_a_hl_mem(),
+                    0xAF => self.xor_a_a(),
+                    0xB0 => self.or_a_b(),
+                    0xB1 => self.or_a_c(),
+                    0xB2 => self.or_a_d(),
+                    0xB3 => self.or_a_e(),
+                    0xB4 => self.or_a_h(),
+                    0xB5 => self.or_a_l(),
+                    0xB6 => self.or_a_hl_mem(),
+                    0xB7 => self.or_a_a(),
+                    0xB8 => self.cp_a_b(),
+                    0xB9 => self.cp_a_c(),
+                    0xBA => self.cp_a_d(),
+                    0xBB => self.cp_a_e(),
+                    0xBC => self.cp_a_h(),
+                    0xBD => self.cp_a_l(),
+                    0xBE => self.cp_a_hl_mem(),
+                    0xBF => self.cp_a_a(),
+                    _ => unreachable!(),
+                }
+                timing_info.unwrap_fixed()
+            }
+            0xC0 => {
+                // RET NZ
+                let condition = !self.is_flag_z();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.ret(); // ret handles PC update from stack
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(1); // consumes only 1 byte for opcode
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(3);
-                    cf
+                    panic!("Incorrect timing for RET NZ");
                 }
-            } else { panic!("Incorrect timing for JP Z,a16"); }
-        }
-        0xCB => { // PREFIX CB
-            let prefix_cycles = timing_info.unwrap_fixed();
-            let cb_opcode = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            self.pc = self.pc.wrapping_add(2); // Advance PC for 0xCB and the operand
-            let cb_cycles = self.execute_cb_prefixed(cb_opcode);
-            prefix_cycles.wrapping_add(cb_cycles) // Total cycles
-        }
-        0xCC => { // CALL Z,a16
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            let condition = self.is_flag_z();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.call_nn(lo, hi);
-                    ct
+            }
+            0xC1 => {
+                self.pop_bc();
+                timing_info.unwrap_fixed()
+            }
+            0xC2 => {
+                // JP NZ,a16
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                let condition = !self.is_flag_z();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.pc = ((hi as u16) << 8) | (lo as u16);
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(3);
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(3);
-                    cf
+                    panic!("Incorrect timing for JP NZ,a16");
                 }
-            } else { panic!("Incorrect timing for CALL Z,a16"); }
-        }
-        0xCD => { // CALL a16
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            self.call_nn(lo, hi);
-            timing_info.unwrap_fixed()
-        }
-        0xCE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.adc_a_n(val); timing_info.unwrap_fixed() }
-        0xCF => { self.rst_08h(); timing_info.unwrap_fixed() }
-        0xD0 => { // RET NC
-            let condition = !self.is_flag_c();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.ret();
-                    ct
+            }
+            0xC3 => {
+                // JP a16
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.jp_nn(lo, hi); // jp_nn updates PC
+                timing_info.unwrap_fixed()
+            }
+            0xC4 => {
+                // CALL NZ,a16
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                let condition = !self.is_flag_z();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.call_nn(lo, hi); // call_nn handles PC update & stack
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(3);
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(1);
-                    cf
+                    panic!("Incorrect timing for CALL NZ,a16");
                 }
-            } else { panic!("Incorrect timing for RET NC"); }
-        }
-        0xD1 => { self.pop_de(); timing_info.unwrap_fixed() }
-        0xD2 => { // JP NC,a16
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            let condition = !self.is_flag_c();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.pc = ((hi as u16) << 8) | (lo as u16);
-                    ct
+            }
+            0xC5 => {
+                self.push_bc();
+                timing_info.unwrap_fixed()
+            }
+            0xC6 => {
+                let val = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.add_a_n(val);
+                timing_info.unwrap_fixed()
+            }
+            0xC7 => {
+                self.rst_00h();
+                timing_info.unwrap_fixed()
+            }
+            0xC8 => {
+                // RET Z
+                let condition = self.is_flag_z();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.ret();
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(1);
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(3);
-                    cf
+                    panic!("Incorrect timing for RET Z");
                 }
-            } else { panic!("Incorrect timing for JP NC,a16"); }
-        }
-        0xD4 => { // CALL NC,a16
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            let condition = !self.is_flag_c();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.call_nn(lo, hi);
-                    ct
+            }
+            0xC9 => {
+                self.ret();
+                timing_info.unwrap_fixed()
+            }
+            0xCA => {
+                // JP Z,a16
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                let condition = self.is_flag_z();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.pc = ((hi as u16) << 8) | (lo as u16);
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(3);
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(3);
-                    cf
+                    panic!("Incorrect timing for JP Z,a16");
                 }
-            } else { panic!("Incorrect timing for CALL NC,a16"); }
-        }
-        0xD5 => { self.push_de(); timing_info.unwrap_fixed() }
-        0xD6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.sub_a_n(val); timing_info.unwrap_fixed() }
-        0xD7 => { self.rst_10h(); timing_info.unwrap_fixed() }
-        0xD8 => { // RET C
-            let condition = self.is_flag_c();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.ret();
-                    ct
+            }
+            0xCB => {
+                // PREFIX CB
+                let prefix_cycles = timing_info.unwrap_fixed();
+                let cb_opcode = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.pc = self.pc.wrapping_add(2); // Advance PC for 0xCB and the operand
+                let cb_cycles = self.execute_cb_prefixed(cb_opcode);
+                prefix_cycles.wrapping_add(cb_cycles) // Total cycles
+            }
+            0xCC => {
+                // CALL Z,a16
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                let condition = self.is_flag_z();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.call_nn(lo, hi);
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(3);
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(1);
-                    cf
+                    panic!("Incorrect timing for CALL Z,a16");
                 }
-            } else { panic!("Incorrect timing for RET C"); }
-        }
-        0xD9 => { self.reti(); timing_info.unwrap_fixed() }
-        0xDA => { // JP C,a16
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            let condition = self.is_flag_c();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.pc = ((hi as u16) << 8) | (lo as u16);
-                    ct
+            }
+            0xCD => {
+                // CALL a16
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.call_nn(lo, hi);
+                timing_info.unwrap_fixed()
+            }
+            0xCE => {
+                let val = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.adc_a_n(val);
+                timing_info.unwrap_fixed()
+            }
+            0xCF => {
+                self.rst_08h();
+                timing_info.unwrap_fixed()
+            }
+            0xD0 => {
+                // RET NC
+                let condition = !self.is_flag_c();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.ret();
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(1);
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(3);
-                    cf
+                    panic!("Incorrect timing for RET NC");
                 }
-            } else { panic!("Incorrect timing for JP C,a16"); }
-        }
-        0xDC => { // CALL C,a16
-            let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
-            let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
-            let condition = self.is_flag_c();
-            if let Timing::Conditional(ct, cf) = timing_info {
-                if condition {
-                    self.call_nn(lo, hi);
-                    ct
+            }
+            0xD1 => {
+                self.pop_de();
+                timing_info.unwrap_fixed()
+            }
+            0xD2 => {
+                // JP NC,a16
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                let condition = !self.is_flag_c();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.pc = ((hi as u16) << 8) | (lo as u16);
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(3);
+                        cf
+                    }
                 } else {
-                    self.pc = self.pc.wrapping_add(3);
-                    cf
+                    panic!("Incorrect timing for JP NC,a16");
                 }
-            } else { panic!("Incorrect timing for CALL C,a16"); }
-        }
-        0xDE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.sbc_a_n(val); timing_info.unwrap_fixed() }
-        0xDF => { self.rst_18h(); timing_info.unwrap_fixed() }
-        0xE0 => { let offset=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ldh_n_offset_mem_a(offset); timing_info.unwrap_fixed() }
-        0xE1 => { self.pop_hl(); timing_info.unwrap_fixed() }
-        0xE2 => { self.ldh_c_offset_mem_a(); timing_info.unwrap_fixed() }
-        0xE5 => { self.push_hl(); timing_info.unwrap_fixed() }
-        0xE6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.and_a_n(val); timing_info.unwrap_fixed() }
-        0xE7 => { self.rst_20h(); timing_info.unwrap_fixed() }
-        0xE8 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.add_sp_e8(val); timing_info.unwrap_fixed() }
-        0xE9 => { self.jp_hl(); timing_info.unwrap_fixed() }
-        0xEA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.ld_nn_mem_a(lo, hi); timing_info.unwrap_fixed() }
-        0xEE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.xor_a_n(val); timing_info.unwrap_fixed() }
-        0xEF => { self.rst_28h(); timing_info.unwrap_fixed() }
-        0xF0 => { let offset=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ldh_a_n_offset_mem(offset); timing_info.unwrap_fixed() }
-        0xF1 => { self.pop_af(); timing_info.unwrap_fixed() }
-        0xF2 => { self.ldh_a_c_offset_mem(); timing_info.unwrap_fixed() }
-        0xF3 => { self.di(); timing_info.unwrap_fixed() }
-        0xF5 => { self.push_af(); timing_info.unwrap_fixed() }
-        0xF6 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.or_a_n(val); timing_info.unwrap_fixed() }
-        0xF7 => { self.rst_30h(); timing_info.unwrap_fixed() }
-        0xF8 => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.ld_hl_sp_plus_e8(val); timing_info.unwrap_fixed() }
-        0xF9 => { self.ld_sp_hl(); timing_info.unwrap_fixed() }
-        0xFA => { let lo=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); let hi=self.bus.borrow().read_byte(self.pc.wrapping_add(2)); self.ld_a_nn_mem(lo, hi); timing_info.unwrap_fixed() }
-        0xFB => { self.ei(); timing_info.unwrap_fixed() }
-        0xFE => { let val=self.bus.borrow().read_byte(self.pc.wrapping_add(1)); self.cp_a_n(val); timing_info.unwrap_fixed() }
-        0xFF => { self.rst_38h(); timing_info.unwrap_fixed() }
-        0xD3 | 0xDB | 0xDD | 0xE3 | 0xE4 | 0xEB | 0xEC | 0xED | 0xF4 | 0xFC | 0xFD => {
-            // For known illegal opcodes, we use Timing::Illegal.
-            // If an opcode is not in the timing table or marked as Timing::Illegal, panic.
-            match timing_info {
+            }
+            0xD4 => {
+                // CALL NC,a16
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                let condition = !self.is_flag_c();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.call_nn(lo, hi);
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(3);
+                        cf
+                    }
+                } else {
+                    panic!("Incorrect timing for CALL NC,a16");
+                }
+            }
+            0xD5 => {
+                self.push_de();
+                timing_info.unwrap_fixed()
+            }
+            0xD6 => {
+                let val = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.sub_a_n(val);
+                timing_info.unwrap_fixed()
+            }
+            0xD7 => {
+                self.rst_10h();
+                timing_info.unwrap_fixed()
+            }
+            0xD8 => {
+                // RET C
+                let condition = self.is_flag_c();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.ret();
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(1);
+                        cf
+                    }
+                } else {
+                    panic!("Incorrect timing for RET C");
+                }
+            }
+            0xD9 => {
+                self.reti();
+                timing_info.unwrap_fixed()
+            }
+            0xDA => {
+                // JP C,a16
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                let condition = self.is_flag_c();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.pc = ((hi as u16) << 8) | (lo as u16);
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(3);
+                        cf
+                    }
+                } else {
+                    panic!("Incorrect timing for JP C,a16");
+                }
+            }
+            0xDC => {
+                // CALL C,a16
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                let condition = self.is_flag_c();
+                if let Timing::Conditional(ct, cf) = timing_info {
+                    if condition {
+                        self.call_nn(lo, hi);
+                        ct
+                    } else {
+                        self.pc = self.pc.wrapping_add(3);
+                        cf
+                    }
+                } else {
+                    panic!("Incorrect timing for CALL C,a16");
+                }
+            }
+            0xDE => {
+                let val = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.sbc_a_n(val);
+                timing_info.unwrap_fixed()
+            }
+            0xDF => {
+                self.rst_18h();
+                timing_info.unwrap_fixed()
+            }
+            0xE0 => {
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ldh_n_offset_mem_a(offset);
+                timing_info.unwrap_fixed()
+            }
+            0xE1 => {
+                self.pop_hl();
+                timing_info.unwrap_fixed()
+            }
+            0xE2 => {
+                self.ldh_c_offset_mem_a();
+                timing_info.unwrap_fixed()
+            }
+            0xE5 => {
+                self.push_hl();
+                timing_info.unwrap_fixed()
+            }
+            0xE6 => {
+                let val = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.and_a_n(val);
+                timing_info.unwrap_fixed()
+            }
+            0xE7 => {
+                self.rst_20h();
+                timing_info.unwrap_fixed()
+            }
+            0xE8 => {
+                let val = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.add_sp_e8(val);
+                timing_info.unwrap_fixed()
+            }
+            0xE9 => {
+                self.jp_hl();
+                timing_info.unwrap_fixed()
+            }
+            0xEA => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_nn_mem_a(lo, hi);
+                timing_info.unwrap_fixed()
+            }
+            0xEE => {
+                let val = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.xor_a_n(val);
+                timing_info.unwrap_fixed()
+            }
+            0xEF => {
+                self.rst_28h();
+                timing_info.unwrap_fixed()
+            }
+            0xF0 => {
+                let offset = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ldh_a_n_offset_mem(offset);
+                timing_info.unwrap_fixed()
+            }
+            0xF1 => {
+                self.pop_af();
+                timing_info.unwrap_fixed()
+            }
+            0xF2 => {
+                self.ldh_a_c_offset_mem();
+                timing_info.unwrap_fixed()
+            }
+            0xF3 => {
+                self.di();
+                timing_info.unwrap_fixed()
+            }
+            0xF5 => {
+                self.push_af();
+                timing_info.unwrap_fixed()
+            }
+            0xF6 => {
+                let val = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.or_a_n(val);
+                timing_info.unwrap_fixed()
+            }
+            0xF7 => {
+                self.rst_30h();
+                timing_info.unwrap_fixed()
+            }
+            0xF8 => {
+                let val = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.ld_hl_sp_plus_e8(val);
+                timing_info.unwrap_fixed()
+            }
+            0xF9 => {
+                self.ld_sp_hl();
+                timing_info.unwrap_fixed()
+            }
+            0xFA => {
+                let lo = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                let hi = self.bus.borrow().read_byte(self.pc.wrapping_add(2));
+                self.ld_a_nn_mem(lo, hi);
+                timing_info.unwrap_fixed()
+            }
+            0xFB => {
+                self.ei();
+                timing_info.unwrap_fixed()
+            }
+            0xFE => {
+                let val = self.bus.borrow().read_byte(self.pc.wrapping_add(1));
+                self.cp_a_n(val);
+                timing_info.unwrap_fixed()
+            }
+            0xFF => {
+                self.rst_38h();
+                timing_info.unwrap_fixed()
+            }
+            0xD3 | 0xDB | 0xDD | 0xE3 | 0xE4 | 0xEB | 0xEC | 0xED | 0xF4 | 0xFC | 0xFD => {
+                // For known illegal opcodes, we use Timing::Illegal.
+                // If an opcode is not in the timing table or marked as Timing::Illegal, panic.
+                match timing_info {
                 Timing::Illegal => panic!("Executed ILLEGAL opcode: {:#04X} at PC: {:#04X}", opcode, self.pc),
                 _ => panic!("Unimplemented or illegal opcode: {:#04X} at PC: {:#04X} (with valid timing entry, this is unexpected)", opcode, self.pc),
             }
-        }
-    };
+            }
+        };
 
-    return cycles as u32;
-}
+        return cycles as u32;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*; // Imports Cpu, flag constants, etc.
     use crate::bus::Bus; // Required for Bus::new()
-    use crate::models::GameBoyModel; // Added for tests
     use crate::interrupts::InterruptType; // Moved import here for test usage
+    use crate::models::GameBoyModel; // Added for tests
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -2867,12 +3779,14 @@ mod tests {
         };
     }
 
-    fn setup_cpu_with_model(model: GameBoyModel) -> Cpu { // Renamed and model type changed
+    fn setup_cpu_with_model(model: GameBoyModel) -> Cpu {
+        // Renamed and model type changed
         // Provide dummy ROM data. For CGB family, set the CGB flag.
         let mut rom_data = vec![0; 0x8000]; // Ensure enough size for header
         rom_data[0x0147] = 0x00; // NoMBC cartridge type
         rom_data[0x0149] = 0x02; // 8KB RAM size
-        if model.is_cgb_family() { // Check CGB family
+        if model.is_cgb_family() {
+            // Check CGB family
             rom_data[0x0143] = 0x80; // CGB supported/required
         } else {
             rom_data[0x0143] = 0x00; // DMG/SGB mode
@@ -2881,10 +3795,10 @@ mod tests {
         Cpu::new(bus)
     }
 
-    fn setup_cpu() -> Cpu { // Default to a CGB model for existing tests, or adjust as needed
+    fn setup_cpu() -> Cpu {
+        // Default to a CGB model for existing tests, or adjust as needed
         setup_cpu_with_model(GameBoyModel::CGBD) // Using CGB-D as a generic CGB for tests
     }
-
 
     mod initial_tests {
         use super::*;
@@ -2896,7 +3810,11 @@ mod tests {
             // We capture initial PC before it's changed by NOP.
             let initial_pc_for_nop_test = cpu.pc;
             cpu.nop();
-            assert_eq!(cpu.pc, initial_pc_for_nop_test + 1, "PC should increment by 1 for NOP");
+            assert_eq!(
+                cpu.pc,
+                initial_pc_for_nop_test + 1,
+                "PC should increment by 1 for NOP"
+            );
         }
 
         #[test]
@@ -2915,7 +3833,10 @@ mod tests {
             assert_eq!(cpu.sp, 0xFFFE, "CGB Initial SP register value incorrect");
             assert_flags!(cpu, true, false, false, false); // For F=0x80
             assert_eq!(cpu.ime, true, "CGB Initial IME value incorrect");
-            assert_eq!(cpu.is_halted, false, "CGB Initial is_halted value incorrect");
+            assert_eq!(
+                cpu.is_halted, false,
+                "CGB Initial is_halted value incorrect"
+            );
         }
 
         #[test]
@@ -2934,11 +3855,14 @@ mod tests {
             assert_eq!(cpu.sp, 0xFFFE, "DMG Initial SP register value incorrect");
             assert_flags!(cpu, true, false, true, true); // For F=0xB0
             assert_eq!(cpu.ime, true, "DMG Initial IME value incorrect");
-            assert_eq!(cpu.is_halted, false, "DMG Initial is_halted value incorrect");
+            assert_eq!(
+                cpu.is_halted, false,
+                "DMG Initial is_halted value incorrect"
+            );
         }
     }
 
-    mod loads_8bit_reg_reg { 
+    mod loads_8bit_reg_reg {
         use super::*;
 
         #[test]
@@ -2948,13 +3872,17 @@ mod tests {
             cpu.c = 0x12; // Control value to ensure it's not affected
             let initial_pc = cpu.pc;
             let initial_f = cpu.f; // Capture flags
-        
+
             cpu.ld_a_b();
-        
+
             assert_eq!(cpu.a, 0xAB, "A should be loaded with value from B");
             assert_eq!(cpu.b, 0xAB, "B should remain unchanged");
             assert_eq!(cpu.c, 0x12, "C should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD A, B");
         }
 
@@ -2971,7 +3899,11 @@ mod tests {
             assert_eq!(cpu.c, 0xCD, "C should be loaded with value from E");
             assert_eq!(cpu.e, 0xCD, "E should remain unchanged");
             assert_eq!(cpu.d, 0x34, "D should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD C, E");
         }
 
@@ -2988,7 +3920,11 @@ mod tests {
             assert_eq!(cpu.h, 0xFE, "H should be loaded with value from L");
             assert_eq!(cpu.l, 0xFE, "L should remain unchanged");
             assert_eq!(cpu.a, 0x56, "A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD H, L");
         }
 
@@ -3005,7 +3941,11 @@ mod tests {
             assert_eq!(cpu.l, 0x89, "L should be loaded with value from A");
             assert_eq!(cpu.a, 0x89, "A should remain unchanged");
             assert_eq!(cpu.b, 0x7A, "B should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD L, A");
         }
 
@@ -3021,7 +3961,11 @@ mod tests {
 
             assert_eq!(cpu.b, 0x67, "B should remain unchanged (LD B,B)");
             assert_eq!(cpu.a, 0xFF, "A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD B, B");
         }
 
@@ -3038,7 +3982,11 @@ mod tests {
             assert_eq!(cpu.d, 0x1F, "D should be loaded with value from A");
             assert_eq!(cpu.a, 0x1F, "A should remain unchanged");
             assert_eq!(cpu.e, 0x2E, "E should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD D, A");
         }
 
@@ -3055,11 +4003,15 @@ mod tests {
             assert_eq!(cpu.e, 0x9C, "E should be loaded with value from B");
             assert_eq!(cpu.b, 0x9C, "B should remain unchanged");
             assert_eq!(cpu.d, 0x8D, "D should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD E, B");
         }
     }
-    mod loads_8bit_reg_n { 
+    mod loads_8bit_reg_n {
         use super::*;
 
         #[test]
@@ -3069,12 +4021,16 @@ mod tests {
             cpu.b = 0x12; // Control value
             let initial_pc = cpu.pc;
             let initial_f = cpu.f; // Capture flags
-        
+
             cpu.ld_a_n(val_n);
-        
+
             assert_eq!(cpu.a, val_n, "A should be loaded with immediate value n");
             assert_eq!(cpu.b, 0x12, "B should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "PC should increment by 2"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD A, n");
         }
 
@@ -3090,7 +4046,11 @@ mod tests {
 
             assert_eq!(cpu.b, val_n, "B should be loaded with immediate value n");
             assert_eq!(cpu.c, 0x34, "C should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "PC should increment by 2"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD B, n");
         }
 
@@ -3106,7 +4066,11 @@ mod tests {
 
             assert_eq!(cpu.c, val_n, "C should be loaded with immediate value n");
             assert_eq!(cpu.d, 0xEA, "D should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "PC should increment by 2"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD C, n");
         }
 
@@ -3122,7 +4086,11 @@ mod tests {
 
             assert_eq!(cpu.d, val_n, "D should be loaded with immediate value n");
             assert_eq!(cpu.e, 0x45, "E should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "PC should increment by 2"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD D, n");
         }
 
@@ -3138,7 +4106,11 @@ mod tests {
 
             assert_eq!(cpu.e, val_n, "E should be loaded with immediate value n");
             assert_eq!(cpu.h, 0x88, "H should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "PC should increment by 2"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD E, n");
         }
 
@@ -3154,7 +4126,11 @@ mod tests {
 
             assert_eq!(cpu.h, val_n, "H should be loaded with immediate value n");
             assert_eq!(cpu.l, 0xAA, "L should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "PC should increment by 2"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD H, n");
         }
 
@@ -3170,11 +4146,15 @@ mod tests {
 
             assert_eq!(cpu.l, val_n, "L should be loaded with immediate value n");
             assert_eq!(cpu.a, 0xCC, "A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "PC should increment by 2"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD L, n");
         }
     }
-    mod loads_8bit_hl_mem { 
+    mod loads_8bit_hl_mem {
         use super::*;
 
         #[test]
@@ -3187,13 +4167,21 @@ mod tests {
             cpu.b = 0xCD; // Control
             let initial_pc = cpu.pc;
             let initial_f = cpu.f; // Capture flags
-    
+
             cpu.ld_a_hl_mem();
-    
+
             assert_eq!(cpu.a, 0xAB, "A should be loaded from memory[HL]");
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0xAB, "Memory should be unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0xAB,
+                "Memory should be unchanged"
+            );
             assert_eq!(cpu.b, 0xCD, "B should be unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD A, (HL)");
         }
 
@@ -3211,9 +4199,17 @@ mod tests {
             cpu.ld_b_hl_mem();
 
             assert_eq!(cpu.b, 0x55, "B should be loaded from memory[HL]");
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x55, "Memory should be unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0x55,
+                "Memory should be unchanged"
+            );
             assert_eq!(cpu.a, 0xFF, "A should be unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD B, (HL)");
         }
 
@@ -3231,9 +4227,17 @@ mod tests {
             cpu.ld_c_hl_mem();
 
             assert_eq!(cpu.c, 0x66, "C should be loaded from memory[HL]");
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x66, "Memory should be unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0x66,
+                "Memory should be unchanged"
+            );
             assert_eq!(cpu.a, 0xFF, "A should be unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD C, (HL)");
         }
 
@@ -3251,9 +4255,17 @@ mod tests {
             cpu.ld_d_hl_mem();
 
             assert_eq!(cpu.d, 0x77, "D should be loaded from memory[HL]");
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x77, "Memory should be unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0x77,
+                "Memory should be unchanged"
+            );
             assert_eq!(cpu.a, 0xFF, "A should be unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD D, (HL)");
         }
 
@@ -3271,14 +4283,23 @@ mod tests {
             cpu.ld_e_hl_mem();
 
             assert_eq!(cpu.e, 0x88, "E should be loaded from memory[HL]");
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x88, "Memory should be unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0x88,
+                "Memory should be unchanged"
+            );
             assert_eq!(cpu.a, 0xFF, "A should be unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD E, (HL)");
         }
 
         #[test]
-        fn test_ld_h_hl_mem() { // Tests H = (HL)
+        fn test_ld_h_hl_mem() {
+            // Tests H = (HL)
             let mut cpu = setup_cpu();
             let addr = 0xC005;
             cpu.h = (addr >> 8) as u8; // H will be overwritten by memory read
@@ -3292,15 +4313,24 @@ mod tests {
             cpu.ld_h_hl_mem();
 
             assert_eq!(cpu.h, 0x99, "H should be loaded from memory[HL]");
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x99, "Memory should be unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0x99,
+                "Memory should be unchanged"
+            );
             assert_eq!(cpu.l, initial_l, "L should be unchanged");
             assert_eq!(cpu.a, 0xFF, "A should be unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD H, (HL)");
         }
 
         #[test]
-        fn test_ld_l_hl_mem() { // Tests L = (HL)
+        fn test_ld_l_hl_mem() {
+            // Tests L = (HL)
             let mut cpu = setup_cpu();
             let addr = 0xD345;
             cpu.h = (addr >> 8) as u8; // H should not change
@@ -3310,14 +4340,22 @@ mod tests {
             let initial_pc = cpu.pc;
             let initial_h = cpu.h; // H should not change
             let initial_f = cpu.f; // Capture flags
-    
+
             cpu.ld_l_hl_mem();
-    
+
             assert_eq!(cpu.l, 0x22, "L should be loaded from memory[HL]");
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x22, "Memory should be unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0x22,
+                "Memory should be unchanged"
+            );
             assert_eq!(cpu.a, 0xEE, "A should be unchanged");
             assert_eq!(cpu.h, initial_h, "H should be unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD L, (HL)");
         }
 
@@ -3331,13 +4369,21 @@ mod tests {
             cpu.b = 0x12; // Control
             let initial_pc = cpu.pc;
             let initial_f = cpu.f; // Capture flags
-    
+
             cpu.ld_hl_mem_a();
-    
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0xEF, "memory[HL] should be loaded from A");
+
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0xEF,
+                "memory[HL] should be loaded from A"
+            );
             assert_eq!(cpu.a, 0xEF, "A should be unchanged");
             assert_eq!(cpu.b, 0x12, "B should be unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), A");
         }
 
@@ -3357,12 +4403,28 @@ mod tests {
 
             cpu.ld_hl_mem_b();
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), cpu.b, "memory[HL] should now contain the value of B");
-            assert_eq!(cpu.h, (addr >> 8) as u8, "H register itself should remain unchanged");
-            assert_eq!(cpu.l, (addr & 0xFF) as u8, "L register itself should remain unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                cpu.b,
+                "memory[HL] should now contain the value of B"
+            );
+            assert_eq!(
+                cpu.h,
+                (addr >> 8) as u8,
+                "H register itself should remain unchanged"
+            );
+            assert_eq!(
+                cpu.l,
+                (addr & 0xFF) as u8,
+                "L register itself should remain unchanged"
+            );
             assert_eq!(cpu.b, 0xAB, "B register itself should remain unchanged");
             assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), B");
         }
 
@@ -3382,12 +4444,28 @@ mod tests {
 
             cpu.ld_hl_mem_c();
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), cpu.c, "memory[HL] should now contain the value of C");
-            assert_eq!(cpu.h, (addr >> 8) as u8, "H register should remain unchanged");
-            assert_eq!(cpu.l, (addr & 0xFF) as u8, "L register should remain unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                cpu.c,
+                "memory[HL] should now contain the value of C"
+            );
+            assert_eq!(
+                cpu.h,
+                (addr >> 8) as u8,
+                "H register should remain unchanged"
+            );
+            assert_eq!(
+                cpu.l,
+                (addr & 0xFF) as u8,
+                "L register should remain unchanged"
+            );
             assert_eq!(cpu.c, 0x7C, "C register itself should remain unchanged");
             assert_eq!(cpu.d, 0xDD, "Control register D should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), C");
         }
 
@@ -3407,12 +4485,28 @@ mod tests {
 
             cpu.ld_hl_mem_d();
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), cpu.d, "memory[HL] should now contain the value of D");
-            assert_eq!(cpu.h, (addr >> 8) as u8, "H register itself should remain unchanged");
-            assert_eq!(cpu.l, (addr & 0xFF) as u8, "L register itself should remain unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                cpu.d,
+                "memory[HL] should now contain the value of D"
+            );
+            assert_eq!(
+                cpu.h,
+                (addr >> 8) as u8,
+                "H register itself should remain unchanged"
+            );
+            assert_eq!(
+                cpu.l,
+                (addr & 0xFF) as u8,
+                "L register itself should remain unchanged"
+            );
             assert_eq!(cpu.d, 0xDA, "D register itself should remain unchanged");
             assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), D");
         }
 
@@ -3432,15 +4526,31 @@ mod tests {
 
             cpu.ld_hl_mem_e();
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), cpu.e, "memory[HL] should now contain the value of E");
-            assert_eq!(cpu.h, (addr >> 8) as u8, "H register itself should remain unchanged");
-            assert_eq!(cpu.l, (addr & 0xFF) as u8, "L register itself should remain unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                cpu.e,
+                "memory[HL] should now contain the value of E"
+            );
+            assert_eq!(
+                cpu.h,
+                (addr >> 8) as u8,
+                "H register itself should remain unchanged"
+            );
+            assert_eq!(
+                cpu.l,
+                (addr & 0xFF) as u8,
+                "L register itself should remain unchanged"
+            );
             assert_eq!(cpu.e, 0xEA, "E register itself should remain unchanged");
             assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), E");
         }
-        
+
         #[test]
         fn test_ld_hl_mem_l() {
             let mut cpu = setup_cpu();
@@ -3457,16 +4567,32 @@ mod tests {
 
             cpu.ld_hl_mem_l();
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), initial_l, "memory[HL] should now contain the value of L");
-            assert_eq!(cpu.h, (addr >> 8) as u8, "H register itself should remain unchanged");
-            assert_eq!(cpu.l, initial_l, "L register itself should remain unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                initial_l,
+                "memory[HL] should now contain the value of L"
+            );
+            assert_eq!(
+                cpu.h,
+                (addr >> 8) as u8,
+                "H register itself should remain unchanged"
+            );
+            assert_eq!(
+                cpu.l, initial_l,
+                "L register itself should remain unchanged"
+            );
             assert_eq!(cpu.a, 0xCD, "Control register A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), L");
         }
 
         #[test]
-        fn test_ld_hl_mem_h() { // Tests LD (HL), H
+        fn test_ld_hl_mem_h() {
+            // Tests LD (HL), H
             let mut cpu = setup_cpu();
             let addr = 0xC129; // Use WRAM
             cpu.h = (addr >> 8) as u8; // H value to be written
@@ -3484,11 +4610,25 @@ mod tests {
             let h_val_at_setup = (addr >> 8) as u8; // 0xC1
             let l_val_at_setup = (addr & 0xFF) as u8; // 0x29
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), h_val_at_setup, "memory[HL] should now contain the initial value of H");
-            assert_eq!(cpu.h, h_val_at_setup, "H register itself should remain unchanged");
-            assert_eq!(cpu.l, l_val_at_setup, "L register itself should remain unchanged");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                h_val_at_setup,
+                "memory[HL] should now contain the initial value of H"
+            );
+            assert_eq!(
+                cpu.h, h_val_at_setup,
+                "H register itself should remain unchanged"
+            );
+            assert_eq!(
+                cpu.l, l_val_at_setup,
+                "L register itself should remain unchanged"
+            );
             assert_eq!(cpu.a, 0xBD, "Control register A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), H");
         }
 
@@ -3502,16 +4642,24 @@ mod tests {
             cpu.a = 0x12; // Control
             let initial_pc = cpu.pc;
             let initial_f = cpu.f; // Capture flags
-    
+
             cpu.ld_hl_mem_n(val_n);
-    
-            assert_eq!(cpu.bus.borrow().read_byte(addr), val_n, "memory[HL] should be loaded with n");
+
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                val_n,
+                "memory[HL] should be loaded with n"
+            );
             assert_eq!(cpu.a, 0x12, "A should be unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "PC should increment by 2"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (HL), n");
         }
     }
-    mod loads_8bit_indexed_and_indirect { 
+    mod loads_8bit_indexed_and_indirect {
         use super::*;
 
         #[test]
@@ -3523,10 +4671,14 @@ mod tests {
             cpu.b = (target_addr >> 8) as u8;
             cpu.c = (target_addr & 0xFF) as u8;
             let initial_f = cpu.f; // Capture flags
-    
+
             cpu.ld_bc_mem_a();
-    
-            assert_eq!(cpu.bus.borrow().read_byte(target_addr), cpu.a, "Memory at (BC) should be loaded with value of A");
+
+            assert_eq!(
+                cpu.bus.borrow().read_byte(target_addr),
+                cpu.a,
+                "Memory at (BC) should be loaded with value of A"
+            );
             assert_eq!(cpu.pc, 1, "PC should increment by 1 for LD (BC), A");
             assert_eq!(cpu.a, 0xAB, "Register A should not change for LD (BC), A");
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (BC), A");
@@ -3545,7 +4697,11 @@ mod tests {
             cpu.ld_a_bc_mem();
 
             assert_eq!(cpu.a, 0xAB, "A should be loaded from memory[BC]");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD A, (BC)");
         }
 
@@ -3562,7 +4718,11 @@ mod tests {
             cpu.ld_a_de_mem();
 
             assert_eq!(cpu.a, 0xCD, "A should be loaded from memory[DE]");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD A, (DE)");
         }
 
@@ -3579,7 +4739,11 @@ mod tests {
             cpu.ld_a_nn_mem(addr_lo, addr_hi);
 
             assert_eq!(cpu.a, 0xEF, "A should be loaded from memory[nn]");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(3),
+                "PC should increment by 3"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD A, (nn)");
         }
 
@@ -3595,9 +4759,17 @@ mod tests {
 
             cpu.ld_de_mem_a();
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0xFA, "memory[DE] should be loaded from A");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0xFA,
+                "memory[DE] should be loaded from A"
+            );
             assert_eq!(cpu.a, 0xFA, "A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (DE), A");
         }
 
@@ -3613,13 +4785,21 @@ mod tests {
 
             cpu.ld_nn_mem_a(addr_lo, addr_hi);
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x99, "memory[nn] should be loaded from A");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0x99,
+                "memory[nn] should be loaded from A"
+            );
             assert_eq!(cpu.a, 0x99, "A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(3),
+                "PC should increment by 3"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (nn), A");
         }
     }
-    mod loads_8bit_high_ram { 
+    mod loads_8bit_high_ram {
         use super::*;
 
         #[test]
@@ -3634,7 +4814,11 @@ mod tests {
             cpu.ldh_a_c_offset_mem();
 
             assert_eq!(cpu.a, 0xAB, "A should be loaded from memory[0xFF00+C]");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDH A, (C)");
         }
 
@@ -3649,9 +4833,17 @@ mod tests {
 
             cpu.ldh_c_offset_mem_a();
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0xCD, "memory[0xFF00+C] should be loaded from A");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0xCD,
+                "memory[0xFF00+C] should be loaded from A"
+            );
             assert_eq!(cpu.a, 0xCD, "A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDH (C), A");
         }
 
@@ -3667,7 +4859,11 @@ mod tests {
             cpu.ldh_a_n_offset_mem(offset_n);
 
             assert_eq!(cpu.a, 0xEF, "A should be loaded from memory[0xFF00+n]");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "PC should increment by 2"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDH A, (n)");
         }
 
@@ -3679,16 +4875,24 @@ mod tests {
             let addr = 0xFF00 + offset_n as u16; // 0xFF95
             let initial_pc = cpu.pc;
             let initial_f = cpu.f; // Capture flags before operation
-            
+
             cpu.ldh_n_offset_mem_a(offset_n);
 
-            assert_eq!(cpu.bus.borrow().read_byte(addr), 0x55, "memory[0xFF00+n] should be loaded from A");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(addr),
+                0x55,
+                "memory[0xFF00+n] should be loaded from A"
+            );
             assert_eq!(cpu.a, 0x55, "A should remain unchanged");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "PC should increment by 2");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "PC should increment by 2"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDH (n), A");
         }
     }
-    mod loads_8bit_inc_dec_hl { 
+    mod loads_8bit_inc_dec_hl {
         use super::*;
 
         #[test]
@@ -3700,13 +4904,25 @@ mod tests {
             cpu.a = 0xAB;
             let initial_pc = cpu.pc;
             let initial_f = cpu.f; // Capture flags
-        
+
             cpu.ldi_hl_mem_a();
-        
-            assert_eq!(cpu.bus.borrow().read_byte(initial_addr), 0xAB, "Memory at initial HL should get value from A");
+
+            assert_eq!(
+                cpu.bus.borrow().read_byte(initial_addr),
+                0xAB,
+                "Memory at initial HL should get value from A"
+            );
             let expected_hl = initial_addr.wrapping_add(1);
-            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, expected_hl, "HL should increment");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                ((cpu.h as u16) << 8) | cpu.l as u16,
+                expected_hl,
+                "HL should increment"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDI (HL), A");
         }
 
@@ -3724,8 +4940,16 @@ mod tests {
 
             assert_eq!(cpu.a, 0xCD, "A should be loaded from memory at initial HL");
             let expected_hl = initial_addr.wrapping_add(1);
-            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, expected_hl, "HL should increment");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                ((cpu.h as u16) << 8) | cpu.l as u16,
+                expected_hl,
+                "HL should increment"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDI A, (HL)");
         }
 
@@ -3741,10 +4965,22 @@ mod tests {
 
             cpu.ldd_hl_mem_a();
 
-            assert_eq!(cpu.bus.borrow().read_byte(initial_addr), 0xEF, "Memory at initial HL should get value from A");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(initial_addr),
+                0xEF,
+                "Memory at initial HL should get value from A"
+            );
             let expected_hl = initial_addr.wrapping_sub(1);
-            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, expected_hl, "HL should decrement");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                ((cpu.h as u16) << 8) | cpu.l as u16,
+                expected_hl,
+                "HL should decrement"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDD (HL), A");
         }
 
@@ -3762,8 +4998,16 @@ mod tests {
 
             assert_eq!(cpu.a, 0xFA, "A should be loaded from memory at initial HL");
             let expected_hl = initial_addr.wrapping_sub(1);
-            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, expected_hl, "HL should decrement");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                ((cpu.h as u16) << 8) | cpu.l as u16,
+                expected_hl,
+                "HL should decrement"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDD A, (HL)");
         }
 
@@ -3780,9 +5024,16 @@ mod tests {
             cpu.ldi_hl_mem_a();
 
             assert_eq!(cpu.bus.borrow().read_byte(initial_addr), 0xAB);
-            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0000, "HL should wrap to 0x0000");
+            assert_eq!(
+                ((cpu.h as u16) << 8) | cpu.l as u16,
+                0x0000,
+                "HL should wrap to 0x0000"
+            );
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDI (HL), A wrap");
+            assert_eq!(
+                cpu.f, initial_f,
+                "Flags should be unchanged by LDI (HL), A wrap"
+            );
         }
 
         #[test]
@@ -3793,7 +5044,7 @@ mod tests {
             rom_data[initial_addr as usize] = 0xCD; // Pre-set the value in ROM
             rom_data[0x0147] = 0x00; // NoMBC
             rom_data[0x0149] = 0x02; // 8KB RAM
-            // Assuming CGB mode is the default for setup_cpu(), set CGB flag
+                                     // Assuming CGB mode is the default for setup_cpu(), set CGB flag
             rom_data[0x0143] = 0x80; // CGB supported/required
 
             let bus = Rc::new(RefCell::new(Bus::new(rom_data)));
@@ -3808,15 +5059,22 @@ mod tests {
             let initial_f = cpu.f; // Capture flags
 
             cpu.ldd_a_hl_mem();
-            
+
             assert_eq!(cpu.a, 0xCD);
-            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0xFFFF, "HL should wrap to 0xFFFF");
+            assert_eq!(
+                ((cpu.h as u16) << 8) | cpu.l as u16,
+                0xFFFF,
+                "HL should wrap to 0xFFFF"
+            );
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LDD A, (HL) wrap");
+            assert_eq!(
+                cpu.f, initial_f,
+                "Flags should be unchanged by LDD A, (HL) wrap"
+            );
         }
     }
 
-    mod loads_16bit { 
+    mod loads_16bit {
         use super::*;
 
         #[test]
@@ -3829,7 +5087,11 @@ mod tests {
             cpu.ld_bc_nn(val_lo, val_hi);
             assert_eq!(cpu.b, val_hi, "Register B should be loaded with high byte");
             assert_eq!(cpu.c, val_lo, "Register C should be loaded with low byte");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(3),
+                "PC should increment by 3"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD BC, nn");
         }
 
@@ -3843,7 +5105,11 @@ mod tests {
             cpu.ld_de_nn(val_lo, val_hi);
             assert_eq!(cpu.d, val_hi, "Register D should be loaded with high byte");
             assert_eq!(cpu.e, val_lo, "Register E should be loaded with low byte");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(3),
+                "PC should increment by 3"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD DE, nn");
         }
 
@@ -3857,7 +5123,11 @@ mod tests {
             cpu.ld_hl_nn(val_lo, val_hi);
             assert_eq!(cpu.h, val_hi, "Register H should be loaded with high byte");
             assert_eq!(cpu.l, val_lo, "Register L should be loaded with low byte");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(3),
+                "PC should increment by 3"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD HL, nn");
         }
 
@@ -3870,7 +5140,11 @@ mod tests {
             let initial_f = cpu.f; // Capture flags
             cpu.ld_sp_nn(val_lo, val_hi);
             assert_eq!(cpu.sp, 0xFFFE, "SP should be loaded with 0xFFFE");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(3),
+                "PC should increment by 3"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD SP, nn");
         }
 
@@ -3882,11 +5156,18 @@ mod tests {
             let initial_hl_val = 0x8C12u16;
             let initial_pc = cpu.pc;
             let initial_f = cpu.f; // Capture flags
-            
+
             cpu.ld_sp_hl();
 
-            assert_eq!(cpu.sp, initial_hl_val, "SP should be loaded with value from HL");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.sp, initial_hl_val,
+                "SP should be loaded with value from HL"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD SP, HL");
         }
 
@@ -3903,13 +5184,25 @@ mod tests {
 
             cpu.ld_nn_mem_sp(addr_lo, addr_hi);
 
-            assert_eq!(cpu.bus.borrow().read_byte(target_addr), (cpu.sp & 0xFF) as u8, "Memory at nn should store SP low byte");
-            assert_eq!(cpu.bus.borrow().read_byte(target_addr.wrapping_add(1)), (cpu.sp >> 8) as u8, "Memory at nn+1 should store SP high byte");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "PC should increment by 3");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(target_addr),
+                (cpu.sp & 0xFF) as u8,
+                "Memory at nn should store SP low byte"
+            );
+            assert_eq!(
+                cpu.bus.borrow().read_byte(target_addr.wrapping_add(1)),
+                (cpu.sp >> 8) as u8,
+                "Memory at nn+1 should store SP high byte"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(3),
+                "PC should increment by 3"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by LD (nn), SP");
         }
     }
-    mod stack_ops { 
+    mod stack_ops {
         use super::*;
 
         #[test]
@@ -3920,13 +5213,25 @@ mod tests {
             cpu.c = 0x34;
             let initial_pc = cpu.pc;
             let initial_f = cpu.f; // PUSH BC should not affect flags
-        
+
             cpu.push_bc();
-        
+
             assert_eq!(cpu.sp, 0xDFFC, "SP should decrement by 2"); // 0xDFFE - 2 = 0xDFFC
-            assert_eq!(cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1)), 0x12, "Memory at SP+1 (0xDFFD) should be B");
-            assert_eq!(cpu.bus.borrow().read_byte(cpu.sp), 0x34, "Memory at SP (0xDFFC) should be C");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1)),
+                0x12,
+                "Memory at SP+1 (0xDFFD) should be B"
+            );
+            assert_eq!(
+                cpu.bus.borrow().read_byte(cpu.sp),
+                0x34,
+                "Memory at SP (0xDFFC) should be C"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by PUSH BC");
         }
 
@@ -3934,8 +5239,10 @@ mod tests {
         fn test_pop_bc() {
             let mut cpu = setup_cpu();
             cpu.sp = 0xDFFC; // Changed SP to WRAM (matching push)
-            cpu.bus.borrow_mut().write_byte(cpu.sp.wrapping_add(1), 0xAB); // B at 0xDFFD
-            cpu.bus.borrow_mut().write_byte(cpu.sp, 0xCD);          // C at 0xDFFC
+            cpu.bus
+                .borrow_mut()
+                .write_byte(cpu.sp.wrapping_add(1), 0xAB); // B at 0xDFFD
+            cpu.bus.borrow_mut().write_byte(cpu.sp, 0xCD); // C at 0xDFFC
             let initial_pc = cpu.pc;
             let initial_f = cpu.f; // POP BC should not affect flags
 
@@ -3944,7 +5251,11 @@ mod tests {
             assert_eq!(cpu.b, 0xAB, "B should be popped from stack");
             assert_eq!(cpu.c, 0xCD, "C should be popped from stack");
             assert_eq!(cpu.sp, 0xDFFE, "SP should increment by 2"); // 0xDFFC + 2 = 0xDFFE
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by POP BC");
         }
 
@@ -3960,9 +5271,21 @@ mod tests {
             cpu.push_de();
 
             assert_eq!(cpu.sp, 0xDFFC, "SP should decrement by 2"); // 0xDFFE - 2 = 0xDFFC
-            assert_eq!(cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1)), 0x56, "Memory at SP+1 (0xDFFD) should be D");
-            assert_eq!(cpu.bus.borrow().read_byte(cpu.sp), 0x78, "Memory at SP (0xDFFC) should be E");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1)),
+                0x56,
+                "Memory at SP+1 (0xDFFD) should be D"
+            );
+            assert_eq!(
+                cpu.bus.borrow().read_byte(cpu.sp),
+                0x78,
+                "Memory at SP (0xDFFC) should be E"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by PUSH DE");
         }
 
@@ -3970,8 +5293,10 @@ mod tests {
         fn test_pop_de() {
             let mut cpu = setup_cpu();
             cpu.sp = 0xDFFC; // Changed SP to WRAM
-            cpu.bus.borrow_mut().write_byte(cpu.sp.wrapping_add(1), 0x56); // D at 0xDFFD
-            cpu.bus.borrow_mut().write_byte(cpu.sp, 0x78);          // E at 0xDFFC
+            cpu.bus
+                .borrow_mut()
+                .write_byte(cpu.sp.wrapping_add(1), 0x56); // D at 0xDFFD
+            cpu.bus.borrow_mut().write_byte(cpu.sp, 0x78); // E at 0xDFFC
             let initial_pc = cpu.pc;
             let initial_f = cpu.f;
 
@@ -3980,7 +5305,11 @@ mod tests {
             assert_eq!(cpu.d, 0x56, "D should be popped from stack");
             assert_eq!(cpu.e, 0x78, "E should be popped from stack");
             assert_eq!(cpu.sp, 0xDFFE, "SP should increment by 2"); // 0xDFFC + 2 = 0xDFFE
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by POP DE");
         }
 
@@ -3996,9 +5325,21 @@ mod tests {
             cpu.push_hl();
 
             assert_eq!(cpu.sp, 0xDFFC, "SP should decrement by 2"); // 0xDFFE - 2 = 0xDFFC
-            assert_eq!(cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1)), 0x9A, "Memory at SP+1 (0xDFFD) should be H");
-            assert_eq!(cpu.bus.borrow().read_byte(cpu.sp), 0xBC, "Memory at SP (0xDFFC) should be L");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1)),
+                0x9A,
+                "Memory at SP+1 (0xDFFD) should be H"
+            );
+            assert_eq!(
+                cpu.bus.borrow().read_byte(cpu.sp),
+                0xBC,
+                "Memory at SP (0xDFFC) should be L"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by PUSH HL");
         }
 
@@ -4006,8 +5347,10 @@ mod tests {
         fn test_pop_hl() {
             let mut cpu = setup_cpu();
             cpu.sp = 0xDFFC; // Changed SP to WRAM
-            cpu.bus.borrow_mut().write_byte(cpu.sp.wrapping_add(1), 0x9A); // H at 0xDFFD
-            cpu.bus.borrow_mut().write_byte(cpu.sp, 0xBC);          // L at 0xDFFC
+            cpu.bus
+                .borrow_mut()
+                .write_byte(cpu.sp.wrapping_add(1), 0x9A); // H at 0xDFFD
+            cpu.bus.borrow_mut().write_byte(cpu.sp, 0xBC); // L at 0xDFFC
             let initial_pc = cpu.pc;
             let initial_f = cpu.f;
 
@@ -4016,10 +5359,14 @@ mod tests {
             assert_eq!(cpu.h, 0x9A, "H should be popped from stack");
             assert_eq!(cpu.l, 0xBC, "L should be popped from stack");
             assert_eq!(cpu.sp, 0xDFFE, "SP should increment by 2"); // 0xDFFC + 2 = 0xDFFE
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged by POP HL");
         }
-        
+
         #[test]
         fn test_push_af() {
             let mut cpu = setup_cpu();
@@ -4032,28 +5379,49 @@ mod tests {
             cpu.push_af();
 
             assert_eq!(cpu.sp, 0xDFFC, "SP should decrement by 2"); // 0xDFFE - 2 = 0xDFFC
-            assert_eq!(cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1)), 0xAA, "Memory at SP+1 (0xDFFD) should be A");
-            assert_eq!(cpu.bus.borrow().read_byte(cpu.sp), 0xB0, "Memory at SP (0xDFFC) should be F, masked"); // 0xB7 & 0xF0 = 0xB0
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1)),
+                0xAA,
+                "Memory at SP+1 (0xDFFD) should be A"
+            );
+            assert_eq!(
+                cpu.bus.borrow().read_byte(cpu.sp),
+                0xB0,
+                "Memory at SP (0xDFFC) should be F, masked"
+            ); // 0xB7 & 0xF0 = 0xB0
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             // PUSH AF should not change the F register itself, so original flags should be asserted
             cpu.f = initial_f_val_for_assertion; // Restore F for assert_flags! to check original state
-            assert_flags!(cpu, true, false, true, true); 
+            assert_flags!(cpu, true, false, true, true);
         }
 
         #[test]
         fn test_pop_af() {
             let mut cpu = setup_cpu();
             cpu.sp = 0xDFFC; // Changed SP to WRAM
-            cpu.bus.borrow_mut().write_byte(cpu.sp.wrapping_add(1), 0xAB); // Value for A at 0xDFFD
+            cpu.bus
+                .borrow_mut()
+                .write_byte(cpu.sp.wrapping_add(1), 0xAB); // Value for A at 0xDFFD
             cpu.bus.borrow_mut().write_byte(cpu.sp, 0xF7); // Value for F on stack at 0xDFFC (Z=1,N=1,H=1,C=1 from 0xF0, lower bits 0x07)
             let initial_pc = cpu.pc;
-        
+
             cpu.pop_af();
-        
+
             assert_eq!(cpu.a, 0xAB, "A should be popped from stack");
-            assert_eq!(cpu.f, 0xF0, "F should be popped from stack and lower bits masked"); // 0xF7 & 0xF0 = 0xF0
+            assert_eq!(
+                cpu.f, 0xF0,
+                "F should be popped from stack and lower bits masked"
+            ); // 0xF7 & 0xF0 = 0xF0
             assert_eq!(cpu.sp, 0xDFFE, "SP should increment by 2"); // 0xDFFC + 2 = 0xDFFE
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should increment by 1");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(1),
+                "PC should increment by 1"
+            );
             assert_flags!(cpu, true, true, true, true); // Flags reflect popped F value (0xF0)
         }
 
@@ -4069,8 +5437,16 @@ mod tests {
             cpu.push_bc(); // Pushes B then C
 
             assert_eq!(cpu.sp, 0xBFFF, "SP should wrap from 0xC001 to 0xBFFF");
-            assert_eq!(cpu.bus.borrow().read_byte(0xC000), 0x12, "Memory at 0xC000 should be B");
-            assert_eq!(cpu.bus.borrow().read_byte(0xBFFF), 0x34, "Memory at 0xBFFF should be C");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(0xC000),
+                0x12,
+                "Memory at 0xC000 should be B"
+            );
+            assert_eq!(
+                cpu.bus.borrow().read_byte(0xBFFF),
+                0x34,
+                "Memory at 0xBFFF should be C"
+            );
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged");
         }
@@ -4083,18 +5459,27 @@ mod tests {
             cpu.c = 0xCD;
             let initial_pc = cpu.pc;
             let initial_f = cpu.f;
-            
+
             cpu.push_bc(); // Pushes B then C
 
             assert_eq!(cpu.sp, 0xBFFE, "SP should wrap from 0xC000 to 0xBFFE");
-            assert_eq!(cpu.bus.borrow().read_byte(0xBFFF), 0xAB, "Memory at 0xBFFF should be B");
-            assert_eq!(cpu.bus.borrow().read_byte(0xBFFE), 0xCD, "Memory at 0xBFFE should be C");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(0xBFFF),
+                0xAB,
+                "Memory at 0xBFFF should be B"
+            );
+            assert_eq!(
+                cpu.bus.borrow().read_byte(0xBFFE),
+                0xCD,
+                "Memory at 0xBFFE should be C"
+            );
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged");
         }
-        
+
         #[test]
-        fn test_pop_sp_wrap_high() { // SP = 0xFFFE -> WRAM/HRAM/IE, this test should be fine
+        fn test_pop_sp_wrap_high() {
+            // SP = 0xFFFE -> WRAM/HRAM/IE, this test should be fine
             let mut cpu = setup_cpu();
             cpu.sp = 0xFFFE;
             cpu.bus.borrow_mut().write_byte(0xFFFF, 0x12); // B written to IE register
@@ -4111,7 +5496,7 @@ mod tests {
             assert_eq!(cpu.f, initial_f, "Flags should be unchanged");
         }
     }
-    
+
     mod arithmetic_logical_8bit {
 
         // Tests for ADD, ADC, SUB, SBC, AND, OR, XOR, CP will go here or in submodules.
@@ -4127,107 +5512,178 @@ mod tests {
             // C flag is not affected by INC A
 
             // Case 1: A = 0x00 -> A = 0x01, Z=0, N=0, H=0
-            cpu.a = 0x00; cpu.f = 0; cpu.pc = 0;
+            cpu.a = 0x00;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_a();
-            assert_eq!(cpu.a, 0x01); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.a, 0x01);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
 
             // Case 2: A = 0x0F -> A = 0x10, Z=0, N=0, H=1
-            cpu.a = 0x0F; cpu.f = 0; cpu.pc = 0;
+            cpu.a = 0x0F;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_a();
-            assert_eq!(cpu.a, 0x10); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.a, 0x10);
+            assert_flags!(cpu, false, false, true, false);
+            assert_eq!(cpu.pc, 1);
 
             // Case 3: A = 0xFF -> A = 0x00, Z=1, N=0, H=1
-            cpu.a = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.a = 0xFF;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_a();
-            assert_eq!(cpu.a, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.a, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
 
             // Case 4: A = 0x5A, C flag initially set (should not be affected)
-            cpu.a = 0x5A; cpu.set_flag_c(true); let c_flag_before = cpu.is_flag_c(); cpu.pc = 0;
+            cpu.a = 0x5A;
+            cpu.set_flag_c(true);
+            let c_flag_before = cpu.is_flag_c();
+            cpu.pc = 0;
             // Clear other flags that are affected by INC A to ensure a clean test for those
-            cpu.set_flag_z(true); cpu.set_flag_n(true); cpu.set_flag_h(true);
+            cpu.set_flag_z(true);
+            cpu.set_flag_n(true);
+            cpu.set_flag_h(true);
             cpu.inc_a();
-            assert_eq!(cpu.a, 0x5B); assert_flags!(cpu, false, false, false, c_flag_before); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.a, 0x5B);
+            assert_flags!(cpu, false, false, false, c_flag_before);
+            assert_eq!(cpu.pc, 1);
         }
 
         #[test]
         fn test_inc_b() {
             let mut cpu = setup_cpu();
             // Test case: B = 0x00 -> B = 0x01, Z=0, N=0, H=0
-            cpu.b = 0x00; cpu.f = 0; cpu.pc = 0;
+            cpu.b = 0x00;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_b();
-            assert_eq!(cpu.b, 0x01); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.b, 0x01);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
 
             // Test case: B = 0x0F -> B = 0x10, Z=0, N=0, H=1
-            cpu.b = 0x0F; cpu.f = 0; cpu.pc = 0;
+            cpu.b = 0x0F;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_b();
-            assert_eq!(cpu.b, 0x10); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.b, 0x10);
+            assert_flags!(cpu, false, false, true, false);
+            assert_eq!(cpu.pc, 1);
 
             // Test case: B = 0xFF -> B = 0x00, Z=1, N=0, H=1
-            cpu.b = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.b = 0xFF;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_b();
-            assert_eq!(cpu.b, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.b, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
         }
 
         #[test]
         fn test_inc_c() {
             let mut cpu = setup_cpu();
             // Test case: C = 0x00 -> C = 0x01, Z=0, N=0, H=0
-            cpu.c = 0x00; cpu.f = 0; cpu.pc = 0;
+            cpu.c = 0x00;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_c();
-            assert_eq!(cpu.c, 0x01); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.c, 0x01);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
 
             // Test case: C = 0x0F -> C = 0x10, Z=0, N=0, H=1
-            cpu.c = 0x0F; cpu.f = 0; cpu.pc = 0;
+            cpu.c = 0x0F;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_c();
-            assert_eq!(cpu.c, 0x10); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.c, 0x10);
+            assert_flags!(cpu, false, false, true, false);
+            assert_eq!(cpu.pc, 1);
         }
 
         #[test]
         fn test_inc_d() {
             let mut cpu = setup_cpu();
-            cpu.d = 0xAE; cpu.f = 0; cpu.pc = 0;
+            cpu.d = 0xAE;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_d();
-            assert_eq!(cpu.d, 0xAF); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
-             // Test case: D = 0xFF -> D = 0x00, Z=1, N=0, H=1
-            cpu.d = 0xFF; cpu.f = 0; cpu.pc = 0;
+            assert_eq!(cpu.d, 0xAF);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
+            // Test case: D = 0xFF -> D = 0x00, Z=1, N=0, H=1
+            cpu.d = 0xFF;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_d();
-            assert_eq!(cpu.d, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.d, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
         }
 
         #[test]
         fn test_inc_e() {
             let mut cpu = setup_cpu();
-            cpu.e = 0xEF; cpu.f = 0; cpu.pc = 0;
+            cpu.e = 0xEF;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_e();
-            assert_eq!(cpu.e, 0xF0); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.e, 0xF0);
+            assert_flags!(cpu, false, false, true, false);
+            assert_eq!(cpu.pc, 1);
             // Test case: E = 0xFF -> E = 0x00, Z=1, N=0, H=1
-            cpu.e = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.e = 0xFF;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_e();
-            assert_eq!(cpu.e, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.e, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
         }
 
         #[test]
         fn test_inc_h() {
             let mut cpu = setup_cpu();
-            cpu.h = 0x2F; cpu.f = 0; cpu.pc = 0;
+            cpu.h = 0x2F;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_h();
-            assert_eq!(cpu.h, 0x30); assert_flags!(cpu, false, false, true, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.h, 0x30);
+            assert_flags!(cpu, false, false, true, false);
+            assert_eq!(cpu.pc, 1);
             // Test case: H = 0xFF -> H = 0x00, Z=1, N=0, H=1
-            cpu.h = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.h = 0xFF;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_h();
-            assert_eq!(cpu.h, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.h, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
         }
 
         #[test]
         fn test_inc_l() {
             let mut cpu = setup_cpu();
-            cpu.l = 0xFE; cpu.f = 0; cpu.pc = 0;
+            cpu.l = 0xFE;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_l();
-            assert_eq!(cpu.l, 0xFF); assert_flags!(cpu, false, false, false, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.l, 0xFF);
+            assert_flags!(cpu, false, false, false, false);
+            assert_eq!(cpu.pc, 1);
             // Test case: L = 0xFF -> L = 0x00, Z=1, N=0, H=1
-            cpu.l = 0xFF; cpu.f = 0; cpu.pc = 0;
+            cpu.l = 0xFF;
+            cpu.f = 0;
+            cpu.pc = 0;
             cpu.inc_l();
-            assert_eq!(cpu.l, 0x00); assert_flags!(cpu, true, false, true, false); assert_eq!(cpu.pc, 1);
+            assert_eq!(cpu.l, 0x00);
+            assert_flags!(cpu, true, false, true, false);
+            assert_eq!(cpu.pc, 1);
         }
 
         #[test]
@@ -4367,33 +5823,51 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(wram_addr, 0x01);
             cpu.pc = 0;
             // Clear flags that will be set by DEC (N, H) and preserve Z for check. C is unaffected.
-            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false);
+            cpu.set_flag_z(false);
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
             let initial_c_flag = cpu.is_flag_c();
 
             cpu.dec_hl_mem();
-            assert_eq!(cpu.bus.borrow().read_byte(wram_addr), 0x00, "DEC (HL): 0x01 -> 0x00 failed");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(wram_addr),
+                0x00,
+                "DEC (HL): 0x01 -> 0x00 failed"
+            );
             assert_flags!(cpu, true, true, false, initial_c_flag); // Z=1, N=1, H=0 (no borrow from bit 4), C unaffected
             assert_eq!(cpu.pc, 1);
 
             // Case 2: Value 0x10 -> 0x0F, H should be set
             cpu.bus.borrow_mut().write_byte(wram_addr, 0x10);
             cpu.pc = 0;
-            cpu.set_flag_z(true); cpu.set_flag_n(false); cpu.set_flag_h(false);
+            cpu.set_flag_z(true);
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
             let initial_c_flag_2 = cpu.is_flag_c();
 
             cpu.dec_hl_mem();
-            assert_eq!(cpu.bus.borrow().read_byte(wram_addr), 0x0F, "DEC (HL): 0x10 -> 0x0F failed");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(wram_addr),
+                0x0F,
+                "DEC (HL): 0x10 -> 0x0F failed"
+            );
             assert_flags!(cpu, false, true, true, initial_c_flag_2); // Z=0, N=1, H=1 (borrow from bit 4), C unaffected
             assert_eq!(cpu.pc, 1);
 
             // Case 3: Value 0x00 -> 0xFF, H should be set
             cpu.bus.borrow_mut().write_byte(wram_addr, 0x00);
             cpu.pc = 0;
-            cpu.set_flag_z(true); cpu.set_flag_n(false); cpu.set_flag_h(false);
+            cpu.set_flag_z(true);
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
             let initial_c_flag_3 = cpu.is_flag_c();
 
             cpu.dec_hl_mem();
-            assert_eq!(cpu.bus.borrow().read_byte(wram_addr), 0xFF, "DEC (HL): 0x00 -> 0xFF failed");
+            assert_eq!(
+                cpu.bus.borrow().read_byte(wram_addr),
+                0xFF,
+                "DEC (HL): 0x00 -> 0xFF failed"
+            );
             assert_flags!(cpu, false, true, true, initial_c_flag_3); // Z=0, N=1, H=1 (borrow from bit 4), C unaffected
             assert_eq!(cpu.pc, 1);
         }
@@ -4451,7 +5925,11 @@ mod tests {
 
             // Case 1: (HL) = 0x00 -> (HL) = 0x01, Z=0, N=0, H=0
             cpu.bus.borrow_mut().write_byte(addr, 0x00);
-            cpu.f = if initial_c_flag_state { 1 << CARRY_FLAG_BYTE_POSITION } else { 0 }; // Preserve C, clear others
+            cpu.f = if initial_c_flag_state {
+                1 << CARRY_FLAG_BYTE_POSITION
+            } else {
+                0
+            }; // Preserve C, clear others
             cpu.pc = 0;
             cpu.inc_hl_mem();
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x01);
@@ -4460,7 +5938,11 @@ mod tests {
 
             // Case 2: (HL) = 0x0F -> (HL) = 0x10, Z=0, N=0, H=1
             cpu.bus.borrow_mut().write_byte(addr, 0x0F);
-            cpu.f = if initial_c_flag_state { 1 << CARRY_FLAG_BYTE_POSITION } else { 0 };
+            cpu.f = if initial_c_flag_state {
+                1 << CARRY_FLAG_BYTE_POSITION
+            } else {
+                0
+            };
             cpu.pc = 0;
             cpu.inc_hl_mem();
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x10);
@@ -4469,7 +5951,11 @@ mod tests {
 
             // Case 3: (HL) = 0xFF -> (HL) = 0x00, Z=1, N=0, H=1
             cpu.bus.borrow_mut().write_byte(addr, 0xFF);
-            cpu.f = if initial_c_flag_state { 1 << CARRY_FLAG_BYTE_POSITION } else { 0 };
+            cpu.f = if initial_c_flag_state {
+                1 << CARRY_FLAG_BYTE_POSITION
+            } else {
+                0
+            };
             cpu.pc = 0;
             cpu.inc_hl_mem();
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x00);
@@ -4482,7 +5968,9 @@ mod tests {
             cpu.set_flag_c(true);
             let c_flag_before_case4 = cpu.is_flag_c();
             // Clear other flags that are affected by the instruction
-            cpu.set_flag_z(true); cpu.set_flag_n(true); cpu.set_flag_h(true);
+            cpu.set_flag_z(true);
+            cpu.set_flag_n(true);
+            cpu.set_flag_h(true);
             cpu.pc = 0;
             cpu.inc_hl_mem();
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x5B);
@@ -4572,7 +6060,10 @@ mod tests {
 
             assert_eq!(((cpu.b as u16) << 8) | cpu.c as u16, 0x0000);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC BC (wrap)");
+            assert_eq!(
+                cpu.f, initial_f,
+                "Flags should be unchanged by INC BC (wrap)"
+            );
         }
 
         #[test]
@@ -4598,7 +6089,10 @@ mod tests {
             cpu.inc_de();
             assert_eq!(((cpu.d as u16) << 8) | cpu.e as u16, 0x0000);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC DE (wrap)");
+            assert_eq!(
+                cpu.f, initial_f,
+                "Flags should be unchanged by INC DE (wrap)"
+            );
         }
 
         #[test]
@@ -4624,7 +6118,10 @@ mod tests {
             cpu.inc_hl();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0000);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC HL (wrap)");
+            assert_eq!(
+                cpu.f, initial_f,
+                "Flags should be unchanged by INC HL (wrap)"
+            );
         }
 
         #[test]
@@ -4648,7 +6145,10 @@ mod tests {
             cpu.inc_sp();
             assert_eq!(cpu.sp, 0x0000);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by INC SP (wrap)");
+            assert_eq!(
+                cpu.f, initial_f,
+                "Flags should be unchanged by INC SP (wrap)"
+            );
         }
 
         // DEC rr Tests
@@ -4679,7 +6179,10 @@ mod tests {
 
             assert_eq!(((cpu.b as u16) << 8) | cpu.c as u16, 0xFFFF);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC BC (wrap)");
+            assert_eq!(
+                cpu.f, initial_f,
+                "Flags should be unchanged by DEC BC (wrap)"
+            );
         }
 
         #[test]
@@ -4705,7 +6208,10 @@ mod tests {
             cpu.dec_de();
             assert_eq!(((cpu.d as u16) << 8) | cpu.e as u16, 0xFFFF);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC DE (wrap)");
+            assert_eq!(
+                cpu.f, initial_f,
+                "Flags should be unchanged by DEC DE (wrap)"
+            );
         }
 
         #[test]
@@ -4731,7 +6237,10 @@ mod tests {
             cpu.dec_hl();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0xFFFF);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC HL (wrap)");
+            assert_eq!(
+                cpu.f, initial_f,
+                "Flags should be unchanged by DEC HL (wrap)"
+            );
         }
 
         #[test]
@@ -4755,7 +6264,10 @@ mod tests {
             cpu.dec_sp();
             assert_eq!(cpu.sp, 0xFFFF);
             assert_eq!(cpu.pc, initial_pc.wrapping_add(1));
-            assert_eq!(cpu.f, initial_f, "Flags should be unchanged by DEC SP (wrap)");
+            assert_eq!(
+                cpu.f, initial_f,
+                "Flags should be unchanged by DEC SP (wrap)"
+            );
         }
 
         #[test]
@@ -4786,8 +6298,10 @@ mod tests {
             cpu.inc_sp();
             assert_eq!(cpu.sp, 0x1235, "SP should be 0x1235");
             assert_eq!(cpu.pc, 1, "PC should increment by 1");
-            assert_eq!(cpu.f, flags_before_case2, "Flags should not be affected (case 2)");
-
+            assert_eq!(
+                cpu.f, flags_before_case2,
+                "Flags should not be affected (case 2)"
+            );
 
             // Case 3: SP = 0xFFFF -> SP = 0x0000 (wraparound)
             cpu.sp = 0xFFFF;
@@ -4797,7 +6311,10 @@ mod tests {
             cpu.inc_sp();
             assert_eq!(cpu.sp, 0x0000, "SP should be 0x0000 (wraparound)");
             assert_eq!(cpu.pc, 1, "PC should increment by 1");
-            assert_eq!(cpu.f, flags_before_case3, "Flags should not be affected (case 3)");
+            assert_eq!(
+                cpu.f, flags_before_case3,
+                "Flags should not be affected (case 3)"
+            );
         }
     }
 
@@ -4808,8 +6325,10 @@ mod tests {
         #[test]
         fn test_add_hl_bc() {
             let mut cpu = setup_cpu();
-            cpu.h = 0x12; cpu.l = 0x34; // HL = 0x1234
-            cpu.b = 0x01; cpu.c = 0x02; // BC = 0x0102
+            cpu.h = 0x12;
+            cpu.l = 0x34; // HL = 0x1234
+            cpu.b = 0x01;
+            cpu.c = 0x02; // BC = 0x0102
             let initial_pc = cpu.pc;
             let initial_f_z = cpu.is_flag_z();
             cpu.add_hl_bc(); // HL = 0x1234 + 0x0102 = 0x1336
@@ -4820,11 +6339,16 @@ mod tests {
             // Test H flag
             cpu.pc = 0; // Reset PC for sub-test consistency if needed, or use initial_pc from outer scope
             let initial_pc_h_test = cpu.pc;
-            cpu.h = 0x0F; cpu.l = 0x00; // HL = 0x0F00
-            cpu.b = 0x01; cpu.c = 0x00; // BC = 0x0100
-            // HL + BC = 0x0F00 + 0x0100 = 0x1000. (HL & 0xFFF) = 0xF00. (BC & 0xFFF) = 0x100. Sum = 0x1000. H set.
+            cpu.h = 0x0F;
+            cpu.l = 0x00; // HL = 0x0F00
+            cpu.b = 0x01;
+            cpu.c = 0x00; // BC = 0x0100
+                          // HL + BC = 0x0F00 + 0x0100 = 0x1000. (HL & 0xFFF) = 0xF00. (BC & 0xFFF) = 0x100. Sum = 0x1000. H set.
             let _initial_f_z = cpu.is_flag_z();
-            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
+            cpu.set_flag_z(false);
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(false); // Clear flags
             cpu.add_hl_bc();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000);
             assert_flags!(cpu, false, false, true, false); // Z is false due to clearing, N=0, H=1, C=0
@@ -4833,11 +6357,16 @@ mod tests {
             // Test C flag
             cpu.pc = 0; // Reset PC
             let initial_pc_c_test = cpu.pc;
-            cpu.h = 0xF0; cpu.l = 0x00; // HL = 0xF000
-            cpu.b = 0x10; cpu.c = 0x00; // BC = 0x1000
-            // HL + BC = 0xF000 + 0x1000 = 0x0000 (carry). C set.
+            cpu.h = 0xF0;
+            cpu.l = 0x00; // HL = 0xF000
+            cpu.b = 0x10;
+            cpu.c = 0x00; // BC = 0x1000
+                          // HL + BC = 0xF000 + 0x1000 = 0x0000 (carry). C set.
             let _initial_f_z = cpu.is_flag_z(); // This will be false from previous clear
-            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
+            cpu.set_flag_z(false);
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(false); // Clear flags
             cpu.add_hl_bc();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0000);
             assert_flags!(cpu, false, false, false, true); // Z is false, N=0, H=0, C=1
@@ -4846,13 +6375,18 @@ mod tests {
             // Test H and C flag
             cpu.pc = 0; // Reset PC
             let initial_pc_hc_test = cpu.pc;
-            cpu.h = 0x8F; cpu.l = 0xFF; // HL = 0x8FFF
-            cpu.b = 0x80; cpu.c = 0x01; // BC = 0x8001
-            // HL + BC = 0x8FFF + 0x8001 = 0x1000 (H set, C set)
-            // H: (0x8FFF & 0xFFF) = 0xFFF. (0x8001 & 0xFFF) = 1. Sum = 0x1000. H set.
-            // C: 0x8FFF + 0x8001 = 0x11000. C set.
+            cpu.h = 0x8F;
+            cpu.l = 0xFF; // HL = 0x8FFF
+            cpu.b = 0x80;
+            cpu.c = 0x01; // BC = 0x8001
+                          // HL + BC = 0x8FFF + 0x8001 = 0x1000 (H set, C set)
+                          // H: (0x8FFF & 0xFFF) = 0xFFF. (0x8001 & 0xFFF) = 1. Sum = 0x1000. H set.
+                          // C: 0x8FFF + 0x8001 = 0x11000. C set.
             let _initial_f_z = cpu.is_flag_z(); // This will be false
-            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
+            cpu.set_flag_z(false);
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(false); // Clear flags
             cpu.add_hl_bc();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000);
             assert_flags!(cpu, false, false, true, true); // Z is false, N=0, H=1, C=1
@@ -4863,8 +6397,10 @@ mod tests {
         fn test_add_hl_de() {
             let mut cpu = setup_cpu();
             let initial_pc = cpu.pc;
-            cpu.h = 0x23; cpu.l = 0x45; // HL = 0x2345
-            cpu.d = 0x01; cpu.e = 0x02; // DE = 0x0102
+            cpu.h = 0x23;
+            cpu.l = 0x45; // HL = 0x2345
+            cpu.d = 0x01;
+            cpu.e = 0x02; // DE = 0x0102
             let initial_f_z = cpu.is_flag_z();
             cpu.add_hl_de(); // HL = 0x2345 + 0x0102 = 0x2447
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x2447);
@@ -4876,7 +6412,8 @@ mod tests {
         fn test_add_hl_hl() {
             let mut cpu = setup_cpu();
             let initial_pc = cpu.pc;
-            cpu.h = 0x01; cpu.l = 0x02; // HL = 0x0102
+            cpu.h = 0x01;
+            cpu.l = 0x02; // HL = 0x0102
             let initial_f_z = cpu.is_flag_z();
             cpu.add_hl_hl(); // HL = 0x0102 + 0x0102 = 0x0204
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0204);
@@ -4886,12 +6423,16 @@ mod tests {
             // Test C and H flag for ADD HL, HL
             cpu.pc = 0; // Reset PC
             let initial_pc_ch_test = cpu.pc;
-            cpu.h = 0x8F; cpu.l = 0x00; // HL = 0x8F00
-            // HL + HL = 0x8F00 + 0x8F00 = 0x1E00. H should set. C should set.
-            // H: (0x8F00 & 0xFFF) = 0xF00. 0xF00 + 0xF00 = 0x1E00. H set.
-            // C: 0x8F00 + 0x8F00 = 0x11E00. C set.
+            cpu.h = 0x8F;
+            cpu.l = 0x00; // HL = 0x8F00
+                          // HL + HL = 0x8F00 + 0x8F00 = 0x1E00. H should set. C should set.
+                          // H: (0x8F00 & 0xFFF) = 0xF00. 0xF00 + 0xF00 = 0x1E00. H set.
+                          // C: 0x8F00 + 0x8F00 = 0x11E00. C set.
             let _initial_f_z = cpu.is_flag_z(); // Will be false from previous operations if tests run sequentially in one instance
-            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); // Clear flags
+            cpu.set_flag_z(false);
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(false); // Clear flags
             cpu.add_hl_hl();
             assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1E00);
             assert_flags!(cpu, false, false, true, true); // Z is false
@@ -4904,61 +6445,86 @@ mod tests {
 
             // Case 1: HL=0x0100, SP=0x0200 -> HL=0x0300, N=0, H=0, C=0
             let initial_pc_case1 = cpu.pc;
-            cpu.h = 0x01; cpu.l = 0x00; // HL = 0x0100
+            cpu.h = 0x01;
+            cpu.l = 0x00; // HL = 0x0100
             cpu.sp = 0x0200;
             cpu.set_flag_z(true); // Z should not be affected, set it to true to check
             let initial_z_case1 = cpu.is_flag_z();
             // cpu.pc = 0; // Not resetting pc here, using outer scope's initial_pc
             cpu.add_hl_sp();
-            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0300, "Case 1: HL result");
+            assert_eq!(
+                ((cpu.h as u16) << 8) | cpu.l as u16,
+                0x0300,
+                "Case 1: HL result"
+            );
             assert_flags!(cpu, initial_z_case1, false, false, false); // N=0, H=0, C=0
             assert_eq!(cpu.pc, initial_pc_case1.wrapping_add(1));
 
             // Case 2: HL=0x0F00, SP=0x0100 -> HL=0x1000, N=0, H=1, C=0
             let initial_pc_case2 = cpu.pc;
-            cpu.h = 0x0F; cpu.l = 0x00; // HL = 0x0F00
+            cpu.h = 0x0F;
+            cpu.l = 0x00; // HL = 0x0F00
             cpu.sp = 0x0100;
             cpu.set_flag_z(false); // Z should not be affected
             let initial_z_case2 = cpu.is_flag_z();
             // cpu.pc = 0;
             cpu.add_hl_sp();
-            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000, "Case 2: HL result");
+            assert_eq!(
+                ((cpu.h as u16) << 8) | cpu.l as u16,
+                0x1000,
+                "Case 2: HL result"
+            );
             assert_flags!(cpu, initial_z_case2, false, true, false); // N=0, H=1, C=0
             assert_eq!(cpu.pc, initial_pc_case2.wrapping_add(1));
 
             // Case 3: HL=0x8000, SP=0x8000 -> HL=0x0000, N=0, H=0, C=1
             let initial_pc_case3 = cpu.pc;
-            cpu.h = 0x80; cpu.l = 0x00; // HL = 0x8000
+            cpu.h = 0x80;
+            cpu.l = 0x00; // HL = 0x8000
             cpu.sp = 0x8000;
             cpu.set_flag_z(true); // Z should not be affected
             let initial_z_case3 = cpu.is_flag_z();
             // cpu.pc = 0;
             cpu.add_hl_sp();
-            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x0000, "Case 3: HL result");
+            assert_eq!(
+                ((cpu.h as u16) << 8) | cpu.l as u16,
+                0x0000,
+                "Case 3: HL result"
+            );
             assert_flags!(cpu, initial_z_case3, false, false, true); // N=0, H=0, C=1
             assert_eq!(cpu.pc, initial_pc_case3.wrapping_add(1));
 
             // Case 4: HL=0x0FFF, SP=0x0001 -> HL=0x1000, N=0, H=1, C=0
             let initial_pc_case4 = cpu.pc;
-            cpu.h = 0x0F; cpu.l = 0xFF; // HL = 0x0FFF
+            cpu.h = 0x0F;
+            cpu.l = 0xFF; // HL = 0x0FFF
             cpu.sp = 0x0001;
             cpu.set_flag_z(false);
             let initial_z_case4 = cpu.is_flag_z();
             // cpu.pc = 0;
             cpu.add_hl_sp();
-            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000, "Case 4: HL result");
+            assert_eq!(
+                ((cpu.h as u16) << 8) | cpu.l as u16,
+                0x1000,
+                "Case 4: HL result"
+            );
             assert_flags!(cpu, initial_z_case4, false, true, false); // N=0, H=1, C=0
             assert_eq!(cpu.pc, initial_pc_case4.wrapping_add(1));
 
             // Case 5: HL=0x8FFF, SP=0x8001 -> HL=0x1000, N=0, H=1, C=1
             let initial_pc_case5 = cpu.pc;
-            cpu.h = 0x8F; cpu.l = 0xFF; // HL = 0x8FFF
+            cpu.h = 0x8F;
+            cpu.l = 0xFF; // HL = 0x8FFF
             cpu.sp = 0x8001;
             cpu.set_flag_z(true);
             let initial_z_case5 = cpu.is_flag_z();
             // cpu.pc = 0;
             cpu.add_hl_sp();
-            assert_eq!(((cpu.h as u16) << 8) | cpu.l as u16, 0x1000, "Case 5: HL result");
+            assert_eq!(
+                ((cpu.h as u16) << 8) | cpu.l as u16,
+                0x1000,
+                "Case 5: HL result"
+            );
             assert_flags!(cpu, initial_z_case5, false, true, true); // N=0, H=1, C=1
             assert_eq!(cpu.pc, initial_pc_case5.wrapping_add(1));
         }
@@ -4978,7 +6544,11 @@ mod tests {
             assert_eq!(cpu.pc, 1);
 
             cpu.a = 0b0100_0010; // Bit 7 is 0, Bit 0 is 0
-            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); cpu.pc = 0;
+            cpu.set_flag_z(false);
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(false);
+            cpu.pc = 0;
             cpu.rlca();
             assert_eq!(cpu.a, 0b1000_0100);
             assert_flags!(cpu, false, false, false, false); // C=0 (old bit 7)
@@ -4995,7 +6565,11 @@ mod tests {
             assert_eq!(cpu.pc, 1);
 
             cpu.a = 0b0100_0010; // Bit 7 is 0, Bit 0 is 0
-            cpu.set_flag_z(false); cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); cpu.pc = 0;
+            cpu.set_flag_z(false);
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(false);
+            cpu.pc = 0;
             cpu.rrca();
             assert_eq!(cpu.a, 0b0010_0001);
             assert_flags!(cpu, false, false, false, false); // C=0 (old bit 0)
@@ -5041,7 +6615,10 @@ mod tests {
         fn test_daa() {
             let mut cpu = setup_cpu();
             // Example from prompt: After ADD: A=0x99, H=0,C=0,N=0 -> A=0x99, ZNHC=0000. DAA -> A=0x99, ZNHC=0000
-            cpu.a = 0x99; cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false);
+            cpu.a = 0x99;
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(false);
             cpu.daa();
             assert_eq!(cpu.a, 0x99);
             assert_flags!(cpu, false, false, false, false); // Z=0, N=0, H=0, C=0 by daa logic (adjust == 0)
@@ -5059,21 +6636,28 @@ mod tests {
             //   a_val = 0x9A + 0x06 = 0xA0.
             //   set_c(adjust (0x06) >= 0x60) -> C=false. H=0. Z=(0xA0==0) = false.
             // The DAA logic in prompt for `(adjust & 0x60) != 0` for C seems more aligned with tests.
-            cpu.a = 0x9A; cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(false); cpu.pc = 0;
+            cpu.a = 0x9A;
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(false);
+            cpu.pc = 0;
             cpu.daa(); // My code: A=A0, Z0 N0 H0 C0.
-            // The prompt's expected output for 0x9A (add, N=0,H=0,C=0) is A=0x00, C=1.
-            // This means an adjustment of 0x66 was expected (0x9A + 0x66 = 0x100).
-            // For this, (a&0F)>9 needs to trigger 0x06, AND a>0x99 (or C) needs to trigger 0x60.
-            // My DAA: (0x9A&0x0F > 9) -> adjust=0x06. (0x9A > 0x99 is false, C is false) -> no 0x60.
-            // So, adjust = 0x06. A = 0x9A + 0x06 = 0xA0. C from (0x06 & 0x60 != 0) is false.
-            // This test case highlights a known tricky part of DAA. I will use test cases that match the implemented logic.
-            // Corrected trace: A=9A, N=0,H=0,C=0. adjust=0. (A&0F)>9 -> adjust|=0x06. A>99 -> adjust|=0x60. adjust=0x66. A = 9A+66=00. C=(0x66&0x60)!=0 -> C=true. Z=true,H=false.
+                       // The prompt's expected output for 0x9A (add, N=0,H=0,C=0) is A=0x00, C=1.
+                       // This means an adjustment of 0x66 was expected (0x9A + 0x66 = 0x100).
+                       // For this, (a&0F)>9 needs to trigger 0x06, AND a>0x99 (or C) needs to trigger 0x60.
+                       // My DAA: (0x9A&0x0F > 9) -> adjust=0x06. (0x9A > 0x99 is false, C is false) -> no 0x60.
+                       // So, adjust = 0x06. A = 0x9A + 0x06 = 0xA0. C from (0x06 & 0x60 != 0) is false.
+                       // This test case highlights a known tricky part of DAA. I will use test cases that match the implemented logic.
+                       // Corrected trace: A=9A, N=0,H=0,C=0. adjust=0. (A&0F)>9 -> adjust|=0x06. A>99 -> adjust|=0x60. adjust=0x66. A = 9A+66=00. C=(0x66&0x60)!=0 -> C=true. Z=true,H=false.
             assert_eq!(cpu.a, 0x00);
             assert_flags!(cpu, true, false, false, true);
 
-
             // After ADD: A=0x00, H=1,C=0,N=0 -> DAA -> A=0x06, ZNHC=0000
-            cpu.a = 0x00; cpu.set_flag_n(false); cpu.set_flag_h(true); cpu.set_flag_c(false); cpu.pc = 0;
+            cpu.a = 0x00;
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(true);
+            cpu.set_flag_c(false);
+            cpu.pc = 0;
             cpu.daa(); // adjust gets 0x06 from H. Then (a&0F)>9 (false), H (true) -> adjust |=0x06. (still 0x06)
                        // a>99 (false), C (false) -> no 0x60.
                        // a = 0 + 0x06 = 0x06. C = false. Z=0, H=0.
@@ -5086,17 +6670,24 @@ mod tests {
             // If A=0x40, N=0, H=0, C=1 (e.g. 0x80+0x80=0x00, C=1, H=0). DAA on 0x00 with C=1, N=0, H=0:
             // adjust = 0x60 (from C). (a&0F)>9 (false), H(false). a>99 (false), C(true) -> adjust|=0x60.
             // a = 0x00 + 0x60 = 0x60. C becomes true (0x60&0x60 !=0). Z=0,H=0.
-            cpu.a = 0x00; cpu.set_flag_n(false); cpu.set_flag_h(false); cpu.set_flag_c(true); cpu.pc = 0;
+            cpu.a = 0x00;
+            cpu.set_flag_n(false);
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(true);
+            cpu.pc = 0;
             cpu.daa();
             assert_eq!(cpu.a, 0x60);
             assert_flags!(cpu, false, false, false, true);
-
 
             // After SUB: A=0x01, H=1,C=0,N=1 -> DAA -> A=0xFB (-0x06), C=0
             // My DAA: a=0x01, N=1, H=1, C=0. adjust = 0 (C is false). H is true -> adjust |=0x06. (adjust=0x06)
             // N is true. a = 0x01 - 0x06 = 0xFB.
             // C from (0x06&0x60!=0) is false. Z=0, H=0.
-            cpu.a = 0x01; cpu.set_flag_n(true); cpu.set_flag_h(true); cpu.set_flag_c(false); cpu.pc = 0;
+            cpu.a = 0x01;
+            cpu.set_flag_n(true);
+            cpu.set_flag_h(true);
+            cpu.set_flag_c(false);
+            cpu.pc = 0;
             cpu.daa();
             assert_eq!(cpu.a, 0xFB);
             assert_flags!(cpu, false, true, false, false);
@@ -5105,7 +6696,11 @@ mod tests {
             // My DAA: a=0x90, N=1, H=0, C=1. adjust = 0x60 (from C). H is false.
             // N is true. a = 0x90 - 0x60 = 0x30.
             // C from (0x60&0x60!=0) is true. Z=0, H=0.
-            cpu.a = 0x90; cpu.set_flag_n(true); cpu.set_flag_h(false); cpu.set_flag_c(true); cpu.pc = 0;
+            cpu.a = 0x90;
+            cpu.set_flag_n(true);
+            cpu.set_flag_h(false);
+            cpu.set_flag_c(true);
+            cpu.pc = 0;
             cpu.daa();
             assert_eq!(cpu.a, 0x30);
             assert_flags!(cpu, false, true, false, true);
@@ -5125,7 +6720,10 @@ mod tests {
             cpu.set_flag_c(true);
 
             cpu.cpl();
-            assert_eq!(cpu.a, !initial_a_scenario1, "Scenario 1: A should be complemented");
+            assert_eq!(
+                cpu.a, !initial_a_scenario1,
+                "Scenario 1: A should be complemented"
+            );
             assert_flags!(cpu, true, true, true, true); // Z true (unchanged), N true (set), H true (set), C true (unchanged)
             assert_eq!(cpu.pc, 1, "Scenario 1: PC should increment by 1");
 
@@ -5133,16 +6731,19 @@ mod tests {
             cpu.a = 0b0011_1100; // Different example value for A
             let initial_a_scenario2 = cpu.a;
             cpu.pc = 0; // Reset PC for the new scenario
-            // Reset flags from setup or previous state for a clean test
+                        // Reset flags from setup or previous state for a clean test
             cpu.f = 0; // Clears all flags (Z=0, N=0, H=0, C=0)
-            // If setup_cpu() doesn't guarantee zeroed flags, explicitly set them:
-            // cpu.set_flag_z(false);
-            // cpu.set_flag_n(false); // N will be set
-            // cpu.set_flag_h(false); // H will be set
-            // cpu.set_flag_c(false);
+                       // If setup_cpu() doesn't guarantee zeroed flags, explicitly set them:
+                       // cpu.set_flag_z(false);
+                       // cpu.set_flag_n(false); // N will be set
+                       // cpu.set_flag_h(false); // H will be set
+                       // cpu.set_flag_c(false);
 
             cpu.cpl();
-            assert_eq!(cpu.a, !initial_a_scenario2, "Scenario 2: A should be complemented");
+            assert_eq!(
+                cpu.a, !initial_a_scenario2,
+                "Scenario 2: A should be complemented"
+            );
             assert_flags!(cpu, false, true, true, false); // Z false (unchanged), N true (set), H true (set), C false (unchanged)
             assert_eq!(cpu.pc, 1, "Scenario 2: PC should increment by 1");
         }
@@ -5250,7 +6851,7 @@ mod tests {
         fn test_jp_nn() {
             let mut cpu = setup_cpu();
             cpu.pc = 0x0100; // Initial PC
-            cpu.f = 0xB0;    // Z=1, N=0, H=1, C=1
+            cpu.f = 0xB0; // Z=1, N=0, H=1, C=1
 
             let addr_lo = 0x34;
             let addr_hi = 0x12;
@@ -5281,7 +6882,7 @@ mod tests {
         fn test_jp_hl() {
             let mut cpu = setup_cpu();
             cpu.pc = 0x0100; // Initial PC
-            cpu.f = 0xB0;    // Z=1, N=0, H=1, C=1
+            cpu.f = 0xB0; // Z=1, N=0, H=1, C=1
 
             cpu.h = 0x12;
             cpu.l = 0x34;
@@ -5322,7 +6923,7 @@ mod tests {
             // Case 1: Condition met (Z flag is 0)
             cpu.pc = initial_pc;
             cpu.set_flag_z(false); // NZ is true
-            // Preserve other flags by reading them, then clearing Z, then ORing back.
+                                   // Preserve other flags by reading them, then clearing Z, then ORing back.
             let original_flags = cpu.f;
             cpu.f = original_flags & 0x7F; // Clear Z flag bit
 
@@ -5341,27 +6942,40 @@ mod tests {
             // Flags N, H, C are not affected by JP. Z is tested for condition but not modified by JP itself.
             // So, F should be what it was before the op, with Z still false.
             assert_eq!(cpu.is_flag_z(), false, "Z flag should remain false");
-            assert_eq!((cpu.f & 0x70), (original_flags & 0x70), "N, H, C flags should not change");
-
+            assert_eq!(
+                (cpu.f & 0x70),
+                (original_flags & 0x70),
+                "N, H, C flags should not change"
+            );
 
             // Case 2: Condition not met (Z flag is 1)
             cpu.pc = initial_pc; // Reset PC
             cpu.set_flag_z(true); // NZ is false
             let original_flags_no_jump = cpu.f; // Includes Z=1
-            // Write opcode and operands to memory
+                                                // Write opcode and operands to memory
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xC2); // JP NZ,a16 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
             cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
 
             let cycles_no_jump = cpu.step();
-            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when Z is true (no jump)");
+            assert_eq!(
+                cpu.pc,
+                initial_pc + 3,
+                "PC should increment by 3 when Z is true (no jump)"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xC2 as usize] {
-                assert_eq!(cycles_no_jump, cf as u32, "Cycles incorrect for JP NZ not taken");
+                assert_eq!(
+                    cycles_no_jump, cf as u32,
+                    "Cycles incorrect for JP NZ not taken"
+                );
             } else {
                 panic!("Expected conditional timing for JP NZ");
             }
             // Flags N, H, C are not affected. Z was true and should remain true.
-            assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
+            assert_eq!(
+                cpu.f, original_flags_no_jump,
+                "Flags should not change on no jump"
+            );
         }
 
         #[test]
@@ -5375,7 +6989,7 @@ mod tests {
             cpu.pc = initial_pc;
             cpu.set_flag_z(true);
             let original_flags_jump = cpu.f; // Z is 1
-            // Write opcode and operands to memory
+                                             // Write opcode and operands to memory
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xCA); // JP Z,a16 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
             cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
@@ -5387,26 +7001,38 @@ mod tests {
             } else {
                 panic!("Expected conditional timing for JP Z");
             }
-            assert_eq!(cpu.f, original_flags_jump, "Flags should not change on jump");
-
+            assert_eq!(
+                cpu.f, original_flags_jump,
+                "Flags should not change on jump"
+            );
 
             // Case 2: Condition not met (Z flag is 0)
             cpu.pc = initial_pc; // Reset PC
             cpu.set_flag_z(false);
             let original_flags_no_jump = cpu.f; // Z is 0
-            // Write opcode and operands to memory
+                                                // Write opcode and operands to memory
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xCA); // JP Z,a16 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
             cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
 
             let cycles_no_jump = cpu.step();
-            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when Z is false (no jump)");
+            assert_eq!(
+                cpu.pc,
+                initial_pc + 3,
+                "PC should increment by 3 when Z is false (no jump)"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xCA as usize] {
-                assert_eq!(cycles_no_jump, cf as u32, "Cycles incorrect for JP Z not taken");
+                assert_eq!(
+                    cycles_no_jump, cf as u32,
+                    "Cycles incorrect for JP Z not taken"
+                );
             } else {
                 panic!("Expected conditional timing for JP Z");
             }
-            assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
+            assert_eq!(
+                cpu.f, original_flags_no_jump,
+                "Flags should not change on no jump"
+            );
         }
 
         #[test]
@@ -5420,7 +7046,7 @@ mod tests {
             cpu.pc = initial_pc;
             cpu.set_flag_c(false); // NC is true
             let original_flags_jump = cpu.f; // C is 0
-            // Write opcode and operands to memory
+                                             // Write opcode and operands to memory
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xD2); // JP NC,a16 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
             cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
@@ -5432,25 +7058,38 @@ mod tests {
             } else {
                 panic!("Expected conditional timing for JP NC");
             }
-            assert_eq!(cpu.f, original_flags_jump, "Flags should not change on jump");
+            assert_eq!(
+                cpu.f, original_flags_jump,
+                "Flags should not change on jump"
+            );
 
             // Case 2: Condition not met (C flag is 1)
             cpu.pc = initial_pc; // Reset PC
             cpu.set_flag_c(true); // NC is false
             let original_flags_no_jump = cpu.f; // C is 1
-            // Write opcode and operands to memory
+                                                // Write opcode and operands to memory
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xD2); // JP NC,a16 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
             cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
 
             let cycles_no_jump = cpu.step();
-            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when C is true (no jump)");
+            assert_eq!(
+                cpu.pc,
+                initial_pc + 3,
+                "PC should increment by 3 when C is true (no jump)"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xD2 as usize] {
-                assert_eq!(cycles_no_jump, cf as u32, "Cycles incorrect for JP NC not taken");
+                assert_eq!(
+                    cycles_no_jump, cf as u32,
+                    "Cycles incorrect for JP NC not taken"
+                );
             } else {
                 panic!("Expected conditional timing for JP NC");
             }
-            assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
+            assert_eq!(
+                cpu.f, original_flags_no_jump,
+                "Flags should not change on no jump"
+            );
         }
 
         #[test]
@@ -5464,7 +7103,7 @@ mod tests {
             cpu.pc = initial_pc;
             cpu.set_flag_c(true);
             let original_flags_jump = cpu.f; // C is 1
-            // Write opcode and operands to memory
+                                             // Write opcode and operands to memory
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xDA); // JP C,a16 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
             cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
@@ -5476,25 +7115,38 @@ mod tests {
             } else {
                 panic!("Expected conditional timing for JP C");
             }
-            assert_eq!(cpu.f, original_flags_jump, "Flags should not change on jump");
+            assert_eq!(
+                cpu.f, original_flags_jump,
+                "Flags should not change on jump"
+            );
 
             // Case 2: Condition not met (C flag is 0)
             cpu.pc = initial_pc; // Reset PC
             cpu.set_flag_c(false);
             let original_flags_no_jump = cpu.f; // C is 0
-            // Write opcode and operands to memory
+                                                // Write opcode and operands to memory
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xDA); // JP C,a16 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, addr_lo);
             cpu.bus.borrow_mut().write_byte(initial_pc + 2, addr_hi);
 
             let cycles_no_jump = cpu.step();
-            assert_eq!(cpu.pc, initial_pc + 3, "PC should increment by 3 when C is false (no jump)");
+            assert_eq!(
+                cpu.pc,
+                initial_pc + 3,
+                "PC should increment by 3 when C is false (no jump)"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xDA as usize] {
-                assert_eq!(cycles_no_jump, cf as u32, "Cycles incorrect for JP C not taken");
+                assert_eq!(
+                    cycles_no_jump, cf as u32,
+                    "Cycles incorrect for JP C not taken"
+                );
             } else {
                 panic!("Expected conditional timing for JP C");
             }
-            assert_eq!(cpu.f, original_flags_no_jump, "Flags should not change on no jump");
+            assert_eq!(
+                cpu.f, original_flags_no_jump,
+                "Flags should not change on no jump"
+            );
         }
 
         #[test]
@@ -5506,7 +7158,7 @@ mod tests {
             cpu.f = 0xB0; // Example flags
             let initial_flags = cpu.f;
             cpu.jr_e8(0x0A); // Jump 10 bytes forward from PC+2
-            // Expected: 0x0100 (JR) + 2 (operand) + 0x0A (offset) = 0x010C
+                             // Expected: 0x0100 (JR) + 2 (operand) + 0x0A (offset) = 0x010C
             assert_eq!(cpu.pc, 0x010C, "JR forward jump failed");
             assert_eq!(cpu.f, initial_flags, "JR forward: Flags should not change");
 
@@ -5515,9 +7167,12 @@ mod tests {
             cpu.f = 0x50;
             let initial_flags_back = cpu.f;
             cpu.jr_e8(0xF6 as u8); // Jump -10 bytes (0xF6 is -10 as i8) from PC+2
-            // Expected: 0x010C (JR_opcode_addr) + 2 (length_of_JR_instr) + offset (-10) = 0x010E - 10 = 0x0104
+                                   // Expected: 0x010C (JR_opcode_addr) + 2 (length_of_JR_instr) + offset (-10) = 0x010E - 10 = 0x0104
             assert_eq!(cpu.pc, 0x0104, "JR backward jump failed");
-            assert_eq!(cpu.f, initial_flags_back, "JR backward: Flags should not change");
+            assert_eq!(
+                cpu.f, initial_flags_back,
+                "JR backward: Flags should not change"
+            );
 
             // Jump across 0x0000 (backward)
             cpu.pc = 0x0005;
@@ -5538,12 +7193,19 @@ mod tests {
             let offset_bwd = 0xE0 as u8; // Jump -32 (0xE0 as i8 = -32)
 
             // Case 1: NZ is true (Z=0), jump taken
-            cpu.pc = initial_pc; cpu.set_flag_z(false);
+            cpu.pc = initial_pc;
+            cpu.set_flag_z(false);
             let original_flags_fwd = cpu.f; // Z is 0
             cpu.bus.borrow_mut().write_byte(initial_pc, 0x20); // JR NZ,r8 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset_fwd);
             let cycles_fwd = cpu.step();
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset_fwd as i8 as i16 as u16), "JR NZ fwd (Z=0) PC failed");
+            assert_eq!(
+                cpu.pc,
+                initial_pc
+                    .wrapping_add(2)
+                    .wrapping_add(offset_fwd as i8 as i16 as u16),
+                "JR NZ fwd (Z=0) PC failed"
+            );
             if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x20 as usize] {
                 assert_eq!(cycles_fwd, ct as u32, "JR NZ fwd (Z=0) cycles failed");
             } else {
@@ -5551,12 +7213,19 @@ mod tests {
             }
             assert_eq!(cpu.f, original_flags_fwd, "JR NZ fwd (Z=0) flags changed");
 
-            cpu.pc = initial_pc; cpu.set_flag_z(false); // Reset PC and Z
+            cpu.pc = initial_pc;
+            cpu.set_flag_z(false); // Reset PC and Z
             let original_flags_bwd = cpu.f; // Z is 0
             cpu.bus.borrow_mut().write_byte(initial_pc, 0x20); // JR NZ,r8 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset_bwd);
             let cycles_bwd = cpu.step();
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset_bwd as i8 as i16 as u16), "JR NZ bwd (Z=0) PC failed");
+            assert_eq!(
+                cpu.pc,
+                initial_pc
+                    .wrapping_add(2)
+                    .wrapping_add(offset_bwd as i8 as i16 as u16),
+                "JR NZ bwd (Z=0) PC failed"
+            );
             if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x20 as usize] {
                 assert_eq!(cycles_bwd, ct as u32, "JR NZ bwd (Z=0) cycles failed");
             } else {
@@ -5565,18 +7234,29 @@ mod tests {
             assert_eq!(cpu.f, original_flags_bwd, "JR NZ bwd (Z=0) flags changed");
 
             // Case 2: NZ is false (Z=1), jump not taken
-            cpu.pc = initial_pc; cpu.set_flag_z(true);
+            cpu.pc = initial_pc;
+            cpu.set_flag_z(true);
             let original_flags_no_jump = cpu.f; // Z is 1
             cpu.bus.borrow_mut().write_byte(initial_pc, 0x20); // JR NZ,r8 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset_fwd);
             let cycles_no_jump = cpu.step();
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "JR NZ (Z=1) no jump PC failed");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "JR NZ (Z=1) no jump PC failed"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0x20 as usize] {
-                assert_eq!(cycles_no_jump, cf as u32, "JR NZ (Z=1) no jump cycles failed");
+                assert_eq!(
+                    cycles_no_jump, cf as u32,
+                    "JR NZ (Z=1) no jump cycles failed"
+                );
             } else {
                 panic!("Expected conditional timing for JR NZ");
             }
-            assert_eq!(cpu.f, original_flags_no_jump, "JR NZ (Z=1) no jump flags changed");
+            assert_eq!(
+                cpu.f, original_flags_no_jump,
+                "JR NZ (Z=1) no jump flags changed"
+            );
         }
 
         #[test]
@@ -5586,12 +7266,18 @@ mod tests {
             let offset = 0x0A;
 
             // Case 1: Z is true, jump taken
-            cpu.pc = initial_pc; cpu.set_flag_z(true);
+            cpu.pc = initial_pc;
+            cpu.set_flag_z(true);
             let original_flags_jump = cpu.f; // Z is 1
             cpu.bus.borrow_mut().write_byte(initial_pc, 0x28); // JR Z,r8 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
             let cycles_jump = cpu.step();
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset as i8 as i16 as u16));
+            assert_eq!(
+                cpu.pc,
+                initial_pc
+                    .wrapping_add(2)
+                    .wrapping_add(offset as i8 as i16 as u16)
+            );
             if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x28 as usize] {
                 assert_eq!(cycles_jump, ct as u32);
             } else {
@@ -5600,7 +7286,8 @@ mod tests {
             assert_eq!(cpu.f, original_flags_jump);
 
             // Case 2: Z is false, jump not taken
-            cpu.pc = initial_pc; cpu.set_flag_z(false);
+            cpu.pc = initial_pc;
+            cpu.set_flag_z(false);
             let original_flags_no_jump = cpu.f; // Z is 0
             cpu.bus.borrow_mut().write_byte(initial_pc, 0x28); // JR Z,r8 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
@@ -5621,12 +7308,18 @@ mod tests {
             let offset = 0x05;
 
             // Case 1: C is true, jump taken
-            cpu.pc = initial_pc; cpu.set_flag_c(true);
+            cpu.pc = initial_pc;
+            cpu.set_flag_c(true);
             let original_flags_jump = cpu.f; // C is 1
             cpu.bus.borrow_mut().write_byte(initial_pc, 0x38); // JR C,r8 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
             let cycles_jump = cpu.step();
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_add(offset as i8 as i16 as u16));
+            assert_eq!(
+                cpu.pc,
+                initial_pc
+                    .wrapping_add(2)
+                    .wrapping_add(offset as i8 as i16 as u16)
+            );
             if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x38 as usize] {
                 assert_eq!(cycles_jump, ct as u32);
             } else {
@@ -5635,7 +7328,8 @@ mod tests {
             assert_eq!(cpu.f, original_flags_jump);
 
             // Case 2: C is false, jump not taken
-            cpu.pc = initial_pc; cpu.set_flag_c(false);
+            cpu.pc = initial_pc;
+            cpu.set_flag_c(false);
             let original_flags_no_jump = cpu.f; // C is 0
             cpu.bus.borrow_mut().write_byte(initial_pc, 0x38); // JR C,r8 opcode
             cpu.bus.borrow_mut().write_byte(initial_pc + 1, offset);
@@ -5661,66 +7355,104 @@ mod tests {
             let initial_flags_case1 = cpu.f; // C is 0
             let offset_case1 = 0x0A; // 10
             cpu.bus.borrow_mut().write_byte(initial_pc_base, 0x30); // JR NC,r8 opcode
-            cpu.bus.borrow_mut().write_byte(initial_pc_base + 1, offset_case1);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc_base + 1, offset_case1);
             let cycles_case1 = cpu.step();
-            let expected_pc_case1 = initial_pc_base.wrapping_add(2).wrapping_add(offset_case1 as i8 as i16 as u16); // 0x100 + 2 + 10 = 0x10C
-            assert_eq!(cpu.pc, expected_pc_case1, "JR NC (C=0, offset +10) PC failed");
+            let expected_pc_case1 = initial_pc_base
+                .wrapping_add(2)
+                .wrapping_add(offset_case1 as i8 as i16 as u16); // 0x100 + 2 + 10 = 0x10C
+            assert_eq!(
+                cpu.pc, expected_pc_case1,
+                "JR NC (C=0, offset +10) PC failed"
+            );
             if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x30 as usize] {
                 assert_eq!(cycles_case1, ct as u32);
             } else {
                 panic!("Expected conditional timing for JR NC");
             }
-            assert_eq!(cpu.f, initial_flags_case1, "JR NC (C=0, offset +10) flags changed");
+            assert_eq!(
+                cpu.f, initial_flags_case1,
+                "JR NC (C=0, offset +10) flags changed"
+            );
 
             // Case 2: NC is true (C=0), negative offset
-            cpu.pc = initial_pc_base; cpu.set_flag_c(false); // Reset
+            cpu.pc = initial_pc_base;
+            cpu.set_flag_c(false); // Reset
             let initial_flags_case2 = cpu.f; // C is 0
             let offset_case2 = 0xF6u8; // -10 as i8
             cpu.bus.borrow_mut().write_byte(initial_pc_base, 0x30);
-            cpu.bus.borrow_mut().write_byte(initial_pc_base + 1, offset_case2);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc_base + 1, offset_case2);
             let cycles_case2 = cpu.step();
-            let expected_pc_case2 = initial_pc_base.wrapping_add(2).wrapping_add(offset_case2 as i8 as i16 as u16); // 0x100 + 2 - 10 = 0x0F8
-            assert_eq!(cpu.pc, expected_pc_case2, "JR NC (C=0, offset -10) PC failed");
+            let expected_pc_case2 = initial_pc_base
+                .wrapping_add(2)
+                .wrapping_add(offset_case2 as i8 as i16 as u16); // 0x100 + 2 - 10 = 0x0F8
+            assert_eq!(
+                cpu.pc, expected_pc_case2,
+                "JR NC (C=0, offset -10) PC failed"
+            );
             if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0x30 as usize] {
                 assert_eq!(cycles_case2, ct as u32);
             } else {
                 panic!("Expected conditional timing for JR NC");
             }
-            assert_eq!(cpu.f, initial_flags_case2, "JR NC (C=0, offset -10) flags changed");
+            assert_eq!(
+                cpu.f, initial_flags_case2,
+                "JR NC (C=0, offset -10) flags changed"
+            );
 
             // Case 3: NC is false (C=1), positive offset (no jump)
-            cpu.pc = initial_pc_base; cpu.set_flag_c(true); // Reset
+            cpu.pc = initial_pc_base;
+            cpu.set_flag_c(true); // Reset
             let initial_flags_case3 = cpu.f; // C is 1
             let offset_case3 = 0x0A;
             cpu.bus.borrow_mut().write_byte(initial_pc_base, 0x30);
-            cpu.bus.borrow_mut().write_byte(initial_pc_base + 1, offset_case3);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc_base + 1, offset_case3);
             let cycles_case3 = cpu.step();
             let expected_pc_case3 = initial_pc_base.wrapping_add(2); // 0x100 + 2 = 0x102
-            assert_eq!(cpu.pc, expected_pc_case3, "JR NC (C=1, offset +10) no jump PC failed");
+            assert_eq!(
+                cpu.pc, expected_pc_case3,
+                "JR NC (C=1, offset +10) no jump PC failed"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0x30 as usize] {
                 assert_eq!(cycles_case3, cf as u32);
             } else {
                 panic!("Expected conditional timing for JR NC");
             }
-            assert_eq!(cpu.f, initial_flags_case3, "JR NC (C=1, offset +10) no jump flags changed");
+            assert_eq!(
+                cpu.f, initial_flags_case3,
+                "JR NC (C=1, offset +10) no jump flags changed"
+            );
 
             // Case 4: NC is false (C=1), negative offset (no jump)
-            cpu.pc = initial_pc_base; cpu.set_flag_c(true); // Reset
+            cpu.pc = initial_pc_base;
+            cpu.set_flag_c(true); // Reset
             let initial_flags_case4 = cpu.f; // C is 1
             let offset_case4 = 0xF6u8; // -10
             cpu.bus.borrow_mut().write_byte(initial_pc_base, 0x30);
-            cpu.bus.borrow_mut().write_byte(initial_pc_base + 1, offset_case4);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc_base + 1, offset_case4);
             let cycles_case4 = cpu.step();
             let expected_pc_case4 = initial_pc_base.wrapping_add(2); // 0x100 + 2 = 0x102
-            assert_eq!(cpu.pc, expected_pc_case4, "JR NC (C=1, offset -10) no jump PC failed");
+            assert_eq!(
+                cpu.pc, expected_pc_case4,
+                "JR NC (C=1, offset -10) no jump PC failed"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0x30 as usize] {
                 assert_eq!(cycles_case4, cf as u32);
             } else {
                 panic!("Expected conditional timing for JR NC");
             }
-            assert_eq!(cpu.f, initial_flags_case4, "JR NC (C=1, offset -10) no jump flags changed");
+            assert_eq!(
+                cpu.f, initial_flags_case4,
+                "JR NC (C=1, offset -10) no jump flags changed"
+            );
         }
-
     }
 
     mod call_return_instructions {
@@ -5729,9 +7461,9 @@ mod tests {
         #[test]
         fn test_call_nn_basic() {
             let mut cpu = setup_cpu();
-            cpu.pc = 0x0100;    // Initial PC
-            cpu.sp = 0xFFFE;    // Initial SP
-            cpu.f = 0xB0;       // Z=1, N=0, H=1, C=1 (example flags)
+            cpu.pc = 0x0100; // Initial PC
+            cpu.sp = 0xFFFE; // Initial SP
+            cpu.f = 0xB0; // Z=1, N=0, H=1, C=1 (example flags)
 
             let flags_before_call = cpu.f;
             let initial_sp = cpu.sp;
@@ -5742,17 +7474,38 @@ mod tests {
 
             cpu.call_nn(addr_lo, addr_hi);
 
-            assert_eq!(cpu.pc, 0x1234, "PC should be updated to the call address 0x1234");
-            assert_eq!(cpu.sp, initial_sp.wrapping_sub(2), "SP should be decremented by 2");
+            assert_eq!(
+                cpu.pc, 0x1234,
+                "PC should be updated to the call address 0x1234"
+            );
+            assert_eq!(
+                cpu.sp,
+                initial_sp.wrapping_sub(2),
+                "SP should be decremented by 2"
+            );
 
             let pushed_pc_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_pc_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
             let pushed_return_addr = ((pushed_pc_hi as u16) << 8) | (pushed_pc_lo as u16);
 
-            assert_eq!(pushed_return_addr, expected_return_addr, "Return address pushed onto stack is incorrect");
-            assert_eq!(pushed_pc_lo, (expected_return_addr & 0xFF) as u8, "Pushed PC lo byte is incorrect");
-            assert_eq!(pushed_pc_hi, (expected_return_addr >> 8) as u8, "Pushed PC hi byte is incorrect");
-            assert_eq!(cpu.f, flags_before_call, "Flags should not be affected by CALL nn");
+            assert_eq!(
+                pushed_return_addr, expected_return_addr,
+                "Return address pushed onto stack is incorrect"
+            );
+            assert_eq!(
+                pushed_pc_lo,
+                (expected_return_addr & 0xFF) as u8,
+                "Pushed PC lo byte is incorrect"
+            );
+            assert_eq!(
+                pushed_pc_hi,
+                (expected_return_addr >> 8) as u8,
+                "Pushed PC hi byte is incorrect"
+            );
+            assert_eq!(
+                cpu.f, flags_before_call,
+                "Flags should not be affected by CALL nn"
+            );
         }
 
         #[test]
@@ -5770,15 +7523,33 @@ mod tests {
             let expected_sp_val = initial_sp_2.wrapping_sub(2); // Now 0xDFFD
 
             assert_eq!(cpu.pc, 0x0000, "PC after CALL 0x0000 should be 0x0000");
-            assert_eq!(cpu.sp, expected_sp_val, "SP after CALL 0x0000 should be 0xDFFD");
+            assert_eq!(
+                cpu.sp, expected_sp_val,
+                "SP after CALL 0x0000 should be 0xDFFD"
+            );
 
             let pushed_pc_lo_2 = cpu.bus.borrow().read_byte(cpu.sp); // Reads from 0xDFFD
             let pushed_pc_hi_2 = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1)); // Reads from 0xDFFE
 
-            assert_eq!(((pushed_pc_hi_2 as u16) << 8) | (pushed_pc_lo_2 as u16), expected_return_addr_2, "Return address pushed to stack incorrect");
-            assert_eq!(pushed_pc_lo_2, (expected_return_addr_2 & 0xFF) as u8, "Pushed PCL incorrect");
-            assert_eq!(pushed_pc_hi_2, (expected_return_addr_2 >> 8) as u8, "Pushed PCH incorrect");
-            assert_eq!(cpu.f, flags_before_call_2, "Flags affected by CALL nn (to zero)");
+            assert_eq!(
+                ((pushed_pc_hi_2 as u16) << 8) | (pushed_pc_lo_2 as u16),
+                expected_return_addr_2,
+                "Return address pushed to stack incorrect"
+            );
+            assert_eq!(
+                pushed_pc_lo_2,
+                (expected_return_addr_2 & 0xFF) as u8,
+                "Pushed PCL incorrect"
+            );
+            assert_eq!(
+                pushed_pc_hi_2,
+                (expected_return_addr_2 >> 8) as u8,
+                "Pushed PCH incorrect"
+            );
+            assert_eq!(
+                cpu.f, flags_before_call_2,
+                "Flags affected by CALL nn (to zero)"
+            );
         }
 
         #[test]
@@ -5795,15 +7566,33 @@ mod tests {
             cpu.call_nn(0xFF, 0xEE); // Call 0xEEFF
 
             assert_eq!(cpu.pc, 0xEEFF, "SP Wrap Test: PC after call failed");
-            assert_eq!(cpu.sp, initial_sp.wrapping_sub(2), "SP Wrap Test: SP after call failed. Expected {:#06X}, got {:#06X}", initial_sp.wrapping_sub(2), cpu.sp);
+            assert_eq!(
+                cpu.sp,
+                initial_sp.wrapping_sub(2),
+                "SP Wrap Test: SP after call failed. Expected {:#06X}, got {:#06X}",
+                initial_sp.wrapping_sub(2),
+                cpu.sp
+            );
             assert_eq!(cpu.sp, 0xBFFF, "SP should be 0xBFFF after wrapping");
 
             // PC_low (0x03) pushed to 0xBFFF, PC_high (0x03) pushed to 0xC000
             let pushed_pc_lo = cpu.bus.borrow().read_byte(0xBFFF);
             let pushed_pc_hi = cpu.bus.borrow().read_byte(0xC000);
-            assert_eq!(((pushed_pc_hi as u16) << 8) | (pushed_pc_lo as u16), expected_return_addr, "SP Wrap Test: Return address on stack incorrect");
-            assert_eq!(pushed_pc_lo, (expected_return_addr & 0xFF) as u8, "Pushed PC lo byte incorrect");
-            assert_eq!(pushed_pc_hi, (expected_return_addr >> 8) as u8, "Pushed PC hi byte incorrect");
+            assert_eq!(
+                ((pushed_pc_hi as u16) << 8) | (pushed_pc_lo as u16),
+                expected_return_addr,
+                "SP Wrap Test: Return address on stack incorrect"
+            );
+            assert_eq!(
+                pushed_pc_lo,
+                (expected_return_addr & 0xFF) as u8,
+                "Pushed PC lo byte incorrect"
+            );
+            assert_eq!(
+                pushed_pc_hi,
+                (expected_return_addr >> 8) as u8,
+                "Pushed PC hi byte incorrect"
+            );
             assert_eq!(cpu.f, flags_before_call, "SP Wrap Test: Flags changed");
         }
 
@@ -5822,40 +7611,75 @@ mod tests {
             let original_flags_jump = cpu.f; // Z is 0
             let expected_return_addr = initial_pc.wrapping_add(3);
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xC4); // CALL NZ,a16 opcode
-            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
-            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 2, call_addr_hi);
 
             let cycles_jump = cpu.step();
-            assert_eq!(cpu.pc, 0x1234, "CALL NZ: PC should be 0x1234 when Z is false");
-            assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL NZ: SP should decrement by 2 when Z is false");
+            assert_eq!(
+                cpu.pc, 0x1234,
+                "CALL NZ: PC should be 0x1234 when Z is false"
+            );
+            assert_eq!(
+                cpu.sp,
+                initial_sp_val.wrapping_sub(2),
+                "CALL NZ: SP should decrement by 2 when Z is false"
+            );
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
-            assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL NZ: Return address on stack incorrect when Z is false");
+            assert_eq!(
+                ((pushed_hi as u16) << 8) | pushed_lo as u16,
+                expected_return_addr,
+                "CALL NZ: Return address on stack incorrect when Z is false"
+            );
             if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xC4 as usize] {
                 assert_eq!(cycles_jump, ct as u32, "CALL NZ (taken) cycles incorrect");
             } else {
                 panic!("Expected conditional timing for CALL NZ");
             }
-            assert_eq!(cpu.f, original_flags_jump, "CALL NZ: Flags should not change when Z is false");
+            assert_eq!(
+                cpu.f, original_flags_jump,
+                "CALL NZ: Flags should not change when Z is false"
+            );
 
             // Case 2: Condition not met (Z flag is 1)
             cpu.pc = initial_pc;
             cpu.sp = initial_sp_val; // Reset SP
-            cpu.set_flag_z(true);  // NZ is false
+            cpu.set_flag_z(true); // NZ is false
             let original_flags_no_call = cpu.f; // Z is 1
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xC4); // CALL NZ,a16 opcode
-            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
-            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 2, call_addr_hi);
 
             let cycles_no_call = cpu.step();
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL NZ: PC should increment by 3 when Z is true");
-            assert_eq!(cpu.sp, initial_sp_val, "CALL NZ: SP should not change when Z is true");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(3),
+                "CALL NZ: PC should increment by 3 when Z is true"
+            );
+            assert_eq!(
+                cpu.sp, initial_sp_val,
+                "CALL NZ: SP should not change when Z is true"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xC4 as usize] {
-                assert_eq!(cycles_no_call, cf as u32, "CALL NZ (not taken) cycles incorrect");
+                assert_eq!(
+                    cycles_no_call, cf as u32,
+                    "CALL NZ (not taken) cycles incorrect"
+                );
             } else {
                 panic!("Expected conditional timing for CALL NZ");
             }
-            assert_eq!(cpu.f, original_flags_no_call, "CALL NZ: Flags should not change when Z is true");
+            assert_eq!(
+                cpu.f, original_flags_no_call,
+                "CALL NZ: Flags should not change when Z is true"
+            );
         }
 
         #[test]
@@ -5873,21 +7697,36 @@ mod tests {
             let original_flags_jump = cpu.f; // Z is 1
             let expected_return_addr = initial_pc.wrapping_add(3);
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xCC); // CALL Z,a16 opcode
-            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
-            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 2, call_addr_hi);
 
             let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0xABCD, "CALL Z: PC should be 0xABCD when Z is true");
-            assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL Z: SP should decrement by 2 when Z is true");
+            assert_eq!(
+                cpu.sp,
+                initial_sp_val.wrapping_sub(2),
+                "CALL Z: SP should decrement by 2 when Z is true"
+            );
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
-            assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL Z: Return address on stack incorrect");
+            assert_eq!(
+                ((pushed_hi as u16) << 8) | pushed_lo as u16,
+                expected_return_addr,
+                "CALL Z: Return address on stack incorrect"
+            );
             if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xCC as usize] {
                 assert_eq!(cycles_jump, ct as u32, "CALL Z (taken) cycles incorrect");
             } else {
                 panic!("Expected conditional timing for CALL Z");
             }
-            assert_eq!(cpu.f, original_flags_jump, "CALL Z: Flags should not change");
+            assert_eq!(
+                cpu.f, original_flags_jump,
+                "CALL Z: Flags should not change"
+            );
 
             // Case 2: Condition not met (Z flag is 0)
             cpu.pc = initial_pc;
@@ -5895,18 +7734,35 @@ mod tests {
             cpu.set_flag_z(false);
             let original_flags_no_call = cpu.f; // Z is 0
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xCC); // CALL Z,a16 opcode
-            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
-            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 2, call_addr_hi);
 
             let cycles_no_call = cpu.step();
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL Z: PC should increment by 3 when Z is false");
-            assert_eq!(cpu.sp, initial_sp_val, "CALL Z: SP should not change when Z is false");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(3),
+                "CALL Z: PC should increment by 3 when Z is false"
+            );
+            assert_eq!(
+                cpu.sp, initial_sp_val,
+                "CALL Z: SP should not change when Z is false"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xCC as usize] {
-                assert_eq!(cycles_no_call, cf as u32, "CALL Z (not taken) cycles incorrect");
+                assert_eq!(
+                    cycles_no_call, cf as u32,
+                    "CALL Z (not taken) cycles incorrect"
+                );
             } else {
                 panic!("Expected conditional timing for CALL Z");
             }
-            assert_eq!(cpu.f, original_flags_no_call, "CALL Z: Flags should not change when Z is false");
+            assert_eq!(
+                cpu.f, original_flags_no_call,
+                "CALL Z: Flags should not change when Z is false"
+            );
         }
 
         #[test]
@@ -5924,21 +7780,39 @@ mod tests {
             let original_flags_jump = cpu.f; // C is 0
             let expected_return_addr = initial_pc.wrapping_add(3);
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xD4); // CALL NC,a16 opcode
-            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
-            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 2, call_addr_hi);
 
             let cycles_jump = cpu.step();
-            assert_eq!(cpu.pc, 0x5678, "CALL NC: PC should be 0x5678 when C is false");
-            assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL NC: SP should decrement by 2");
+            assert_eq!(
+                cpu.pc, 0x5678,
+                "CALL NC: PC should be 0x5678 when C is false"
+            );
+            assert_eq!(
+                cpu.sp,
+                initial_sp_val.wrapping_sub(2),
+                "CALL NC: SP should decrement by 2"
+            );
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
-            assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL NC: Return address incorrect");
+            assert_eq!(
+                ((pushed_hi as u16) << 8) | pushed_lo as u16,
+                expected_return_addr,
+                "CALL NC: Return address incorrect"
+            );
             if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xD4 as usize] {
                 assert_eq!(cycles_jump, ct as u32, "CALL NC (taken) cycles incorrect");
             } else {
                 panic!("Expected conditional timing for CALL NC");
             }
-            assert_eq!(cpu.f, original_flags_jump, "CALL NC: Flags should not change");
+            assert_eq!(
+                cpu.f, original_flags_jump,
+                "CALL NC: Flags should not change"
+            );
 
             // Case 2: Condition not met (C flag is 1)
             cpu.pc = initial_pc;
@@ -5946,18 +7820,35 @@ mod tests {
             cpu.set_flag_c(true);
             let original_flags_no_call = cpu.f; // C is 1
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xD4); // CALL NC,a16 opcode
-            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
-            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 2, call_addr_hi);
 
             let cycles_no_call = cpu.step();
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL NC: PC should increment by 3 when C is true");
-            assert_eq!(cpu.sp, initial_sp_val, "CALL NC: SP should not change when C is true");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(3),
+                "CALL NC: PC should increment by 3 when C is true"
+            );
+            assert_eq!(
+                cpu.sp, initial_sp_val,
+                "CALL NC: SP should not change when C is true"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xD4 as usize] {
-                assert_eq!(cycles_no_call, cf as u32, "CALL NC (not taken) cycles incorrect");
+                assert_eq!(
+                    cycles_no_call, cf as u32,
+                    "CALL NC (not taken) cycles incorrect"
+                );
             } else {
                 panic!("Expected conditional timing for CALL NC");
             }
-            assert_eq!(cpu.f, original_flags_no_call, "CALL NC: Flags should not change when C is true");
+            assert_eq!(
+                cpu.f, original_flags_no_call,
+                "CALL NC: Flags should not change when C is true"
+            );
         }
 
         #[test]
@@ -5975,21 +7866,36 @@ mod tests {
             let original_flags_jump = cpu.f; // C is 1
             let expected_return_addr = initial_pc.wrapping_add(3);
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xDC); // CALL C,a16 opcode
-            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
-            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 2, call_addr_hi);
 
             let cycles_jump = cpu.step();
             assert_eq!(cpu.pc, 0x9ABC, "CALL C: PC should be 0x9ABC when C is true");
-            assert_eq!(cpu.sp, initial_sp_val.wrapping_sub(2), "CALL C: SP should decrement by 2");
+            assert_eq!(
+                cpu.sp,
+                initial_sp_val.wrapping_sub(2),
+                "CALL C: SP should decrement by 2"
+            );
             let pushed_lo = cpu.bus.borrow().read_byte(cpu.sp);
             let pushed_hi = cpu.bus.borrow().read_byte(cpu.sp.wrapping_add(1));
-            assert_eq!(((pushed_hi as u16) << 8) | pushed_lo as u16, expected_return_addr, "CALL C: Return address incorrect");
+            assert_eq!(
+                ((pushed_hi as u16) << 8) | pushed_lo as u16,
+                expected_return_addr,
+                "CALL C: Return address incorrect"
+            );
             if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xDC as usize] {
                 assert_eq!(cycles_jump, ct as u32, "CALL C (taken) cycles incorrect");
             } else {
                 panic!("Expected conditional timing for CALL C");
             }
-            assert_eq!(cpu.f, original_flags_jump, "CALL C: Flags should not change");
+            assert_eq!(
+                cpu.f, original_flags_jump,
+                "CALL C: Flags should not change"
+            );
 
             // Case 2: Condition not met (C flag is 0)
             cpu.pc = initial_pc;
@@ -5997,18 +7903,35 @@ mod tests {
             cpu.set_flag_c(false);
             let original_flags_no_call = cpu.f; // C is 0
             cpu.bus.borrow_mut().write_byte(initial_pc, 0xDC); // CALL C,a16 opcode
-            cpu.bus.borrow_mut().write_byte(initial_pc + 1, call_addr_lo);
-            cpu.bus.borrow_mut().write_byte(initial_pc + 2, call_addr_hi);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 1, call_addr_lo);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_pc + 2, call_addr_hi);
 
             let cycles_no_call = cpu.step();
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(3), "CALL C: PC should increment by 3 when C is false");
-            assert_eq!(cpu.sp, initial_sp_val, "CALL C: SP should not change when C is false");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(3),
+                "CALL C: PC should increment by 3 when C is false"
+            );
+            assert_eq!(
+                cpu.sp, initial_sp_val,
+                "CALL C: SP should not change when C is false"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xDC as usize] {
-                assert_eq!(cycles_no_call, cf as u32, "CALL C (not taken) cycles incorrect");
+                assert_eq!(
+                    cycles_no_call, cf as u32,
+                    "CALL C (not taken) cycles incorrect"
+                );
             } else {
                 panic!("Expected conditional timing for CALL C");
             }
-            assert_eq!(cpu.f, original_flags_no_call, "CALL C: Flags should not change when C is false");
+            assert_eq!(
+                cpu.f, original_flags_no_call,
+                "CALL C: Flags should not change when C is false"
+            );
         }
 
         #[test]
@@ -6016,36 +7939,64 @@ mod tests {
             let mut cpu = setup_cpu();
             let return_addr = 0x1234;
             cpu.sp = 0xFFFC; // Initial SP
-            // Push return address onto stack manually
-            cpu.bus.borrow_mut().write_byte(cpu.sp, (return_addr & 0xFF) as u8); // Lo byte
-            cpu.bus.borrow_mut().write_byte(cpu.sp.wrapping_add(1), (return_addr >> 8) as u8); // Hi byte
+                             // Push return address onto stack manually
+            cpu.bus
+                .borrow_mut()
+                .write_byte(cpu.sp, (return_addr & 0xFF) as u8); // Lo byte
+            cpu.bus
+                .borrow_mut()
+                .write_byte(cpu.sp.wrapping_add(1), (return_addr >> 8) as u8); // Hi byte
 
             cpu.pc = 0x0000; // Dummy PC before RET
-            cpu.f = 0xB0;    // Example flags Z=1, N=0, H=1, C=1
+            cpu.f = 0xB0; // Example flags Z=1, N=0, H=1, C=1
             let flags_before_ret = cpu.f;
             let initial_sp = cpu.sp;
 
             cpu.ret();
 
-            assert_eq!(cpu.pc, return_addr, "PC should be updated to the return address from stack");
-            assert_eq!(cpu.sp, initial_sp.wrapping_add(2), "SP should be incremented by 2");
-            assert_eq!(cpu.f, flags_before_ret, "Flags should not be affected by RET");
+            assert_eq!(
+                cpu.pc, return_addr,
+                "PC should be updated to the return address from stack"
+            );
+            assert_eq!(
+                cpu.sp,
+                initial_sp.wrapping_add(2),
+                "SP should be incremented by 2"
+            );
+            assert_eq!(
+                cpu.f, flags_before_ret,
+                "Flags should not be affected by RET"
+            );
 
             // Test RET with SP wrapping from 0xFFFE (stack in HRAM/IE)
             let return_addr_2 = 0xABCD;
             cpu.sp = 0xFFFE;
             // cpu.bus is the same bus from the setup_cpu()
-            cpu.bus.borrow_mut().write_byte(0xFFFE, (return_addr_2 & 0xFF) as u8); // Lo byte to 0xFFFE (HRAM)
-            cpu.bus.borrow_mut().write_byte(0xFFFF, (return_addr_2 >> 8) as u8);   // Hi byte to 0xFFFF (IE Register)
+            cpu.bus
+                .borrow_mut()
+                .write_byte(0xFFFE, (return_addr_2 & 0xFF) as u8); // Lo byte to 0xFFFE (HRAM)
+            cpu.bus
+                .borrow_mut()
+                .write_byte(0xFFFF, (return_addr_2 >> 8) as u8); // Hi byte to 0xFFFF (IE Register)
             cpu.pc = 0x0010; // Dummy PC
-            cpu.f = 0x00;    // Clear flags
+            cpu.f = 0x00; // Clear flags
             let flags_before_ret_2 = cpu.f;
             let initial_sp_2 = cpu.sp;
 
             cpu.ret();
-            assert_eq!(cpu.pc, return_addr_2, "PC should be 0xABCD after RET with SP starting at 0xFFFE");
-            assert_eq!(cpu.sp, initial_sp_2.wrapping_add(2), "SP should wrap from 0xFFFE to 0x0000");
-            assert_eq!(cpu.f, flags_before_ret_2, "Flags should not be affected by RET with SP at 0xFFFE");
+            assert_eq!(
+                cpu.pc, return_addr_2,
+                "PC should be 0xABCD after RET with SP starting at 0xFFFE"
+            );
+            assert_eq!(
+                cpu.sp,
+                initial_sp_2.wrapping_add(2),
+                "SP should wrap from 0xFFFE to 0x0000"
+            );
+            assert_eq!(
+                cpu.f, flags_before_ret_2,
+                "Flags should not be affected by RET with SP at 0xFFFE"
+            );
 
             // Test RET with SP wrapping from 0xFFFF (causes read from 0xFFFF and 0x0000)
             // This needs a custom ROM where 0x0000 can be pre-set.
@@ -6054,7 +8005,7 @@ mod tests {
             let mut rom_data_ret_wrap = vec![0; 0x8000];
             rom_data_ret_wrap[0x0147] = 0x00; // NoMBC
             rom_data_ret_wrap[0x0149] = 0x02; // 8KB RAM
-            // Determine CGB flag based on the model of the *original* cpu instance for consistency
+                                              // Determine CGB flag based on the model of the *original* cpu instance for consistency
             let current_model = cpu.bus.borrow().get_model();
             if current_model.is_cgb_family() {
                 rom_data_ret_wrap[0x0143] = 0x80;
@@ -6068,18 +8019,30 @@ mod tests {
 
             cpu_ret_wrap.sp = 0xFFFF;
             // Lo byte (0xAA) is written to IE register (0xFFFF), which is writable
-            bus_ret_wrap.borrow_mut().write_byte(0xFFFF, (return_addr_3 & 0xFF) as u8);
+            bus_ret_wrap
+                .borrow_mut()
+                .write_byte(0xFFFF, (return_addr_3 & 0xFF) as u8);
             // Hi byte (0x55) is "read" from ROM[0x0000] which was pre-set
 
             cpu_ret_wrap.pc = 0x0020; // Dummy PC
-            cpu_ret_wrap.f = 0xF0;   // Example flags
+            cpu_ret_wrap.f = 0xF0; // Example flags
             let flags_before_ret_3 = cpu_ret_wrap.f;
             let initial_sp_3 = cpu_ret_wrap.sp;
 
             cpu_ret_wrap.ret();
-            assert_eq!(cpu_ret_wrap.pc, return_addr_3, "PC should be 0x55AA after RET with SP wrap from 0xFFFF");
-            assert_eq!(cpu_ret_wrap.sp, initial_sp_3.wrapping_add(2), "SP should wrap from 0xFFFF to 0x0001");
-            assert_eq!(cpu_ret_wrap.f, flags_before_ret_3, "Flags should not be affected by RET with SP wrap from 0xFFFF");
+            assert_eq!(
+                cpu_ret_wrap.pc, return_addr_3,
+                "PC should be 0x55AA after RET with SP wrap from 0xFFFF"
+            );
+            assert_eq!(
+                cpu_ret_wrap.sp,
+                initial_sp_3.wrapping_add(2),
+                "SP should wrap from 0xFFFF to 0x0001"
+            );
+            assert_eq!(
+                cpu_ret_wrap.f, flags_before_ret_3,
+                "Flags should not be affected by RET with SP wrap from 0xFFFF"
+            );
         }
 
         #[test]
@@ -6090,8 +8053,12 @@ mod tests {
             let initial_sp_val: u16 = 0xFFFC;
 
             // Setup stack
-            cpu.bus.borrow_mut().write_byte(initial_sp_val, (return_addr & 0xFF) as u8); // Lo
-            cpu.bus.borrow_mut().write_byte(initial_sp_val.wrapping_add(1), (return_addr >> 8) as u8); // Hi
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_sp_val, (return_addr & 0xFF) as u8); // Lo
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_sp_val.wrapping_add(1), (return_addr >> 8) as u8); // Hi
 
             // Case 1: Condition met (Z flag is 0)
             cpu.pc = initial_pc_val;
@@ -6101,31 +8068,54 @@ mod tests {
             cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xC0); // RET NZ opcode
 
             let cycles_ret = cpu.step();
-            assert_eq!(cpu.pc, return_addr, "RET NZ: PC should be return_addr when Z is false");
-            assert_eq!(cpu.sp, initial_sp_val.wrapping_add(2), "RET NZ: SP should increment by 2 when Z is false");
+            assert_eq!(
+                cpu.pc, return_addr,
+                "RET NZ: PC should be return_addr when Z is false"
+            );
+            assert_eq!(
+                cpu.sp,
+                initial_sp_val.wrapping_add(2),
+                "RET NZ: SP should increment by 2 when Z is false"
+            );
             if let Timing::Conditional(ct, _) = OPCODE_TIMINGS[0xC0 as usize] {
                 assert_eq!(cycles_ret, ct as u32, "RET NZ (taken) cycles incorrect");
             } else {
                 panic!("Expected conditional timing for RET NZ");
             }
-            assert_eq!(cpu.f, original_flags_ret, "RET NZ: Flags should not change when Z is false");
+            assert_eq!(
+                cpu.f, original_flags_ret,
+                "RET NZ: Flags should not change when Z is false"
+            );
 
             // Case 2: Condition not met (Z flag is 1)
             cpu.pc = initial_pc_val;
             cpu.sp = initial_sp_val; // Reset SP
-            cpu.set_flag_z(true);  // NZ is false
+            cpu.set_flag_z(true); // NZ is false
             let original_flags_no_ret = cpu.f;
             cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xC0); // RET NZ opcode
 
             let cycles_no_ret = cpu.step();
-            assert_eq!(cpu.pc, initial_pc_val.wrapping_add(1), "RET NZ: PC should increment by 1 when Z is true");
-            assert_eq!(cpu.sp, initial_sp_val, "RET NZ: SP should not change when Z is true");
+            assert_eq!(
+                cpu.pc,
+                initial_pc_val.wrapping_add(1),
+                "RET NZ: PC should increment by 1 when Z is true"
+            );
+            assert_eq!(
+                cpu.sp, initial_sp_val,
+                "RET NZ: SP should not change when Z is true"
+            );
             if let Timing::Conditional(_, cf) = OPCODE_TIMINGS[0xC0 as usize] {
-                assert_eq!(cycles_no_ret, cf as u32, "RET NZ (not taken) cycles incorrect");
+                assert_eq!(
+                    cycles_no_ret, cf as u32,
+                    "RET NZ (not taken) cycles incorrect"
+                );
             } else {
                 panic!("Expected conditional timing for RET NZ");
             }
-            assert_eq!(cpu.f, original_flags_no_ret, "RET NZ: Flags should not change when Z is true");
+            assert_eq!(
+                cpu.f, original_flags_no_ret,
+                "RET NZ: Flags should not change when Z is true"
+            );
         }
 
         #[test]
@@ -6134,11 +8124,17 @@ mod tests {
             let return_addr = 0xABCD;
             let initial_pc_val = 0xC000; // USE WRAM FOR TEST OPCODES
             let initial_sp_val: u16 = 0xFFFC;
-            cpu.bus.borrow_mut().write_byte(initial_sp_val, (return_addr & 0xFF) as u8);
-            cpu.bus.borrow_mut().write_byte(initial_sp_val.wrapping_add(1), (return_addr >> 8) as u8);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_sp_val, (return_addr & 0xFF) as u8);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_sp_val.wrapping_add(1), (return_addr >> 8) as u8);
 
             // Case 1: Condition met (Z flag is 1)
-            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_z(true);
+            cpu.pc = initial_pc_val;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_z(true);
             let original_flags_ret = cpu.f;
             cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xC8); // RET Z opcode
             let cycles_ret = cpu.step();
@@ -6152,7 +8148,9 @@ mod tests {
             assert_eq!(cpu.f, original_flags_ret);
 
             // Case 2: Condition not met (Z flag is 0)
-            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_z(false);
+            cpu.pc = initial_pc_val;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_z(false);
             let original_flags_no_ret = cpu.f;
             cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xC8); // RET Z opcode
             let cycles_no_ret = cpu.step();
@@ -6172,11 +8170,17 @@ mod tests {
             let return_addr = 0x5678;
             let initial_pc_val = 0xC000; // USE WRAM FOR TEST OPCODES
             let initial_sp_val: u16 = 0xFFFC;
-            cpu.bus.borrow_mut().write_byte(initial_sp_val, (return_addr & 0xFF) as u8);
-            cpu.bus.borrow_mut().write_byte(initial_sp_val.wrapping_add(1), (return_addr >> 8) as u8);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_sp_val, (return_addr & 0xFF) as u8);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_sp_val.wrapping_add(1), (return_addr >> 8) as u8);
 
             // Case 1: Condition met (C flag is 0)
-            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(false);
+            cpu.pc = initial_pc_val;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_c(false);
             let original_flags_ret = cpu.f;
             cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xD0); // RET NC opcode
             let cycles_ret = cpu.step();
@@ -6190,7 +8194,9 @@ mod tests {
             assert_eq!(cpu.f, original_flags_ret);
 
             // Case 2: Condition not met (C flag is 1)
-            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(true);
+            cpu.pc = initial_pc_val;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_c(true);
             let original_flags_no_ret = cpu.f;
             cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xD0); // RET NC opcode
             let cycles_no_ret = cpu.step();
@@ -6210,11 +8216,17 @@ mod tests {
             let return_addr = 0x9ABC;
             let initial_pc_val = 0xC000; // USE WRAM FOR TEST OPCODES
             let initial_sp_val: u16 = 0xFFFC;
-            cpu.bus.borrow_mut().write_byte(initial_sp_val, (return_addr & 0xFF) as u8);
-            cpu.bus.borrow_mut().write_byte(initial_sp_val.wrapping_add(1), (return_addr >> 8) as u8);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_sp_val, (return_addr & 0xFF) as u8);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(initial_sp_val.wrapping_add(1), (return_addr >> 8) as u8);
 
             // Case 1: Condition met (C flag is 1)
-            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(true);
+            cpu.pc = initial_pc_val;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_c(true);
             let original_flags_ret = cpu.f;
             cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xD8); // RET C opcode
             let cycles_ret = cpu.step();
@@ -6228,7 +8240,9 @@ mod tests {
             assert_eq!(cpu.f, original_flags_ret);
 
             // Case 2: Condition not met (C flag is 0)
-            cpu.pc = initial_pc_val; cpu.sp = initial_sp_val; cpu.set_flag_c(false);
+            cpu.pc = initial_pc_val;
+            cpu.sp = initial_sp_val;
+            cpu.set_flag_c(false);
             let original_flags_no_ret = cpu.f;
             cpu.bus.borrow_mut().write_byte(initial_pc_val, 0xD8); // RET C opcode
             let cycles_no_ret = cpu.step();
@@ -6247,12 +8261,16 @@ mod tests {
             let mut cpu = setup_cpu();
             let return_addr = 0x4567;
             cpu.sp = 0xFFFA; // Initial SP
-            // Push return address onto stack manually
-            cpu.bus.borrow_mut().write_byte(cpu.sp, (return_addr & 0xFF) as u8); // Lo byte
-            cpu.bus.borrow_mut().write_byte(cpu.sp.wrapping_add(1), (return_addr >> 8) as u8); // Hi byte
+                             // Push return address onto stack manually
+            cpu.bus
+                .borrow_mut()
+                .write_byte(cpu.sp, (return_addr & 0xFF) as u8); // Lo byte
+            cpu.bus
+                .borrow_mut()
+                .write_byte(cpu.sp.wrapping_add(1), (return_addr >> 8) as u8); // Hi byte
 
             cpu.pc = 0x0000; // Dummy PC before RETI
-            cpu.f = 0x70;    // Example flags (Z=0, N=1, H=1, C=1)
+            cpu.f = 0x70; // Example flags (Z=0, N=1, H=1, C=1)
             cpu.ime = false; // Ensure IME is false before RETI
 
             let flags_before_reti = cpu.f;
@@ -6260,16 +8278,30 @@ mod tests {
 
             cpu.reti();
 
-            assert_eq!(cpu.pc, return_addr, "RETI: PC should be updated to the return address");
-            assert_eq!(cpu.sp, initial_sp.wrapping_add(2), "RETI: SP should be incremented by 2");
+            assert_eq!(
+                cpu.pc, return_addr,
+                "RETI: PC should be updated to the return address"
+            );
+            assert_eq!(
+                cpu.sp,
+                initial_sp.wrapping_add(2),
+                "RETI: SP should be incremented by 2"
+            );
             assert_eq!(cpu.ime, true, "RETI: IME should be set to true");
-            assert_eq!(cpu.f, flags_before_reti, "RETI: Other flags should not be affected");
+            assert_eq!(
+                cpu.f, flags_before_reti,
+                "RETI: Other flags should not be affected"
+            );
 
             // Test RETI with SP wrapping from 0xFFFE
             let return_addr_2 = 0xBEEF;
             cpu.sp = 0xFFFE;
-            cpu.bus.borrow_mut().write_byte(cpu.sp, (return_addr_2 & 0xFF) as u8); // Lo at 0xFFFE
-            cpu.bus.borrow_mut().write_byte(cpu.sp.wrapping_add(1), (return_addr_2 >> 8) as u8); // Hi at 0xFFFF
+            cpu.bus
+                .borrow_mut()
+                .write_byte(cpu.sp, (return_addr_2 & 0xFF) as u8); // Lo at 0xFFFE
+            cpu.bus
+                .borrow_mut()
+                .write_byte(cpu.sp.wrapping_add(1), (return_addr_2 >> 8) as u8); // Hi at 0xFFFF
             cpu.pc = 0x0010;
             cpu.f = 0x10; // Z=0, N=0, H=0, C=1
             cpu.ime = false;
@@ -6277,10 +8309,20 @@ mod tests {
             let initial_sp_2 = cpu.sp;
 
             cpu.reti();
-            assert_eq!(cpu.pc, return_addr_2, "RETI: PC should be 0xBEEF after SP wrap");
-            assert_eq!(cpu.sp, initial_sp_2.wrapping_add(2), "RETI: SP should wrap from 0xFFFE to 0x0000");
+            assert_eq!(
+                cpu.pc, return_addr_2,
+                "RETI: PC should be 0xBEEF after SP wrap"
+            );
+            assert_eq!(
+                cpu.sp,
+                initial_sp_2.wrapping_add(2),
+                "RETI: SP should wrap from 0xFFFE to 0x0000"
+            );
             assert_eq!(cpu.ime, true, "RETI: IME should be set after SP wrap");
-            assert_eq!(cpu.f, flags_before_reti_2, "RETI: Other flags should not be affected after SP wrap");
+            assert_eq!(
+                cpu.f, flags_before_reti_2,
+                "RETI: Other flags should not be affected after SP wrap"
+            );
         }
 
         #[test]
@@ -6300,8 +8342,16 @@ mod tests {
             let read_val1 = cpu.bus.borrow().read_byte(wram_addr1);
             let read_val2 = cpu.bus.borrow().read_byte(wram_addr2);
 
-            assert_eq!(read_val1, val1, "Value at {:#06X} incorrect after write.", wram_addr1);
-            assert_eq!(read_val2, val2, "Value at {:#06X} incorrect after write.", wram_addr2);
+            assert_eq!(
+                read_val1, val1,
+                "Value at {:#06X} incorrect after write.",
+                wram_addr1
+            );
+            assert_eq!(
+                read_val2, val2,
+                "Value at {:#06X} incorrect after write.",
+                wram_addr2
+            );
             assert_eq!(cpu.b, 0xBB, "cpu.b corrupted!");
             assert_eq!(control_value, 0xAAAA, "Local control_value corrupted!");
         }
@@ -6311,10 +8361,15 @@ mod tests {
         use super::*;
 
         // Helper to test a single RST instruction
-        fn test_rst_individual(cpu: &mut Cpu, rst_fn: fn(&mut Cpu), target_addr: u16, initial_pc_val: u16) {
+        fn test_rst_individual(
+            cpu: &mut Cpu,
+            rst_fn: fn(&mut Cpu),
+            target_addr: u16,
+            initial_pc_val: u16,
+        ) {
             cpu.pc = initial_pc_val;
-            cpu.sp = 0xFFFE;    // Initial SP
-            cpu.f = 0xB0;       // Example flags (Z=1,N=0,H=1,C=1)
+            cpu.sp = 0xFFFE; // Initial SP
+            cpu.f = 0xB0; // Example flags (Z=1,N=0,H=1,C=1)
 
             let flags_before_rst = cpu.f;
             let initial_sp = cpu.sp;
@@ -6323,10 +8378,19 @@ mod tests {
             rst_fn(cpu); // Call the specific RST function (e.g., cpu.rst_00h())
 
             // Check PC
-            assert_eq!(cpu.pc, target_addr, "RST to 0x{:02X}: PC should be updated to target address", target_addr);
+            assert_eq!(
+                cpu.pc, target_addr,
+                "RST to 0x{:02X}: PC should be updated to target address",
+                target_addr
+            );
 
             // Check SP
-            assert_eq!(cpu.sp, initial_sp.wrapping_sub(2), "RST to 0x{:02X}: SP should be decremented by 2", target_addr);
+            assert_eq!(
+                cpu.sp,
+                initial_sp.wrapping_sub(2),
+                "RST to 0x{:02X}: SP should be decremented by 2",
+                target_addr
+            );
 
             // Check stack content (return address)
             let pushed_pc_lo = cpu.bus.borrow().read_byte(cpu.sp);
@@ -6334,11 +8398,25 @@ mod tests {
             let pushed_return_addr = ((pushed_pc_hi as u16) << 8) | (pushed_pc_lo as u16);
 
             assert_eq!(pushed_return_addr, expected_return_addr, "RST to 0x{:02X}: Return address (0x{:04X}) pushed onto stack is incorrect (was 0x{:04X})", target_addr, expected_return_addr, pushed_return_addr);
-            assert_eq!(pushed_pc_lo, (expected_return_addr & 0xFF) as u8, "RST to 0x{:02X}: Pushed PC lo byte is incorrect", target_addr);
-            assert_eq!(pushed_pc_hi, (expected_return_addr >> 8) as u8, "RST to 0x{:02X}: Pushed PC hi byte is incorrect", target_addr);
+            assert_eq!(
+                pushed_pc_lo,
+                (expected_return_addr & 0xFF) as u8,
+                "RST to 0x{:02X}: Pushed PC lo byte is incorrect",
+                target_addr
+            );
+            assert_eq!(
+                pushed_pc_hi,
+                (expected_return_addr >> 8) as u8,
+                "RST to 0x{:02X}: Pushed PC hi byte is incorrect",
+                target_addr
+            );
 
             // Check flags
-            assert_eq!(cpu.f, flags_before_rst, "RST to 0x{:02X}: Flags should not be affected", target_addr);
+            assert_eq!(
+                cpu.f, flags_before_rst,
+                "RST to 0x{:02X}: Flags should not be affected",
+                target_addr
+            );
         }
 
         #[test]
@@ -6371,8 +8449,17 @@ mod tests {
 
             cpu.rst_28h();
 
-            assert_eq!(cpu.pc, target_addr, "RST SP Wrap: PC should be target address");
-            assert_eq!(cpu.sp, initial_sp.wrapping_sub(2), "RST SP Wrap: SP should wrap correctly. Expected {:#06X}, got {:#06X}", initial_sp.wrapping_sub(2), cpu.sp);
+            assert_eq!(
+                cpu.pc, target_addr,
+                "RST SP Wrap: PC should be target address"
+            );
+            assert_eq!(
+                cpu.sp,
+                initial_sp.wrapping_sub(2),
+                "RST SP Wrap: SP should wrap correctly. Expected {:#06X}, got {:#06X}",
+                initial_sp.wrapping_sub(2),
+                cpu.sp
+            );
             assert_eq!(cpu.sp, 0xBFFF, "SP should be 0xBFFF after wrapping");
 
             // PC_low (0x01) pushed to 0xBFFF, PC_high (0x02) pushed to 0xC000
@@ -6380,10 +8467,25 @@ mod tests {
             let pushed_pc_hi = cpu.bus.borrow().read_byte(0xC000);
             let pushed_return_addr = ((pushed_pc_hi as u16) << 8) | (pushed_pc_lo as u16);
 
-            assert_eq!(pushed_return_addr, expected_return_addr, "RST SP Wrap: Return address incorrect. Expected {:#06X}, got {:#06X}", expected_return_addr, pushed_return_addr);
-            assert_eq!(pushed_pc_lo, (expected_return_addr & 0xFF) as u8, "Pushed PC lo byte incorrect");
-            assert_eq!(pushed_pc_hi, (expected_return_addr >> 8) as u8, "Pushed PC hi byte incorrect");
-            assert_eq!(cpu.f, flags_before_rst, "RST SP Wrap: Flags should not be affected");
+            assert_eq!(
+                pushed_return_addr, expected_return_addr,
+                "RST SP Wrap: Return address incorrect. Expected {:#06X}, got {:#06X}",
+                expected_return_addr, pushed_return_addr
+            );
+            assert_eq!(
+                pushed_pc_lo,
+                (expected_return_addr & 0xFF) as u8,
+                "Pushed PC lo byte incorrect"
+            );
+            assert_eq!(
+                pushed_pc_hi,
+                (expected_return_addr >> 8) as u8,
+                "Pushed PC hi byte incorrect"
+            );
+            assert_eq!(
+                cpu.f, flags_before_rst,
+                "RST SP Wrap: Flags should not be affected"
+            );
         }
     }
 
@@ -6425,22 +8527,52 @@ mod tests {
         }
         // Minimal tests for other registers to ensure dispatch works
         #[test]
-        fn test_rlc_d_cb() { let mut cpu = setup_cpu(); cpu.d=0x80; cpu.execute_cb_prefixed(0x02); assert_eq!(cpu.d, 0x01); assert_flags!(cpu,false,false,false,true); }
+        fn test_rlc_d_cb() {
+            let mut cpu = setup_cpu();
+            cpu.d = 0x80;
+            cpu.execute_cb_prefixed(0x02);
+            assert_eq!(cpu.d, 0x01);
+            assert_flags!(cpu, false, false, false, true);
+        }
         #[test]
-        fn test_rlc_e_cb() { let mut cpu = setup_cpu(); cpu.e=0x01; cpu.execute_cb_prefixed(0x03); assert_eq!(cpu.e, 0x02); assert_flags!(cpu,false,false,false,false); }
+        fn test_rlc_e_cb() {
+            let mut cpu = setup_cpu();
+            cpu.e = 0x01;
+            cpu.execute_cb_prefixed(0x03);
+            assert_eq!(cpu.e, 0x02);
+            assert_flags!(cpu, false, false, false, false);
+        }
         #[test]
-        fn test_rlc_h_cb() { let mut cpu = setup_cpu(); cpu.h=0x00; cpu.execute_cb_prefixed(0x04); assert_eq!(cpu.h, 0x00); assert_flags!(cpu,true,false,false,false); }
+        fn test_rlc_h_cb() {
+            let mut cpu = setup_cpu();
+            cpu.h = 0x00;
+            cpu.execute_cb_prefixed(0x04);
+            assert_eq!(cpu.h, 0x00);
+            assert_flags!(cpu, true, false, false, false);
+        }
         #[test]
-        fn test_rlc_l_cb() { let mut cpu = setup_cpu(); cpu.l=0xFF; cpu.execute_cb_prefixed(0x05); assert_eq!(cpu.l, 0xFF); assert_flags!(cpu,false,false,false,true); }
+        fn test_rlc_l_cb() {
+            let mut cpu = setup_cpu();
+            cpu.l = 0xFF;
+            cpu.execute_cb_prefixed(0x05);
+            assert_eq!(cpu.l, 0xFF);
+            assert_flags!(cpu, false, false, false, true);
+        }
         #[test]
-        fn test_rlc_a_cb() { let mut cpu = setup_cpu(); cpu.a=0x42; cpu.execute_cb_prefixed(0x07); assert_eq!(cpu.a, 0x84); assert_flags!(cpu,false,false,false,false); }
-
+        fn test_rlc_a_cb() {
+            let mut cpu = setup_cpu();
+            cpu.a = 0x42;
+            cpu.execute_cb_prefixed(0x07);
+            assert_eq!(cpu.a, 0x84);
+            assert_flags!(cpu, false, false, false, false);
+        }
 
         #[test]
         fn test_rlc_hl_mem_cb() {
             let mut cpu = setup_cpu();
             let addr = 0xC123; // Use WRAM
-            cpu.h = (addr >> 8) as u8; cpu.l = (addr & 0xFF) as u8;
+            cpu.h = (addr >> 8) as u8;
+            cpu.l = (addr & 0xFF) as u8;
 
             cpu.bus.borrow_mut().write_byte(addr, 0b1000_0000); // C=1, Z=0
             cpu.execute_cb_prefixed(0x06);
@@ -6485,7 +8617,8 @@ mod tests {
         #[test]
         fn test_rrc_hl_mem_cb() {
             let mut cpu = setup_cpu();
-            cpu.h = 0xDE; cpu.l = 0xAD;
+            cpu.h = 0xDE;
+            cpu.l = 0xAD;
             let addr = 0xDEAD;
 
             cpu.bus.borrow_mut().write_byte(addr, 0b0000_0001); // C=1, Z=0
@@ -6499,33 +8632,79 @@ mod tests {
             assert_flags!(cpu, true, false, false, false);
         }
         // Minimal tests for other RRC registers
-        #[test] fn test_rrc_c_cb() { let mut c = setup_cpu(); c.c=0x01; c.execute_cb_prefixed(0x09); assert_eq!(c.c, 0x80); assert_flags!(c,false,false,false,true); }
-        #[test] fn test_rrc_d_cb() { let mut c = setup_cpu(); c.d=0x02; c.execute_cb_prefixed(0x0A); assert_eq!(c.d, 0x01); assert_flags!(c,false,false,false,false); }
-        #[test] fn test_rrc_e_cb() { let mut c = setup_cpu(); c.e=0x80; c.execute_cb_prefixed(0x0B); assert_eq!(c.e, 0x40); assert_flags!(c,false,false,false,false); }
-        #[test] fn test_rrc_h_cb() { let mut c = setup_cpu(); c.h=0x00; c.execute_cb_prefixed(0x0C); assert_eq!(c.h, 0x00); assert_flags!(c,true,false,false,false); }
-        #[test] fn test_rrc_l_cb() { let mut c = setup_cpu(); c.l=0xFF; c.execute_cb_prefixed(0x0D); assert_eq!(c.l, 0xFF); assert_flags!(c,false,false,false,true); }
-        #[test] fn test_rrc_a_cb() { let mut c = setup_cpu(); c.a=0x01; c.execute_cb_prefixed(0x0F); assert_eq!(c.a, 0x80); assert_flags!(c,false,false,false,true); }
+        #[test]
+        fn test_rrc_c_cb() {
+            let mut c = setup_cpu();
+            c.c = 0x01;
+            c.execute_cb_prefixed(0x09);
+            assert_eq!(c.c, 0x80);
+            assert_flags!(c, false, false, false, true);
+        }
+        #[test]
+        fn test_rrc_d_cb() {
+            let mut c = setup_cpu();
+            c.d = 0x02;
+            c.execute_cb_prefixed(0x0A);
+            assert_eq!(c.d, 0x01);
+            assert_flags!(c, false, false, false, false);
+        }
+        #[test]
+        fn test_rrc_e_cb() {
+            let mut c = setup_cpu();
+            c.e = 0x80;
+            c.execute_cb_prefixed(0x0B);
+            assert_eq!(c.e, 0x40);
+            assert_flags!(c, false, false, false, false);
+        }
+        #[test]
+        fn test_rrc_h_cb() {
+            let mut c = setup_cpu();
+            c.h = 0x00;
+            c.execute_cb_prefixed(0x0C);
+            assert_eq!(c.h, 0x00);
+            assert_flags!(c, true, false, false, false);
+        }
+        #[test]
+        fn test_rrc_l_cb() {
+            let mut c = setup_cpu();
+            c.l = 0xFF;
+            c.execute_cb_prefixed(0x0D);
+            assert_eq!(c.l, 0xFF);
+            assert_flags!(c, false, false, false, true);
+        }
+        #[test]
+        fn test_rrc_a_cb() {
+            let mut c = setup_cpu();
+            c.a = 0x01;
+            c.execute_cb_prefixed(0x0F);
+            assert_eq!(c.a, 0x80);
+            assert_flags!(c, false, false, false, true);
+        }
 
         // Test RL operations
         #[test]
         fn test_rl_b_cb() {
             let mut cpu = setup_cpu();
-            cpu.b = 0b1000_0000; cpu.set_flag_c(false); // old_C=0, new_C=1 (from bit 7), result 0b0000_0000
+            cpu.b = 0b1000_0000;
+            cpu.set_flag_c(false); // old_C=0, new_C=1 (from bit 7), result 0b0000_0000
             cpu.execute_cb_prefixed(0x10);
             assert_eq!(cpu.b, 0b0000_0000);
             assert_flags!(cpu, true, false, false, true);
 
-            cpu.b = 0b0000_0000; cpu.set_flag_c(true);  // old_C=1, new_C=0 (from bit 7), result 0b0000_0001
+            cpu.b = 0b0000_0000;
+            cpu.set_flag_c(true); // old_C=1, new_C=0 (from bit 7), result 0b0000_0001
             cpu.execute_cb_prefixed(0x10);
             assert_eq!(cpu.b, 0b0000_0001);
             assert_flags!(cpu, false, false, false, false);
 
-            cpu.b = 0b1010_1010; cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b0101_0101
+            cpu.b = 0b1010_1010;
+            cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b0101_0101
             cpu.execute_cb_prefixed(0x10);
             assert_eq!(cpu.b, 0b0101_0101);
             assert_flags!(cpu, false, false, false, true);
 
-            cpu.b = 0x00; cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
+            cpu.b = 0x00;
+            cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
             cpu.execute_cb_prefixed(0x10);
             assert_eq!(cpu.b, 0x00);
             assert_flags!(cpu, true, false, false, false);
@@ -6534,43 +8713,66 @@ mod tests {
         #[test]
         fn test_rl_hl_mem_cb() {
             let mut cpu = setup_cpu();
-            cpu.h = 0xDA; cpu.l = 0xFE;
+            cpu.h = 0xDA;
+            cpu.l = 0xFE;
             let addr = 0xDAFE;
 
-            cpu.bus.borrow_mut().write_byte(addr, 0b1000_0000); cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b0000_0001
+            cpu.bus.borrow_mut().write_byte(addr, 0b1000_0000);
+            cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b0000_0001
             cpu.execute_cb_prefixed(0x16);
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0b0000_0001);
             assert_flags!(cpu, false, false, false, true);
 
-            cpu.bus.borrow_mut().write_byte(addr, 0x00); cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
+            cpu.bus.borrow_mut().write_byte(addr, 0x00);
+            cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
             cpu.execute_cb_prefixed(0x16);
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x00);
             assert_flags!(cpu, true, false, false, false);
         }
         // Minimal tests for other RL registers
-        #[test] fn test_rl_c_cb() { let mut c = setup_cpu(); c.c=0x80; c.set_flag_c(true); c.execute_cb_prefixed(0x11); assert_eq!(c.c, 0x01); assert_flags!(c,false,false,false,true); }
-        #[test] fn test_rl_a_cb() { let mut c = setup_cpu(); c.a=0x00; c.set_flag_c(true); c.execute_cb_prefixed(0x17); assert_eq!(c.a, 0x01); assert_flags!(c,false,false,false,false); }
+        #[test]
+        fn test_rl_c_cb() {
+            let mut c = setup_cpu();
+            c.c = 0x80;
+            c.set_flag_c(true);
+            c.execute_cb_prefixed(0x11);
+            assert_eq!(c.c, 0x01);
+            assert_flags!(c, false, false, false, true);
+        }
+        #[test]
+        fn test_rl_a_cb() {
+            let mut c = setup_cpu();
+            c.a = 0x00;
+            c.set_flag_c(true);
+            c.execute_cb_prefixed(0x17);
+            assert_eq!(c.a, 0x01);
+            assert_flags!(c, false, false, false, false);
+        }
 
         // Test RR operations
         #[test]
         fn test_rr_b_cb() {
             let mut cpu = setup_cpu();
-            cpu.b = 0b0000_0001; cpu.set_flag_c(false); // old_C=0, new_C=1 (from bit 0), result 0b0000_0000
+            cpu.b = 0b0000_0001;
+            cpu.set_flag_c(false); // old_C=0, new_C=1 (from bit 0), result 0b0000_0000
             cpu.execute_cb_prefixed(0x18);
             assert_eq!(cpu.b, 0b0000_0000);
             assert_flags!(cpu, true, false, false, true);
 
-            cpu.b = 0b0000_0000; cpu.set_flag_c(true);  // old_C=1, new_C=0 (from bit 0), result 0b1000_0000
+            cpu.b = 0b0000_0000;
+            cpu.set_flag_c(true); // old_C=1, new_C=0 (from bit 0), result 0b1000_0000
             cpu.execute_cb_prefixed(0x18);
             assert_eq!(cpu.b, 0b1000_0000);
             assert_flags!(cpu, false, false, false, false);
 
-            cpu.b = 0b0101_0101; cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b1010_1010
+            cpu.b = 0b0101_0101;
+            cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b1010_1010
             cpu.execute_cb_prefixed(0x18);
             assert_eq!(cpu.b, 0b1010_1010);
             assert_flags!(cpu, false, false, false, true);
 
-            cpu.b = 0x00; cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
+            cpu.b = 0x00;
+            cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
             cpu.execute_cb_prefixed(0x18);
             assert_eq!(cpu.b, 0x00);
             assert_flags!(cpu, true, false, false, false);
@@ -6579,22 +8781,41 @@ mod tests {
         #[test]
         fn test_rr_hl_mem_cb() {
             let mut cpu = setup_cpu();
-            cpu.h = 0xCA; cpu.l = 0xFE;
+            cpu.h = 0xCA;
+            cpu.l = 0xFE;
             let addr = 0xCAFE;
 
-            cpu.bus.borrow_mut().write_byte(addr, 0b0000_0001); cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b1000_0000
+            cpu.bus.borrow_mut().write_byte(addr, 0b0000_0001);
+            cpu.set_flag_c(true); // old_C=1, new_C=1, result 0b1000_0000
             cpu.execute_cb_prefixed(0x1E);
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0b1000_0000);
             assert_flags!(cpu, false, false, false, true);
 
-            cpu.bus.borrow_mut().write_byte(addr, 0x00); cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
+            cpu.bus.borrow_mut().write_byte(addr, 0x00);
+            cpu.set_flag_c(false); // old_C=0, new_C=0, result 0x00
             cpu.execute_cb_prefixed(0x1E);
             assert_eq!(cpu.bus.borrow().read_byte(addr), 0x00);
             assert_flags!(cpu, true, false, false, false);
         }
         // Minimal tests for other RR registers
-        #[test] fn test_rr_c_cb() { let mut c = setup_cpu(); c.c=0x01; c.set_flag_c(true); c.execute_cb_prefixed(0x19); assert_eq!(c.c, 0x80); assert_flags!(c,false,false,false,true); }
-        #[test] fn test_rr_a_cb() { let mut c = setup_cpu(); c.a=0x00; c.set_flag_c(true); c.execute_cb_prefixed(0x1F); assert_eq!(c.a, 0x80); assert_flags!(c,false,false,false,false); }
+        #[test]
+        fn test_rr_c_cb() {
+            let mut c = setup_cpu();
+            c.c = 0x01;
+            c.set_flag_c(true);
+            c.execute_cb_prefixed(0x19);
+            assert_eq!(c.c, 0x80);
+            assert_flags!(c, false, false, false, true);
+        }
+        #[test]
+        fn test_rr_a_cb() {
+            let mut c = setup_cpu();
+            c.a = 0x00;
+            c.set_flag_c(true);
+            c.execute_cb_prefixed(0x1F);
+            assert_eq!(c.a, 0x80);
+            assert_flags!(c, false, false, false, false);
+        }
 
         // Test SLA operations
         #[test]
@@ -6625,7 +8846,8 @@ mod tests {
         fn test_sla_hl_mem_cb() {
             let mut cpu = setup_cpu();
             let addr = 0xCBBC; // Use WRAM
-            cpu.h = (addr >> 8) as u8; cpu.l = (addr & 0xFF) as u8;
+            cpu.h = (addr >> 8) as u8;
+            cpu.l = (addr & 0xFF) as u8;
 
             cpu.bus.borrow_mut().write_byte(addr, 0b1000_0001); // C=1, Z=0, result 0b0000_0010
             cpu.execute_cb_prefixed(0x26);
@@ -6638,8 +8860,22 @@ mod tests {
             assert_flags!(cpu, true, false, false, false);
         }
         // Minimal tests for other SLA registers
-        #[test] fn test_sla_c_cb() { let mut c = setup_cpu(); c.c=0x80; c.execute_cb_prefixed(0x21); assert_eq!(c.c, 0x00); assert_flags!(c,true,false,false,true); }
-        #[test] fn test_sla_a_cb() { let mut c = setup_cpu(); c.a=0x01; c.execute_cb_prefixed(0x27); assert_eq!(c.a, 0x02); assert_flags!(c,false,false,false,false); }
+        #[test]
+        fn test_sla_c_cb() {
+            let mut c = setup_cpu();
+            c.c = 0x80;
+            c.execute_cb_prefixed(0x21);
+            assert_eq!(c.c, 0x00);
+            assert_flags!(c, true, false, false, true);
+        }
+        #[test]
+        fn test_sla_a_cb() {
+            let mut c = setup_cpu();
+            c.a = 0x01;
+            c.execute_cb_prefixed(0x27);
+            assert_eq!(c.a, 0x02);
+            assert_flags!(c, false, false, false, false);
+        }
 
         // Test SRA operations
         #[test]
@@ -6674,7 +8910,8 @@ mod tests {
         #[test]
         fn test_sra_hl_mem_cb() {
             let mut cpu = setup_cpu();
-            cpu.h = 0xDD; cpu.l = 0xEE;
+            cpu.h = 0xDD;
+            cpu.l = 0xEE;
             let addr = 0xDDEE;
 
             cpu.bus.borrow_mut().write_byte(addr, 0b1000_0001); // C=1, Z=0, result 0b1100_0000
@@ -6689,8 +8926,22 @@ mod tests {
             assert_flags!(cpu, true, false, false, true);
         }
         // Minimal tests for other SRA registers
-        #[test] fn test_sra_c_cb() { let mut c = setup_cpu(); c.c=0x81; c.execute_cb_prefixed(0x29); assert_eq!(c.c, 0xC0); assert_flags!(c,false,false,false,true); }
-        #[test] fn test_sra_a_cb() { let mut c = setup_cpu(); c.a=0x02; c.execute_cb_prefixed(0x2F); assert_eq!(c.a, 0x01); assert_flags!(c,false,false,false,false); }
+        #[test]
+        fn test_sra_c_cb() {
+            let mut c = setup_cpu();
+            c.c = 0x81;
+            c.execute_cb_prefixed(0x29);
+            assert_eq!(c.c, 0xC0);
+            assert_flags!(c, false, false, false, true);
+        }
+        #[test]
+        fn test_sra_a_cb() {
+            let mut c = setup_cpu();
+            c.a = 0x02;
+            c.execute_cb_prefixed(0x2F);
+            assert_eq!(c.a, 0x01);
+            assert_flags!(c, false, false, false, false);
+        }
 
         // Test SWAP operations
         #[test]
@@ -6716,8 +8967,8 @@ mod tests {
         fn test_swap_hl_mem_cb() {
             let mut cpu = setup_cpu();
             let addr = 0xCF01; // Use WRAM
-            cpu.h = (addr >> 8) as u8; cpu.l = (addr & 0xFF) as u8;
-
+            cpu.h = (addr >> 8) as u8;
+            cpu.l = (addr & 0xFF) as u8;
 
             cpu.bus.borrow_mut().write_byte(addr, 0xCD); // result 0xDC
             cpu.execute_cb_prefixed(0x36);
@@ -6730,8 +8981,22 @@ mod tests {
             assert_flags!(cpu, true, false, false, false);
         }
         // Minimal tests for other SWAP registers
-        #[test] fn test_swap_c_cb() { let mut c = setup_cpu(); c.c=0x12; c.execute_cb_prefixed(0x31); assert_eq!(c.c, 0x21); assert_flags!(c,false,false,false,false); }
-        #[test] fn test_swap_a_cb() { let mut c = setup_cpu(); c.a=0x00; c.execute_cb_prefixed(0x37); assert_eq!(c.a, 0x00); assert_flags!(c,true,false,false,false); }
+        #[test]
+        fn test_swap_c_cb() {
+            let mut c = setup_cpu();
+            c.c = 0x12;
+            c.execute_cb_prefixed(0x31);
+            assert_eq!(c.c, 0x21);
+            assert_flags!(c, false, false, false, false);
+        }
+        #[test]
+        fn test_swap_a_cb() {
+            let mut c = setup_cpu();
+            c.a = 0x00;
+            c.execute_cb_prefixed(0x37);
+            assert_eq!(c.a, 0x00);
+            assert_flags!(c, true, false, false, false);
+        }
 
         // Test SRL operations
         #[test]
@@ -6767,7 +9032,8 @@ mod tests {
         fn test_srl_hl_mem_cb() {
             let mut cpu = setup_cpu();
             let addr = 0xCAAB; // Use WRAM
-            cpu.h = (addr >> 8) as u8; cpu.l = (addr & 0xFF) as u8;
+            cpu.h = (addr >> 8) as u8;
+            cpu.l = (addr & 0xFF) as u8;
 
             cpu.bus.borrow_mut().write_byte(addr, 0b1000_0001); // C=1, Z=0, result 0b0100_0000
             cpu.execute_cb_prefixed(0x3E);
@@ -6780,8 +9046,22 @@ mod tests {
             assert_flags!(cpu, true, false, false, true);
         }
         // Minimal tests for other SRL registers
-        #[test] fn test_srl_c_cb() { let mut c = setup_cpu(); c.c=0x81; c.execute_cb_prefixed(0x39); assert_eq!(c.c, 0x40); assert_flags!(c,false,false,false,true); }
-        #[test] fn test_srl_a_cb() { let mut c = setup_cpu(); c.a=0x02; c.execute_cb_prefixed(0x3F); assert_eq!(c.a, 0x01); assert_flags!(c,false,false,false,false); }
+        #[test]
+        fn test_srl_c_cb() {
+            let mut c = setup_cpu();
+            c.c = 0x81;
+            c.execute_cb_prefixed(0x39);
+            assert_eq!(c.c, 0x40);
+            assert_flags!(c, false, false, false, true);
+        }
+        #[test]
+        fn test_srl_a_cb() {
+            let mut c = setup_cpu();
+            c.a = 0x02;
+            c.execute_cb_prefixed(0x3F);
+            assert_eq!(c.a, 0x01);
+            assert_flags!(c, false, false, false, false);
+        }
     }
 
     #[test]
@@ -6802,9 +9082,11 @@ mod tests {
         cpu.ime = false; // IME is disabled
 
         // Enable VBlank interrupt (bit 0) in IE register
-        bus.borrow_mut().write_byte(INTERRUPT_ENABLE_REGISTER_ADDR, 1 << VBLANK_IRQ_BIT);
+        bus.borrow_mut()
+            .write_byte(INTERRUPT_ENABLE_REGISTER_ADDR, 1 << VBLANK_IRQ_BIT);
         // Request VBlank interrupt (bit 0) in IF register
-        bus.borrow_mut().write_byte(INTERRUPT_FLAG_REGISTER_ADDR, 1 << VBLANK_IRQ_BIT);
+        bus.borrow_mut()
+            .write_byte(INTERRUPT_FLAG_REGISTER_ADDR, 1 << VBLANK_IRQ_BIT);
 
         // Note: The direct bus writes for opcodes are removed as they are now in rom_data.
 
@@ -6814,22 +9096,36 @@ mod tests {
         cpu.step();
 
         // 1. is_halted should be false (HALT instruction's effect was skipped by the bug logic in step)
-        assert_eq!(cpu.is_halted, false, "CPU should not be halted due to HALT bug skip logic in step()");
+        assert_eq!(
+            cpu.is_halted, false,
+            "CPU should not be halted due to HALT bug skip logic in step()"
+        );
 
         // 2. PC should be initial_pc + 1 (advanced past HALT by the bug skip in step)
-        assert_eq!(cpu.pc, initial_pc.wrapping_add(1), "PC should be incremented by 1 by HALT bug skip logic in step()");
+        assert_eq!(
+            cpu.pc,
+            initial_pc.wrapping_add(1),
+            "PC should be incremented by 1 by HALT bug skip logic in step()"
+        );
 
         // 3. IME should still be false (interrupt was not serviced)
-        assert_eq!(cpu.ime, false, "IME should remain false as interrupt was not serviced");
+        assert_eq!(
+            cpu.ime, false,
+            "IME should remain false as interrupt was not serviced"
+        );
 
         // 4. Interrupt flag in IF should remain set (not cleared because not serviced)
         let if_val_after = bus.borrow().read_byte(INTERRUPT_FLAG_REGISTER_ADDR);
-        assert_ne!((if_val_after & (1 << VBLANK_IRQ_BIT)), 0, "IF VBlank flag should remain set");
+        assert_ne!(
+            (if_val_after & (1 << VBLANK_IRQ_BIT)),
+            0,
+            "IF VBlank flag should remain set"
+        );
     }
 
     mod stop_instruction_tests {
         use super::*;
-         // For simulating joypad interrupt
+        // For simulating joypad interrupt
 
         #[test]
         fn test_stop_dmg_mode() {
@@ -6852,21 +9148,38 @@ mod tests {
 
             assert!(cpu.is_halted, "DMG STOP: CPU should be halted");
             assert!(cpu.in_stop_mode, "DMG STOP: CPU should be in_stop_mode");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "DMG STOP: PC should advance by 2");
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "DMG STOP: PC should advance by 2"
+            );
 
             // Simulate Joypad interrupt to wake from STOP
             // Enable Joypad interrupt
-            cpu.bus.borrow_mut().write_byte(INTERRUPT_ENABLE_REGISTER_ADDR, 1 << JOYPAD_IRQ_BIT);
+            cpu.bus
+                .borrow_mut()
+                .write_byte(INTERRUPT_ENABLE_REGISTER_ADDR, 1 << JOYPAD_IRQ_BIT);
             // Request Joypad interrupt
-            cpu.bus.borrow_mut().request_interrupt(InterruptType::Joypad);
+            cpu.bus
+                .borrow_mut()
+                .request_interrupt(InterruptType::Joypad);
 
             // IME is true by default in setup_cpu_with_mode
             // The step function should detect the interrupt and call service_interrupt
             let _m_cycles = cpu.step(); // This step should process the interrupt
 
-            assert!(!cpu.is_halted, "DMG STOP: CPU should not be halted after joypad interrupt");
-            assert!(!cpu.in_stop_mode, "DMG STOP: CPU should not be in_stop_mode after joypad interrupt");
-            assert_eq!(cpu.pc, JOYPAD_HANDLER_ADDR, "DMG STOP: PC should be at Joypad IRQ handler address");
+            assert!(
+                !cpu.is_halted,
+                "DMG STOP: CPU should not be halted after joypad interrupt"
+            );
+            assert!(
+                !cpu.in_stop_mode,
+                "DMG STOP: CPU should not be in_stop_mode after joypad interrupt"
+            );
+            assert_eq!(
+                cpu.pc, JOYPAD_HANDLER_ADDR,
+                "DMG STOP: PC should be at Joypad IRQ handler address"
+            );
         }
 
         #[test]
@@ -6884,13 +9197,20 @@ mod tests {
             // cpu.pc will be 0x0100 from Cpu::new
 
             cpu.bus.borrow_mut().set_key1_prepare_speed_switch(false); // Ensure no speed switch
-            // Removed direct bus writes for opcodes
+                                                                       // Removed direct bus writes for opcodes
 
             cpu.step(); // Execute STOP
 
             assert!(cpu.is_halted, "CGB STOP (no switch): CPU should be halted");
-            assert!(cpu.in_stop_mode, "CGB STOP (no switch): CPU should be in_stop_mode");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "CGB STOP (no switch): PC should advance by 2");
+            assert!(
+                cpu.in_stop_mode,
+                "CGB STOP (no switch): CPU should be in_stop_mode"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "CGB STOP (no switch): PC should advance by 2"
+            );
         }
 
         #[test]
@@ -6914,11 +9234,27 @@ mod tests {
 
             cpu.step(); // Execute STOP for speed switch
 
-            assert!(!cpu.is_halted, "CGB STOP (speed switch): CPU should NOT be halted");
-            assert!(!cpu.in_stop_mode, "CGB STOP (speed switch): CPU should NOT be in_stop_mode");
-            assert!(cpu.bus.borrow().get_is_double_speed(), "CGB STOP (speed switch): Bus should be in double speed mode");
-            assert!(!cpu.bus.borrow().get_key1_prepare_speed_switch(), "CGB STOP (speed switch): KEY1 prepare bit should be cleared");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "CGB STOP (speed switch): PC should advance by 2");
+            assert!(
+                !cpu.is_halted,
+                "CGB STOP (speed switch): CPU should NOT be halted"
+            );
+            assert!(
+                !cpu.in_stop_mode,
+                "CGB STOP (speed switch): CPU should NOT be in_stop_mode"
+            );
+            assert!(
+                cpu.bus.borrow().get_is_double_speed(),
+                "CGB STOP (speed switch): Bus should be in double speed mode"
+            );
+            assert!(
+                !cpu.bus.borrow().get_key1_prepare_speed_switch(),
+                "CGB STOP (speed switch): KEY1 prepare bit should be cleared"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "CGB STOP (speed switch): PC should advance by 2"
+            );
         }
 
         #[test]
@@ -6942,11 +9278,27 @@ mod tests {
 
             cpu.step(); // Execute STOP for speed switch
 
-            assert!(!cpu.is_halted, "CGB STOP (switch to normal): CPU should NOT be halted");
-            assert!(!cpu.in_stop_mode, "CGB STOP (switch to normal): CPU should NOT be in_stop_mode");
-            assert!(!cpu.bus.borrow().get_is_double_speed(), "CGB STOP (switch to normal): Bus should be in normal speed mode");
-            assert!(!cpu.bus.borrow().get_key1_prepare_speed_switch(), "CGB STOP (switch to normal): KEY1 prepare bit should be cleared");
-            assert_eq!(cpu.pc, initial_pc.wrapping_add(2), "CGB STOP (switch to normal): PC should advance by 2");
+            assert!(
+                !cpu.is_halted,
+                "CGB STOP (switch to normal): CPU should NOT be halted"
+            );
+            assert!(
+                !cpu.in_stop_mode,
+                "CGB STOP (switch to normal): CPU should NOT be in_stop_mode"
+            );
+            assert!(
+                !cpu.bus.borrow().get_is_double_speed(),
+                "CGB STOP (switch to normal): Bus should be in normal speed mode"
+            );
+            assert!(
+                !cpu.bus.borrow().get_key1_prepare_speed_switch(),
+                "CGB STOP (switch to normal): KEY1 prepare bit should be cleared"
+            );
+            assert_eq!(
+                cpu.pc,
+                initial_pc.wrapping_add(2),
+                "CGB STOP (switch to normal): PC should advance by 2"
+            );
         }
     }
 }

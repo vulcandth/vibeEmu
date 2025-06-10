@@ -19,9 +19,15 @@ mod tests {
         apu.write_byte(NR11_ADDR, 0b10000001);
         apu.write_byte(NR12_ADDR, 0xF3);
         apu.write_byte(NR14_ADDR, 0b11000000);
-        for _ in 0..(8192 * 2) { apu.tick(1); }
+        for _ in 0..(8192 * 2) {
+            apu.tick(1);
+        }
         let nr52_val_after_trigger = apu.read_byte(NR52_ADDR);
-        assert_ne!(nr52_val_after_trigger & 0x01, 0x00, "CH1 should be on after trigger and some ticks");
+        assert_ne!(
+            nr52_val_after_trigger & 0x01,
+            0x00,
+            "CH1 should be on after trigger and some ticks"
+        );
     }
 
     // Placeholder for more tests
@@ -31,7 +37,9 @@ mod tests {
         apu.write_byte(0xFF16, 0b10000001);
         apu.write_byte(0xFF17, 0xF3);
         apu.write_byte(0xFF19, 0b11000000);
-        for _ in 0..(8192 * 2) { apu.tick(1); }
+        for _ in 0..(8192 * 2) {
+            apu.tick(1);
+        }
         let nr52_val = apu.read_byte(NR52_ADDR);
         assert_ne!(nr52_val & 0x02, 0x00, "CH2 should be on");
     }
@@ -63,7 +71,11 @@ mod tests {
         // After 4 ticks, sample_index becomes 1 (0->1). current_wave_ram_byte_index() is (1/2) = 0.
 
         apu.write_byte(WAVE_START + 1, 0xAA); // Redirected to wave_ram[0]
-        assert_eq!(apu.read_byte(WAVE_START + 0), 0xAA, "Read after write to redirected WaveRAM[0] failed");
+        assert_eq!(
+            apu.read_byte(WAVE_START + 0),
+            0xAA,
+            "Read after write to redirected WaveRAM[0] failed"
+        );
 
         // Advance two more *samples*. Each sample takes `frequency_timer` ticks.
         // Initial freq_timer was 4. It reloads to (2048-2047)*2 = 2.
@@ -75,7 +87,10 @@ mod tests {
         apu.tick(2); // sample_index becomes 3. current_idx = 1. wave_form_just_read = true.
 
         apu.write_byte(WAVE_START + 2, 0xBB); // Redirected to wave_ram[1]
-        assert_eq!(apu.read_byte(WAVE_START + 0x01), 0xBB, "Read after write to redirected WaveRAM[1] failed");
+        assert_eq!(
+            apu.read_byte(WAVE_START + 0x01),
+            0xBB,
+            "Read after write to redirected WaveRAM[1] failed"
+        );
     }
-
 }

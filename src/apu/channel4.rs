@@ -1,6 +1,6 @@
 // src/apu/channel4.rs
-use crate::models::GameBoyModel;
 use super::{Nr41, Nr42, Nr43, Nr44};
+use crate::models::GameBoyModel;
 
 pub struct Channel4 {
     pub nr41: Nr41,
@@ -28,9 +28,15 @@ pub struct Channel4 {
 impl Channel4 {
     pub fn new() -> Self {
         let mut new_ch4 = Self {
-            nr41: Nr41::new(), nr42: Nr42::new(), nr43: Nr43::new(), nr44: Nr44::new(),
-            enabled: false, length_counter: 0,
-            envelope_volume: 0, envelope_period_timer: 0, envelope_running: false,
+            nr41: Nr41::new(),
+            nr42: Nr42::new(),
+            nr43: Nr43::new(),
+            nr44: Nr44::new(),
+            enabled: false,
+            length_counter: 0,
+            envelope_volume: 0,
+            envelope_period_timer: 0,
+            envelope_running: false,
             lfsr: 0xFFFF,
             initial_delay_countdown: 0,
             lfsr_clock_divider_val: 2,
@@ -52,12 +58,16 @@ impl Channel4 {
         lf_div: u8,
         model: GameBoyModel,
         current_alignment: u32,
-        length_enabled_from_nrx4: bool
+        length_enabled_from_nrx4: bool,
     ) {
         let was_enabled_before_this_trigger = self.enabled;
 
-        if self.nr42.dac_power() { self.enabled = true; }
-        else { self.enabled = false; return; }
+        if self.nr42.dac_power() {
+            self.enabled = true;
+        } else {
+            self.enabled = false;
+            return;
+        }
 
         if was_enabled_before_this_trigger {
             self.initial_delay_countdown = 4u8.saturating_sub(lf_div);
@@ -74,9 +84,17 @@ impl Channel4 {
         if self.length_counter == 0 {
             let length_data = self.nr41.initial_length_timer_val();
             let is_max_length_condition_len = length_data == 0;
-            let mut actual_load_val_len = if is_max_length_condition_len { 64 } else { 64 - length_data as u16 };
-            let next_fs_step_will_not_clock_length = matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
-            if next_fs_step_will_not_clock_length && length_enabled_from_nrx4 && is_max_length_condition_len {
+            let mut actual_load_val_len = if is_max_length_condition_len {
+                64
+            } else {
+                64 - length_data as u16
+            };
+            let next_fs_step_will_not_clock_length =
+                matches!(current_frame_sequencer_step, 0 | 2 | 4 | 6);
+            if next_fs_step_will_not_clock_length
+                && length_enabled_from_nrx4
+                && is_max_length_condition_len
+            {
                 actual_load_val_len = 63;
             }
             self.length_counter = actual_load_val_len;
@@ -107,67 +125,117 @@ impl Channel4 {
 
         self.envelope_volume = self.nr42.initial_volume_val();
         let env_period_raw = self.nr42.envelope_period_val();
-        let mut envelope_timer_load_val = if env_period_raw == 0 { 8 } else { env_period_raw };
+        let mut envelope_timer_load_val = if env_period_raw == 0 {
+            8
+        } else {
+            env_period_raw
+        };
         if current_frame_sequencer_step == 6 {
             envelope_timer_load_val += 1;
         }
         self.envelope_period_timer = envelope_timer_load_val;
         self.envelope_running = self.nr42.dac_power() && env_period_raw != 0;
-        if !self.nr42.dac_power() { self.enabled = false; }
+        if !self.nr42.dac_power() {
+            self.enabled = false;
+        }
     }
 
     pub(super) fn set_lfsr_clock_divider_from_raw(&mut self, raw_r_bits: u8) {
         let r = raw_r_bits & 0x07;
         self.lfsr_clock_divider_val = match r {
-            0 => 2, 1 => 4, 2 => 8, 3 => 12, 4 => 16, 5 => 20, 6 => 24, _ => 28,
+            0 => 2,
+            1 => 4,
+            2 => 8,
+            3 => 12,
+            4 => 16,
+            5 => 20,
+            6 => 24,
+            _ => 28,
         };
     }
 
-    pub(super) fn get_lfsr_shift_amount(&self) -> u8 { self.lfsr_shift_amount }
-    pub(super) fn set_lfsr_shift_amount(&mut self, shift_amount: u8) { self.lfsr_shift_amount = shift_amount; }
-    pub(super) fn get_div_apu_counter(&self) -> u32 { self.div_apu_counter }
-    pub(super) fn set_force_narrow_lfsr_for_glitch(&mut self, val: bool) { self.force_narrow_lfsr_for_glitch = val; }
+    pub(super) fn get_lfsr_shift_amount(&self) -> u8 {
+        self.lfsr_shift_amount
+    }
+    pub(super) fn set_lfsr_shift_amount(&mut self, shift_amount: u8) {
+        self.lfsr_shift_amount = shift_amount;
+    }
+    pub(super) fn get_div_apu_counter(&self) -> u32 {
+        self.div_apu_counter
+    }
+    pub(super) fn set_force_narrow_lfsr_for_glitch(&mut self, val: bool) {
+        self.force_narrow_lfsr_for_glitch = val;
+    }
 
-    pub fn get_length_counter(&self) -> u16 { self.length_counter }
+    pub fn get_length_counter(&self) -> u16 {
+        self.length_counter
+    }
 
     pub fn extra_length_clock(&mut self, trigger_is_set_in_nrx4: bool) {
         if self.length_counter > 0 {
             self.length_counter -= 1;
-            if self.length_counter == 0 && !trigger_is_set_in_nrx4 { self.enabled = false; }
+            if self.length_counter == 0 && !trigger_is_set_in_nrx4 {
+                self.enabled = false;
+            }
         }
     }
 
-    pub(super) fn is_envelope_running(&self) -> bool { self.envelope_running }
-    pub(super) fn get_envelope_volume(&self) -> u8 { self.envelope_volume }
-    pub(super) fn set_envelope_volume(&mut self, vol: u8) { self.envelope_volume = vol & 0x0F; }
-    pub(super) fn force_disable_channel(&mut self) { self.enabled = false; }
+    pub(super) fn is_envelope_running(&self) -> bool {
+        self.envelope_running
+    }
+    pub(super) fn get_envelope_volume(&self) -> u8 {
+        self.envelope_volume
+    }
+    pub(super) fn set_envelope_volume(&mut self, vol: u8) {
+        self.envelope_volume = vol & 0x0F;
+    }
+    pub(super) fn force_disable_channel(&mut self) {
+        self.enabled = false;
+    }
 
     pub fn clock_length(&mut self) {
         if self.nr44.is_length_enabled() && self.length_counter > 0 {
             self.length_counter -= 1;
-            if self.length_counter == 0 { self.enabled = false; }
+            if self.length_counter == 0 {
+                self.enabled = false;
+            }
         }
     }
 
     pub fn clock_envelope(&mut self) {
-        if !self.envelope_running || !self.nr42.dac_power() { return; }
+        if !self.envelope_running || !self.nr42.dac_power() {
+            return;
+        }
         let env_period_raw = self.nr42.envelope_period_val();
-        if env_period_raw == 0 { self.envelope_running = false; return; }
+        if env_period_raw == 0 {
+            self.envelope_running = false;
+            return;
+        }
         self.envelope_period_timer -= 1;
         if self.envelope_period_timer == 0 {
             self.envelope_period_timer = env_period_raw;
             let current_volume = self.envelope_volume;
             if self.nr42.envelope_direction_is_increase() {
-                if current_volume < 15 { self.envelope_volume += 1; }
+                if current_volume < 15 {
+                    self.envelope_volume += 1;
+                }
             } else {
-                if current_volume > 0 { self.envelope_volume -= 1; }
+                if current_volume > 0 {
+                    self.envelope_volume -= 1;
+                }
             }
-            if self.envelope_volume == 0 || self.envelope_volume == 15 { self.envelope_running = false; }
+            if self.envelope_volume == 0 || self.envelope_volume == 15 {
+                self.envelope_running = false;
+            }
         }
     }
 
     pub(super) fn step_lfsr(&mut self) {
-        let use_narrow_mode = if self.force_narrow_lfsr_for_glitch { true } else { self.nr43.lfsr_width_is_7bit() };
+        let use_narrow_mode = if self.force_narrow_lfsr_for_glitch {
+            true
+        } else {
+            self.nr43.lfsr_width_is_7bit()
+        };
         let feedback_bit = ((self.lfsr & 0x0001) ^ ((self.lfsr >> 1) & 0x0001)) ^ 1;
         self.lfsr >>= 1;
         self.lfsr = (self.lfsr & !(1 << 14)) | (feedback_bit << 14);
@@ -177,7 +245,9 @@ impl Channel4 {
     }
 
     pub fn tick(&mut self) {
-        if !self.enabled { return; }
+        if !self.enabled {
+            return;
+        }
 
         if self.lfsr_step_countdown > 0 {
             self.lfsr_step_countdown -= 1;
@@ -201,7 +271,13 @@ impl Channel4 {
             self.initial_delay_countdown -= 1;
             return 0;
         }
-        if !self.enabled || !self.nr42.dac_power() { return 0; }
-        if (self.lfsr & 0x0001) != 0 { 0 } else { self.envelope_volume }
+        if !self.enabled || !self.nr42.dac_power() {
+            return 0;
+        }
+        if (self.lfsr & 0x0001) != 0 {
+            0
+        } else {
+            self.envelope_volume
+        }
     }
 }

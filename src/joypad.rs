@@ -13,17 +13,17 @@ pub enum JoypadButton {
 }
 
 pub struct Joypad {
-    action_buttons: u8,      // Bit 0: A, Bit 1: B, Bit 2: Select, Bit 3: Start (0 = pressed)
-    direction_buttons: u8,   // Bit 0: Right, Bit 1: Left, Bit 2: Up, Bit 3: Down (0 = pressed)
-    select_action_buttons: bool,    // True if P15 (bit 5 of P1 register) is low
+    action_buttons: u8, // Bit 0: A, Bit 1: B, Bit 2: Select, Bit 3: Start (0 = pressed)
+    direction_buttons: u8, // Bit 0: Right, Bit 1: Left, Bit 2: Up, Bit 3: Down (0 = pressed)
+    select_action_buttons: bool, // True if P15 (bit 5 of P1 register) is low
     select_direction_buttons: bool, // True if P14 (bit 4 of P1 register) is low
 }
 
 impl Joypad {
     pub fn new() -> Self {
         Joypad {
-            action_buttons: 0x0F,      // All not pressed (bits are high)
-            direction_buttons: 0x0F,   // All not pressed (bits are high)
+            action_buttons: 0x0F,    // All not pressed (bits are high)
+            direction_buttons: 0x0F, // All not pressed (bits are high)
             select_action_buttons: false,
             select_direction_buttons: false,
         }
@@ -83,7 +83,7 @@ impl Joypad {
         // This handles the case where both might be selected (direction_buttons already applied if P14 was low).
         // If only action buttons are selected, button_bits is initially 0x0F, so it becomes self.action_buttons.
         if self.select_action_buttons {
-             button_bits &= self.action_buttons;
+            button_bits &= self.action_buttons;
         }
         // If neither is selected, button_bits remains 0x0F.
 
@@ -98,14 +98,14 @@ impl Joypad {
         let old_p1_low_nibble = self.get_p1_lower_nibble();
 
         let (button_group_is_action, bit_index) = match button {
-            JoypadButton::Right  => (false, 0),
-            JoypadButton::Left   => (false, 1),
-            JoypadButton::Up     => (false, 2),
-            JoypadButton::Down   => (false, 3),
-            JoypadButton::A      => (true, 0),
-            JoypadButton::B      => (true, 1),
+            JoypadButton::Right => (false, 0),
+            JoypadButton::Left => (false, 1),
+            JoypadButton::Up => (false, 2),
+            JoypadButton::Down => (false, 3),
+            JoypadButton::A => (true, 0),
+            JoypadButton::B => (true, 1),
             JoypadButton::Select => (true, 2),
-            JoypadButton::Start  => (true, 3),
+            JoypadButton::Start => (true, 3),
         };
 
         // Update the raw hardware state of the button
@@ -115,7 +115,8 @@ impl Joypad {
             } else {
                 self.action_buttons |= 1 << bit_index;
             }
-        } else { // Direction button
+        } else {
+            // Direction button
             if pressed {
                 self.direction_buttons &= !(1 << bit_index);
             } else {
@@ -141,7 +142,9 @@ impl Joypad {
                 // Check if the bit corresponding to the pressed button in old_p1_low_nibble was high (1)
                 // AND the same bit in new_p1_low_nibble is low (0).
                 // This implicitly means the line was selected both before and after, and the button itself caused the change.
-                if (old_p1_low_nibble & (1 << bit_index)) != 0 && (new_p1_low_nibble & (1 << bit_index)) == 0 {
+                if (old_p1_low_nibble & (1 << bit_index)) != 0
+                    && (new_p1_low_nibble & (1 << bit_index)) == 0
+                {
                     request_interrupt = true;
                 }
             }
@@ -183,8 +186,11 @@ mod tests {
         // Result: 0xC0 | 0b0010_0000 (P15 high) | 0b0000_0000 (P14 low) | 0x0F (buttons) = 0b1110_1111 = 0xEF
         // Corrected expectation: 0b1101_1111 = 0xDF (if P15 not sel, P14 sel). My manual trace was wrong.
         // read_p1 logic: result = 0xC0. !sel_action -> result |= 0x20 (0xE0). !sel_dir is false. button_bits = 0x0F & dir_buttons (0x0F) = 0x0F. result |= 0x0F = 0xEF.
-        assert_eq!(joypad.read_p1(), 0xEF, "P1 read after selecting direction buttons");
-
+        assert_eq!(
+            joypad.read_p1(),
+            0xEF,
+            "P1 read after selecting direction buttons"
+        );
 
         // Select action buttons (P15 low)
         joypad.write_p1(0b1101_1111); // Bit 5 low (0xDF -> P14=1, P15=0)
@@ -193,7 +199,11 @@ mod tests {
         // P1 read: P15 low (bit 5 = 0), P14 high (bit 4 = 1). Buttons all high.
         // Expected: 0b1100_1111 -> 0xDF (bits 7-6 high, bit 5 low, bit 4 high, button bits 0-3 high)
         // Result: 0xC0 | 0b0000_0000 (P15 low) | 0b0001_0000 (P14 high) | 0x0F (buttons) = 0b1101_1111 = 0xDF
-        assert_eq!(joypad.read_p1(), 0xDF, "P1 read after selecting action buttons");
+        assert_eq!(
+            joypad.read_p1(),
+            0xDF,
+            "P1 read after selecting action buttons"
+        );
 
         // Select both (unusual, but test)
         // P14=0 (sel_dir=true), P15=0 (sel_act=true)
@@ -202,8 +212,11 @@ mod tests {
         assert!(joypad.select_action_buttons);
         // P1 read: P15 low, P14 low. Buttons all high (0x0F).
         // Result: 0xC0 | 0b0000_0000 (P15 low) | 0b0000_0000 (P14 low) | (dir_buttons & action_buttons = 0x0F) = 0b1100_1111 = 0xCF
-        assert_eq!(joypad.read_p1(), 0xCF, "P1 read after selecting both lines (buttons ANDed)");
-
+        assert_eq!(
+            joypad.read_p1(),
+            0xCF,
+            "P1 read after selecting both lines (buttons ANDed)"
+        );
 
         // Select none (P14, P15 high)
         joypad.write_p1(0b1111_1111); // Bits 4 and 5 high
@@ -220,15 +233,25 @@ mod tests {
 
         // 1. Press 'A' button (action line not selected)
         irq = joypad.button_event(JoypadButton::A, true);
-        assert_eq!(joypad.action_buttons, 0b0000_1110, "A should be pressed internally");
-        assert!(!irq, "IRQ should not be requested: A pressed, action line NOT selected");
+        assert_eq!(
+            joypad.action_buttons, 0b0000_1110,
+            "A should be pressed internally"
+        );
+        assert!(
+            !irq,
+            "IRQ should not be requested: A pressed, action line NOT selected"
+        );
 
         // 2. Select action buttons
         joypad.write_p1(0b1101_1111); // P15 low (select action), P14 high
         assert!(joypad.select_action_buttons);
         assert!(!joypad.select_direction_buttons);
         // P1 value should reflect A being pressed (0xDE)
-        assert_eq!(joypad.read_p1(), 0xDE, "P1 read: A pressed, action line selected");
+        assert_eq!(
+            joypad.read_p1(),
+            0xDE,
+            "P1 read: A pressed, action line selected"
+        );
 
         // 3. Press 'A' again (it's already pressed, no H->L transition on P1 bit)
         // old_p1_low_nibble for action buttons (A=0, B=1, Sel=1, Start=1 -> 0b1110) is 0b1110. Bit 0 is 0.
@@ -238,53 +261,91 @@ mod tests {
 
         // 4. Release 'A' button
         irq = joypad.button_event(JoypadButton::A, false);
-        assert_eq!(joypad.action_buttons, 0x0F, "A should be released internally");
+        assert_eq!(
+            joypad.action_buttons, 0x0F,
+            "A should be released internally"
+        );
         assert!(!irq, "IRQ should not be requested: A released");
         // P1 value should reflect A being released (0xDF)
-        assert_eq!(joypad.read_p1(), 0xDF, "P1 read: A released, action line selected");
+        assert_eq!(
+            joypad.read_p1(),
+            0xDF,
+            "P1 read: A released, action line selected"
+        );
 
         // 5. Press 'A' (H->L transition on P1.0 expected)
         // old_p1_low_nibble (all action buttons released = 0x0F). Bit 0 is 1.
         // New press makes action_buttons bit 0 = 0.
         irq = joypad.button_event(JoypadButton::A, true);
-        assert!(irq, "IRQ should be requested: A pressed (H->L), action line selected");
-        assert_eq!(joypad.read_p1(), 0xDE, "P1 read: A pressed again, action line selected");
-
+        assert!(
+            irq,
+            "IRQ should be requested: A pressed (H->L), action line selected"
+        );
+        assert_eq!(
+            joypad.read_p1(),
+            0xDE,
+            "P1 read: A pressed again, action line selected"
+        );
 
         // 6. Press 'Right' (direction line not selected)
         joypad.write_p1(0b1111_1111); // Deselect all lines
         irq = joypad.button_event(JoypadButton::Right, true);
         assert_eq!(joypad.direction_buttons, 0b0000_1110);
-        assert!(!irq, "IRQ should not be requested: Right pressed, direction line NOT selected");
+        assert!(
+            !irq,
+            "IRQ should not be requested: Right pressed, direction line NOT selected"
+        );
 
         // 7. Select direction buttons
         joypad.write_p1(0b1110_1111); // P14 low (select direction), P15 high
         assert!(!joypad.select_action_buttons);
         assert!(joypad.select_direction_buttons);
         // P1 value should reflect Right being pressed (0xEE)
-        assert_eq!(joypad.read_p1(), 0xEE, "P1 read: Right pressed, direction line selected");
+        assert_eq!(
+            joypad.read_p1(),
+            0xEE,
+            "P1 read: Right pressed, direction line selected"
+        );
 
         // 8. Press 'Down' (H->L transition on P1.3 expected)
         // old_p1_low_nibble for direction (Right=0, L=1, U=1, D=1 -> 0b1110). Bit 3 (Down) is 1.
         // New press makes direction_buttons bit 3 = 0.
         irq = joypad.button_event(JoypadButton::Down, true);
         assert_eq!(joypad.direction_buttons, 0b0000_0110); // Right and Down pressed
-        assert!(irq, "IRQ should be requested: Down pressed (H->L), direction line selected");
+        assert!(
+            irq,
+            "IRQ should be requested: Down pressed (H->L), direction line selected"
+        );
         // P1 value reflects Right and Down pressed (0xE6)
-        assert_eq!(joypad.read_p1(), 0xE6, "P1 read: Right and Down pressed, direction line selected");
+        assert_eq!(
+            joypad.read_p1(),
+            0xE6,
+            "P1 read: Right and Down pressed, direction line selected"
+        );
 
         // 9. Release 'Right'
         irq = joypad.button_event(JoypadButton::Right, false);
         assert!(!irq, "IRQ should not be requested: Right released");
         assert_eq!(joypad.direction_buttons, 0b0000_0111); // Only Down pressed
-        assert_eq!(joypad.read_p1(), 0xE7, "P1 read: Down pressed, direction line selected");
+        assert_eq!(
+            joypad.read_p1(),
+            0xE7,
+            "P1 read: Down pressed, direction line selected"
+        );
 
         // 10. Press 'Right' again (H->L on P1.0)
         // old_p1_low_nibble (R=1, L=1, U=1, D=0 -> 0b0111). Bit 0 is 1.
         irq = joypad.button_event(JoypadButton::Right, true);
-        assert!(irq, "IRQ should be requested: Right pressed again (H->L), direction line selected");
+        assert!(
+            irq,
+            "IRQ should be requested: Right pressed again (H->L), direction line selected"
+        );
         assert_eq!(joypad.direction_buttons, 0b0000_0110); // Right and Down pressed
-        assert_eq!(joypad.read_p1(), 0xE6, "P1 read: Right and Down pressed again, direction line selected");
+        assert_eq!(
+            joypad.read_p1(),
+            0xE6,
+            "P1 read: Right and Down pressed again, direction line selected"
+        );
     }
 
     #[test]
@@ -321,17 +382,21 @@ mod tests {
         let mut joypad = setup_joypad();
         assert!(!joypad.button_event(JoypadButton::A, true)); // No IRQ as line not selected
         assert!(!joypad.button_event(JoypadButton::Down, true)); // No IRQ as line not selected
-        // P14 and P15 are high (not selecting anything)
+                                                                 // P14 and P15 are high (not selecting anything)
         joypad.write_p1(0b1111_1111); // This sets select_action_buttons and select_direction_buttons to false
-        // Expect bits 0-3 to be high (0x0F), P14 high, P15 high. Bits 7-6 high. So 0xFF.
-        assert_eq!(joypad.read_p1(), 0xFF, "P1 read with no selection should be 0xFF regardless of button state");
+                                      // Expect bits 0-3 to be high (0x0F), P14 high, P15 high. Bits 7-6 high. So 0xFF.
+        assert_eq!(
+            joypad.read_p1(),
+            0xFF,
+            "P1 read with no selection should be 0xFF regardless of button state"
+        );
     }
 
     #[test]
     fn test_read_p1_both_lines_selected_unusual_case() {
         let mut joypad = setup_joypad();
         let mut irq;
-        irq = joypad.button_event(JoypadButton::A, true);    // Action: 0b1110 (A pressed)
+        irq = joypad.button_event(JoypadButton::A, true); // Action: 0b1110 (A pressed)
         assert!(!irq);
         irq = joypad.button_event(JoypadButton::Right, true); // Direction: 0b1110 (Right pressed)
         assert!(!irq);
@@ -345,7 +410,11 @@ mod tests {
         // dir_buttons = 0x0E, action_buttons = 0x0E.
         // get_p1_lower_nibble() will return 0x0E & 0x0E = 0x0E.
         // read_p1() will be 0xC0 | 0x0E = 0xCE.
-        assert_eq!(joypad.read_p1(), 0xCE, "P1 read with both lines selected and A/Right pressed");
+        assert_eq!(
+            joypad.read_p1(),
+            0xCE,
+            "P1 read with both lines selected and A/Right pressed"
+        );
 
         // Press B (action_buttons becomes 0b1100), keep Right pressed (direction_buttons 0b1110)
         // Old P1 lower nibble was 0x0E.
@@ -356,10 +425,17 @@ mod tests {
         // New p1_low_nibble = 0x0C & 0x0E = 0x0C. Bit 1 is 0 (low).
         // So, H->L transition on bit 1.
         irq = joypad.button_event(JoypadButton::B, true); // Action: 0b1100 (A, B pressed)
-        assert!(irq, "IRQ should be requested when B pressed, both lines selected, causing H->L on P1.1");
+        assert!(
+            irq,
+            "IRQ should be requested when B pressed, both lines selected, causing H->L on P1.1"
+        );
         // get_p1_lower_nibble() will return dir(0x0E) & act(0x0C) = 0x0C
         // read_p1() will be 0xC0 | 0x0C = 0xCC
-        assert_eq!(joypad.read_p1(), 0xCC, "P1 read with both lines selected and A/B/Right pressed");
+        assert_eq!(
+            joypad.read_p1(),
+            0xCC,
+            "P1 read with both lines selected and A/B/Right pressed"
+        );
     }
 
     #[test]
@@ -373,26 +449,26 @@ mod tests {
 
         // Select Directions (P14=0, P15=1), Right pressed (0b1110)
         joypad.write_p1(0x20); // Select Directions (P15=1, P14=0) -> P1 value should be 0b..10....
-        // Expected: 0b11101110 = 0xEE (P15 high, P14 low, Right low, LUD high)
+                               // Expected: 0b11101110 = 0xEE (P15 high, P14 low, Right low, LUD high)
         assert_eq!(joypad.read_p1(), 0xEE, "P1: Dir selected, Right pressed");
 
         // Select Directions, Left pressed (0b1101)
         joypad.button_event(JoypadButton::Right, false); // Release Right
-        joypad.button_event(JoypadButton::Left, true);   // Press Left
-        // Expected: 0b11101101 = 0xED (P15 high, P14 low, Left low, RUD high)
+        joypad.button_event(JoypadButton::Left, true); // Press Left
+                                                       // Expected: 0b11101101 = 0xED (P15 high, P14 low, Left low, RUD high)
         assert_eq!(joypad.read_p1(), 0xED, "P1: Dir selected, Left pressed");
 
         // Select Actions (P14=1, P15=0), A pressed (0b1110)
         joypad.button_event(JoypadButton::Left, false); // Release Left
-        joypad.button_event(JoypadButton::A, true);    // Press A
+        joypad.button_event(JoypadButton::A, true); // Press A
         joypad.write_p1(0x10); // Select Actions (P15=0, P14=1) -> P1 value should be 0b..01....
-        // Expected: 0b11011110 = 0xDE (P15 low, P14 high, A low, B/Sel/Start high)
+                               // Expected: 0b11011110 = 0xDE (P15 low, P14 high, A low, B/Sel/Start high)
         assert_eq!(joypad.read_p1(), 0xDE, "P1: Act selected, A pressed");
 
         // Select Actions, B pressed (0b1101)
-        joypad.button_event(JoypadButton::A, false);   // Release A
-        joypad.button_event(JoypadButton::B, true);    // Press B
-        // Expected: 0b11011101 = 0xDD (P15 low, P14 high, B low, A/Sel/Start high)
+        joypad.button_event(JoypadButton::A, false); // Release A
+        joypad.button_event(JoypadButton::B, true); // Press B
+                                                    // Expected: 0b11011101 = 0xDD (P15 low, P14 high, B low, A/Sel/Start high)
         assert_eq!(joypad.read_p1(), 0xDD, "P1: Act selected, B pressed");
     }
 
@@ -410,11 +486,17 @@ mod tests {
         joypad.write_p1(0x10); // Select Action buttons (P15=0)
         joypad.button_event(JoypadButton::A, false); // Ensure A is not pressed
         irq = joypad.button_event(JoypadButton::A, true); // Press A
-        assert!(irq, "Interrupt should trigger for A press when action line selected");
+        assert!(
+            irq,
+            "Interrupt should trigger for A press when action line selected"
+        );
 
         // Scenario 3: Press button that is ALREADY pressed (selected line)
         irq = joypad.button_event(JoypadButton::A, true); // A is already pressed
-        assert!(!irq, "Interrupt should not trigger if button already pressed (no H->L)");
+        assert!(
+            !irq,
+            "Interrupt should not trigger if button already pressed (no H->L)"
+        );
 
         // Scenario 4: Release button (selected line)
         irq = joypad.button_event(JoypadButton::A, false);
@@ -424,7 +506,10 @@ mod tests {
         joypad.write_p1(0x20); // Select Direction buttons (P14=0)
         joypad.button_event(JoypadButton::Right, false); // Ensure Right is not pressed
         irq = joypad.button_event(JoypadButton::Right, true);
-        assert!(irq, "Interrupt should trigger for Right press when direction line selected");
+        assert!(
+            irq,
+            "Interrupt should trigger for Right press when direction line selected"
+        );
 
         // Scenario 6: Both lines selected, press an action button (e.g. Start)
         // Initial state: Start not pressed.
@@ -444,9 +529,9 @@ mod tests {
         // direction_buttons = 0b1111
         joypad.button_event(JoypadButton::Up, false);
         joypad.write_p1(0x00); // Select both P14 and P15
-        // old_p1_low_nibble = action_buttons (0b0111) & direction_buttons (0b1111) = 0b0111
-        // Pressing Up (direction button, bit 2)
-        // (old_p1_low_nibble & (1<<2)) = (0b0111 & 0x04) = 0x04 (high)
+                               // old_p1_low_nibble = action_buttons (0b0111) & direction_buttons (0b1111) = 0b0111
+                               // Pressing Up (direction button, bit 2)
+                               // (old_p1_low_nibble & (1<<2)) = (0b0111 & 0x04) = 0x04 (high)
         irq = joypad.button_event(JoypadButton::Up, true);
         // new_direction_buttons = 0b1011.
         // new_p1_low_nibble = action_buttons(0b0111) & direction_buttons(0b1011) = 0b0011. Bit 2 is 0. H->L.

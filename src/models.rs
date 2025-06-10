@@ -3,19 +3,19 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::upper_case_acronyms)] // To allow AGB, SGB etc.
 pub enum GameBoyModel {
-    DMG,      // Original Dot Matrix Gameboy
-    SGB,      // Super Game Boy (needs SNES integration, but model exists)
-    SGB2,     // Super Game Boy 2
+    DMG,  // Original Dot Matrix Gameboy
+    SGB,  // Super Game Boy (needs SNES integration, but model exists)
+    SGB2, // Super Game Boy 2
     // MGB,   // Game Boy Pocket - Often treated as DMG for emulation purposes
     // CGB0,  // CGB Initial CPU (CPU CGB) - SameBoy specific
-    CGB0,     // CGB CPU Revision 0
-    CGBA,     // CGB CPU Revision A
-    CGBB,     // CGB CPU Revision B
-    CGBC,     // CGB CPU Revision C
-    CGBD,     // CGB CPU Revision D
-    CGBE,     // CGB CPU Revision E (Last CGB revision)
-    AGB,      // Game Boy Advance (in GB/CGB compatibility mode)
-    AGS,      // Game Boy Advance SP (similar to AGB for GB/CGB mode)
+    CGB0,       // CGB CPU Revision 0
+    CGBA,       // CGB CPU Revision A
+    CGBB,       // CGB CPU Revision B
+    CGBC,       // CGB CPU Revision C
+    CGBD,       // CGB CPU Revision D
+    CGBE,       // CGB CPU Revision E (Last CGB revision)
+    AGB,        // Game Boy Advance (in GB/CGB compatibility mode)
+    AGS,        // Game Boy Advance SP (similar to AGB for GB/CGB mode)
     GenericCGB, // Used if CGB flag is set but specific revision is unknown/unimportant
 }
 
@@ -50,7 +50,9 @@ impl GameBoyModel {
     // GB_MODEL_CGB_0 to GB_MODEL_CGB_E map to our CGB0-CGBE
     pub fn is_cgb_c_or_older(&self) -> bool {
         match self {
-            GameBoyModel::CGB0 | GameBoyModel::CGBA | GameBoyModel::CGBB | GameBoyModel::CGBC => true,
+            GameBoyModel::CGB0 | GameBoyModel::CGBA | GameBoyModel::CGBB | GameBoyModel::CGBC => {
+                true
+            }
             GameBoyModel::GenericCGB => true, // Assume generic CGB might be older for safety unless specified for a particular feature
             _ => false,
         }
