@@ -7,7 +7,8 @@ This document outlines the major components, functions, and logic sections that 
 - [x] Implement basic constructor (`new()`) initializing fields to power-up states.
 - [x] VRAM (Video RAM): Implement banking for CGB.
 - [x] OAM (Object Attribute Memory): Basic storage is present. Implement access restrictions based on PPU mode.
-- [ ] Framebuffer: Currently `Vec<u8>` for RGB888. Ensure correct dimensions and pixel format.
+- [x] Framebuffer: Currently `Vec<u8>` for RGB888. Ensure correct dimensions and pixel format.
+- [x] `current_scanline_color_indices`: Buffer for 2-bit color indices for the current line.
 
 ## PPU Modes & Timing
 - [ ] **Mode Switching Logic:**
@@ -23,20 +24,27 @@ This document outlines the major components, functions, and logic sections that 
     - [x] Reset LY during VBlank (or at the start of line 0 after VBlank).
     - [x] Handle LYC comparison and update STAT register.
 - [ ] **LCDC Register (0xFF40):**
-    - [ ] Implement full read/write logic.
-    - [ ] Use LCDC bits to control PPU operations (Display Enable, Window Tile Map, Window Enable, BG/OBJ Tile Data Select, OBJ Size, OBJ Enable, BG Enable). (Bits 0 (BG Enable), 3 (BG Tile Map Select), 4 (BG/Win Tile Data Select) are now conceptually used by BG tile info fetching logic.)
-    - [-] **Handle LCD enable/disable logic (e.g., PPU stops, screen clears, LY resets)** (Partially implemented: PPU tick sets LY=0, mode=HBlank, clears its interrupt flags, and STAT reflects this state when LCDC.7 is off).
+    - [x] Implement full read/write logic (via Bus to PPU fields).
+    - [-] Use LCDC bits to control PPU operations:
+        - [-] Bit 0 (BG Display Enable): Logic in place (rendering conditional, actual white screen if disabled is part of palette mapping).
+        - [-] Bit 1 (OBJ Display Enable): Check placeholder added.
+        - [-] Bit 2 (OBJ Size): Check placeholder (for 8x8 vs 8x16) added.
+        - [x] Bit 3 (BG Tile Map Display Select): Used by BG tile fetching.
+        - [x] Bit 4 (BG & Window Tile Data Select): Used by BG tile fetching.
+        - [-] Bit 5 (Window Display Enable): Check placeholder added.
+        - [-] Bit 6 (Window Tile Map Display Select): Placeholder added.
+        - [x] Bit 7 (LCD Display Enable): PPU tick sets LY=0, mode=HBlank, clears its interrupt flags, and STAT reflects this state when LCDC.7 is off.
 
 ## Scanline Rendering Pipeline (Conceptual)
 *(This section assumes a pipeline similar to hardware or SameBoy's FIFO-based approach. Adapt as necessary.)*
 
 - [ ] **Pixel Fetcher:**
-    - [x] **Conceptual BG Tile Info Fetching:** Basic logic in `Ppu::get_bg_tile_info` to calculate BG tile map addresses, tile numbers, CGB attributes (from VRAM bank 1), and tile data addresses based on LCDC, scroll registers, and LY. This is a precursor to a full pixel fetcher.
-    - [ ] Fetch tile data for Background, Window.
-    - [ ] Handle SCX/SCY scrolling for BG.
+    - [x] **Conceptual BG Tile Info Fetching:** Implemented concrete BG tile data fetching (tile number, attributes, pixel data bytes via `fetch_tile_line_data`).
+    - [-] Fetch tile data for Background (done), Window (pending).
+    - [x] Handle SCX/SCY scrolling for BG (as part of `render_scanline_bg`).
     - [ ] Handle WX/WY for Window positioning.
 - [ ] **Pixel FIFO:**
-    - [ ] Manage a First-In-First-Out queue for background/window pixels.
+    - [-] Pixel color indices generated directly into a scanline buffer (`current_scanline_color_indices`); full FIFO for cycle accuracy is future work.
     - [ ] Manage a separate FIFO or merging logic for sprite pixels.
 - [ ] **Sprite (OBJ) Processing:**
     - **OAM Scan (Mode 2):**
@@ -50,19 +58,19 @@ This document outlines the major components, functions, and logic sections that 
         - [ ] Implement 8x8 and 8x16 sprite sizes (controlled by LCDC.2).
         - [ ] Correctly mix sprite pixels with BG/Window pixels based on priority (OBJ-BG priority bit in OAM flags, CGB BG-to-OAM priority).
 - [ ] **Background (BG) Rendering:**
-    - [ ] Select correct tile map (LCDC.3). (Conceptually done in tile info fetching)
-    - [ ] Select correct tile data (LCDC.4). (Conceptually done in tile info fetching)
-    - [ ] Render BG pixels considering SCX/SCY scroll.
+    - [x] Select correct tile map (LCDC.3). (Used in `render_scanline_bg`)
+    - [x] Select correct tile data (LCDC.4). (Used in `render_scanline_bg`)
+    - [x] Render BG pixels considering SCX/SCY scroll (writes 2-bit color indices to scanline buffer).
 - [ ] **Window Rendering:**
-    - [ ] Enable/disable based on LCDC.5.
-    - [ ] Select correct tile map (LCDC.6).
+    - [-] Enable/disable based on LCDC.5 (placeholder check added).
+    - [-] Select correct tile map (LCDC.6) (placeholder added).
     - [ ] Use WY/WX for window positioning.
     - [ ] Implement window internal line counter.
 
 ## Palettes
 - [ ] **DMG Palette Management:**
-    - [ ] Implement reads/writes to BGP (0xFF47), OBP0 (0xFF48), OBP1 (0xFF49).
-    - [ ] Apply these palettes to BG/Window and Sprite pixels respectively.
+    - [x] BGP (0xFF47) is read for BG palette mapping. Writes handled by Bus. OBP0/1 pending.
+    - [x] Apply DMG BGP palette to BG pixels (writes to framebuffer). Window/Sprite palettes pending.
 - [ ] **CGB Palette Management:**
     - [ ] Implement CGB palette RAM (Background and Sprite).
     - [ ] Handle BCPS/BCPI (0xFF68) for BG palette index and auto-increment.
@@ -75,21 +83,21 @@ This document outlines the major components, functions, and logic sections that 
 ## Interrupts
 - [ ] **VBlank Interrupt (Mode 1):**
     - [x] Trigger VBlank interrupt when PPU enters Mode 1 (LY = 144). (PPU sets internal flag, Bus requests interrupt)
-    - [ ] Set VBlank flag in IF register (0xFF0F). (Done by Bus)
+    - [x] Set VBlank flag in IF register (0xFF0F). (Done by Bus)
 - [ ] **LCD STAT Interrupt:**
     - [x] Trigger based on conditions enabled in STAT register (LYC=LY, Mode 0/1/2 HBlank/VBlank/OAM period). (PPU sets internal flag, Bus requests interrupt)
-    - [ ] Set LCD STAT flag in IF register (0xFF0F). (Done by Bus)
+    - [x] Set LCD STAT flag in IF register (0xFF0F). (Done by Bus)
 
 ## CGB Specific Features
-- [x] **VRAM Banking (VBK Register - 0xFF4F):** (Basic read/write via Bus to PPU field. PPU's `read_vram` uses it. `get_bg_tile_info` uses `read_vram_bank_agnostic` for specific bank access.)
+- [x] **VRAM Banking (VBK Register - 0xFF4F):** (Basic read/write via Bus to PPU field. PPU's `read_vram` uses it. `fetch_tile_line_data` uses `read_vram_bank_agnostic` for specific bank access.)
     - Implement VRAM bank switching for CGB mode. Reads/writes to 0x8000-0x9FFF should respect the selected bank.
 - [ ] **HDMA/GDMA Interaction Points:**
     - [x] While DMA logic is in `Bus`, the PPU needs to allow VRAM access during HDMA/GDMA. (PPU VRAM access methods are public)
     - [x] Ensure VRAM access methods (`read_vram`, `write_vram`) are usable by DMA logic.
     - [x] Consider any PPU state that might affect or be affected by HDMA (e.g., HBlank state for HDMA triggers). (PPU sets `just_entered_hblank`, Bus uses it)
-- [x] **CGB Tile Attributes:** (Conceptual fetching in `get_bg_tile_info`)
+- [x] **CGB Tile Attributes:** (Fetching implemented in `fetch_tile_line_data`)
     - When fetching BG/Window tiles in CGB mode, read attributes from VRAM bank 1.
-    - Apply attributes: BG-to-OAM priority, vertical/horizontal flip, VRAM bank selection for tile data, palette selection. (Vertical flip and bank selection for tile data conceptually used in `get_bg_tile_info`)
+    - Apply attributes: BG-to-OAM priority, vertical/horizontal flip, VRAM bank selection for tile data, palette selection. (Vertical flip and bank selection for tile data used in `fetch_tile_line_data`; H-flip used in `decode_tile_line_to_pixels`)
 
 ## Bus Integration
 - [x] **Register Access:**
@@ -97,7 +105,7 @@ This document outlines the major components, functions, and logic sections that 
     - Implement side effects of register writes (e.g., writing to LCDC can change PPU state, STAT can trigger interrupts). (STAT write effects partially handled via `ppu.write_stat()`)
 - [x] **Memory Access:**
     - `Bus` should call `ppu.read_vram()`, `ppu.write_vram()`, `ppu.read_oam()`, `ppu.write_oam()`.
-    - [ ] Implement PPU mode-based access restrictions for VRAM and OAM within PPU methods (e.g., CPU cannot access VRAM/OAM during certain PPU modes).
+    - [x] Implement PPU mode-based access restrictions for VRAM and OAM within PPU methods (for CPU access; DMA bypasses implemented).
 - [x] **PPU Tick Function:**
     - Implement `ppu.tick(cycles)` method to advance PPU state based on passed CPU M-cycles (or T-cycles).
     - This function will manage internal cycle counters, mode transitions, scanline rendering, and interrupt flags.
