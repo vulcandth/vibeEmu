@@ -42,14 +42,14 @@ This document outlines the major components, functions, and logic sections that 
 - [ ] **Pixel Fetcher:**
     - [x] **Conceptual BG Tile Info Fetching:** Implemented concrete BG tile data fetching (tile number, attributes, pixel data bytes via `fetch_tile_line_data`).
     - [-] Fetch tile data for Background (done), Window (pending).
-    - [x] Handle SCX/SCY scrolling for BG (as part of `render_scanline_bg`).
+    - [x] Handle SCX/SCY scrolling for BG (as part of render_scanline_bg - Fine X scroll now handled by discarding initial pixels from fetcher/FIFO).
     - [ ] Handle WX/WY for Window positioning.
-    - [ ] Implement dedicated BG/Window pixel fetcher logic (state machine for tile#, data, attributes).
-    - [ ] Implement dedicated Sprite pixel fetcher logic.
+    - [-] Implement dedicated BG/Window pixel fetcher logic (state machine for tile#, data, attributes - BG fetcher improved with fine SCX handling).
+    - [-] Implement dedicated Sprite pixel fetcher logic (Current sprite pipeline loads pre-fetched line data into sprite FIFO; a more traditional cycle-accurate fetcher is future work).
 - [ ] **Pixel FIFO:**
-    - [ ] Implement BG Pixel FIFO.
-    - [ ] Implement Sprite Pixel FIFO.
-    - [ ] Implement FIFO mixing/merging logic for BG and Sprite pixels.
+    - [x] Implement BG Pixel FIFO.
+    - [x] Implement Sprite Pixel FIFO.
+    - [-] Implement FIFO mixing/merging logic for BG and Sprite pixels (Basic DMG mixing implemented; CGB and more complex scenarios pending).
     - [ ] Drive PPU Mode 3 timing based on Pixel Fetcher and FIFO states.
 - [ ] **Sprite (OBJ) Processing:**
     - **OAM Scan (Mode 2):**
@@ -61,7 +61,7 @@ This document outlines the major components, functions, and logic sections that 
     - **Sprite Rendering:**
         - [x] Handle sprite attributes: X-position, tile index, DMG palettes (OBP0/1 via OAM attr), DMG priority (OAM attr), X/Y flip.
         - [x] Implemented 8x8 and 8x16 sprite sizes (controlled by LCDC.2) during OAM scan and fetching.
-        - [x] Correctly mix DMG sprite pixels with BG/Window pixels based on OAM priority attribute and transparency. (CGB BG-to-OAM priority pending full CGB palette/attribute integration in scanline buffer).
+        - [x] Correctly mix DMG sprite pixels with BG/Window pixels based on OAM priority attribute and transparency (DMG mixing now actively handled in Mode 3; CGB BG-to-OAM priority pending full CGB palette/attribute integration in scanline buffer).
 - [ ] **Background (BG) Rendering:**
     - [x] Select correct tile map (LCDC.3). (Used in `render_scanline_bg`)
     - [x] Select correct tile data (LCDC.4). (Used in `render_scanline_bg`)
