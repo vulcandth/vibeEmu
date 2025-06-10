@@ -50,13 +50,14 @@ impl AudioOutput {
         let channels = config.channels();
         let config: cpal::StreamConfig = config.into();
 
-        let (tx, rx) = crossbeam_channel::bounded::<(f32, f32)>(2048);
+        let (tx, rx) = crossbeam_channel::bounded::<(f32, f32)>(8192);
         let err_fn = |err| eprintln!("Audio stream error: {err}");
+        let mut last_sample = (0.0_f32, 0.0_f32);
         let stream_result = match sample_format {
             cpal::SampleFormat::F32 => device.build_output_stream(
                 &config,
                 move |data: &mut [f32], _| {
-                    write_samples(data, channels, &rx);
+                    write_samples(data, channels, &rx, &mut last_sample);
                 },
                 err_fn,
                 None,
@@ -64,7 +65,7 @@ impl AudioOutput {
             cpal::SampleFormat::I16 => device.build_output_stream(
                 &config,
                 move |data: &mut [i16], _| {
-                    write_samples(data, channels, &rx);
+                    write_samples(data, channels, &rx, &mut last_sample);
                 },
                 err_fn,
                 None,
@@ -72,7 +73,7 @@ impl AudioOutput {
             cpal::SampleFormat::U16 => device.build_output_stream(
                 &config,
                 move |data: &mut [u16], _| {
-                    write_samples(data, channels, &rx);
+                    write_samples(data, channels, &rx, &mut last_sample);
                 },
                 err_fn,
                 None,
@@ -130,13 +131,23 @@ impl AudioOutput {
     }
 }
 
-fn write_samples<T>(output: &mut [T], channels: u16, rx: &crossbeam_channel::Receiver<(f32, f32)>)
-where
+fn write_samples<T>(
+    output: &mut [T],
+    channels: u16,
+    rx: &crossbeam_channel::Receiver<(f32, f32)>,
+    last_sample: &mut (f32, f32),
+) where
     T: cpal::Sample + cpal::FromSample<f32>,
 {
     let ch = channels as usize;
     for frame in output.chunks_mut(ch) {
-        let (l, r) = rx.try_recv().unwrap_or((0.0, 0.0));
+        let (l, r) = match rx.try_recv() {
+            Ok(sample) => {
+                *last_sample = sample;
+                sample
+            }
+            Err(_) => *last_sample,
+        };
         frame[0] = cpal::Sample::from_sample(l);
         if ch > 1 {
             frame[1] = cpal::Sample::from_sample(r);
