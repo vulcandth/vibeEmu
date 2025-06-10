@@ -13,7 +13,7 @@ This document outlines the major components, functions, and logic sections that 
 
 ## PPU Modes & Timing
 - [ ] **Mode Switching Logic:**
-    - [-] **Implement accurate timing for Mode 0 (HBlank), Mode 1 (VBlank), Mode 2 (OAM Scan), Mode 3 (Drawing)** (Mode 3/HBlank timing is now semi-dynamic based on sprite count. Eventual goal: FIFO-driven cycle accuracy).
+    - [-] **Implement accurate timing for Mode 0 (HBlank), Mode 1 (VBlank), Mode 2 (OAM Scan), Mode 3 (Drawing)** (Mode 3 now primarily ends when 160 pixels are drawn or a failsafe cycle limit is hit. Dynamic sprite-based duration is no longer a hard cutoff. Eventual goal: FIFO-driven cycle accuracy).
     - [x] Manage `cycles_in_mode` and transition between modes correctly.
     - [x] Update `STAT` register (Mode bits) upon mode changes.
 - [ ] **STAT Register (0xFF41):**
@@ -32,8 +32,8 @@ This document outlines the major components, functions, and logic sections that 
         - [x] Bit 2 (OBJ Size): Used in OAM scan and sprite fetching for 8x8 vs 8x16 sprites.
         - [x] Bit 3 (BG Tile Map Display Select): Used by BG tile fetching.
         - [x] Bit 4 (BG & Window Tile Data Select): Used by BG tile fetching.
-        - [-] Bit 5 (Window Display Enable): Check placeholder added.
-        - [-] Bit 6 (Window Tile Map Display Select): Placeholder added.
+        - [~] Bit 5 (Window Display Enable): Basic check implemented in Drawing mode (shows as color 0 area). Full tile fetching pending.
+        - [-] Bit 6 (Window Tile Map Display Select): Role acknowledged by Bit 5 placeholder. Actual use in fetcher pending.
         - [x] Bit 7 (LCD Display Enable): PPU tick sets LY=0, mode=HBlank, clears its interrupt flags, and STAT reflects this state when LCDC.7 is off.
 
 ## Scanline Rendering Pipeline (Conceptual)
@@ -67,10 +67,10 @@ This document outlines the major components, functions, and logic sections that 
     - [x] Select correct tile data (LCDC.4). (Used in `render_scanline_bg`)
     - [x] Render BG pixels considering SCX/SCY scroll (writes 2-bit color indices to scanline buffer).
 - [ ] **Window Rendering:**
-    - [-] Enable/disable based on LCDC.5 (placeholder check added).
-    - [-] Select correct tile map (LCDC.6) (placeholder added).
+    - [~] Enable/disable based on LCDC.5 (Basic check implemented in Drawing mode; window area shown as color 0).
+    - [-] Select correct tile map (LCDC.6) (Role noted; actual use in fetcher pending).
     - [ ] Use WY/WX for window positioning.
-    - [ ] Implement window internal line counter.
+    - [x] Implement window internal line counter (basic version).
 
 ## Palettes
 - [ ] **DMG Palette Management:**
