@@ -19,7 +19,7 @@ pub struct Channel4 {
     lfsr_step_countdown: u32,
     lfsr_shift_amount: u8,
     div_apu_counter: u32,
-    noise_alignment_buffer: u8,
+    // noise_alignment_buffer: u8, // Removed as per warning: field is never read
 
     pub dmg_delayed_start_countdown: u8,
     force_narrow_lfsr_for_glitch: bool,
@@ -43,7 +43,7 @@ impl Channel4 {
             lfsr_step_countdown: 2,
             lfsr_shift_amount: 0,
             div_apu_counter: 0,
-            noise_alignment_buffer: 0,
+            // noise_alignment_buffer: 0, // Removed as per warning: field is never read
             dmg_delayed_start_countdown: 0,
             force_narrow_lfsr_for_glitch: false,
         };

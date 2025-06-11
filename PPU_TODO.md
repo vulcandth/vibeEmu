@@ -41,7 +41,7 @@ This document outlines the major components, functions, and logic sections that 
 *(This section assumes a pipeline similar to hardware or SameBoy's FIFO-based approach. Adapt as necessary.)*
 
 - [ ] **Pixel Fetcher:**
-    - [x] **Conceptual BG Tile Info Fetching:** Implemented concrete BG tile data fetching (tile number, attributes, pixel data bytes via `fetch_tile_line_data`).
+    - [x] **BG Tile Info Fetching:** BG tile data (number, attributes, pixel data) is fetched by the main fetcher logic in `tick_fetcher`.
     - [x] Fetch tile data for Background (done), Window (done - see dedicated logic item). Build issues prevented test verification.
     - [x] Handle SCX/SCY scrolling for BG (as part of render_scanline_bg - Fine X scroll now handled by discarding initial pixels from fetcher/FIFO).
     - [x] Handle WX/WY for Window positioning. <!-- This was under Pixel Fetcher, seems more general to Window -->
@@ -102,9 +102,9 @@ This document outlines the major components, functions, and logic sections that 
     - [x] While DMA logic is in `Bus`, the PPU needs to allow VRAM access during HDMA/GDMA. (PPU VRAM access methods are public)
     - [x] Ensure VRAM access methods (`read_vram`, `write_vram`) are usable by DMA logic.
     - [x] Consider any PPU state that might affect or be affected by HDMA (e.g., HBlank state for HDMA triggers). (PPU sets `just_entered_hblank`, Bus uses it)
-- [x] **CGB Tile Attributes:** (Fetching implemented in `fetch_tile_line_data`)
-    - When fetching BG/Window tiles in CGB mode, read attributes from VRAM bank 1.
-    - Apply attributes: BG-to-OAM priority, vertical/horizontal flip, VRAM bank selection for tile data, palette selection. (Vertical flip and bank selection for tile data used in `fetch_tile_line_data`; H-flip used in `decode_tile_line_to_pixels`; BG palette selection attributes now used in rendering)
+- [x] **CGB Tile Attributes:** BG tile attributes are fetched in `tick_fetcher` and applied during tile data fetching and pixel processing.
+    - When fetching BG/Window tiles in CGB mode, read attributes from VRAM bank 1 (handled in `tick_fetcher`).
+    - Apply attributes: BG-to-OAM priority (pending full implementation), vertical/horizontal flip, VRAM bank selection for tile data, palette selection (all handled in `tick_fetcher` path and `decode_tile_line_to_pixels` or rendering logic).
 
 ## Bus Integration
 - [x] **Register Access:**
