@@ -76,12 +76,13 @@ impl Display {
         self.window.as_ref().map_or(false, |w| w.is_key_down(key))
     }
 
-    /// Gets a list of all keys currently pressed.
-    pub fn get_keys_pressed(&self, active_modifiers: minifb::KeyRepeat) -> Option<Vec<Key>> {
-        self.window
-            .as_ref()
-            .map(|w| w.get_keys_pressed(active_modifiers))
-    }
+    // Removed as per warning: method is never used
+    // /// Gets a list of all keys currently pressed.
+    // pub fn get_keys_pressed(&self, active_modifiers: minifb::KeyRepeat) -> Option<Vec<Key>> {
+    //     self.window
+    //         .as_ref()
+    //         .map(|w| w.get_keys_pressed(active_modifiers))
+    // }
 
     /// Checks if a specific mouse button is currently pressed.
     pub fn get_mouse_down(&self, button: MouseButton) -> bool {

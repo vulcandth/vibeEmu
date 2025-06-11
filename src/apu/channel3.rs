@@ -14,7 +14,7 @@ pub struct Channel3 {
     current_sample_buffer: u8,
     wave_form_just_read: bool,
     pulsed: bool,
-    bugged_read_countdown: u8,
+    // bugged_read_countdown: u8, // Removed as per warning: field is never read
 }
 
 impl Channel3 {
@@ -32,7 +32,7 @@ impl Channel3 {
             current_sample_buffer: 0,
             wave_form_just_read: false,
             pulsed: false,
-            bugged_read_countdown: 0,
+            // bugged_read_countdown: 0, // Removed as per warning: field is never read
         }
     }
 
@@ -156,9 +156,9 @@ impl Channel3 {
         self.wave_form_just_read
     }
 
-    pub(super) fn set_wave_form_just_read(&mut self, val: bool) {
-        self.wave_form_just_read = val;
-    }
+    // pub(super) fn set_wave_form_just_read(&mut self, val: bool) { // Removed as per warning: method is never used
+    //     self.wave_form_just_read = val;
+    // }
 
     pub(super) fn get_frequency_timer(&self) -> u16 {
         self.frequency_timer

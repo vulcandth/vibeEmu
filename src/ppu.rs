@@ -49,8 +49,8 @@ impl PixelFifo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetcherState { GetTile, GetDataLow, GetDataHigh, PushToFifo }
 
-#[derive(Debug, Default, Clone, Copy)]
-struct FetchedTileLineData { plane1_byte: u8, plane2_byte: u8, attributes: u8 }
+// struct FetchedTileLineData removed as it's unused
+// struct FetchedTileLineData { plane1_byte: u8, plane2_byte: u8, attributes: u8 }
 
 pub struct Ppu {
     pub vram: Vec<u8>, pub oam: [u8; OAM_SIZE],
@@ -95,10 +95,9 @@ pub struct Ppu {
 pub struct OamEntryData { pub oam_index: usize, pub y_pos: u8, pub x_pos: u8, pub tile_index: u8, pub attributes: u8 }
 
 #[derive(Debug, Clone)]
-pub struct FetchedSpritePixelLine { pub x_pos: u8, pub attributes: u8, pub pixels: [u8; 8], pub oam_index: usize }
+pub struct FetchedSpritePixelLine { pub x_pos: u8, pub attributes: u8, pub pixels: [u8; 8] } // oam_index removed
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct BgTileInfo { pub tile_number: u8, pub tile_data_addr_plane1: u16, pub tile_data_addr_plane2: u16, pub attributes_addr: u16, pub attributes: u8, pub tile_number_map_addr: u16 }
+// BgTileInfo struct removed as it's unused
 
 impl Ppu {
     pub fn new(model: GameBoyModel) -> Self {
@@ -865,27 +864,27 @@ impl Ppu {
         let plane1_byte = self.read_vram_bank_agnostic(plane1_byte_addr, tile_vram_bank);
         let plane2_byte = self.read_vram_bank_agnostic(plane2_byte_addr, tile_vram_bank);
         let pixels = self.decode_sprite_tile_line(plane1_byte, plane2_byte);
-        Some(FetchedSpritePixelLine { x_pos: oam_entry.x_pos, attributes: oam_entry.attributes, pixels, oam_index: oam_entry.oam_index, })
+        Some(FetchedSpritePixelLine { x_pos: oam_entry.x_pos, attributes: oam_entry.attributes, pixels }) // oam_index removed
     }
 
-    #[allow(dead_code)]
-    fn fetch_tile_line_data( &self, tile_map_addr_base: u16, tile_data_addr_base_select: u8, map_x: u8, map_y: u8,) -> FetchedTileLineData {
-        let mut output = FetchedTileLineData::default();
-        let is_cgb = self.model.is_cgb_family();
-        let tile_row_in_map = (map_y / 8) as u16; let tile_col_in_map = (map_x / 8) as u16;
-        let tile_number_map_addr = tile_map_addr_base + (tile_row_in_map * 32) + tile_col_in_map;
-        let tile_number = self.read_vram_bank_agnostic(tile_number_map_addr, 0);
-        let mut tile_data_vram_bank = 0;
-        if is_cgb { output.attributes = self.read_vram_bank_agnostic(tile_number_map_addr, 1); tile_data_vram_bank = (output.attributes >> 3) & 0x01; }
-        let tile_data_start_addr: u16 = if tile_data_addr_base_select == 1 { 0x8000 + (tile_number as u16 * 16) }
-                                      else { 0x9000u16.wrapping_add(((tile_number as i8) as i16 * 16) as u16) };
-        let mut line_offset_in_tile = (map_y % 8) as u16;
-        if is_cgb && (output.attributes & (1 << 2)) != 0 { line_offset_in_tile = 7 - line_offset_in_tile; }
-        let tile_bytes_offset = line_offset_in_tile * 2;
-        output.plane1_byte = self.read_vram_bank_agnostic(tile_data_start_addr + tile_bytes_offset, tile_data_vram_bank);
-        output.plane2_byte = self.read_vram_bank_agnostic(tile_data_start_addr + tile_bytes_offset + 1, tile_data_vram_bank);
-        output
-    }
+    // Removed fetch_tile_line_data as it was unused (#[allow(dead_code)]) and related to BgTileInfo
+    // fn fetch_tile_line_data( &self, tile_map_addr_base: u16, tile_data_addr_base_select: u8, map_x: u8, map_y: u8,) -> FetchedTileLineData {
+    //     let mut output = FetchedTileLineData::default();
+    //     let is_cgb = self.model.is_cgb_family();
+    //     let tile_row_in_map = (map_y / 8) as u16; let tile_col_in_map = (map_x / 8) as u16;
+    //     let tile_number_map_addr = tile_map_addr_base + (tile_row_in_map * 32) + tile_col_in_map;
+    //     let tile_number = self.read_vram_bank_agnostic(tile_number_map_addr, 0);
+    //     let mut tile_data_vram_bank = 0;
+    //     if is_cgb { output.attributes = self.read_vram_bank_agnostic(tile_number_map_addr, 1); tile_data_vram_bank = (output.attributes >> 3) & 0x01; }
+    //     let tile_data_start_addr: u16 = if tile_data_addr_base_select == 1 { 0x8000 + (tile_number as u16 * 16) }
+    //                                   else { 0x9000u16.wrapping_add(((tile_number as i8) as i16 * 16) as u16) };
+    //     let mut line_offset_in_tile = (map_y % 8) as u16;
+    //     if is_cgb && (output.attributes & (1 << 2)) != 0 { line_offset_in_tile = 7 - line_offset_in_tile; }
+    //     let tile_bytes_offset = line_offset_in_tile * 2;
+    //     output.plane1_byte = self.read_vram_bank_agnostic(tile_data_start_addr + tile_bytes_offset, tile_data_vram_bank);
+    //     output.plane2_byte = self.read_vram_bank_agnostic(tile_data_start_addr + tile_bytes_offset + 1, tile_data_vram_bank);
+    //     output
+    // }
 
     fn decode_tile_line_to_pixels( &self, plane1_byte: u8, plane2_byte: u8, cgb_attributes: u8, is_cgb: bool,) -> [u8; 8] {
         let mut pixels = [0u8; 8];
@@ -987,7 +986,7 @@ impl Ppu {
 
                 let color_index = self.current_scanline_color_indices[x];
                 let pixel_source = self.current_scanline_pixel_source[x];
-                let mut shade = 0;
+                let shade: u8;
                 match pixel_source {
                     PixelSource::Background => { shade = (self.bgp >> (color_index * 2)) & 0x03; }
                     PixelSource::Object { palette_register } => {
