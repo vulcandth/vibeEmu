@@ -2196,7 +2196,7 @@ mod tests {
         // expected_oam_after_bug[23] = ppu.oam[15]
 
         // Re-verify this part of expected_oam_after_bug based on original oam values.
-        let original_oam_clone = ppu.oam.clone(); // To ensure we use pre-bug values for expectation.
+        let mut original_oam_clone = ppu.oam.clone(); // To ensure we use pre-bug values for expectation.
         for j in 0..OAM_SIZE { // Re-init original_oam_clone
             original_oam_clone[j] = j as u8;
         }
