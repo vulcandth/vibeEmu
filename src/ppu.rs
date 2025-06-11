@@ -58,15 +58,17 @@ pub struct Ppu {
     pub cgb_sprite_palette_ram: [u8; CGB_PALETTE_RAM_SIZE],
     pub lcdc: u8, pub stat: u8, pub scy: u8, pub scx: u8, pub ly: u8, pub lyc: u8,
     pub wy: u8, pub wx: u8, pub bgp: u8, pub obp0: u8, pub obp1: u8,
-    pub vbk: u8, pub bcps_bcpi: u8, pub bcpd_bgpd: u8, pub ocps_ocpi: u8, pub ocpd_obpd: u8,
+    pub vbk: u8, pub bcps_bcpi: u8, /* pub bcpd_bgpd: u8, */ pub ocps_ocpi: u8, /* pub ocpd_obpd: u8, */ // bcpd_bgpd and ocpd_obpd removed
     pub current_mode: PpuMode, pub cycles_in_mode: u32,
     pub vblank_interrupt_requested: bool, pub stat_interrupt_requested: bool,
     pub just_entered_hblank: bool,
     pub framebuffer: Vec<u8>,
     pub current_scanline_color_indices: [u8; SCREEN_WIDTH],
+    // For CGB mode, store the BG palette index (0-7) for each BG pixel on the line
+    current_scanline_cgb_bg_palette_indices: [u8; SCREEN_WIDTH],
     visible_oam_entries: Vec<OamEntryData>,
     line_sprite_data: Vec<FetchedSpritePixelLine>,
-    current_scanline_pixel_source: [PixelSource; SCREEN_WIDTH],
+    current_scanline_pixel_source: [PixelSource; SCREEN_WIDTH], // Still used for DMG OBJ vs BG priority
     current_mode3_drawing_cycles: u32,
     actual_drawing_duration_current_line: u32,
     model: GameBoyModel,
@@ -103,16 +105,17 @@ impl Ppu {
         let vram_size = if model.is_cgb_family() { VRAM_SIZE_CGB } else { VRAM_SIZE_DMG };
         Ppu {
             vram: vec![0; vram_size], oam: [0; OAM_SIZE],
-            cgb_background_palette_ram: [0; CGB_PALETTE_RAM_SIZE],
-            cgb_sprite_palette_ram: [0; CGB_PALETTE_RAM_SIZE],
+            cgb_background_palette_ram: [0; CGB_PALETTE_RAM_SIZE], // Initialized to 0s, boot ROM does FF. TODO: Verify if this should be FF.
+            cgb_sprite_palette_ram: [0; CGB_PALETTE_RAM_SIZE],   // Initialized to 0s, boot ROM does FF.
             lcdc: 0x91, stat: 0x80, scy: 0x00, scx: 0x00, ly: 0x00, lyc: 0x00,
             wy: 0x00, wx: 0x00, bgp: 0xFC, obp0: 0xFF, obp1: 0xFF,
-            vbk: 0xFE, bcps_bcpi: 0x00, bcpd_bgpd: 0x00, ocps_ocpi: 0x00, ocpd_obpd: 0x00,
+            vbk: 0xFE, bcps_bcpi: 0x00, /* bcpd_bgpd: 0x00, */ ocps_ocpi: 0x00, /* ocpd_obpd: 0x00, */ // bcpd_bgpd and ocpd_obpd removed
             current_mode: PpuMode::OamScan, cycles_in_mode: 0,
             vblank_interrupt_requested: false, stat_interrupt_requested: false,
             just_entered_hblank: false,
             framebuffer: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 3],
             current_scanline_color_indices: [0; SCREEN_WIDTH],
+            current_scanline_cgb_bg_palette_indices: [0; SCREEN_WIDTH], // Initialize CGB palette indices
             visible_oam_entries: Vec::with_capacity(10),
             line_sprite_data: Vec::with_capacity(10),
             current_scanline_pixel_source: [PixelSource::Background; SCREEN_WIDTH],
@@ -138,6 +141,72 @@ impl Ppu {
             pixels_to_discard_for_window_line_start: 0,
         }
     }
+
+    // CGB Palette Access Methods
+    pub fn read_bcps_bcpi(&self) -> u8 {
+        self.bcps_bcpi
+    }
+
+    pub fn write_bcps_bcpi(&mut self, value: u8) {
+        if self.model.is_cgb_family() {
+            self.bcps_bcpi = value & 0xBF;
+        }
+    }
+
+    pub fn read_bcpd(&self) -> u8 {
+        if !self.model.is_cgb_family() { return 0xFF; }
+        if (self.lcdc & 0x80) != 0 && (self.current_mode == PpuMode::Drawing || self.current_mode == PpuMode::OamScan) {
+           return 0xFF;
+        }
+        let index = (self.bcps_bcpi & 0x3F) as usize;
+        self.cgb_background_palette_ram[index]
+    }
+
+    pub fn write_bcpd(&mut self, value: u8) {
+        if !self.model.is_cgb_family() { return; }
+        if (self.lcdc & 0x80) != 0 && (self.current_mode == PpuMode::Drawing || self.current_mode == PpuMode::OamScan) {
+           return;
+        }
+        let index = (self.bcps_bcpi & 0x3F) as usize;
+        self.cgb_background_palette_ram[index] = value;
+        if self.bcps_bcpi & 0x80 != 0 {
+            let next_index = (index + 1) & 0x3F;
+            self.bcps_bcpi = (self.bcps_bcpi & 0x80) | (next_index as u8);
+        }
+    }
+
+    pub fn read_ocps_ocpi(&self) -> u8 {
+        self.ocps_ocpi
+    }
+
+    pub fn write_ocps_ocpi(&mut self, value: u8) {
+        if self.model.is_cgb_family() {
+            self.ocps_ocpi = value & 0xBF;
+        }
+    }
+
+    pub fn read_ocpd(&self) -> u8 {
+        if !self.model.is_cgb_family() { return 0xFF; }
+        if (self.lcdc & 0x80) != 0 && (self.current_mode == PpuMode::Drawing || self.current_mode == PpuMode::OamScan) {
+           return 0xFF;
+        }
+        let index = (self.ocps_ocpi & 0x3F) as usize;
+        self.cgb_sprite_palette_ram[index]
+    }
+
+    pub fn write_ocpd(&mut self, value: u8) {
+        if !self.model.is_cgb_family() { return; }
+        if (self.lcdc & 0x80) != 0 && (self.current_mode == PpuMode::Drawing || self.current_mode == PpuMode::OamScan) {
+           return;
+        }
+        let index = (self.ocps_ocpi & 0x3F) as usize;
+        self.cgb_sprite_palette_ram[index] = value;
+        if self.ocps_ocpi & 0x80 != 0 {
+            let next_index = (index + 1) & 0x3F;
+            self.ocps_ocpi = (self.ocps_ocpi & 0x80) | (next_index as u8);
+        }
+    }
+    // End CGB Palette Access Methods
 
     pub fn read_vram(&self, addr: u16) -> u8 {
         if (self.lcdc & 0x80) != 0 && self.current_mode == PpuMode::Drawing { return 0xFF; }
@@ -186,6 +255,7 @@ impl Ppu {
         self.line_sprite_data.clear();
         self.current_scanline_color_indices = [0; SCREEN_WIDTH];
         self.current_scanline_pixel_source = [PixelSource::Background; SCREEN_WIDTH];
+        self.current_scanline_cgb_bg_palette_indices = [0; SCREEN_WIDTH]; // Reset CGB attributes for the line
 
         // Initialize window-related scanline state
         self.fetcher_is_for_window = false;
@@ -467,8 +537,32 @@ impl Ppu {
                         }
 
                     } else if final_pixel_data.is_some() { // master_bg_win_enable is true AND we have a mixed pixel (from BG/Win + Sprite)
-                        self.current_scanline_color_indices[self.screen_x as usize] = final_pixel_data.as_ref().unwrap().color_index;
-                        self.current_scanline_pixel_source[self.screen_x as usize] = final_pixel_source;
+                        let final_idx = self.screen_x as usize;
+                        self.current_scanline_color_indices[final_idx] = final_pixel_data.as_ref().unwrap().color_index;
+                        self.current_scanline_pixel_source[final_idx] = final_pixel_source;
+
+                        // Store CGB BG palette index if the final pixel is from BG/Window
+                        if self.model.is_cgb_family() {
+                            match final_pixel_source {
+                                PixelSource::Background => {
+                                    // fetcher_tile_attributes contains the attributes for the BG/Window tile
+                                    // that produced this pixel. Bits 0-2 are the palette number.
+                                    self.current_scanline_cgb_bg_palette_indices[final_idx] = self.fetcher_tile_attributes & 0x07;
+                                }
+                                PixelSource::Object { .. } => {
+                                    // If an object pixel wins, BG palette index is not directly applicable here.
+                                    // Could store a default or a marker if needed for debugging.
+                                    // For now, let's assume it might carry over from a BG pixel that was previously there,
+                                    // or default to 0 if sprite is over "nothing".
+                                    // This depends on exact sprite priority interaction with this array.
+                                    // Safest for now if OBJ wins: don't update or set to a known "OBJ" marker if needed.
+                                    // However, if the goal is for BG pixels to *always* have their CGB palette stored
+                                    // regardless of OBJ priority, this needs to be recorded when b_pixel_opt is processed.
+                                    // Let's try recording it when b_pixel_opt is confirmed.
+                                }
+                            }
+                        }
+
                         self.screen_x += 1;
 
                         // Sprite consumption logic (original position)
@@ -507,7 +601,7 @@ impl Ppu {
                 }
 
                 if transition_to_hblank {
-                    self.apply_dmg_palette_to_framebuffer();
+                    self.apply_palette_to_framebuffer_line();
                     let cycles_spillover = self.cycles_in_mode.saturating_sub(self.actual_drawing_duration_current_line);
                     self.cycles_in_mode = cycles_spillover;
 
@@ -821,31 +915,291 @@ impl Ppu {
     #[allow(dead_code)]
     fn render_scanline_bg(&mut self) { /* Dead code */ }
 
-    fn apply_dmg_palette_to_framebuffer(&mut self) {
+    fn cgb_color_to_rgb(lo_byte: u8, hi_byte: u8) -> [u8; 3] {
+        let bgr555 = ((hi_byte as u16) << 8) | (lo_byte as u16);
+        let r5 = (bgr555 & 0x001F) as u8;
+        let g5 = ((bgr555 & 0x03E0) >> 5) as u8;
+        let b5 = ((bgr555 & 0x7C00) >> 10) as u8;
+
+        // Scale 5-bit colors to 8-bit (val * 255 / 31 or (val << 3) | (val >> 2))
+        let r8 = (r5 << 3) | (r5 >> 2);
+        let g8 = (g5 << 3) | (g5 >> 2);
+        let b8 = (b5 << 3) | (b5 >> 2);
+        [r8, g8, b8]
+    }
+
+    fn apply_palette_to_framebuffer_line(&mut self) {
         if self.ly >= SCREEN_HEIGHT as u8 { return; }
+
         if self.model.is_cgb_family() {
+            // CGB Rendering Path
+            // Priority Master (LCDC Bit 0) for CGB determines if BG/Win lose to sprites.
+            // If LCDC Bit 0 is 0, BG/Win are "blank" (color 0 of their respective palettes) unless OBJ is behind them.
+            // This logic is implicitly handled by current_scanline_color_indices and current_scanline_pixel_source.
+            // If BG/Win is disabled by LCDC.0, color_index should be 0 and source should be Background.
+
             for x in 0..SCREEN_WIDTH {
-                let color_index = self.current_scanline_color_indices[x];
-                let shade_val = match color_index { 0 => DMG_WHITE, 1 => DMG_LIGHT_GRAY, 2 => DMG_DARK_GRAY, _ => DMG_BLACK, };
                 let fb_idx = (self.ly as usize * SCREEN_WIDTH + x) * 3;
-                if fb_idx + 2 < self.framebuffer.len() { self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&shade_val); }
-            }
-            return;
-        }
-        for x in 0..SCREEN_WIDTH {
-            let color_index = self.current_scanline_color_indices[x];
-            let pixel_source = self.current_scanline_pixel_source[x];
-            let mut shade = 0;
-            match pixel_source {
-                PixelSource::Background => { shade = (self.bgp >> (color_index * 2)) & 0x03; }
-                PixelSource::Object { palette_register } => {
-                    if palette_register == 0 { shade = (self.obp0 >> (color_index * 2)) & 0x03; }
-                    else { shade = (self.obp1 >> (color_index * 2)) & 0x03; }
+                if fb_idx + 2 >= self.framebuffer.len() { continue; }
+
+                let dmg_color_idx = self.current_scanline_color_indices[x]; // 0-3
+                // TODO: Handle CGB sprite palettes and priorities correctly.
+                // For now, this path focuses on CGB Background pixels.
+                // If PixelSource is Object, we'd need to use cgb_sprite_palette_ram and OAM attributes.
+
+                match self.current_scanline_pixel_source[x] {
+                    PixelSource::Background => {
+                        let cgb_palette_num = self.current_scanline_cgb_bg_palette_indices[x]; // 0-7
+                        let palette_addr = (cgb_palette_num as usize * 8) + (dmg_color_idx as usize * 2);
+
+                        let lo_byte = self.cgb_background_palette_ram[palette_addr.min(CGB_PALETTE_RAM_SIZE - 2)];
+                        let hi_byte = self.cgb_background_palette_ram[(palette_addr + 1).min(CGB_PALETTE_RAM_SIZE - 1)];
+
+                        let rgb_color = Self::cgb_color_to_rgb(lo_byte, hi_byte);
+                        self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&rgb_color);
+                    }
+                    PixelSource::Object { palette_register } => {
+                        // Placeholder for CGB Object Palette rendering
+                        // For now, use DMG-like rendering for CGB sprites as a fallback
+                        // This will look wrong but prevents crashes.
+                        // let sprite_palette_num = if self.model.is_cgb_family() { oam_attributes & 0x07 } else { palette_register };
+                        // let palette_addr = (sprite_palette_num * 8) + (dmg_color_idx * 2);
+                        // lo = self.cgb_sprite_palette_ram[addr]; hi = self.cgb_sprite_palette_ram[addr+1];
+                        // rgb = cgb_color_to_rgb(lo, hi);
+                        // Fallback to DMG palette for objects for now
+                        let shade = if palette_register == 0 {
+                            (self.obp0 >> (dmg_color_idx * 2)) & 0x03
+                        } else {
+                            (self.obp1 >> (dmg_color_idx * 2)) & 0x03
+                        };
+                        let rgb_color = match shade {
+                            0 => DMG_WHITE, 1 => DMG_LIGHT_GRAY, 2 => DMG_DARK_GRAY, _ => DMG_BLACK,
+                        };
+                        self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&rgb_color);
+                    }
                 }
             }
-            let rgb_color = match shade { 0 => DMG_WHITE, 1 => DMG_LIGHT_GRAY, 2 => DMG_DARK_GRAY, 3 => DMG_BLACK, _ => unreachable!(), };
-            let fb_idx = (self.ly as usize * SCREEN_WIDTH + x) * 3;
-            if fb_idx + 2 < self.framebuffer.len() { self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&rgb_color); }
+        } else {
+            // DMG Rendering Path
+            for x in 0..SCREEN_WIDTH {
+                let fb_idx = (self.ly as usize * SCREEN_WIDTH + x) * 3;
+                if fb_idx + 2 >= self.framebuffer.len() { continue; }
+
+                let color_index = self.current_scanline_color_indices[x];
+                let pixel_source = self.current_scanline_pixel_source[x];
+                let mut shade = 0;
+                match pixel_source {
+                    PixelSource::Background => { shade = (self.bgp >> (color_index * 2)) & 0x03; }
+                    PixelSource::Object { palette_register } => {
+                        if palette_register == 0 { shade = (self.obp0 >> (color_index * 2)) & 0x03; }
+                        else { shade = (self.obp1 >> (color_index * 2)) & 0x03; }
+                    }
+                }
+                let rgb_color = match shade { 0 => DMG_WHITE, 1 => DMG_LIGHT_GRAY, 2 => DMG_DARK_GRAY, 3 => DMG_BLACK, _ => unreachable!(), };
+                self.framebuffer[fb_idx..fb_idx + 3].copy_from_slice(&rgb_color);
+            }
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::GameBoyModel;
+
+    fn setup_ppu_cgb() -> Ppu {
+        Ppu::new(GameBoyModel::GenericCGB)
+    }
+
+    #[test]
+    fn test_bcps_register_access() {
+        let mut ppu = setup_ppu_cgb();
+
+        // Test writing index and auto-increment flag
+        ppu.write_bcps_bcpi(0x8A); // Index 10 (0x0A), auto-increment enabled
+        assert_eq!(ppu.read_bcps_bcpi(), 0x8A & 0xBF, "BCPS write 0x8A (auto-inc ON, index 0x0A)");
+        assert_eq!(ppu.bcps_bcpi & 0x3F, 0x0A, "BCPS index check");
+        assert_ne!(ppu.bcps_bcpi & 0x80, 0, "BCPS auto-increment flag check");
+
+        ppu.write_bcps_bcpi(0x05); // Index 5 (0x05), auto-increment disabled
+        assert_eq!(ppu.read_bcps_bcpi(), 0x05, "BCPS write 0x05 (auto-inc OFF, index 0x05)");
+        assert_eq!(ppu.bcps_bcpi & 0x3F, 0x05, "BCPS index check");
+        assert_eq!(ppu.bcps_bcpi & 0x80, 0, "BCPS auto-increment flag check");
+
+        // Test writing to bit 6 (should be ignored / masked out)
+        ppu.write_bcps_bcpi(0xFF); // All bits set (index 0x3F, auto-inc ON, try to set bit 6)
+        assert_eq!(ppu.read_bcps_bcpi(), 0xBF, "BCPS write 0xFF (bit 6 masked)");
+        assert_eq!(ppu.bcps_bcpi & 0x3F, 0x3F, "BCPS index check for 0xFF write");
+        assert_ne!(ppu.bcps_bcpi & 0x80, 0, "BCPS auto-increment flag for 0xFF write");
+
+        ppu.write_bcps_bcpi(0x40); // Try to write only bit 6
+        assert_eq!(ppu.read_bcps_bcpi(), 0x00, "BCPS write 0x40 (only bit 6, should be masked)");
+    }
+
+    #[test]
+    fn test_bcpd_ram_access_and_increment() {
+        let mut ppu = setup_ppu_cgb();
+        ppu.lcdc = 0x80; // Ensure LCD is "on" for mode restrictions to apply if relevant (not for H/VBlank)
+        ppu.current_mode = PpuMode::HBlank; // Palette access allowed
+
+        // Test writing without auto-increment
+        ppu.write_bcps_bcpi(0x0A); // Index 0x0A, auto-increment OFF
+        ppu.write_bcpd(0x12);
+        ppu.write_bcpd(0x34); // Should overwrite 0x12 as index doesn't change
+        assert_eq!(ppu.cgb_background_palette_ram[0x0A], 0x34, "BCPD write no auto-inc");
+        assert_eq!(ppu.bcps_bcpi & 0x3F, 0x0A, "BCPS index unchanged after BCPD write (no auto-inc)");
+
+        // Test reading without auto-increment
+        let val = ppu.read_bcpd();
+        assert_eq!(val, 0x34, "BCPD read no auto-inc");
+        assert_eq!(ppu.bcps_bcpi & 0x3F, 0x0A, "BCPS index unchanged after BCPD read");
+
+        // Test writing with auto-increment
+        ppu.write_bcps_bcpi(0x80); // Index 0, auto-increment ON
+        ppu.write_bcpd(0xAA);
+        assert_eq!(ppu.cgb_background_palette_ram[0x00], 0xAA, "BCPD write auto-inc (val @ 0x00)");
+        assert_eq!(ppu.bcps_bcpi & 0x3F, 0x01, "BCPS index incremented to 0x01");
+        assert_ne!(ppu.bcps_bcpi & 0x80, 0, "BCPS auto-inc flag should remain set");
+
+        ppu.write_bcpd(0xBB);
+        assert_eq!(ppu.cgb_background_palette_ram[0x01], 0xBB, "BCPD write auto-inc (val @ 0x01)");
+        assert_eq!(ppu.bcps_bcpi & 0x3F, 0x02, "BCPS index incremented to 0x02");
+
+        // Test auto-increment wrapping around 0x3F
+        ppu.write_bcps_bcpi(0x80 | 0x3F); // Index 0x3F, auto-increment ON
+        ppu.write_bcpd(0xCC);
+        assert_eq!(ppu.cgb_background_palette_ram[0x3F], 0xCC, "BCPD write auto-inc (val @ 0x3F)");
+        assert_eq!(ppu.bcps_bcpi & 0x3F, 0x00, "BCPS index wrapped to 0x00");
+        assert_ne!(ppu.bcps_bcpi & 0x80, 0, "BCPS auto-inc flag still set after wrap");
+
+        // Test reading with auto-increment flag set (should not increment)
+        ppu.write_bcps_bcpi(0x80 | 0x05); // Index 0x05, auto-inc ON
+        ppu.cgb_background_palette_ram[0x05] = 0xDD;
+        let val_read_auto_inc_on = ppu.read_bcpd();
+        assert_eq!(val_read_auto_inc_on, 0xDD, "BCPD read with auto-inc ON");
+        assert_eq!(ppu.bcps_bcpi & 0x3F, 0x05, "BCPS index unchanged after BCPD read (auto-inc ON)");
+    }
+
+    #[test]
+    fn test_cgb_palette_mode_restrictions() {
+        let mut ppu = setup_ppu_cgb();
+        ppu.lcdc = 0x80; // LCD ON
+
+        let test_addr_idx: u8 = 0x10;
+        ppu.write_bcps_bcpi(test_addr_idx); // Index 0x10, auto-inc OFF
+        ppu.cgb_background_palette_ram[test_addr_idx as usize] = 0xAB; // Pre-fill value
+
+        // Mode 2 (OAM Scan) - Restricted
+        ppu.current_mode = PpuMode::OamScan;
+        assert_eq!(ppu.read_bcpd(), 0xFF, "BCPD read during OAMScan should be 0xFF");
+        ppu.write_bcpd(0xCD); // Attempt write
+        assert_eq!(ppu.cgb_background_palette_ram[test_addr_idx as usize], 0xAB, "BCPD write during OAMScan should be ignored");
+
+        // Mode 3 (Drawing) - Restricted
+        ppu.current_mode = PpuMode::Drawing;
+        assert_eq!(ppu.read_bcpd(), 0xFF, "BCPD read during Drawing should be 0xFF");
+        ppu.write_bcpd(0xEF); // Attempt write
+        assert_eq!(ppu.cgb_background_palette_ram[test_addr_idx as usize], 0xAB, "BCPD write during Drawing should be ignored");
+
+        // Mode 0 (HBlank) - Allowed
+        ppu.current_mode = PpuMode::HBlank;
+        assert_eq!(ppu.read_bcpd(), 0xAB, "BCPD read during HBlank should be allowed");
+        ppu.write_bcpd(0x11);
+        assert_eq!(ppu.cgb_background_palette_ram[test_addr_idx as usize], 0x11, "BCPD write during HBlank should be allowed");
+        ppu.cgb_background_palette_ram[test_addr_idx as usize] = 0xAB; // Reset for next test
+
+        // Mode 1 (VBlank) - Allowed
+        ppu.current_mode = PpuMode::VBlank;
+        assert_eq!(ppu.read_bcpd(), 0xAB, "BCPD read during VBlank should be allowed");
+        ppu.write_bcpd(0x22);
+        assert_eq!(ppu.cgb_background_palette_ram[test_addr_idx as usize], 0x22, "BCPD write during VBlank should be allowed");
+
+        // LCD OFF - Allowed (current_mode check is inside LCD ON check)
+        ppu.lcdc = 0x00; // LCD OFF
+        ppu.current_mode = PpuMode::Drawing; // Arbitrary mode, should not matter if LCD is off
+        ppu.cgb_background_palette_ram[test_addr_idx as usize] = 0x55;
+        assert_eq!(ppu.read_bcpd(), 0x55, "BCPD read when LCD OFF should be allowed");
+        ppu.write_bcpd(0x66);
+        assert_eq!(ppu.cgb_background_palette_ram[test_addr_idx as usize], 0x66, "BCPD write when LCD OFF should be allowed");
+    }
+
+    #[test]
+    fn test_color_conversion_cgb() {
+        // Black: R=0, G=0, B=0 -> Lo=0x00, Hi=0x00
+        assert_eq!(Ppu::cgb_color_to_rgb(0x00, 0x00), [0, 0, 0], "CGB Black to RGB");
+
+        // White: R=31, G=31, B=31 -> Lo=0xFF, Hi=0x7F (0b01111111_11111111)
+        // R5=(0xFF&0x1F)=31 -> R8=(31<<3)|(31>>2) = 248|7 = 255
+        // G5=((0xFF&0xE0)>>5)|((0x7F&0x03)<<3) = (7<<0)|(3<<3) = 7|24 = 31 -> G8=255
+        // B5=((0x7F&0x7C)>>2) = (0b01111100>>2) = 0b00011111 = 31 -> B8=255
+        assert_eq!(Ppu::cgb_color_to_rgb(0xFF, 0x7F), [255, 255, 255], "CGB White to RGB");
+
+        // Pure Red: R=31, G=0, B=0 -> Lo=0x1F, Hi=0x00 (0b00000000_00011111)
+        assert_eq!(Ppu::cgb_color_to_rgb(0x1F, 0x00), [255, 0, 0], "CGB Red to RGB");
+
+        // Pure Green: R=0, G=31, B=0 -> Lo=0xE0, Hi=0x03 (0b00000011_11100000)
+        assert_eq!(Ppu::cgb_color_to_rgb(0xE0, 0x03), [0, 255, 0], "CGB Green to RGB");
+
+        // Pure Blue: R=0, G=0, B=31 -> Lo=0x00, Hi=0x7C (0b01111100_00000000)
+        assert_eq!(Ppu::cgb_color_to_rgb(0x00, 0x7C), [0, 0, 255], "CGB Blue to RGB");
+
+        // Mid-Red: R=15, G=0, B=0 -> Lo=0x0F, Hi=0x00
+        // R5=15 -> (15<<3)|(15>>2) = 120|3 = 123
+        assert_eq!(Ppu::cgb_color_to_rgb(0x0F, 0x00), [123, 0, 0], "CGB Mid-Red to RGB");
+
+        // Gray (16,16,16): R=16,G=16,B=16 -> Lo=0x00, Hi=0x42 (0b01000010_00000000 is wrong)
+        // R=16 (0x10), G=16 (0x10), B=16 (0x10)
+        // BGR555: BBBBB GGGGG RRRRR
+        // Color: 0b10000_10000_10000 = 0x4210
+        // Lo = 0x10, Hi = 0x42
+        // R5=16 -> (16<<3)|(16>>2) = 128|4 = 132
+        // G5=16 -> 132
+        // B5=16 -> 132
+        assert_eq!(Ppu::cgb_color_to_rgb(0x10, 0x42), [132, 132, 132], "CGB Gray(16,16,16) to RGB");
+    }
+
+    #[test]
+    fn test_cgb_background_rendering_path() {
+        let mut ppu = setup_ppu_cgb();
+        ppu.ly = 0; // Test for scanline 0
+
+        // Setup palette 0, color 1 (DMG index 1) to be bright red
+        // R=31, G=0, B=0 -> Lo=0x1F, Hi=0x00
+        ppu.cgb_background_palette_ram[0 * 8 + 1 * 2 + 0] = 0x1F; // Palette 0, Color 1, Lo byte
+        ppu.cgb_background_palette_ram[0 * 8 + 1 * 2 + 1] = 0x00; // Palette 0, Color 1, Hi byte
+        let expected_red_rgb = Ppu::cgb_color_to_rgb(0x1F, 0x00); // Should be [255,0,0]
+
+        // Setup palette 1, color 2 (DMG index 2) to be bright green
+        // R=0, G=31, B=0 -> Lo=0xE0, Hi=0x03
+        ppu.cgb_background_palette_ram[1 * 8 + 2 * 2 + 0] = 0xE0; // Palette 1, Color 2, Lo byte
+        ppu.cgb_background_palette_ram[1 * 8 + 2 * 2 + 1] = 0x03; // Palette 1, Color 2, Hi byte
+        let expected_green_rgb = Ppu::cgb_color_to_rgb(0xE0, 0x03); // Should be [0,255,0]
+
+        // Pixel 0: Use CGB palette 0, DMG color index 1 (should be red)
+        ppu.current_scanline_color_indices[0] = 1; // DMG color index
+        ppu.current_scanline_cgb_bg_palette_indices[0] = 0; // CGB BG palette index
+        ppu.current_scanline_pixel_source[0] = PixelSource::Background;
+
+        // Pixel 1: Use CGB palette 1, DMG color index 2 (should be green)
+        ppu.current_scanline_color_indices[1] = 2; // DMG color index
+        ppu.current_scanline_cgb_bg_palette_indices[1] = 1; // CGB BG palette index
+        ppu.current_scanline_pixel_source[1] = PixelSource::Background;
+
+        // Pixel 2: DMG color index 0 (from palette 0, should be whatever 0,0 is - black if not set)
+        ppu.cgb_background_palette_ram[0 * 8 + 0 * 2 + 0] = 0x00;
+        ppu.cgb_background_palette_ram[0 * 8 + 0 * 2 + 1] = 0x00;
+        let expected_black_rgb = Ppu::cgb_color_to_rgb(0x00, 0x00);
+
+        ppu.current_scanline_color_indices[2] = 0;
+        ppu.current_scanline_cgb_bg_palette_indices[2] = 0;
+        ppu.current_scanline_pixel_source[2] = PixelSource::Background;
+
+
+        ppu.apply_palette_to_framebuffer_line();
+
+        assert_eq!(&ppu.framebuffer[0..3], &expected_red_rgb, "Pixel 0 (Red)");
+        assert_eq!(&ppu.framebuffer[3..6], &expected_green_rgb, "Pixel 1 (Green)");
+        assert_eq!(&ppu.framebuffer[6..9], &expected_black_rgb, "Pixel 2 (Black)");
+    }
+}
+// [end of src/ppu.rs] <-- This was the duplicated marker, now removed.
