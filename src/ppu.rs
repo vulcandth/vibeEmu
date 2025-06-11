@@ -422,7 +422,7 @@ impl Ppu {
                 // but it might still need to be ticked to keep it "warm" if it were to be enabled mid-scanline (not typical).
                 // For simplicity here, we gate ticking based on master_bg_win_enable.
                 if master_bg_win_enable {
-                    if self.bg_fifo.len() <= 8 { // Needs more pixels for BG/Window
+                    if !self.bg_fifo.is_full() { // Fetch if there's any space.
                         self.tick_fetcher();
                     }
                 }
@@ -595,6 +595,7 @@ impl Ppu {
                 } else if self.cycles_in_mode >= FAILSAFE_MAX_MODE3_CYCLES {
                     // Failsafe: screen_x is stuck, and we've exceeded a generous cycle limit.
                     self.actual_drawing_duration_current_line = self.cycles_in_mode; // Record actual cycles spent
+                    // eprintln!("PPU FAILSAFE: LY={}, screen_x={}, cycles_in_mode={}", self.ly, self.screen_x, self.cycles_in_mode); // Removed as per subtask
                     transition_to_hblank = true;
                     // eprintln!("PPU Warning: Mode 3 force quit at LY={}, screen_x={}, cycles={}", self.ly, self.screen_x, self.cycles_in_mode);
                 }
