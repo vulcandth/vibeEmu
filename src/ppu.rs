@@ -83,6 +83,10 @@ pub struct Ppu {
     window_internal_line_counter: u8,
     sprite_fetcher_pixel_push_idx: u8,
     sprite_pixels_loaded_into_fifo: bool,
+    // Window rendering specific fields
+    fetcher_is_for_window: bool,
+    window_rendering_begun_for_line: bool,
+    pixels_to_discard_for_window_line_start: u8,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -128,6 +132,10 @@ impl Ppu {
             window_internal_line_counter: 0,
             sprite_fetcher_pixel_push_idx: 0,
             sprite_pixels_loaded_into_fifo: false,
+            // Initialize new window fields
+            fetcher_is_for_window: false,
+            window_rendering_begun_for_line: false,
+            pixels_to_discard_for_window_line_start: 0,
         }
     }
 
@@ -178,6 +186,11 @@ impl Ppu {
         self.line_sprite_data.clear();
         self.current_scanline_color_indices = [0; SCREEN_WIDTH];
         self.current_scanline_pixel_source = [PixelSource::Background; SCREEN_WIDTH];
+
+        // Initialize window-related scanline state
+        self.fetcher_is_for_window = false;
+        self.window_rendering_begun_for_line = false;
+        self.pixels_to_discard_for_window_line_start = 0;
     }
 
     pub fn tick(&mut self, cpu_t_cycles: u32) {
@@ -234,6 +247,50 @@ impl Ppu {
                 }
             }
             PpuMode::Drawing => {
+                // Window Activation Logic (before pixel processing and fetcher ticks for the current screen_x)
+                let window_display_enabled = (self.lcdc & (1 << 5)) != 0; // LCDC Bit 5
+                let window_is_on_current_line = self.ly >= self.wy;
+                let window_start_x_coord = self.wx.saturating_sub(7);
+
+                if window_display_enabled && window_is_on_current_line &&
+                   !self.window_rendering_begun_for_line && self.screen_x >= window_start_x_coord {
+
+                    // Check if BG/Window master switch is on, otherwise window doesn't really "activate" over BG
+                    if (self.lcdc & 0x01) != 0 { // LCDC Bit 0 - BG/Window Display Enable
+                        self.fetcher_is_for_window = true;
+                        self.window_rendering_begun_for_line = true;
+                        self.bg_fifo.clear();
+                        self.fetcher_state = FetcherState::GetTile;
+                        self.fetcher_state_cycle = 0; // Allow fetcher to run immediately for the new context
+                        self.fetcher_pixel_push_idx = 0;
+                        // fetcher_map_y for window is the number of lines *into* the window we are.
+                        self.fetcher_map_y = self.window_internal_line_counter;
+                        // fetcher_map_x needs to be the tile column index for the window tile map.
+                        // window_start_x_coord is the screen x where the window begins.
+                        // We need to find the first tile column in the window's tile map that corresponds to this.
+                        // Example: wx=7 (window_start_x_coord=0). fetcher_map_x should be 0.
+                        // wx=10 (window_start_x_coord=3). fetcher_map_x should be 0.
+                        // wx=15 (window_start_x_coord=8). fetcher_map_x should be 8.
+                        // This implies map_x is aligned to the tile grid based on where fetching starts.
+                        // The crucial part is that fetcher_map_x is used to calculate tile_col_in_map later.
+                        // For the window, the "map" effectively starts at x=0 from wx-7.
+                        // So, if window_start_x_coord is 3, we fetch tile 0, but discard 3 pixels.
+                        // self.fetcher_map_x = (self.screen_x / 8) * 8; // This would be if window started at screen_x
+                        // The fetcher_map_x should be relative to the window's own coordinate system for its tile map.
+                        // If window starts at wx=7 (screen_x=0), fetcher_map_x is 0.
+                        // If window starts at wx=10 (screen_x=3), fetcher_map_x is still 0 for the first tile.
+                        // The pixels to discard handle the offset *within* the first tile.
+                        self.fetcher_map_x = 0; // Window's map always starts at its column 0.
+                                                // Discard logic will handle the initial pixel offset.
+
+                        self.pixels_to_discard_for_window_line_start = window_start_x_coord % 8;
+
+                        // The current fetcher might have already fetched some BG tiles for this scanline.
+                        // If the window starts mid-scanline, those prior BG pixels are used up to window_start_x_coord.
+                        // Then, the fetcher switches to window mode.
+                    }
+                }
+
                 // Sprite Data Loading Logic
                 if (self.lcdc & (1 << 1)) != 0 { // OBJ display enabled
                     if self.current_sprite_to_render_idx.is_none() {
@@ -286,31 +343,41 @@ impl Ppu {
                 let mut final_pixel_source: PixelSource = PixelSource::Background; // Default
 
                 let master_bg_win_enable = (self.lcdc & 0x01) != 0; // LCDC Bit 0
-                let window_display_enabled = (self.lcdc & (1 << 5)) != 0; // LCDC Bit 5
-                let window_active_here = window_display_enabled &&
-                                          self.ly >= self.wy &&
-                                          self.screen_x >= self.wx.saturating_sub(7);
 
-                if window_active_here {
-                    if master_bg_win_enable {
-                        // Window is active for this pixel and master BG/Win switch is on.
-                        // Placeholder: Output color 0 for window area.
-                        // LCDC Bit 6 (Window Tile Map) would be used here if fetching real window tiles.
-                        bg_pixel_data = Some(PixelData { color_index: 0 });
-                        final_pixel_source = PixelSource::Background; // Use BG palette for this dummy pixel
-                        // Note: BG fetcher might still run "underneath". A real impl would pause/switch fetcher.
-                    } else {
-                        // Window active, but master BG/Win switch is off. Window shows nothing.
-                        bg_pixel_data = None;
+                // Determine if fetcher should run for BG/Window
+                // Fetcher runs if:
+                // 1. BG/Window display is enabled (master_bg_win_enable)
+                // 2. AND (either fetcher is for window OR it's for BG and window is not currently covering this spot)
+                // This logic is simplified because the fetcher_is_for_window flag handles the switch.
+                // If master_bg_win_enable is false, the fetcher effectively doesn't run for output,
+                // but it might still need to be ticked to keep it "warm" if it were to be enabled mid-scanline (not typical).
+                // For simplicity here, we gate ticking based on master_bg_win_enable.
+                if master_bg_win_enable {
+                    if self.bg_fifo.len() <= 8 { // Needs more pixels for BG/Window
+                        self.tick_fetcher();
                     }
-                } else if master_bg_win_enable { // BG display enabled (and not covered by window)
-                    if self.bg_fifo.len() <= 8 { self.tick_fetcher(); }
-                    if self.screen_x < SCREEN_WIDTH as u8 { bg_pixel_data = self.bg_fifo.pop(); }
-                } else { // Master BG/Win disabled, and not window pixel (or window also off due to master)
-                    bg_pixel_data = None;
                 }
 
-                // Try to pop Sprite pixel
+
+                // Pixel Output Logic (incorporating master_bg_win_enable)
+                if self.screen_x < SCREEN_WIDTH as u8 {
+                    if !master_bg_win_enable {
+                        // LCDC Bit 0 is off: BG and Window are replaced by white
+                        self.current_scanline_color_indices[self.screen_x as usize] = 0; // White
+                        self.current_scanline_pixel_source[self.screen_x as usize] = PixelSource::Background; // Uses BGP0
+                        self.screen_x += 1;
+                        // Sprite processing still happens below, over this white background
+                    } else {
+                        // master_bg_win_enable is true, so try to get BG/Window pixel
+                        // self.fetcher_is_for_window determines if FIFO contains BG or Window pixels
+                        bg_pixel_data = self.bg_fifo.pop();
+                        // If bg_pixel_data is None here, it means FIFO is empty, and PPU should stall for BG/Win.
+                        // The advancement of screen_x will be handled inside the sprite mixing logic if a pixel is available.
+                    }
+                }
+
+
+                // Try to pop Sprite pixel (this logic can remain largely the same)
                 if (self.lcdc & (1 << 1)) != 0 { // OBJ display enabled
                     if let Some(sprite_idx) = self.current_sprite_to_render_idx {
                         let sprite_data = &self.line_sprite_data[sprite_idx];
@@ -366,40 +433,64 @@ impl Ppu {
                 }
                 // If both are None, final_pixel_data remains None. Pushing to framebuffer should handle None.
 
-
+                // Revised Pixel Output / screen_x advancement logic
                 if self.screen_x < SCREEN_WIDTH as u8 {
-                    if let Some(ref pixel_to_draw) = final_pixel_data {
-                        self.current_scanline_color_indices[self.screen_x as usize] = pixel_to_draw.color_index;
-                        self.current_scanline_pixel_source[self.screen_x as usize] = final_pixel_source;
-                        self.screen_x += 1;
+                    if !master_bg_win_enable {
+                        // BG/Window are off (replaced by white earlier). Sprites can still render on top.
+                        if s_pixel_opt.is_some() && s_pixel_opt.as_ref().unwrap().color_index != 0 { // Sprite pixel is not transparent
+                            // Only sprite matters now. BG is white (color index 0, source Background)
+                            let sprite_data_for_mix = &self.line_sprite_data[self.current_sprite_to_render_idx.unwrap()];
+                            let dmg_palette_reg = if (sprite_data_for_mix.attributes & (1 << 4)) != 0 { 1 } else { 0 };
+                            final_pixel_data = s_pixel_opt;
+                            final_pixel_source = PixelSource::Object { palette_register: dmg_palette_reg };
+                        } else { // No sprite, or transparent sprite. BG is white.
+                            final_pixel_data = Some(PixelData { color_index: 0 }); // White from disabled BG/Win
+                            final_pixel_source = PixelSource::Background;
+                        }
+                        // screen_x was already advanced when master_bg_win_enable was false.
+                        // Here we just determine the final pixel color if a sprite overlaps.
+                        self.current_scanline_color_indices[self.screen_x as usize -1] = final_pixel_data.as_ref().unwrap().color_index; // screen_x already advanced
+                        self.current_scanline_pixel_source[self.screen_x as usize -1] = final_pixel_source;
 
-                        // If a sprite pixel was consumed, and its FIFO is now empty, and it was fully loaded:
-                        // Reset current_sprite_to_render_idx to allow next sprite to be picked up.
-                        if s_pixel_opt.is_some() { // A sprite pixel was popped (transparent or not)
+                        // Sprite consumption logic (copied and adapted for this path)
+                        if s_pixel_opt.is_some() {
                             if self.sprite_fifo.is_empty() && self.sprite_pixels_loaded_into_fifo {
                                 if let Some(sprite_idx) = self.current_sprite_to_render_idx {
-                                    // Check if this sprite is truly done (screen_x has passed its last pixel)
                                     let sprite_data = &self.line_sprite_data[sprite_idx];
-                                     // x_pos is 1-indexed like, x_pos=8 means pixels at screen_x = 0..7
-                                    if self.screen_x >= sprite_data.x_pos {
+                                    if self.screen_x >= sprite_data.x_pos { // screen_x is already advanced
                                         self.current_sprite_to_render_idx = None;
                                         self.sprite_pixels_loaded_into_fifo = false;
                                         self.sprite_fetcher_pixel_push_idx = 0;
-                                        // self.sprite_fifo.clear(); // Already empty
                                     }
                                 }
                             }
                         }
-                    } else if (self.lcdc & 0x01) == 0 && (self.lcdc & (1 << 1)) == 0 {
-                        // If both BG and OBJ are disabled, output color 0
-                        self.current_scanline_color_indices[self.screen_x as usize] = 0;
-                        self.current_scanline_pixel_source[self.screen_x as usize] = PixelSource::Background;
+
+                    } else if final_pixel_data.is_some() { // master_bg_win_enable is true AND we have a mixed pixel (from BG/Win + Sprite)
+                        self.current_scanline_color_indices[self.screen_x as usize] = final_pixel_data.as_ref().unwrap().color_index;
+                        self.current_scanline_pixel_source[self.screen_x as usize] = final_pixel_source;
                         self.screen_x += 1;
-                    } else if bg_pixel_data.is_none() && sprite_pixel_data.is_none() && ((self.lcdc & 0x01) !=0 || (self.lcdc & (1 << 1)) != 0) {
-                        // If one or both layers are enabled, but FIFOs are empty (e.g. fetcher stalled, or pixels discarded by SCX)
-                        // PPU doesn't advance screen_x. It waits for pixels. Loop will continue.
-                        // This 'else if' might not be strictly needed if the main loop structure handles stalls.
+
+                        // Sprite consumption logic (original position)
+                        if s_pixel_opt.is_some() {
+                            if self.sprite_fifo.is_empty() && self.sprite_pixels_loaded_into_fifo {
+                                if let Some(sprite_idx) = self.current_sprite_to_render_idx {
+                                    let sprite_data = &self.line_sprite_data[sprite_idx];
+                                    if self.screen_x >= sprite_data.x_pos {
+                                        self.current_sprite_to_render_idx = None;
+                                        self.sprite_pixels_loaded_into_fifo = false;
+                                        self.sprite_fetcher_pixel_push_idx = 0;
+                                    }
+                                }
+                            }
+                        }
+                    } else if bg_pixel_data.is_none() && master_bg_win_enable {
+                        // Master BG/Win is enabled, but bg_fifo was empty. PPU stalls. screen_x does not advance.
+                        // Sprite FIFO might have pixels, but we wait for BG/Win pixel first.
                     }
+                    // The case for "(self.lcdc & (1 << 1)) == 0 && master_bg_win_enable && bg_pixel_data.is_some() && s_pixel_opt.is_none()"
+                    // (i.e., OBJ disabled, BG/Win enabled, BG pixel available, no sprite)
+                    // is naturally handled by the final_pixel_data.is_some() block, as final_pixel_data would be the bg_pixel_data.
                 }
 
 
@@ -496,64 +587,117 @@ impl Ppu {
         if self.fetcher_state_cycle < 2 { return; }
         self.fetcher_state_cycle = 0;
 
-        let bg_tile_map_base_addr = if (self.lcdc >> 3) & 0x01 == 0 { 0x9800 } else { 0x9C00 };
-        let bg_win_tile_data_select = (self.lcdc >> 4) & 0x01;
+        //let bg_tile_map_base_addr = if (self.lcdc >> 3) & 0x01 == 0 { 0x9800 } else { 0x9C00 }; // Original BG only
+        let tile_data_select = (self.lcdc >> 4) & 0x01; // LCDC.4 for BG/Win tile data source is common
         let is_cgb = self.model.is_cgb_family();
 
         match self.fetcher_state {
             FetcherState::GetTile => {
+                let tile_map_base_addr: u16;
+                // effective_map_x and effective_map_y are derived from self.fetcher_map_x and self.fetcher_map_y.
+                // For BG: self.fetcher_map_x = self.scx + pixels_processed_in_bg; self.fetcher_map_y = self.scy + self.ly;
+                // For Win: self.fetcher_map_x = pixels_processed_in_win_line; self.fetcher_map_y = self.window_internal_line_counter;
+                // These are divided by 8 to get tile column/row.
+
+                if self.fetcher_is_for_window {
+                    tile_map_base_addr = if (self.lcdc >> 6) & 0x01 == 0 { 0x9800 } else { 0x9C00 }; // LCDC.6 for Window Tile Map
+                    // self.fetcher_map_x is already 0-indexed for the window's first tile to be fetched.
+                    // self.fetcher_map_y is self.window_internal_line_counter.
+                } else { // Fetching for Background
+                    tile_map_base_addr = if (self.lcdc >> 3) & 0x01 == 0 { 0x9800 } else { 0x9C00 }; // LCDC.3 for BG Tile Map
+                    // self.fetcher_map_x is self.scx.wrapping_add(current_x_offset_for_bg_fetcher)
+                    // self.fetcher_map_y is self.scy.wrapping_add(self.ly)
+                }
+
                 let tile_row_in_map = (self.fetcher_map_y / 8) as u16;
                 let tile_col_in_map = (self.fetcher_map_x / 8) as u16;
-                let tile_number_map_addr = bg_tile_map_base_addr + (tile_row_in_map * 32) + tile_col_in_map;
+
+                let tile_number_map_addr = tile_map_base_addr + (tile_row_in_map * 32) + tile_col_in_map;
                 self.fetcher_tile_number = self.read_vram_bank_agnostic(tile_number_map_addr, 0);
                 self.fetcher_tile_attributes = if is_cgb { self.read_vram_bank_agnostic(tile_number_map_addr, 1) } else { 0 };
-                if bg_win_tile_data_select == 1 { self.fetcher_tile_data_base_addr = 0x8000 + (self.fetcher_tile_number as u16 * 16); }
-                else { self.fetcher_tile_data_base_addr = 0x9000u16.wrapping_add(((self.fetcher_tile_number as i8) as i16 * 16) as u16); }
+
+                if tile_data_select == 1 { // Common for BG and Window: 0x8000 addressing mode (unsigned index)
+                    self.fetcher_tile_data_base_addr = 0x8000 + (self.fetcher_tile_number as u16 * 16);
+                } else { // Common for BG and Window: 0x8800 addressing mode (signed index relative to 0x9000)
+                    self.fetcher_tile_data_base_addr = 0x9000u16.wrapping_add(((self.fetcher_tile_number as i8) as i16 * 16) as u16);
+                }
                 self.fetcher_state = FetcherState::GetDataLow;
             }
             FetcherState::GetDataLow => {
+                // self.fetcher_map_y is already correctly set for either BG (scy.wrapping_add(ly))
+                // or Window (self.window_internal_line_counter) context.
                 let mut line_in_tile = (self.fetcher_map_y % 8) as u16;
-                if is_cgb && (self.fetcher_tile_attributes & (1 << 2)) != 0 { line_in_tile = 7 - line_in_tile; }
+                // CGB vertical flip: uses attribute bit 2 (0x04) as specified in task.
+                // Pan Docs: BG Map Attr Bit 6 for VFlip. Task specifies to keep existing (1<<2) for now.
+                if is_cgb && (self.fetcher_tile_attributes & (1 << 2)) != 0 {
+                    line_in_tile = 7 - line_in_tile;
+                }
                 let tile_bytes_offset = line_in_tile * 2;
                 let data_addr_plane1 = self.fetcher_tile_data_base_addr + tile_bytes_offset;
+                // CGB VRAM bank for tile data: uses attribute bit 3 (0x08)
                 let tile_data_vram_bank = if is_cgb { (self.fetcher_tile_attributes >> 3) & 0x01 } else { 0 };
                 self.fetcher_tile_line_data_bytes[0] = self.read_vram_bank_agnostic(data_addr_plane1, tile_data_vram_bank);
                 self.fetcher_state = FetcherState::GetDataHigh;
             }
             FetcherState::GetDataHigh => {
                 let mut line_in_tile = (self.fetcher_map_y % 8) as u16;
-                if is_cgb && (self.fetcher_tile_attributes & (1 << 2)) != 0 { line_in_tile = 7 - line_in_tile; }
+                // CGB vertical flip: uses attribute bit 2 (0x04)
+                if is_cgb && (self.fetcher_tile_attributes & (1 << 2)) != 0 {
+                    line_in_tile = 7 - line_in_tile;
+                }
                 let tile_bytes_offset = line_in_tile * 2;
                 let data_addr_plane2 = self.fetcher_tile_data_base_addr + tile_bytes_offset + 1;
+                // CGB VRAM bank for tile data: uses attribute bit 3 (0x08)
                 let tile_data_vram_bank = if is_cgb { (self.fetcher_tile_attributes >> 3) & 0x01 } else { 0 };
                 self.fetcher_tile_line_data_bytes[1] = self.read_vram_bank_agnostic(data_addr_plane2, tile_data_vram_bank);
                 self.fetcher_state = FetcherState::PushToFifo;
             }
             FetcherState::PushToFifo => {
-                if self.pixels_to_discard_at_line_start > 0 {
-                    self.pixels_to_discard_at_line_start -= 1;
-                    self.fetcher_pixel_push_idx += 1;
-                    if self.fetcher_pixel_push_idx == 8 {
-                        self.fetcher_pixel_push_idx = 0;
-                        self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8);
-                        self.fetcher_state = FetcherState::GetTile;
+                // Pixel Discard Logic
+                if self.fetcher_is_for_window {
+                    if self.pixels_to_discard_for_window_line_start > 0 {
+                        self.pixels_to_discard_for_window_line_start -= 1;
+                        self.fetcher_pixel_push_idx += 1;
+                        if self.fetcher_pixel_push_idx == 8 { // Current tile fully processed (all its pixels discarded or pushed)
+                            self.fetcher_pixel_push_idx = 0;
+                            self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8); // Advance to next tile in window map
+                            self.fetcher_state = FetcherState::GetTile;
+                        }
+                        return; // Important: exit tick_fetcher for this cycle
                     }
-                    return;
+                } else { // Fetching for Background
+                    if self.pixels_to_discard_at_line_start > 0 { // This is for SCX fine scroll
+                        self.pixels_to_discard_at_line_start -= 1;
+                        self.fetcher_pixel_push_idx += 1;
+                        if self.fetcher_pixel_push_idx == 8 {
+                            self.fetcher_pixel_push_idx = 0;
+                            self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8); // Advance to next tile in BG map
+                            self.fetcher_state = FetcherState::GetTile;
+                        }
+                        return; // Important: exit tick_fetcher for this cycle
+                    }
                 }
 
+                // Pixel Pushing Logic (after discard checks have passed for the current pixel index)
                 if self.bg_fifo.is_full() { return; }
+
                 let pixels = self.decode_tile_line_to_pixels(
                     self.fetcher_tile_line_data_bytes[0], self.fetcher_tile_line_data_bytes[1],
-                    self.fetcher_tile_attributes, is_cgb);
+                    self.fetcher_tile_attributes, is_cgb); // HFlip (attr & (1<<1)) is handled in decode
+
                 let pixel_data = PixelData { color_index: pixels[self.fetcher_pixel_push_idx as usize] };
+
                 if self.bg_fifo.push(pixel_data).is_ok() {
                     self.fetcher_pixel_push_idx += 1;
-                    if self.fetcher_pixel_push_idx == 8 {
+                    if self.fetcher_pixel_push_idx == 8 { // Current tile fully pushed
                         self.fetcher_pixel_push_idx = 0;
-                        self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8);
+                        self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8); // Advance to next tile (applies to BG or Window map)
                         self.fetcher_state = FetcherState::GetTile;
                     }
-                } else { return; }
+                } else {
+                    // FIFO was full when trying to push. Do nothing more this cycle.
+                    return;
+                }
             }
         }
     }
@@ -576,6 +720,29 @@ impl Ppu {
         self.stat = (value & 0b01111000) | (self.stat & 0b10000111);
         let new_stat_int_line = self.eval_stat_interrupt_conditions();
         if !old_stat_int_line && new_stat_int_line { self.stat_interrupt_requested = true; }
+    }
+
+    pub fn update_lyc(&mut self, value: u8) {
+        // Capture interrupt condition state *before* any changes to LYC or STAT bit 2
+        let previous_stat_interrupt_line = self.eval_stat_interrupt_conditions();
+        self.lyc = value;
+
+        // Update STAT bit 2 (LYC=LY flag) based on the new LYC
+        if self.ly == self.lyc {
+            self.stat |= 1 << 2;
+        } else {
+            self.stat &= !(1 << 2);
+        }
+
+        // Check if this change (to LYC and subsequently STAT bit 2) triggered an interrupt condition
+        // This check covers cases where LYC=LY becomes true AND LYC interrupts are enabled,
+        // OR if LYC=LY was already true but another condition (e.g. mode interrupt) that was false just became true
+        // due to the STAT bit 2 update (though less likely for STAT bit 2 to affect other mode conditions).
+        // The key is the overall interrupt line state change.
+        let current_stat_interrupt_line = self.eval_stat_interrupt_conditions();
+        if !previous_stat_interrupt_line && current_stat_interrupt_line {
+            self.stat_interrupt_requested = true;
+        }
     }
 
     fn read_vram_bank_agnostic(&self, addr: u16, bank: u8) -> u8 {
@@ -628,6 +795,8 @@ impl Ppu {
 
     fn decode_tile_line_to_pixels( &self, plane1_byte: u8, plane2_byte: u8, cgb_attributes: u8, is_cgb: bool,) -> [u8; 8] {
         let mut pixels = [0u8; 8];
+        // CGB horizontal flip: uses attribute bit 1 (0x02) as specified in task.
+        // Pan Docs: BG Map Attr Bit 5 for HFlip. Task specifies to keep existing (1<<1) for now.
         let horizontal_flip = is_cgb && (cgb_attributes & (1 << 1)) != 0;
         for i in 0..8 {
             let bit_pos = if horizontal_flip { i } else { 7 - i };

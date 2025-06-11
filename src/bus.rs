@@ -604,7 +604,7 @@ impl Bus {
                     0xFF42 => self.ppu.scy = value,
                     0xFF43 => self.ppu.scx = value,
                     // 0xFF44 (LY) is read-only for CPU
-                    0xFF45 => self.ppu.lyc = value,
+                    0xFF45 => self.ppu.update_lyc(value), // LYC: Call PPU method to handle update and STAT check
                     0xFF46 => {
                         // DMA - OAM DMA Start Register
                         self.oam_dma_source_address_upper = value;
