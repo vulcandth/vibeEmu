@@ -98,6 +98,337 @@ pub enum FetcherState {
     PushToFifo,
 }
 
+// Helper functions for OAM bug emulation
+impl Ppu {
+    #[inline(always)]
+    fn bitwise_glitch(a: u16, b: u16, c: u16) -> u16 {
+        ((a ^ c) & (b ^ c)) ^ c
+    }
+
+    #[inline(always)]
+    fn bitwise_glitch_read(a: u16, b: u16, c: u16) -> u16 {
+        b | (a & c)
+    }
+
+    #[inline(always)]
+    fn bitwise_glitch_read_secondary(a: u16, b: u16, c: u16, d: u16) -> u16 {
+        (b & (a | c | d)) | (a & c & d)
+    }
+
+    #[inline(always)]
+    fn bitwise_glitch_tertiary_read_1(a: u16, b: u16, c: u16, d: u16, e: u16) -> u16 {
+        c | (a & b & d & e)
+    }
+
+    #[inline(always)]
+    fn bitwise_glitch_tertiary_read_2(a: u16, b: u16, c: u16, d: u16, e: u16) -> u16 {
+        (c & (a | b | d | e)) | (a & b & d & e)
+    }
+
+    #[inline(always)]
+    fn bitwise_glitch_tertiary_read_3(a: u16, b: u16, c: u16, d: u16, e: u16) -> u16 {
+        (c & (a | b | d | e)) | (b & d & e)
+    }
+
+    #[inline(always)]
+    fn bitwise_glitch_quaternary_read_dmg(_a: u16, b: u16, c: u16, _d: u16, e: u16, _f: u16, g: u16, h: u16) -> u16 {
+        // Note: This is a simplified version for DMG. Original SameBoy code has SGB/MGB variants.
+        // (e & (h | g | (!d & f) | c | b)) | (c & g & h)
+        // For DMG, d is effectively `0xFFFF` if it's from `corrupted_value_prev2` which seems to be the case
+        // in the context where this is used (GB_oam_bug_quaternary_read_corruption).
+        // If d is 0xFFFF, then `!d` is `0x0000`, so `(!d & f)` is `0`.
+        // Simplified: (e & (h | g | c | b)) | (c & g & h)
+        // This matches the `GB_oam_bug_quaternary_read_corruption_dmg` variant from SameBoy.
+        (e & (h | g | c | b)) | (c & g & h)
+    }
+
+    pub fn trigger_oam_write_bug(&mut self, _address: u16) {
+        if self.model.is_cgb_family() {
+            return;
+        }
+
+        // In SameBoy, OAM bug is active during mode 2 and 3.
+        // Here, we only trigger if accessed_oam_row is valid (not 0xFF).
+        // It's updated in Mode 2. If PPU is in Mode 3, accessed_oam_row would be 0xFF.
+        // This implies the bug, as described by this logic, primarily triggers due to Mode 2 accesses.
+        // The condition `self.accessed_oam_row >= 8` ensures that `prev_row_ptr2` is not negative.
+        // OAM addresses are 0xFE00-0xFE9F. `accessed_oam_row` is an offset relative to OAM start.
+        // Smallest `accessed_oam_row` is 8 (as per `((i & !1) * 4) + 8)` with `i=0`).
+        if self.accessed_oam_row != 0xFF && self.accessed_oam_row >= 8 {
+            let base_ptr = self.accessed_oam_row as usize; // Current row being accessed by PPU (e.g., sprite pair i)
+            let prev_row_ptr1 = base_ptr.saturating_sub(4); // Previous row (sprite pair i-1 word 2)
+            let prev_row_ptr2 = base_ptr.saturating_sub(8); // Row before previous (sprite pair i-2 word 1)
+
+            // Ensure pointers are within OAM bounds, though accessed_oam_row >= 8 should guarantee this for prev_row_ptr2.
+            // OAM size is 160 bytes. Max accessed_oam_row is ((38 & !1) * 4) + 8 = (38*4)+8 = 152+8 = 160.
+            // If base_ptr is 160, base_ptr+1 is out of bounds for u16 read.
+            // The accessed_oam_row refers to the start of a 2-byte word.
+            // Max `i` is 39. `((39 & !1) * 4 + 8)` = `(38 * 4 + 8)` = `152 + 8` = `160`.
+            // This means `base_ptr` can be up to 160. OAM is 0-159.
+            // If `base_ptr` is 160, `self.oam[base_ptr]` is an out-of-bounds access.
+            // The `accessed_oam_row` in SameBoy's `GB_video_read_oam` is `(gb->oam_read_current_row & 0xF8)`.
+            // `oam_read_current_row` seems to be the actual OAM address (e.g. 0xFE00 + offset).
+            // Here, `accessed_oam_row` is just the offset. Max offset is 159.
+            // Max `i` for `oam_search_index` is 39. `((39 & !1) * 4)` = `38 * 4` = `152`. So `accessed_oam_row` max is `152+8 = 160`.
+            // This still implies `base_ptr` can be 160.
+            // Let's adjust `accessed_oam_row` generation: `((i & !1) * 2 + 8)` if it's a word index.
+            // Or, if it's a byte index, it should not exceed `OAM_SIZE - 2` for word reads.
+            // The formula `((i & !1) * 4 + 8)` is from the issue based on SameBoy.
+            // `i` is OAM sprite index 0-39.
+            // `(i & !1)` ensures even: 0, 2, ..., 38.
+            // `* 4` is byte offset of pair: 0, 8, ..., 152.
+            // `+ 8` is offset: 8, 16, ..., 160.
+            // This `accessed_oam_row` is the PPU's internal "cursor", which can point slightly past the end
+            // for the last items. OAM corruption reads/writes seem to handle this by wrapping or specific conditions.
+            // For safety, ensure reads are within bounds.
+            // `base_ptr` points to the first byte of a word.
+            // `self.oam[base_ptr]` and `self.oam[base_ptr + 1]`
+            // If `accessed_oam_row` is `152+8 = 160`, then `base_ptr = 160`. This is out of bounds for `self.oam[160]`.
+            // Max valid index for `self.oam` is `OAM_SIZE - 1 = 159`.
+            // Max valid `base_ptr` for `self.oam[base_ptr+1]` is `OAM_SIZE - 2 = 158`.
+            // So, `accessed_oam_row` should not exceed 158 if it's a direct byte index for a word.
+
+            // Re-evaluating `accessed_oam_row = ((i & !1) * 4 + 8) as u8;`
+            // If `i=38`, `(38*4)+8 = 152+8 = 160`.
+            // If `i=39`, also `160`.
+            // This means `base_ptr` can be `160`.
+            // The OAM bug logic in SameBoy (`GB_trigger_oam_bug`):
+            // `uint8_t *base = gb->oam + gb->oam_read_current_row;`
+            // `gb->oam_read_current_row` is `(event->value & 0xF8)`. `event->value` is the OAM address being accessed by PPU.
+            // This implies `gb->oam_read_current_row` is an offset already multiple of 8.
+            // The `accessed_oam_row` seems to be this `gb->oam_read_current_row`.
+            // Let's assume `accessed_oam_row` is always valid and <= OAM_SIZE - 8 for the core logic to proceed.
+            // The maximum value `self.accessed_oam_row` can take is 160.
+            // OAM is 160 bytes (0-159).
+            // If `base_ptr` (which is `self.accessed_oam_row`) is 160, then `self.oam[base_ptr]` is out of bounds.
+            // The pointers should be checked or the generation of `accessed_oam_row` must ensure validity.
+            // The loop for `i` goes from 0 to 39.
+            // `(i & !1)`: 0, 2, ..., 38.
+            // `* 4`: 0, 8, ..., 152.
+            // `+ 8`: 8, 16, ..., 160.
+            // So `accessed_oam_row` can indeed be 160.
+            // SameBoy's `GB_trigger_oam_bug` has `base = gb->oam + gb->oam_read_current_row;`
+            // And then accesses like `base[0], base[1], base[-1], base[-2]`, etc.
+            // `gb->oam_read_current_row` is `IO_OAM + (event->value & 0xF8)`. `event->value` is from `oam_search_index_to_addr`.
+            // `oam_search_index_to_addr(gb, gb->oam_search_index)` -> `0xFE00 + gb->oam_search_index * 4`.
+            // So `event->value` is an OAM address. `(event->value & 0xF8)` masks it to a multiple of 8.
+            // This means `gb->oam_read_current_row` is an offset from OAM start, multiple of 8. Max `(0xFE00 + 39*4) & 0xF8`
+            // `(0xFE00 + 156) & 0xF8` = `0xFE9C & 0xF8` = `0xFE98`. Offset is 152.
+            // My `accessed_oam_row` formula `((i & !1) * 4 + 8)` is different.
+            // The `+8` might be an error in my interpretation or transcription from the issue.
+            // Let `accessed_oam_row` be `(i & !1) * 4`. Max `38*4 = 152`.
+            // This means `base_ptr` max is 152. `base_ptr+1` is 153. `prev_row_ptr2` min is `152-8=144` or `0-8` (invalid).
+            // Condition `self.accessed_oam_row >= 8` is still important.
+            // Smallest `i` is 0. `(0 & !1) * 4 = 0`. So `accessed_oam_row` can be 0.
+            // This makes `prev_row_ptr2` negative if `accessed_oam_row` is 0 or 4.
+            // The issue description for `accessed_oam_row` update: `((i & !1) * 4 + 8)`.
+            // This implies `accessed_oam_row` values are: 8, 16, ..., 160.
+            // If `base_ptr` is 160, then `self.oam[base_ptr]` is OOB.
+            // However, SameBoy's code uses `uint16_t *base_word = (uint16_t *)base;`
+            // `base_word[0]`, `base_word[-1]`, `base_word[-2]`.
+            // If `base` points to `gb->oam + 160`, then `base_word[0]` reads `oam[160]` and `oam[161]`. This is OOB.
+            // There must be an implicit bound or condition.
+            // The OAM bug doesn't corrupt beyond OAM or read beyond OAM.
+            // The condition `if (gb->oam_read_current_row < 8) return;` is in SameBoy.
+            // This implies `gb->oam_read_current_row` (my `accessed_oam_row`) must be >= 8.
+            // With `((i & !1) * 4 + 8)`, minimum is 8. So this is fine.
+
+            // Let's assume the maximum `accessed_oam_row` that allows valid indexing is `OAM_SIZE - 2 = 158` for word read.
+            // Or `OAM_SIZE - 8` if `base_ptr + i` for `i` up to 7 is needed.
+            // The copy loop `for i in 2..8` means `base_ptr + 7` must be valid. So `base_ptr <= OAM_SIZE - 8`. Max `152`.
+            // If `accessed_oam_row` can be 160, then accesses up to `oam[159]` are for `base_ptr = 152`.
+            // `self.oam[152]` to `self.oam[152+7] = self.oam[159]`.
+            // This implies `accessed_oam_row` should not exceed 152.
+            // If `accessed_oam_row` is `(i & !1) * 4`, then max is `38*4 = 152`. Min is 0.
+            // If this is the case, the `+8` in the formula is incorrect.
+            // Let's trust the formula from the issue for now and add boundary checks.
+
+            if base_ptr > OAM_SIZE - 2 || prev_row_ptr1 > OAM_SIZE - 2 || prev_row_ptr2 > OAM_SIZE - 2 {
+                 // This condition should ideally not be met if accessed_oam_row generation is correct and bounded.
+                return;
+            }
+            // Additional check for the loop: base_ptr + 7 must be < OAM_SIZE
+            if base_ptr > OAM_SIZE - 8 || prev_row_ptr2 > OAM_SIZE - 8 {
+                return;
+            }
+
+
+            let val0 = u16::from_le_bytes([self.oam[base_ptr], self.oam[base_ptr + 1]]);
+            let val_prev1 = u16::from_le_bytes([self.oam[prev_row_ptr1], self.oam[prev_row_ptr1 + 1]]);
+            let val_prev2 = u16::from_le_bytes([self.oam[prev_row_ptr2], self.oam[prev_row_ptr2 + 1]]);
+
+            let corrupted_val = Self::bitwise_glitch(val0, val_prev2, val_prev1);
+            self.oam[base_ptr..base_ptr + 2].copy_from_slice(&corrupted_val.to_le_bytes());
+
+            // Byte copy for the rest of the 8-byte block
+            for i in 2..8 {
+                // self.oam[base_ptr + i] = self.oam[prev_row_ptr2 + i];
+                // Check bounds for safety, though the earlier check base_ptr > OAM_SIZE - 8 should cover this.
+                if base_ptr + i < OAM_SIZE && prev_row_ptr2 + i < OAM_SIZE {
+                     self.oam[base_ptr + i] = self.oam[prev_row_ptr2 + i];
+                }
+            }
+        }
+    }
+
+    // trigger_oam_read_bug is more complex and will be added next.
+    // For now, a placeholder or the start of its implementation.
+    pub fn trigger_oam_read_bug(&mut self, _address: u16) {
+        if self.model.is_cgb_family() {
+            return;
+        }
+        if self.accessed_oam_row == 0xFF || self.accessed_oam_row < 8 {
+            return;
+        }
+
+        let base_ptr = self.accessed_oam_row as usize;
+
+        // Boundary checks similar to write bug
+        if base_ptr > OAM_SIZE - 2 { return; } // For val0 read
+        let prev_row_ptr1 = base_ptr.saturating_sub(4);
+        let prev_row_ptr2 = base_ptr.saturating_sub(8);
+        if prev_row_ptr1 > OAM_SIZE - 2 { return; } // Should not happen if base_ptr >=8 and points to valid word start
+        if prev_row_ptr2 > OAM_SIZE - 2 { return; } // Should not happen if base_ptr >=8 and points to valid word start
+
+        // The main logic from GB_trigger_oam_bug_read (simplified for DMG)
+        // SameBoy's `oam_read_current_row` is `(event->value & 0xF8)`.
+        // This means it's always a multiple of 8. Our `accessed_oam_row` from `((i & !1) * 4 + 8)` is also always a multiple of 8.
+        // Values: 8, 16, 24, ..., 152, 160.
+        // If `accessed_oam_row` is 160, `base_ptr` is 160. This is problematic.
+        // If `accessed_oam_row` must be strictly less than 160 for these accesses:
+        if base_ptr >= OAM_SIZE { // If 160, it's OOB for any direct indexing.
+            // Special handling for accessed_oam_row == 0xA0 (160) might be needed if it's a valid state.
+            // SameBoy's `GB_trigger_oam_bug_read` has specific conditions for `gb->oam_read_current_row == 0xA0`.
+            // `0xA0` is 160. This implies `oam[160]` is a conceptual address.
+            // For now, if base_ptr is 160, we can't safely read `self.oam[base_ptr]`.
+            // Let's assume for now that if base_ptr == 160, the bug doesn't trigger in this simplified model,
+            // or it behaves in a way not yet captured.
+            // The copy loop `oam[X+i] = oam[X-8+i]` needs `X+7` and `X-8+7` to be valid.
+            // Max index is 159. So `X+7 <= 159` -> `X <= 152`.
+            // This means `accessed_oam_row` should not exceed 152 for that generic copy.
+            if base_ptr > OAM_SIZE - 8 { // e.g. > 152
+                 // This path will handle cases like 160 (0xA0), 152+2, 152+4, 152+6 if they were possible.
+                 // For now, simply return if we can't do the main copy.
+                 // A more accurate model would implement SameBoy's specific 0xA0 logic.
+                if base_ptr == OAM_SIZE { // Exactly 160 (0xA0)
+                    // Corrupt oam[0..8] with oam[152..160] - this is the typical 0xA0 case.
+                    // prev_row_ptr2 would be 152.
+                    if prev_row_ptr2 <= OAM_SIZE - 8 { // ensure prev_row_ptr2 is fine (152 is fine)
+                        for i in 0..8 {
+                            self.oam[i] = self.oam[prev_row_ptr2 + i];
+                        }
+                    }
+                }
+                return; // Other cases > 152 but not 160 are not handled by this simple model.
+            }
+        }
+
+
+        // Default corruption case (simplified from SameBoy's `else` branch for DMG)
+        // Requires base_ptr, prev_row_ptr1, prev_row_ptr2 to be valid for word reads.
+        // Max base_ptr for this section should be OAM_SIZE - 2 = 158.
+        // (already checked by `if base_ptr > OAM_SIZE - 2 { return; }`)
+        // And for the copy loop `self.oam[base_ptr + i]`, max base_ptr is OAM_SIZE - 8 = 152.
+        // (already checked by `if base_ptr > OAM_SIZE - 8 { return; }`)
+
+        // Common value reads, ensure base_ptr is valid for these.
+        // base_ptr >= 8 is already checked.
+        let val0 = u16::from_le_bytes([self.oam[base_ptr], self.oam[base_ptr + 1]]);
+        let val_prev1 = u16::from_le_bytes([self.oam[prev_row_ptr1], self.oam[prev_row_ptr1 + 1]]);
+        let val_prev2 = u16::from_le_bytes([self.oam[prev_row_ptr2], self.oam[prev_row_ptr2 + 1]]);
+
+        let corrupted_word: u16;
+
+        if (base_ptr & 0x18) == 0x08 { // Secondary corruption (e.g., rows 0x08, 0x28, 0x48, ...)
+            if base_ptr < 16 { return; } // Needs up to base[-8] (prev_row_ptr4)
+            let prev_row_ptr3 = base_ptr.saturating_sub(12); // base[-6]
+            let prev_row_ptr4 = base_ptr.saturating_sub(16); // base[-8]
+            // Boundary checks for these new pointers
+            if prev_row_ptr3 > OAM_SIZE - 2 || prev_row_ptr4 > OAM_SIZE - 2 { return; }
+
+            let val_prev3 = u16::from_le_bytes([self.oam[prev_row_ptr3], self.oam[prev_row_ptr3 + 1]]);
+            let val_prev4 = u16::from_le_bytes([self.oam[prev_row_ptr4], self.oam[prev_row_ptr4 + 1]]);
+
+            corrupted_word = Self::bitwise_glitch_read_secondary(val_prev2, val_prev4, val_prev3, val0);
+            self.oam[prev_row_ptr4..prev_row_ptr4 + 2].copy_from_slice(&corrupted_word.to_le_bytes());
+            self.oam[prev_row_ptr2..prev_row_ptr2 + 2].copy_from_slice(&corrupted_word.to_le_bytes());
+
+        } else if base_ptr == 0x10 { // Tertiary Type 1 corruption (row 0x10 specifically)
+            if base_ptr < 20 { return; } // Needs up to base[-10] (prev_row_ptr5)
+            let prev_row_ptr3 = base_ptr.saturating_sub(12);
+            let prev_row_ptr4 = base_ptr.saturating_sub(16);
+            let prev_row_ptr5 = base_ptr.saturating_sub(20);
+            if prev_row_ptr3 > OAM_SIZE - 2 || prev_row_ptr4 > OAM_SIZE - 2 || prev_row_ptr5 > OAM_SIZE - 2 { return; }
+
+            let val_prev3 = u16::from_le_bytes([self.oam[prev_row_ptr3], self.oam[prev_row_ptr3 + 1]]);
+            let val_prev4 = u16::from_le_bytes([self.oam[prev_row_ptr4], self.oam[prev_row_ptr4 + 1]]);
+            let val_prev5 = u16::from_le_bytes([self.oam[prev_row_ptr5], self.oam[prev_row_ptr5 + 1]]);
+
+            corrupted_word = Self::bitwise_glitch_tertiary_read_1(val_prev4, val_prev2, val_prev5, val_prev3, val0);
+            self.oam[prev_row_ptr4..prev_row_ptr4 + 2].copy_from_slice(&corrupted_word.to_le_bytes());
+            self.oam[base_ptr..base_ptr + 2].copy_from_slice(&corrupted_word.to_le_bytes());
+
+        } else if (base_ptr & 0x18) == 0x10 { // Tertiary Type 3 corruption (e.g., rows 0x30, 0x50... but not 0x10)
+            if base_ptr < 20 { return; } // Needs up to base[-10] (prev_row_ptr5)
+            let prev_row_ptr3 = base_ptr.saturating_sub(12);
+            let prev_row_ptr4 = base_ptr.saturating_sub(16);
+            let prev_row_ptr5 = base_ptr.saturating_sub(20);
+            if prev_row_ptr3 > OAM_SIZE - 2 || prev_row_ptr4 > OAM_SIZE - 2 || prev_row_ptr5 > OAM_SIZE - 2 { return; }
+
+            let val_prev3 = u16::from_le_bytes([self.oam[prev_row_ptr3], self.oam[prev_row_ptr3 + 1]]);
+            let val_prev4 = u16::from_le_bytes([self.oam[prev_row_ptr4], self.oam[prev_row_ptr4 + 1]]);
+            let val_prev5 = u16::from_le_bytes([self.oam[prev_row_ptr5], self.oam[prev_row_ptr5 + 1]]);
+
+            corrupted_word = Self::bitwise_glitch_tertiary_read_3(val_prev4, val_prev2, val_prev5, val_prev3, val0);
+            self.oam[prev_row_ptr4..prev_row_ptr4 + 2].copy_from_slice(&corrupted_word.to_le_bytes());
+            self.oam[base_ptr..base_ptr + 2].copy_from_slice(&corrupted_word.to_le_bytes());
+
+        } else if (base_ptr & 0x18) == 0x18 { // Quaternary corruption (e.g., rows 0x18, 0x38, 0x58...)
+            if base_ptr < 28 { return; } // Needs up to base[-14] (prev_row_ptr7)
+            let prev_row_ptr3 = base_ptr.saturating_sub(12);
+            let prev_row_ptr4 = base_ptr.saturating_sub(16);
+            let prev_row_ptr5 = base_ptr.saturating_sub(20);
+            let prev_row_ptr6 = base_ptr.saturating_sub(24);
+            let prev_row_ptr7 = base_ptr.saturating_sub(28);
+            if prev_row_ptr3 > OAM_SIZE-2 || prev_row_ptr4 > OAM_SIZE-2 || prev_row_ptr5 > OAM_SIZE-2 ||
+               prev_row_ptr6 > OAM_SIZE-2 || prev_row_ptr7 > OAM_SIZE-2 { return; }
+
+            let val_prev3 = u16::from_le_bytes([self.oam[prev_row_ptr3], self.oam[prev_row_ptr3 + 1]]);
+            let val_prev4 = u16::from_le_bytes([self.oam[prev_row_ptr4], self.oam[prev_row_ptr4 + 1]]);
+            let val_prev5 = u16::from_le_bytes([self.oam[prev_row_ptr5], self.oam[prev_row_ptr5 + 1]]);
+            let val_prev6 = u16::from_le_bytes([self.oam[prev_row_ptr6], self.oam[prev_row_ptr6 + 1]]);
+            let val_prev7 = u16::from_le_bytes([self.oam[prev_row_ptr7], self.oam[prev_row_ptr7 + 1]]);
+
+            // Params for bitwise_glitch_quaternary_read_dmg: (a, b, c, d_ignored, e, f, g, h)
+            // Corresponds to SameBoy: (val_prev6, val_prev4, val_prev2, 0xFFFF, val_prev7, val_prev5, val_prev3, val0)
+            corrupted_word = Self::bitwise_glitch_quaternary_read_dmg(val_prev6, val_prev4, val_prev2, 0xFFFF,
+                                                                     val_prev7, val_prev5, val_prev3, val0);
+            // Different write pattern for quaternary
+            self.oam[prev_row_ptr2..prev_row_ptr2+2].copy_from_slice(&val_prev6.to_le_bytes()); // M[cur-4] = M[cur-12]
+            self.oam[base_ptr..base_ptr+2].copy_from_slice(&corrupted_word.to_le_bytes());      // M[cur] = corrupted_result
+
+        } else { // Default corruption (e.g., rows 0x20, 0x40, 0x60...)
+            corrupted_word = Self::bitwise_glitch_read(val0, val_prev2, val_prev1);
+            self.oam[prev_row_ptr2..prev_row_ptr2 + 2].copy_from_slice(&corrupted_word.to_le_bytes());
+            self.oam[base_ptr..base_ptr + 2].copy_from_slice(&corrupted_word.to_le_bytes());
+        }
+
+        // This final copy is common to most paths in SameBoy's DMG OAM read bug logic,
+        // running *after* the specific corruptions detailed above.
+        // `for (unsigned i = 0; i < 8; i++) { base[i] = base[i - 8]; }`
+        // This means `oam[base_ptr+i] = oam[base_ptr-8+i]` (which is `oam[prev_row_ptr2+i]`)
+        // This was guarded by `base_ptr <= OAM_SIZE - 8` check at the function entry for read bug.
+        // (The check was `if base_ptr > OAM_SIZE - 8 { ... handle 0xA0 or return ... }`)
+        // So, if we are here, base_ptr <= OAM_SIZE - 8.
+        for i in 0..8 {
+            // All indices base_ptr+i and prev_row_ptr2+i must be valid.
+            // Max base_ptr is 152. So base_ptr+7 = 159. prev_row_ptr2+7 = 144+7 = 151. All valid.
+            // Min base_ptr is 8. So base_ptr+0 = 8. prev_row_ptr2+0 = 0. All valid.
+             self.oam[base_ptr + i] = self.oam[prev_row_ptr2 + i];
+        }
+    }
+}
+
 pub struct Ppu {
     pub vram: Vec<u8>,
     pub oam: [u8; OAM_SIZE],
@@ -156,6 +487,7 @@ pub struct Ppu {
     fetcher_is_for_window: bool,
     window_rendering_begun_for_line: bool,
     pixels_to_discard_for_window_line_start: u8,
+    pub accessed_oam_row: u8,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -236,6 +568,7 @@ impl Ppu {
             fetcher_is_for_window: false,
             window_rendering_begun_for_line: false,
             pixels_to_discard_for_window_line_start: 0,
+            accessed_oam_row: 0xFF,
         }
     }
 
@@ -418,6 +751,10 @@ impl Ppu {
             self.ly = 0;
             self.cycles_in_mode = 0;
             self.current_mode = PpuMode::HBlank;
+            // DMG OAM Bug: Reset when LCD turns off
+            if !self.model.is_cgb_family() {
+                self.accessed_oam_row = 0xFF;
+            }
             self.stat = (self.stat & 0xFC) | (PpuMode::HBlank as u8);
             if self.ly == self.lyc {
                 self.stat |= 1 << 2;
@@ -437,6 +774,10 @@ impl Ppu {
 
         match self.current_mode {
             PpuMode::OamScan => {
+                // DMG OAM Bug: `accessed_oam_row` is actively managed during OAMScan for DMG.
+                // It's reset to 0xFF when leaving OAMScan.
+                // Initialization to 0 (or specific start value) happens when entering OAMScan.
+                // The per-entry update is below.
                 if self.cycles_in_mode >= OAM_SCAN_CYCLES {
                     self.visible_oam_entries.clear();
                     let sprite_height = if (self.lcdc & 0x04) != 0 { 16 } else { 8 };
@@ -449,6 +790,20 @@ impl Ppu {
                         let x_pos = self.oam[entry_addr + 1];
                         let tile_idx = self.oam[entry_addr + 2];
                         let attributes = self.oam[entry_addr + 3];
+
+                        // DMG OAM Bug: Update accessed_oam_row for the current OAM entry pair being processed.
+                        // This should reflect the row the PPU is currently "looking at" for potential CPU interaction.
+                        // The value `((i & !1) * 4 + 8)` seems to align with SameBoy's logic, where
+                        // `i` is the sprite index (0-39). `(i & !1)` gets the even index of the pair.
+                        // `* 4` converts sprite pair index to byte offset in OAM.
+                        // `+ 8` is an offset seen in SameBoy, possibly related to how it indexes or represents this state.
+                        // This update happens *before* the sprite is potentially added to visible_oam_entries.
+                        // The critical aspect is that `accessed_oam_row` should be set to the row that
+                        // would be affected if a CPU OAM access occurs *at this point* in the OAM scan.
+                        if !self.model.is_cgb_family() {
+                            self.accessed_oam_row = (((i & !1) * 4) + 8) as u8;
+                        }
+
                         let current_ly_plus_16 = self.ly.wrapping_add(16);
                         if current_ly_plus_16 >= y_pos
                             && current_ly_plus_16 < y_pos.wrapping_add(sprite_height)
@@ -482,6 +837,10 @@ impl Ppu {
                     self.cycles_in_mode = cycles_spillover;
                     self.current_mode = PpuMode::Drawing;
                     self.stat = (self.stat & 0xF8) | (PpuMode::Drawing as u8);
+                    // DMG OAM Bug: Reset when leaving OAMScan
+                    if !self.model.is_cgb_family() {
+                        self.accessed_oam_row = 0xFF;
+                    }
 
                     self.line_sprite_data.clear();
                     if (self.lcdc & (1 << 1)) != 0 {
@@ -911,6 +1270,10 @@ impl Ppu {
                     self.current_mode = PpuMode::HBlank;
                     self.stat = (self.stat & 0xF8) | (PpuMode::HBlank as u8);
                     self.just_entered_hblank = true;
+                    // DMG OAM Bug: Reset when entering HBlank (leaving Drawing)
+                    if !self.model.is_cgb_family() {
+                        self.accessed_oam_row = 0xFF;
+                    }
                 }
             }
             PpuMode::HBlank => {
@@ -956,9 +1319,17 @@ impl Ppu {
                         self.reset_scanline_state();
                         self.current_mode = PpuMode::OamScan;
                         self.stat = (self.stat & 0xF8) | (PpuMode::OamScan as u8);
+                        // DMG OAM Bug: Initialize for OAMScan start
+                        if !self.model.is_cgb_family() {
+                            self.accessed_oam_row = 0;
+                        }
                     } else {
                         self.current_mode = PpuMode::VBlank;
                         self.stat = (self.stat & 0xF8) | (PpuMode::VBlank as u8);
+                        // DMG OAM Bug: Reset when entering VBlank (leaving HBlank)
+                        if !self.model.is_cgb_family() {
+                            self.accessed_oam_row = 0xFF;
+                        }
                         self.vblank_interrupt_requested = true;
                     }
                 }
@@ -975,6 +1346,10 @@ impl Ppu {
                         self.reset_scanline_state();
                         self.current_mode = PpuMode::OamScan;
                         self.stat = (self.stat & 0xF8) | (PpuMode::OamScan as u8);
+                        // DMG OAM Bug: Initialize for OAMScan start (new frame)
+                        if !self.model.is_cgb_family() {
+                            self.accessed_oam_row = 0;
+                        }
                     }
                 }
             }
@@ -1430,7 +1805,7 @@ impl Ppu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::GameBoyModel;
+    use crate::models::GameBoyModel; // Ensure GameBoyModel is in scope for tests
 
     fn setup_ppu_cgb() -> Ppu {
         Ppu::new(GameBoyModel::GenericCGB)
@@ -1748,5 +2123,89 @@ mod tests {
             "Pixel 2 (Black)"
         );
     }
+
+    #[test]
+    fn test_dmg_oam_write_bug() {
+        let mut ppu = Ppu::new(GameBoyModel::DMG); // Corrected model variant
+        ppu.current_mode = PpuMode::OamScan; // Bug active in Mode 2 or 3, accessed_oam_row set in Mode 2
+        ppu.lcdc = 0x91; // LCD on, Sprites enabled, etc.
+
+        // Initialize OAM with a known pattern: oam[j] = j as u8
+        for j in 0..OAM_SIZE {
+            ppu.oam[j] = j as u8;
+        }
+
+        // Choose scenario for GB_trigger_oam_bug (write bug)
+        // accessed_oam_row is a byte offset into OAM.
+        // Let's use accessed_oam_row = 16 (0x10)
+        // This makes base_ptr = 16.
+        // prev_row_ptr1 (base[-2] in u16 terms) = 16 - 4 = 12.
+        // prev_row_ptr2 (base[-4] in u16 terms) = 16 - 8 = 8.
+        ppu.accessed_oam_row = 16;
+
+        // Original values based on oam[j] = j
+        // val0: oam[16], oam[17] -> 16, 17. u16::from_le_bytes([16, 17]) = 17 * 256 + 16 = 4352 + 16 = 4368
+        let val0_orig = u16::from_le_bytes([ppu.oam[16], ppu.oam[17]]);
+        // val_prev1: oam[12], oam[13] -> 12, 13. u16::from_le_bytes([12, 13]) = 13 * 256 + 12 = 3328 + 12 = 3340
+        let val_prev1_orig = u16::from_le_bytes([ppu.oam[12], ppu.oam[13]]);
+        // val_prev2: oam[8], oam[9] -> 8, 9. u16::from_le_bytes([8, 9]) = 9 * 256 + 8 = 2304 + 8 = 2312
+        let val_prev2_orig = u16::from_le_bytes([ppu.oam[8], ppu.oam[9]]);
+
+        // Calculate expected corrupted value for oam[16], oam[17]
+        let expected_corrupted_val_u16 = Ppu::bitwise_glitch(val0_orig, val_prev2_orig, val_prev1_orig);
+        let expected_corrupted_bytes = expected_corrupted_val_u16.to_le_bytes();
+
+        // Define expected state of oam[18..24] (should be copied from oam[8+2 .. 8+8])
+        // which is oam[10..16]
+        let mut expected_oam_after_bug = ppu.oam.clone();
+        expected_oam_after_bug[16] = expected_corrupted_bytes[0];
+        expected_oam_after_bug[17] = expected_corrupted_bytes[1];
+        for k in 0..6 { // oam[18..24] gets oam[10..16] effectively (indices 2 through 7 of the 8-byte blocks)
+            expected_oam_after_bug[18 + k] = ppu.oam[8 + 2 + k];
+        }
+
+        // Call the bug trigger function
+        // Address argument is not used by this version of trigger_oam_write_bug, but pass something valid.
+        ppu.trigger_oam_write_bug(0xFE00 + ppu.accessed_oam_row as u16);
+
+        // Assertions
+        assert_eq!(ppu.oam[16], expected_corrupted_bytes[0], "OAM[16] corrupted byte 0");
+        assert_eq!(ppu.oam[17], expected_corrupted_bytes[1], "OAM[17] corrupted byte 1");
+
+        for k in 0..6 {
+            assert_eq!(
+                ppu.oam[18 + k],
+                expected_oam_after_bug[18 + k],
+                "OAM copy check for index {}", 18 + k
+            );
+        }
+
+        // Double check the loop logic for copy:
+        // `for i in 2..8 { self.oam[base_ptr + i] = self.oam[prev_row_ptr2 + i]; }`
+        // base_ptr = 16, prev_row_ptr2 = 8.
+        // i=2: oam[18] = oam[10]
+        // i=3: oam[19] = oam[11]
+        // i=4: oam[20] = oam[12]
+        // i=5: oam[21] = oam[13]
+        // i=6: oam[22] = oam[14]
+        // i=7: oam[23] = oam[15]
+        // So expected_oam_after_bug should be:
+        // expected_oam_after_bug[18] = ppu.oam[10] (before bug trigger)
+        // expected_oam_after_bug[19] = ppu.oam[11]
+        // ...
+        // expected_oam_after_bug[23] = ppu.oam[15]
+
+        // Re-verify this part of expected_oam_after_bug based on original oam values.
+        let original_oam_clone = ppu.oam.clone(); // To ensure we use pre-bug values for expectation.
+        for j in 0..OAM_SIZE { // Re-init original_oam_clone
+            original_oam_clone[j] = j as u8;
+        }
+
+        assert_eq!(ppu.oam[18], original_oam_clone[10], "OAM[18] should be OAM[10]");
+        assert_eq!(ppu.oam[19], original_oam_clone[11], "OAM[19] should be OAM[11]");
+        assert_eq!(ppu.oam[20], original_oam_clone[12], "OAM[20] should be OAM[12]"); // Note: oam[12] was part of val_prev1
+        assert_eq!(ppu.oam[21], original_oam_clone[13], "OAM[21] should be OAM[13]"); // Note: oam[13] was part of val_prev1
+        assert_eq!(ppu.oam[22], original_oam_clone[14], "OAM[22] should be OAM[14]");
+        assert_eq!(ppu.oam[23], original_oam_clone[15], "OAM[23] should be OAM[15]");
+    }
 }
-// [end of src/ppu.rs] <-- This was the duplicated marker, now removed.

@@ -28,7 +28,7 @@ This document outlines the major components, functions, and logic sections that 
 - [ ] **LCDC Register (0xFF40):**
     - [x] Implement full read/write logic (via Bus to PPU fields).
     - [-] Use LCDC bits to control PPU operations:
-        - [-] Bit 0 (BG Display Enable): Logic in place (rendering conditional, actual white screen if disabled is part of palette mapping).
+        - [x] Bit 0 (BG Display Enable): Logic in place (rendering conditional, actual white screen if disabled is part of palette mapping). (Verified: current logic correctly results in color 0 being used, which maps to white via BGP/CGB palettes).
         - [x] Bit 1 (OBJ Display Enable): Used for enabling/disabling sprite rendering pipeline.
         - [x] Bit 2 (OBJ Size): Used in OAM scan and sprite fetching for 8x8 vs 8x16 sprites.
         - [x] Bit 3 (BG Tile Map Display Select): Used by BG tile fetching.
@@ -55,7 +55,7 @@ This document outlines the major components, functions, and logic sections that 
 - [ ] **Sprite (OBJ) Processing:**
     - **OAM Scan (Mode 2):**
         - [x] Scan OAM for sprites visible on the current scanline (up to 10 per line, Y-check, X>0, sorted by X then OAM index).
-        - [ ] Consider X-priority for CGB when multiple sprites share the same X coordinate. (Currently sorts by X for DMG, CGB needs OAM X field check)
+        - [x] Consider X-priority for CGB when multiple sprites share the same X coordinate. (Verified current sort: `a.x_pos.cmp(&b.x_pos).then(a.oam_index.cmp(&b.oam_index))` correctly handles CGB OAM index priority on X tie.)
         - [x] Store OAM data (index, X, Y, tile, attributes) of visible sprites for Mode 3 processing.
     - **Sprite Fetching:**
         - [x] During Mode 3, fetch tile data (pixel color indices 0-3) for visible sprites (handles 8x8/8x16, Y-flip, CGB VRAM bank).
@@ -104,7 +104,7 @@ This document outlines the major components, functions, and logic sections that 
     - [x] Consider any PPU state that might affect or be affected by HDMA (e.g., HBlank state for HDMA triggers). (PPU sets `just_entered_hblank`, Bus uses it)
 - [x] **CGB Tile Attributes:** BG tile attributes are fetched in `tick_fetcher` and applied during tile data fetching and pixel processing.
     - When fetching BG/Window tiles in CGB mode, read attributes from VRAM bank 1 (handled in `tick_fetcher`).
-    - Apply attributes: BG-to-OAM priority (pending full implementation), vertical/horizontal flip, VRAM bank selection for tile data, palette selection (all handled in `tick_fetcher` path and `decode_tile_line_to_pixels` or rendering logic).
+    - Apply attributes: BG-to-OAM priority (Verified: Handled in CGB pixel mixing logic using BG tile attribute bit 7 from `fetcher_tile_attributes`), vertical/horizontal flip, VRAM bank selection for tile data, palette selection (all handled in `tick_fetcher` path and `decode_tile_line_to_pixels` or rendering logic).
 
 ## Bus Integration
 - [x] **Register Access:**
@@ -119,7 +119,7 @@ This document outlines the major components, functions, and logic sections that 
     - `Bus::tick_components` will call `ppu.tick()`.
 
 ## Miscellaneous & Glitches (Advanced)
-- [ ] **OAM Bug:** Emulate OAM memory corruption if accessed incorrectly during specific PPU states (DMG).
+- [~] OAM Bug: Emulate OAM memory corruption if accessed incorrectly during specific PPU states (DMG). (PPU-side logic for data corruption and `accessed_oam_row` management implemented. Bus integration still needed to call the trigger functions.)
 - [ ] **STAT Register Glitches:** Research and implement various STAT register behavior quirks (e.g., STAT blocking, LYC=LY coincidence timing).
 - [ ] **WX=0 / WX=166 Glitches:** Handle specific window behavior at these WX values.
 - [ ] **SCX Fractional Scrolling Glitch:** Some specific SCX behaviors.
