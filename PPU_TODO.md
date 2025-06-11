@@ -10,6 +10,7 @@ This document outlines the major components, functions, and logic sections that 
 - [x] Framebuffer: Currently `Vec<u8>` for RGB888. Ensure correct dimensions and pixel format.
 - [x] `current_scanline_color_indices`: Buffer for 2-bit color indices for the current line.
 - [x] `current_scanline_pixel_source`: Buffer to track if pixel is BG or Sprite (and which sprite palette for DMG).
+- [x] `current_scanline_cgb_bg_palette_indices`: Buffer for CGB BG palette index per pixel. (Added for CGB BG palettes)
 
 ## PPU Modes & Timing
 - [ ] **Mode Switching Logic:**
@@ -78,12 +79,12 @@ This document outlines the major components, functions, and logic sections that 
     - [x] BGP (0xFF47) is read for BG palette mapping. OBP0 (0xFF48), OBP1 (0xFF49) are read for sprite palette mapping. Writes handled by Bus.
     - [x] Apply DMG BGP, OBP0, OBP1 palettes to BG & Sprite pixels respectively (writes to framebuffer using combined pixel source buffer). Window palettes pending.
 - [ ] **CGB Palette Management:**
-    - [ ] Implement CGB palette RAM (Background and Sprite).
-    - [ ] Handle BCPS/BCPI (0xFF68) for BG palette index and auto-increment.
-    - [ ] Handle BCPD/BGPD (0xFF69) for BG palette data writes.
-    - [ ] Handle OCPS/OCPI (0xFF6A) for Sprite palette index and auto-increment.
-    - [ ] Handle OCPD/OBPD (0xFF6B) for Sprite palette data writes.
-    - [ ] Apply CGB palettes to pixels.
+    - [x] Implement CGB palette RAM (Background and Sprite). (Arrays `cgb_background_palette_ram` and `cgb_sprite_palette_ram` defined in Ppu struct)
+    - [x] Handle BCPS/BCPI (0xFF68) for BG palette index and auto-increment. (Methods `read_bcps_bcpi`, `write_bcps_bcpi` implemented and integrated with Bus)
+    - [x] Handle BCPD/BGPD (0xFF69) for BG palette data writes. (Methods `read_bcpd`, `write_bcpd` implemented, handling RAM access and auto-increment; integrated with Bus)
+    - [x] Handle OCPS/OCPI (0xFF6A) for Sprite palette index and auto-increment. (Methods `read_ocps_ocpi`, `write_ocps_ocpi` implemented and integrated with Bus)
+    - [x] Handle OCPD/OBPD (0xFF6B) for Sprite palette data writes. (Methods `read_ocpd`, `write_ocpd` implemented, handling RAM access and auto-increment; integrated with Bus)
+    - [~] Apply CGB palettes to pixels. (Background palettes implemented and rendering with `Ppu::cgb_color_to_rgb` and `current_scanline_cgb_bg_palette_indices`. Sprite palette rendering pending due to subtask issues.)
     - [ ] Implement CGB BG-to-OAM priority attribute from tile map attributes.
 
 ## Interrupts
@@ -103,7 +104,7 @@ This document outlines the major components, functions, and logic sections that 
     - [x] Consider any PPU state that might affect or be affected by HDMA (e.g., HBlank state for HDMA triggers). (PPU sets `just_entered_hblank`, Bus uses it)
 - [x] **CGB Tile Attributes:** (Fetching implemented in `fetch_tile_line_data`)
     - When fetching BG/Window tiles in CGB mode, read attributes from VRAM bank 1.
-    - Apply attributes: BG-to-OAM priority, vertical/horizontal flip, VRAM bank selection for tile data, palette selection. (Vertical flip and bank selection for tile data used in `fetch_tile_line_data`; H-flip used in `decode_tile_line_to_pixels`)
+    - Apply attributes: BG-to-OAM priority, vertical/horizontal flip, VRAM bank selection for tile data, palette selection. (Vertical flip and bank selection for tile data used in `fetch_tile_line_data`; H-flip used in `decode_tile_line_to_pixels`; BG palette selection attributes now used in rendering)
 
 ## Bus Integration
 - [x] **Register Access:**

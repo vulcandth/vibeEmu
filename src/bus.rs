@@ -345,7 +345,8 @@ impl Bus {
                         };
                         speed_bit | prepare_bit | 0x7E
                     }
-                    0xFF4C | 0xFF4E..=0xFF4F => 0xFF,
+                    0xFF4C | 0xFF4E..=0xFF4F => 0xFF, // Note: FF4F (VBK) is handled in main read_byte
+                    // CGB Palette registers are handled in main read_byte
                     _ => 0xFF, // Default for other I/O
                 }
             }
@@ -491,10 +492,10 @@ impl Bus {
                     0xFF4A => self.ppu.wy,
                     0xFF4B => self.ppu.wx,
                     0xFF4F => self.ppu.vbk | 0xFE, // VBK - bit 0 is bank, others read as 1
-                    0xFF68 => self.ppu.bcps_bcpi,  // BCPS/BCPI
-                    0xFF69 => self.ppu.bcpd_bgpd, // BCPD/BGPD - TODO: PPU should handle read from current index in bcps_bcpi
-                    0xFF6A => self.ppu.ocps_ocpi, // OCPS/OCPI
-                    0xFF6B => self.ppu.ocpd_obpd, // OCPD/OBPD - TODO: PPU should handle read from current index in ocps_ocpi
+                    0xFF68 => self.ppu.read_bcps_bcpi(),  // BCPS/BCPI
+                    0xFF69 => self.ppu.read_bcpd(), // BCPD/BGPD
+                    0xFF6A => self.ppu.read_ocps_ocpi(), // OCPS/OCPI
+                    0xFF6B => self.ppu.read_ocpd(), // OCPD/OBPD
                     0xFF4D => {
                         // KEY1
                         // KEY1 - CGB Speed Switch
@@ -617,20 +618,10 @@ impl Bus {
                     0xFF4A => self.ppu.wy = value,
                     0xFF4B => self.ppu.wx = value,
                     0xFF4F => self.ppu.vbk = value & 0x01, // VBK - CGB VRAM Bank Select (only bit 0 is writable)
-                    0xFF68 => self.ppu.bcps_bcpi = value,  // BCPS/BCPI
-                    0xFF69 => {
-                        // BCPD/BGPD
-                        self.ppu.bcpd_bgpd = value;
-                        // TODO: Write to cgb_background_palette_ram at index from bcps_bcpi
-                        // if (self.ppu.bcps_bcpi & 0x80) { self.ppu.bcps_bcpi = (self.ppu.bcps_bcpi + 1) & 0xBF; } // Auto-increment
-                    }
-                    0xFF6A => self.ppu.ocps_ocpi = value, // OCPS/OCPI
-                    0xFF6B => {
-                        // OCPD/OBPD
-                        self.ppu.ocpd_obpd = value;
-                        // TODO: Write to cgb_sprite_palette_ram at index from ocps_ocpi
-                        // if (self.ppu.ocps_ocpi & 0x80) { self.ppu.ocps_ocpi = (self.ppu.ocps_ocpi + 1) & 0xBF; } // Auto-increment
-                    }
+                    0xFF68 => self.ppu.write_bcps_bcpi(value),  // BCPS/BCPI
+                    0xFF69 => self.ppu.write_bcpd(value), // BCPD/BGPD
+                    0xFF6A => self.ppu.write_ocps_ocpi(value), // OCPS/OCPI
+                    0xFF6B => self.ppu.write_ocpd(value), // OCPD/OBPD
                     0xFF4D => {
                         // KEY1
                         // KEY1 - CGB Speed Switch
@@ -1210,3 +1201,4 @@ mod tests {
         let _ = std::fs::remove_file(rom_path.with_extension("rtc"));
     }
 }
+// [end of src/bus.rs] <-- This was the duplicated marker, now removed.
