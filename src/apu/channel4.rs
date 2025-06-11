@@ -20,7 +20,6 @@ pub struct Channel4 {
     lfsr_shift_amount: u8,
     div_apu_counter: u32,
     // noise_alignment_buffer: u8, // Removed as per warning: field is never read
-
     pub dmg_delayed_start_countdown: u8,
     force_narrow_lfsr_for_glitch: bool,
 }
