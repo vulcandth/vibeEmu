@@ -463,7 +463,14 @@ impl Bus {
                 let mirrored_addr = addr - 0x2000;
                 self.memory.read_byte(mirrored_addr)
             }
-            0xFE00..=0xFE9F => self.ppu.read_oam(addr), // OAM
+            0xFE00..=0xFE9F => { // OAM
+                if !self.ppu.model.is_cgb_family() && (self.ppu.lcdc & 0x80) != 0 { // DMG and LCD ON
+                    if self.ppu.current_mode == crate::ppu::PpuMode::OamScan || self.ppu.current_mode == crate::ppu::PpuMode::Drawing {
+                        self.ppu.trigger_oam_read_bug(addr);
+                    }
+                }
+                self.ppu.read_oam(addr)
+            }
             0xFEA0..=0xFEFF => {
                 // Unusable memory
                 0xFF
@@ -567,7 +574,14 @@ impl Bus {
                 let mirrored_addr = addr - 0x2000;
                 self.memory.write_byte(mirrored_addr, value)
             }
-            0xFE00..=0xFE9F => self.ppu.write_oam(addr, value), // OAM
+            0xFE00..=0xFE9F => { // OAM
+                if !self.ppu.model.is_cgb_family() && (self.ppu.lcdc & 0x80) != 0 { // DMG and LCD ON
+                    if self.ppu.current_mode == crate::ppu::PpuMode::OamScan || self.ppu.current_mode == crate::ppu::PpuMode::Drawing {
+                        self.ppu.trigger_oam_write_bug(addr);
+                    }
+                }
+                self.ppu.write_oam(addr, value)
+            }
             0xFEA0..=0xFEFF => {
                 // Unusable memory - Do nothing
             }

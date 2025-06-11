@@ -801,7 +801,10 @@ impl Ppu {
                         // The critical aspect is that `accessed_oam_row` should be set to the row that
                         // would be affected if a CPU OAM access occurs *at this point* in the OAM scan.
                         if !self.model.is_cgb_family() {
-                            self.accessed_oam_row = (((i & !1) * 4) + 8) as u8;
+                            // Old: self.accessed_oam_row = (((i & !1) * 4) + 8) as u8;
+                            // New: accessed_oam_row is (oam_entry_addr & 0xF8) where oam_entry_addr is (i * 4)
+                            // This aligns with SameBoy's (event->value & 0xF8) where event->value is oam_addr.
+                            self.accessed_oam_row = ((i * 4) & 0xF8) as u8;
                         }
 
                         let current_ly_plus_16 = self.ly.wrapping_add(16);
