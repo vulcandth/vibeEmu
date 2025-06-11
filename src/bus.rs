@@ -492,7 +492,7 @@ impl Bus {
                     0xFF4A => self.ppu.wy,
                     0xFF4B => self.ppu.wx,
                     0xFF4F => self.ppu.vbk | 0xFE, // VBK - bit 0 is bank, others read as 1
-                    0xFF68 => self.ppu.read_bcps_bcpi(),  // BCPS/BCPI
+                    0xFF68 => self.ppu.read_bcps_bcpi(), // BCPS/BCPI
                     0xFF69 => self.ppu.read_bcpd(), // BCPD/BGPD
                     0xFF6A => self.ppu.read_ocps_ocpi(), // OCPS/OCPI
                     0xFF6B => self.ppu.read_ocpd(), // OCPD/OBPD
@@ -618,10 +618,10 @@ impl Bus {
                     0xFF4A => self.ppu.wy = value,
                     0xFF4B => self.ppu.wx = value,
                     0xFF4F => self.ppu.vbk = value & 0x01, // VBK - CGB VRAM Bank Select (only bit 0 is writable)
-                    0xFF68 => self.ppu.write_bcps_bcpi(value),  // BCPS/BCPI
-                    0xFF69 => self.ppu.write_bcpd(value), // BCPD/BGPD
+                    0xFF68 => self.ppu.write_bcps_bcpi(value), // BCPS/BCPI
+                    0xFF69 => self.ppu.write_bcpd(value),  // BCPD/BGPD
                     0xFF6A => self.ppu.write_ocps_ocpi(value), // OCPS/OCPI
-                    0xFF6B => self.ppu.write_ocpd(value), // OCPD/OBPD
+                    0xFF6B => self.ppu.write_ocpd(value),  // OCPD/OBPD
                     0xFF4D => {
                         // KEY1
                         // KEY1 - CGB Speed Switch

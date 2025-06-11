@@ -6,7 +6,7 @@ This document outlines the major components, functions, and logic sections that 
 - [x] Define main `Ppu` struct (`src/ppu.rs`).
 - [x] Implement basic constructor (`new()`) initializing fields to power-up states.
 - [x] VRAM (Video RAM): Implement banking for CGB.
-- [x] OAM (Object Attribute Memory): Basic storage is present. Implement access restrictions based on PPU mode.
+- [x] OAM (Object Attribute Memory): Basic storage is present. Implemented access restrictions based on PPU mode (verified).
 - [x] Framebuffer: Currently `Vec<u8>` for RGB888. Ensure correct dimensions and pixel format.
 - [x] `current_scanline_color_indices`: Buffer for 2-bit color indices for the current line.
 - [x] `current_scanline_pixel_source`: Buffer to track if pixel is BG or Sprite (and which sprite palette for DMG).
@@ -50,7 +50,7 @@ This document outlines the major components, functions, and logic sections that 
 - [ ] **Pixel FIFO:**
     - [x] Implement BG Pixel FIFO.
     - [x] Implement Sprite Pixel FIFO.
-    - [-] Implement FIFO mixing/merging logic for BG and Sprite pixels (Basic DMG mixing implemented; CGB and more complex scenarios pending).
+    - [~] Implement FIFO mixing/merging logic for BG and Sprite pixels (Basic DMG mixing implemented; CGB priority logic considering LCDC.0, BG tile attributes, and OAM attributes implemented. Further CGB scenarios might be pending).
     - [~] Drive PPU Mode 3 timing based on Pixel Fetcher and FIFO states. (Improved fetcher logic to be more proactive in filling the FIFO, reducing stalls and ensuring Mode 3 can complete drawing 160 pixels. Further refinement for cycle-perfect FIFO interaction is a future goal.)
 - [ ] **Sprite (OBJ) Processing:**
     - **OAM Scan (Mode 2):**
@@ -84,8 +84,8 @@ This document outlines the major components, functions, and logic sections that 
     - [x] Handle BCPD/BGPD (0xFF69) for BG palette data writes. (Methods `read_bcpd`, `write_bcpd` implemented, handling RAM access and auto-increment; integrated with Bus)
     - [x] Handle OCPS/OCPI (0xFF6A) for Sprite palette index and auto-increment. (Methods `read_ocps_ocpi`, `write_ocps_ocpi` implemented and integrated with Bus)
     - [x] Handle OCPD/OBPD (0xFF6B) for Sprite palette data writes. (Methods `read_ocpd`, `write_ocpd` implemented, handling RAM access and auto-increment; integrated with Bus)
-    - [~] Apply CGB palettes to pixels. (Background palettes implemented and rendering with `Ppu::cgb_color_to_rgb` and `current_scanline_cgb_bg_palette_indices`. Sprite palette rendering pending due to subtask issues.)
-    - [ ] Implement CGB BG-to-OAM priority attribute from tile map attributes.
+    - [x] Apply CGB palettes to pixels. (Background palettes implemented. CGB Sprite palette rendering implemented using OAM attributes and `cgb_sprite_palette_ram`.)
+    - [x] Implement CGB BG-to-OAM priority attribute from tile map attributes. (Handled as part of CGB pixel mixing logic using BG tile attributes bit 7).
 
 ## Interrupts
 - [ ] **VBlank Interrupt (Mode 1):**
