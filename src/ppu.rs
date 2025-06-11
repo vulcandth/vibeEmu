@@ -19,7 +19,7 @@ pub const SCANLINE_CYCLES: u32 = 456;
 // pub const VBLANK_LINES: u8 = 10; // Not directly used, TOTAL_LINES implies this
 // pub const VBLANK_DURATION_CYCLES: u32 = SCANLINE_CYCLES * VBLANK_LINES as u32; // Not directly used
 pub const TOTAL_LINES: u8 = 154;
-pub const FAILSAFE_MAX_MODE3_CYCLES: u32 = 340; // Max cycles for Mode 3 before force quit if screen_x stuck
+pub const FAILSAFE_MAX_MODE3_CYCLES: u32 = 420; // Max cycles for Mode 3 before force quit if screen_x stuck
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -262,7 +262,15 @@ impl Ppu {
         self.pixels_to_discard_for_window_line_start = 0;
     }
 
+
     pub fn tick(&mut self, cpu_t_cycles: u32) {
+        self.cycles_in_mode += cpu_t_cycles;
+        for _ in 0..cpu_t_cycles {
+            self.tick_dot();
+        }
+    }
+
+    pub fn tick_dot(&mut self) {
         self.just_entered_hblank = false;
 
         if (self.lcdc & 0x80) == 0 {
@@ -277,7 +285,6 @@ impl Ppu {
             return;
         }
 
-        self.cycles_in_mode += cpu_t_cycles;
         let previous_stat_interrupt_line = self.eval_stat_interrupt_conditions();
 
         match self.current_mode {
@@ -422,9 +429,7 @@ impl Ppu {
                 // but it might still need to be ticked to keep it "warm" if it were to be enabled mid-scanline (not typical).
                 // For simplicity here, we gate ticking based on master_bg_win_enable.
                 if master_bg_win_enable {
-                    if self.bg_fifo.len() <= 8 { // Needs more pixels for BG/Window
-                        self.tick_fetcher();
-                    }
+                    self.tick_fetcher();
                 }
 
 
@@ -580,6 +585,7 @@ impl Ppu {
                     } else if bg_pixel_data.is_none() && master_bg_win_enable {
                         // Master BG/Win is enabled, but bg_fifo was empty. PPU stalls. screen_x does not advance.
                         // Sprite FIFO might have pixels, but we wait for BG/Win pixel first.
+                        //eprintln!("PPU STALL: LY={}, screen_x={}, fifo_len={}, fetcher_state={:?}, cycles_in_mode={}", self.ly, self.screen_x, self.bg_fifo.len(), self.fetcher_state, self.cycles_in_mode);
                     }
                     // The case for "(self.lcdc & (1 << 1)) == 0 && master_bg_win_enable && bg_pixel_data.is_some() && s_pixel_opt.is_none()"
                     // (i.e., OBJ disabled, BG/Win enabled, BG pixel available, no sprite)
@@ -595,8 +601,9 @@ impl Ppu {
                 } else if self.cycles_in_mode >= FAILSAFE_MAX_MODE3_CYCLES {
                     // Failsafe: screen_x is stuck, and we've exceeded a generous cycle limit.
                     self.actual_drawing_duration_current_line = self.cycles_in_mode; // Record actual cycles spent
+                    //eprintln!("PPU FAILSAFE: LY={}, screen_x={}, cycles_in_mode={}", self.ly, self.screen_x, self.cycles_in_mode);
                     transition_to_hblank = true;
-                    // eprintln!("PPU Warning: Mode 3 force quit at LY={}, screen_x={}, cycles={}", self.ly, self.screen_x, self.cycles_in_mode);
+                    //eprintln!("PPU Warning: Mode 3 force quit at LY={}, screen_x={}, cycles={}", self.ly, self.screen_x, self.cycles_in_mode);
                 }
 
                 if transition_to_hblank {
@@ -676,9 +683,15 @@ impl Ppu {
     }
 
     fn tick_fetcher(&mut self) {
-        self.fetcher_state_cycle += 1;
-        if self.fetcher_state_cycle < 2 { return; }
-        self.fetcher_state_cycle = 0;
+        match self.fetcher_state {
+            FetcherState::GetTile | FetcherState::GetDataLow | FetcherState::GetDataHigh => {
+                self.fetcher_state_cycle ^= 1;
+                if self.fetcher_state_cycle == 1 { return;}
+            }
+            FetcherState::PushToFifo => {
+                self.fetcher_state_cycle = 0;
+            }
+        }
 
         //let bg_tile_map_base_addr = if (self.lcdc >> 3) & 0x01 == 0 { 0x9800 } else { 0x9C00 }; // Original BG only
         let tile_data_select = (self.lcdc >> 4) & 0x01; // LCDC.4 for BG/Win tile data source is common
@@ -715,6 +728,7 @@ impl Ppu {
                     self.fetcher_tile_data_base_addr = 0x9000u16.wrapping_add(((self.fetcher_tile_number as i8) as i16 * 16) as u16);
                 }
                 self.fetcher_state = FetcherState::GetDataLow;
+                self.fetcher_state_cycle = 1;
             }
             FetcherState::GetDataLow => {
                 // self.fetcher_map_y is already correctly set for either BG (scy.wrapping_add(ly))
@@ -731,6 +745,7 @@ impl Ppu {
                 let tile_data_vram_bank = if is_cgb { (self.fetcher_tile_attributes >> 3) & 0x01 } else { 0 };
                 self.fetcher_tile_line_data_bytes[0] = self.read_vram_bank_agnostic(data_addr_plane1, tile_data_vram_bank);
                 self.fetcher_state = FetcherState::GetDataHigh;
+                self.fetcher_state_cycle = 1;
             }
             FetcherState::GetDataHigh => {
                 let mut line_in_tile = (self.fetcher_map_y % 8) as u16;
@@ -744,52 +759,60 @@ impl Ppu {
                 let tile_data_vram_bank = if is_cgb { (self.fetcher_tile_attributes >> 3) & 0x01 } else { 0 };
                 self.fetcher_tile_line_data_bytes[1] = self.read_vram_bank_agnostic(data_addr_plane2, tile_data_vram_bank);
                 self.fetcher_state = FetcherState::PushToFifo;
+                self.fetcher_state_cycle = 1;
             }
             FetcherState::PushToFifo => {
-                // Pixel Discard Logic
+                // Pixel Discard Logic (MUST be processed first)
                 if self.fetcher_is_for_window {
                     if self.pixels_to_discard_for_window_line_start > 0 {
                         self.pixels_to_discard_for_window_line_start -= 1;
                         self.fetcher_pixel_push_idx += 1;
-                        if self.fetcher_pixel_push_idx == 8 { // Current tile fully processed (all its pixels discarded or pushed)
+                        if self.fetcher_pixel_push_idx == 8 {
                             self.fetcher_pixel_push_idx = 0;
-                            self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8); // Advance to next tile in window map
+                            self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8);
                             self.fetcher_state = FetcherState::GetTile;
                         }
-                        return; // Important: exit tick_fetcher for this cycle
+                        return; 
                     }
-                } else { // Fetching for Background
-                    if self.pixels_to_discard_at_line_start > 0 { // This is for SCX fine scroll
+                } else { 
+                    if self.pixels_to_discard_at_line_start > 0 {
                         self.pixels_to_discard_at_line_start -= 1;
                         self.fetcher_pixel_push_idx += 1;
                         if self.fetcher_pixel_push_idx == 8 {
                             self.fetcher_pixel_push_idx = 0;
-                            self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8); // Advance to next tile in BG map
+                            self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8);
                             self.fetcher_state = FetcherState::GetTile;
                         }
-                        return; // Important: exit tick_fetcher for this cycle
+                        return; 
                     }
                 }
+                
+                //eprintln!("FETCHER PUSH ATTEMPT (LY={}, X={}): fetch_px_idx={}, fifo_len={}, discard_bg={}, discard_win={}, fetcher_is_win={}", self.ly, self.screen_x, self.fetcher_pixel_push_idx, self.bg_fifo.len(), self.pixels_to_discard_at_line_start, self.pixels_to_discard_for_window_line_start, self.fetcher_is_for_window);
 
-                // Pixel Pushing Logic (after discard checks have passed for the current pixel index)
-                if self.bg_fifo.is_full() { return; }
+                if self.bg_fifo.is_full() { 
+                    return; 
+                }
 
+                let is_cgb = self.model.is_cgb_family();
                 let pixels = self.decode_tile_line_to_pixels(
                     self.fetcher_tile_line_data_bytes[0], self.fetcher_tile_line_data_bytes[1],
-                    self.fetcher_tile_attributes, is_cgb); // HFlip (attr & (1<<1)) is handled in decode
+                    self.fetcher_tile_attributes, is_cgb);
 
-                let pixel_data = PixelData { color_index: pixels[self.fetcher_pixel_push_idx as usize] };
-
-                if self.bg_fifo.push(pixel_data).is_ok() {
-                    self.fetcher_pixel_push_idx += 1;
-                    if self.fetcher_pixel_push_idx == 8 { // Current tile fully pushed
-                        self.fetcher_pixel_push_idx = 0;
-                        self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8); // Advance to next tile (applies to BG or Window map)
-                        self.fetcher_state = FetcherState::GetTile;
-                    }
-                } else {
-                    // FIFO was full when trying to push. Do nothing more this cycle.
+                if self.bg_fifo.is_full() {
                     return;
+                }
+                
+                let pixel_data = PixelData {
+                    color_index: pixels[self.fetcher_pixel_push_idx as usize],
+                };
+                self.bg_fifo.push(pixel_data).unwrap();
+                self.fetcher_pixel_push_idx += 1;
+
+                if self.fetcher_pixel_push_idx == 8 {
+                    self.fetcher_pixel_push_idx = 0;
+                    self.fetcher_map_x = self.fetcher_map_x.wrapping_add(8); 
+                    self.fetcher_state = FetcherState::GetTile;
+                     //eprintln!("FETCHER TILE COMPLETE: LY={}, X={}, next_state=GetTile, new_map_x={}", self.ly, self.screen_x, self.fetcher_map_x);
                 }
             }
         }

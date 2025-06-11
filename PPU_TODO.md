@@ -14,7 +14,7 @@ This document outlines the major components, functions, and logic sections that 
 
 ## PPU Modes & Timing
 - [ ] **Mode Switching Logic:**
-    - [~] **Implement accurate timing for Mode 0 (HBlank), Mode 1 (VBlank), Mode 2 (OAM Scan), Mode 3 (Drawing)** (Mode 3 now primarily ends when 160 pixels are drawn or a failsafe cycle limit is hit. Dynamic sprite-based duration is no longer a hard cutoff. Eventual goal: FIFO-driven cycle accuracy). Existing cycle accounting for modes reviewed (OAM, Drawing, HBlank, VBlank sums to SCANLINE_CYCLES; VBlank duration correct). Mode 3 duration uses `actual_drawing_duration_current_line`. Further FIFO-driven cycle accuracy is a future goal. Build issues prevented test verification.
+    - [x] **Implement accurate timing for Mode 0 (HBlank), Mode 1 (VBlank), Mode 2 (OAM Scan), Mode 3 (Drawing)** (Mode 3 now primarily ends when 160 pixels are drawn. Addressed issue where Mode 3 could prematurely end due to FIFO stalls by making the pixel fetcher more proactive. Dynamic sprite-based duration is no longer a hard cutoff. Eventual goal: FIFO-driven cycle accuracy). Existing cycle accounting for modes reviewed (OAM, Drawing, HBlank, VBlank sums to SCANLINE_CYCLES; VBlank duration correct). Mode 3 duration uses `actual_drawing_duration_current_line`. Further FIFO-driven cycle accuracy is a future goal. Build issues prevented test verification.
     - [x] Manage `cycles_in_mode` and transition between modes correctly.
     - [x] Update `STAT` register (Mode bits) upon mode changes.
 - [ ] **STAT Register (0xFF41):**
@@ -51,7 +51,7 @@ This document outlines the major components, functions, and logic sections that 
     - [x] Implement BG Pixel FIFO.
     - [x] Implement Sprite Pixel FIFO.
     - [-] Implement FIFO mixing/merging logic for BG and Sprite pixels (Basic DMG mixing implemented; CGB and more complex scenarios pending).
-    - [ ] Drive PPU Mode 3 timing based on Pixel Fetcher and FIFO states.
+    - [~] Drive PPU Mode 3 timing based on Pixel Fetcher and FIFO states. (Improved fetcher logic to be more proactive in filling the FIFO, reducing stalls and ensuring Mode 3 can complete drawing 160 pixels. Further refinement for cycle-perfect FIFO interaction is a future goal.)
 - [ ] **Sprite (OBJ) Processing:**
     - **OAM Scan (Mode 2):**
         - [x] Scan OAM for sprites visible on the current scanline (up to 10 per line, Y-check, X>0, sorted by X then OAM index).
