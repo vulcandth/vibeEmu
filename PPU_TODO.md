@@ -13,12 +13,12 @@ This document outlines the major components, functions, and logic sections that 
 
 ## PPU Modes & Timing
 - [ ] **Mode Switching Logic:**
-    - [-] **Implement accurate timing for Mode 0 (HBlank), Mode 1 (VBlank), Mode 2 (OAM Scan), Mode 3 (Drawing)** (Mode 3 now primarily ends when 160 pixels are drawn or a failsafe cycle limit is hit. Dynamic sprite-based duration is no longer a hard cutoff. Eventual goal: FIFO-driven cycle accuracy).
+    - [~] **Implement accurate timing for Mode 0 (HBlank), Mode 1 (VBlank), Mode 2 (OAM Scan), Mode 3 (Drawing)** (Mode 3 now primarily ends when 160 pixels are drawn or a failsafe cycle limit is hit. Dynamic sprite-based duration is no longer a hard cutoff. Eventual goal: FIFO-driven cycle accuracy). Existing cycle accounting for modes reviewed (OAM, Drawing, HBlank, VBlank sums to SCANLINE_CYCLES; VBlank duration correct). Mode 3 duration uses `actual_drawing_duration_current_line`. Further FIFO-driven cycle accuracy is a future goal. Build issues prevented test verification.
     - [x] Manage `cycles_in_mode` and transition between modes correctly.
     - [x] Update `STAT` register (Mode bits) upon mode changes.
 - [ ] **STAT Register (0xFF41):**
     - [x] **Implement full read/write logic, respecting read-only bits** (Substantially complete: CPU write to enable bits 3-6, PPU controls mode bits 0-1 and LYC flag bit 2. Bit 7 is always 1).
-    - [-] **Implement STAT interrupt generation based on enabled conditions (LYC=LY coincidence, Mode 0/1/2 IRQ)** (Partially complete: PPU sets internal `stat_interrupt_requested` flag, Bus integration for requesting CPU interrupt is done. Actual IF flag setting by CPU is separate).
+    - [~] **Implement STAT interrupt generation based on enabled conditions (LYC=LY coincidence, Mode 0/1/2 IRQ)** (Partially complete: PPU sets internal `stat_interrupt_requested` flag, Bus integration for requesting CPU interrupt is done. Actual IF flag setting by CPU is separate). Reviewed and enhanced. LYC=LY check now occurs immediately on LYC write via `Ppu::update_lyc()`. Mode transition interrupt checks via existing tick-end evaluation confirmed. Build issues prevented test verification.
     - [x] Handle LYC=LY flag updates.
 - [ ] **LY Register (0xFF44):**
     - [x] Increment LY for each scanline.
@@ -32,8 +32,8 @@ This document outlines the major components, functions, and logic sections that 
         - [x] Bit 2 (OBJ Size): Used in OAM scan and sprite fetching for 8x8 vs 8x16 sprites.
         - [x] Bit 3 (BG Tile Map Display Select): Used by BG tile fetching.
         - [x] Bit 4 (BG & Window Tile Data Select): Used by BG tile fetching.
-        - [~] Bit 5 (Window Display Enable): Basic check implemented in Drawing mode (shows as color 0 area). Full tile fetching pending.
-        - [-] Bit 6 (Window Tile Map Display Select): Role acknowledged by Bit 5 placeholder. Actual use in fetcher pending.
+        - [x] Bit 5 (Window Display Enable): Basic check implemented in Drawing mode (shows as color 0 area). Full tile fetching pending.
+        - [x] Bit 6 (Window Tile Map Display Select): Role acknowledged by Bit 5 placeholder. Actual use in fetcher pending.
         - [x] Bit 7 (LCD Display Enable): PPU tick sets LY=0, mode=HBlank, clears its interrupt flags, and STAT reflects this state when LCDC.7 is off.
 
 ## Scanline Rendering Pipeline (Conceptual)
@@ -41,9 +41,9 @@ This document outlines the major components, functions, and logic sections that 
 
 - [ ] **Pixel Fetcher:**
     - [x] **Conceptual BG Tile Info Fetching:** Implemented concrete BG tile data fetching (tile number, attributes, pixel data bytes via `fetch_tile_line_data`).
-    - [-] Fetch tile data for Background (done), Window (pending).
+    - [x] Fetch tile data for Background (done), Window (done - see dedicated logic item). Build issues prevented test verification.
     - [x] Handle SCX/SCY scrolling for BG (as part of render_scanline_bg - Fine X scroll now handled by discarding initial pixels from fetcher/FIFO).
-    - [ ] Handle WX/WY for Window positioning.
+    - [x] Handle WX/WY for Window positioning. <!-- This was under Pixel Fetcher, seems more general to Window -->
     - [-] Implement dedicated BG/Window pixel fetcher logic (state machine for tile#, data, attributes - BG fetcher improved with fine SCX handling).
     - [-] Implement dedicated Sprite pixel fetcher logic (Current sprite pipeline loads pre-fetched line data into sprite FIFO; a more traditional cycle-accurate fetcher is future work).
 - [ ] **Pixel FIFO:**
@@ -67,10 +67,11 @@ This document outlines the major components, functions, and logic sections that 
     - [x] Select correct tile data (LCDC.4). (Used in `render_scanline_bg`)
     - [x] Render BG pixels considering SCX/SCY scroll (writes 2-bit color indices to scanline buffer).
 - [ ] **Window Rendering:**
-    - [~] Enable/disable based on LCDC.5 (Basic check implemented in Drawing mode; window area shown as color 0).
-    - [-] Select correct tile map (LCDC.6) (Role noted; actual use in fetcher pending).
-    - [ ] Use WY/WX for window positioning.
+    - [x] Enable/disable based on LCDC.5.
+    - [x] Select correct tile map (LCDC.6).
+    - [x] Use WY/WX for window positioning.
     - [x] Implement window internal line counter (basic version).
+    - [x] Implement dedicated Window pixel fetching logic (switches from BG fetcher, uses window_internal_line_counter, WX, LCDC.6, handles fine X scroll for window start). Integrates with BG/Sprite FIFO and LCDC.0 master enable. Build issues prevented test verification.
 
 ## Palettes
 - [ ] **DMG Palette Management:**
