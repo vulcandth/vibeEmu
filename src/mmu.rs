@@ -137,7 +137,7 @@ impl Mmu {
                     self.sc &= 0x7F;
                 }
             }
-            0xFF04..=0xFF07 => self.timer.write(addr, val),
+            0xFF04..=0xFF07 => self.timer.write(addr, val, &mut self.if_reg),
             0xFF0F => self.if_reg = val,
             0xFF10..=0xFF3F => self.apu.write_reg(addr, val),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
