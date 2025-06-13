@@ -336,6 +336,7 @@ fn main() {
     let mut ppu_cycles_this_frame: u32 = 0;
     let target_frame_duration = std::time::Duration::from_secs_f64(1.0 / TARGET_FPS);
     let mut last_frame_time = std::time::Instant::now();
+    let mut lag = std::time::Duration::from_secs(0);
 
     // Audio output via cpal
     let audio_output = AudioOutput::new();
@@ -424,18 +425,21 @@ fn main() {
             let t_cycles_for_step = m_cycles * 4; // These are PPU T-cycles (also CPU T-cycles)
 
             if !(cpu.is_halted && cpu.in_stop_mode) {
-                bus.borrow_mut().tick_components(m_cycles); // Ticks PPU, Timer
-                bus.borrow_mut().apu.tick(t_cycles_for_step); // Tick APU with T-cycles
-                ppu_cycles_this_frame += t_cycles_for_step; // Accumulate PPU cycles
+                {
+                    let mut bus_mut = bus.borrow_mut();
+                    bus_mut.tick_components(m_cycles); // Ticks PPU, Timer
+                    bus_mut.apu.tick(t_cycles_for_step); // Tick APU with T-cycles
+                    ppu_cycles_this_frame += t_cycles_for_step; // Accumulate PPU cycles
 
-                // Audio sample generation
-                if audio_output.is_enabled() {
-                    audio_cycle_counter += t_cycles_for_step;
-                    if audio_cycle_counter >= cpu_cycles_per_audio_sample {
-                        audio_cycle_counter -= cpu_cycles_per_audio_sample;
-                        let (left_sample, right_sample) =
-                            bus.borrow_mut().apu.get_mixed_audio_samples();
-                        audio_output.push_sample(left_sample, right_sample);
+                    // Audio sample generation
+                    if audio_output.is_enabled() {
+                        audio_cycle_counter += t_cycles_for_step;
+                        if audio_cycle_counter >= cpu_cycles_per_audio_sample {
+                            audio_cycle_counter -= cpu_cycles_per_audio_sample;
+                            let (left_sample, right_sample) =
+                                bus_mut.apu.get_mixed_audio_samples();
+                            audio_output.push_sample(left_sample, right_sample);
+                        }
                     }
                 }
             } else {
@@ -465,11 +469,15 @@ fn main() {
                     d.update_with_buffer(&display_buffer);
                 }
                 // Frame rate locking logic
-                let elapsed_time = last_frame_time.elapsed();
-                if elapsed_time < target_frame_duration {
-                    std::thread::sleep(target_frame_duration - elapsed_time);
+                let now = std::time::Instant::now();
+                lag += now - last_frame_time;
+                last_frame_time = now;
+                if lag < target_frame_duration {
+                    std::thread::sleep(target_frame_duration - lag);
+                    lag = std::time::Duration::from_secs(0);
+                } else {
+                    lag -= target_frame_duration;
                 }
-                last_frame_time = std::time::Instant::now();
             }
             emulation_steps += 1; // Increment emulation steps only when not paused
         } else {

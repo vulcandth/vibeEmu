@@ -9,6 +9,7 @@ use self::channel1::Channel1;
 use self::channel2::Channel2;
 use self::channel3::Channel3;
 use self::channel4::Channel4;
+#[cfg(feature = "debug_logs")]
 use log::debug;
 
 pub const CPU_CLOCK_HZ: u32 = 4194304;
@@ -924,6 +925,7 @@ impl Apu {
                 }
             }
             _ => {
+                #[cfg(feature = "debug_logs")]
                 debug!("APU read from unhandled/unmapped address: {:#06X}", addr);
                 0xFF
             }
