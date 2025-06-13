@@ -19,3 +19,9 @@ impl GameBoy {
         }
     }
 }
+
+impl Default for GameBoy {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -134,3 +134,25 @@ fn ld_rr_instructions() {
     assert_eq!(cpu.sp, 0xFFFE);
     assert_eq!(cpu.get_hl(), 0xC000);
 }
+
+#[test]
+fn alu_immediate_ops() {
+    let program = vec![
+        0x3E, 0x0F, // LD A,0x0F
+        0xC6, 0x01, // ADD A,0x01 -> A=0x10
+        0xD6, 0x10, // SUB 0x10 -> A=0x00
+        0xEE, 0xFF, // XOR 0xFF -> A=0xFF
+    ];
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    let mut mmu = Mmu::new();
+    mmu.load_cart(Cartridge { rom: program });
+
+    for _ in 0..4 {
+        cpu.step(&mut mmu);
+    }
+
+    assert_eq!(cpu.a, 0xFF);
+    assert_eq!(cpu.f, 0x00);
+}

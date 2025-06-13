@@ -5,3 +5,9 @@ impl Apu {
         Self {}
     }
 }
+
+impl Default for Apu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
