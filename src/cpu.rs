@@ -69,6 +69,7 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0xAF] = 4; // XOR A
     arr[0xC3] = 16; // JP a16
     arr[0xC4] = 12; // CALL NZ,a16 (not taken)
+    arr[0xCC] = 12; // CALL Z,a16 (not taken)
     arr[0xC1] = 12; // POP BC
     arr[0xC5] = 16; // PUSH BC
     arr[0xC2] = 12; // JP NZ,a16 (not taken)
@@ -81,7 +82,9 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0xD2] = 12; // JP NC,a16 (not taken)
     arr[0xDA] = 12; // JP C,a16 (not taken)
     arr[0xCE] = 8; // ADC A,d8
-    arr[0xCB] = 4; // PREFIX CB
+    // CB prefix is handled separately; base cycles are accounted for in the
+    // prefixed opcode itself.
+    arr[0xCB] = 0; // PREFIX CB
     arr[0xD8] = 8; // RET C (not taken)
     arr[0xD0] = 8; // RET NC (not taken)
     arr[0xD1] = 12; // POP DE
@@ -89,6 +92,8 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0xD6] = 8; // SUB d8
     arr[0xD9] = 16; // RETI
     arr[0xDE] = 8; // SBC A,d8
+    arr[0xD4] = 12; // CALL NC,a16 (not taken)
+    arr[0xDC] = 12; // CALL C,a16 (not taken)
     arr[0xE1] = 12; // POP HL
     arr[0xE5] = 16; // PUSH HL
     arr[0xE0] = 12; // LDH (a8),A
@@ -109,6 +114,18 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0xFA] = 16; // LD A,(a16)
     arr[0xFB] = 4; // EI
     arr[0xFE] = 8; // CP d8
+    // ADC A,r
+    let mut op = 0x88u8;
+    while op <= 0x8F {
+        arr[op as usize] = if op & 0x07 == 6 { 8 } else { 4 };
+        op += 1;
+    }
+    // SBC A,r
+    let mut op = 0x98u8;
+    while op <= 0x9F {
+        arr[op as usize] = if op & 0x07 == 6 { 8 } else { 4 };
+        op += 1;
+    }
     // ADD A,r
     let mut op = 0x80u8;
     while op <= 0x87 {
@@ -145,6 +162,15 @@ const fn opcode_cycles() -> [u8; 256] {
         arr[op as usize] = if op & 0x07 == 6 { 8 } else { 4 };
         op += 1;
     }
+    // RST n
+    arr[0xC7] = 16;
+    arr[0xCF] = 16;
+    arr[0xD7] = 16;
+    arr[0xDF] = 16;
+    arr[0xE7] = 16;
+    arr[0xEF] = 16;
+    arr[0xF7] = 16;
+    arr[0xFF] = 16;
     // LD r,r and LD r,(HL)/(HL),r
     let mut op = 0x40u8;
     while op <= 0x7F {
@@ -167,8 +193,16 @@ const fn cb_cycles() -> [u8; 256] {
     let mut arr = [8u8; 256];
     let mut op = 0;
     while op < 256 {
-        if op & 0x07 == 6 {
-            arr[op as usize] = 16;
+        let r = op & 0x07;
+        // BIT instructions occupy 0x40..=0x7F and only read from (HL)
+        // instead of read-modify-write. These take 12 cycles when using
+        // (HL). Other (HL) variants take 16 cycles.
+        if r == 6 {
+            if op >= 0x40 && op <= 0x7F {
+                arr[op as usize] = 12;
+            } else {
+                arr[op as usize] = 16;
+            }
         }
         op += 1;
     }
