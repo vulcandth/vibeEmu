@@ -746,23 +746,23 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
 - [ ] **Audio (APU) Implementation** – *Dep: CPU (timing), Timer (frame sequencer sync).*
   
-  - [ ] Implement APU channel classes:  
-    
-    * [ ] Square Channel (1 & 2): fields for frequency timer, duty cycle (from NR11/NR21), envelope (NR12/NR22), sweep (for Ch1 NR10), length counter.  
-    * [ ] Wave Channel (3): waveform RAM (already in MMU at FF30-FF3F), fields for frequency, length, volume code (NR32), position in waveform, enabled flag.  
-    * [ ] Noise Channel (4): LFSR state, divisor, clock shift, length, envelope.
+  - [x] Implement APU channel classes:
+
+    * [x] Square Channel (1 & 2): fields for frequency timer, duty cycle (from NR11/NR21), envelope (NR12/NR22), sweep (for Ch1 NR10), length counter.
+    * [x] Wave Channel (3): waveform RAM (already in MMU at FF30-FF3F), fields for frequency, length, volume code (NR32), position in waveform, enabled flag.
+    * [x] Noise Channel (4): LFSR state, divisor, clock shift, length, envelope.
   
-  - [ ] Frame Sequencer: use an internal counter that runs at 512Hz. It ticks 8 steps (0 to 7) in a cycle:  
-    
-    * [ ] Steps 0,2,4,6: clock length counters (if enabled).  
-    * [ ] Step 2,6: clock sweep (Ch1).  
-    * [ ] Steps 7: clock volume envelopes.  
-    * [ ] (This is per Game Boy APU specification.)
+  - [x] Frame Sequencer: use an internal counter that runs at 512Hz. It ticks 8 steps (0 to 7) in a cycle:
+
+    * [x] Steps 0,2,4,6: clock length counters (if enabled).
+    * [x] Step 2,6: clock sweep (Ch1).
+    * [x] Steps 7: clock volume envelopes.
+    * [x] (This is per Game Boy APU specification.)
   
-  - [ ] Each APU `step(cycles)`:  
-    
-    * [ ] Accumulate cycles, and also accumulate a fraction towards the next 512 Hz step. When 8192 cycles have accumulated, that’s one frame sequencer tick.  
-    * [ ] Also, for each channel, decrement their frequency timers by `cycles`. If a channel’s timer <= 0, it means the waveform output should tick: for square wave, flip the waveform output according to duty; for wave channel, advance to next sample; for noise, shift the LFSR. Then reload the frequency timer (which is (2048 - frequency) * 4 for squares, or appropriate formula for others). For noise, the timer period is 2^(shift+1)* (divisor?).  
+  - [ ] Each APU `step(cycles)`:
+
+    * [x] Accumulate cycles, and also accumulate a fraction towards the next 512 Hz step. When 8192 cycles have accumulated, that’s one frame sequencer tick.
+    * [x] Also, for each channel, decrement their frequency timers by `cycles`. If a channel’s timer <= 0, it means the waveform output should tick: for square wave, flip the waveform output according to duty; for wave channel, advance to next sample; for noise, shift the LFSR. Then reload the frequency timer (which is (2048 - frequency) * 4 for squares, or appropriate formula for others). For noise, the timer period is 2^(shift+1)* (divisor?).
     * [ ] Mix samples: We might generate audio at the same time as emulation cycles, but that’s a lot of samples (4 million per second!). Instead, decide on an output sample rate. A straightforward approach: every X CPU cycles, output one sample. For example, if we choose 44,100 Hz, that’s ~95 cycles per sample (at DMG rate). So we can accumulate a `sample_timer += cycles`, and while `sample_timer >= cycles_per_sample`, do:  
     - [ ] Compute the output of each channel at this moment (each channel either outputs a 4-bit value or is silent if disabled).  
     - [ ] Mix according to NR50/NR51: each channel to left/right.  
