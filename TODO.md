@@ -680,18 +680,18 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
     * [x] Trigger VBlank interrupt when entering mode1 at line 144.
     * Rendering: For now, implement a straightforward pixel generation during mode 3:  
     - [x] If LCDC says BG enable or the game is in DMG mode (BG cannot be turned off on DMG, it’s always enabled at least as a white background), draw background: For each x of the line, determine the tile from the background tile map (using SCX, SCY plus the current LY), fetch tile data from pattern table (taking into account LCDC tile data area and signed tile indices if using 8800-97FF area), get the correct tile line (using SCY+LY mod 8), and palette color.
-    - If window is enabled (LCDC bit and if current line >= WY and WX in range), at WX position, switch to drawing window tiles instead of background.  
-    - Draw sprites: After drawing BG/window for the line, iterate sprites in OAM (or better, pre-collected during mode 2 OAM scan which we can simulate by collecting the first up to 10 sprites on this line, since only 10 sprites can be drawn per line). Sprites have priority: lowest OAM index has highest priority if overlapping (typical for sprites). If sprite x is in range for this pixel and its priority allows (OBJ-to-BG priority respect), draw sprite pixel (using its tile data, which might come from second tile bank on CGB if specified, and using OBP0/OBP1 or CGB palette).  
-    - Mark sprite pixel as drawn to enforce the 10 sprites/line limit.  
-    - Write the final pixel color into the frame buffer.  
-    - This can be simplified initially (e.g. ignore priority and just draw sprites after background, or implement without window). But to pass many games’ visuals, eventually implement fully.  
-    * Support both 8x8 and 8x16 sprite sizes (LCDC bit 2).  
-    * If CGB mode, use tile VRAM bank as specified by tile attributes (BG tile can come from bank 0/1, sprite tiles similarly).  
+    - [x] If window is enabled (LCDC bit and if current line >= WY and WX in range), at WX position, switch to drawing window tiles instead of background.
+    - [x] Draw sprites: After drawing BG/window for the line, iterate sprites in OAM (or better, pre-collected during mode 2 OAM scan which we can simulate by collecting the first up to 10 sprites on this line, since only 10 sprites can be drawn per line). Sprites have priority: lowest OAM index has highest priority if overlapping (typical for sprites). If sprite x is in range for this pixel and its priority allows (OBJ-to-BG priority respect), draw sprite pixel (using its tile data, which might come from second tile bank on CGB if specified, and using OBP0/OBP1 or CGB palette).
+    - [x] Mark sprite pixel as drawn to enforce the 10 sprites/line limit.
+    - [x] Write the final pixel color into the frame buffer.
+    - [ ] This can be simplified initially (e.g. ignore priority and just draw sprites after background, or implement without window). But to pass many games’ visuals, eventually implement fully.
+    * [x] Support both 8x8 and 8x16 sprite sizes (LCDC bit 2).
+    * [x] If CGB mode, use tile VRAM bank as specified by tile attributes (BG tile can come from bank 0/1, sprite tiles similarly).
     * If performance becomes an issue for rendering, consider optimizing using lookup tables (for tile decoding) or caching tile graphics, but correctness first.
   
   - As each line is rendered, the PPU could optionally output it immediately (some emulators do scanline rendering). But easier is to render to frame buffer and after LY=143, when going into VBlank, we know the frame is done and we can copy or present the frame.
   
-  - Handle LCD on/off: If LCD is off (LCDC bit7 = 0), PPU should not draw anything and LY will stay at 0 (or goes immediately to 0?). Actually, turning off LCD mid-frame resets LY to 0 within 1-2 lines and PPU stays in VBlank state effectively. We might handle this by if LCD off, we don’t do normal mode stepping, maybe just reset LY. This is an edge case; games rarely turn it off except to load tiles quickly.
+  - [x] Handle LCD on/off: If LCD is off (LCDC bit7 = 0), PPU should not draw anything and LY will stay at 0 (or goes immediately to 0?). Actually, turning off LCD mid-frame resets LY to 0 within 1-2 lines and PPU stays in VBlank state effectively. We might handle this by if LCD off, we don’t do normal mode stepping, maybe just reset LY. This is an edge case; games rarely turn it off except to load tiles quickly.
   
   - Test: To validate PPU, one approach: run known good ROMs like the Nintendo logo (boot ROM) or a simple homebrew that draws something. Alternatively, use test ROMs from the `mooneye-gb` suite (there are many PPU tests). You can also write a simple program to draw a pattern in tile data and see if the frame buffer matches expected values. If using boot ROM, when boot ROM finishes, it displays the Nintendo logo – check that it appears correctly (requires the front end to actually show the frame).
 
