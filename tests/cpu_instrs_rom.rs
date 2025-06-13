@@ -28,7 +28,6 @@ fn cpu_instrs_01_special() {
 }
 
 #[test]
-#[ignore]
 fn cpu_instrs_02_interrupts() {
     run_individual("02-interrupts.gb");
 }
