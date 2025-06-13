@@ -49,6 +49,7 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0x33] = 8; // INC SP
     arr[0x34] = 12; // INC (HL)
     arr[0x35] = 12; // DEC (HL)
+    arr[0x36] = 12; // LD (HL),d8
     arr[0x37] = 4; // SCF
     arr[0x38] = 8; // JR C,r8 (not taken)
     arr[0x39] = 8; // ADD HL,SP
@@ -79,6 +80,42 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0xFA] = 16; // LD A,(a16)
     arr[0xFB] = 4; // EI
     arr[0xFE] = 8; // CP d8
+    // ADD A,r
+    let mut op = 0x80u8;
+    while op <= 0x87 {
+        arr[op as usize] = if op & 0x07 == 6 { 8 } else { 4 };
+        op += 1;
+    }
+    // SUB r
+    let mut op = 0x90u8;
+    while op <= 0x97 {
+        arr[op as usize] = if op & 0x07 == 6 { 8 } else { 4 };
+        op += 1;
+    }
+    // AND r
+    let mut op = 0xA0u8;
+    while op <= 0xA7 {
+        arr[op as usize] = if op & 0x07 == 6 { 8 } else { 4 };
+        op += 1;
+    }
+    // XOR r
+    let mut op = 0xA8u8;
+    while op <= 0xAF {
+        arr[op as usize] = if op & 0x07 == 6 { 8 } else { 4 };
+        op += 1;
+    }
+    // OR r
+    let mut op = 0xB0u8;
+    while op <= 0xB7 {
+        arr[op as usize] = if op & 0x07 == 6 { 8 } else { 4 };
+        op += 1;
+    }
+    // CP r
+    let mut op = 0xB8u8;
+    while op <= 0xBF {
+        arr[op as usize] = if op & 0x07 == 6 { 8 } else { 4 };
+        op += 1;
+    }
     // LD r,r and LD r,(HL)/(HL),r
     let mut op = 0x40u8;
     while op <= 0x7F {
@@ -544,6 +581,12 @@ impl Cpu {
                     | if val == 0 { 0x80 } else { 0 }
                     | if old & 0x0F == 0 { 0x20 } else { 0 };
             }
+            0x36 => {
+                let val = mmu.read_byte(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let addr = self.get_hl();
+                mmu.write_byte(addr, val);
+            }
             0x37 => {
                 self.f = (self.f & 0x80) | 0x10;
             }
@@ -638,6 +681,124 @@ impl Cpu {
             0x77 => {
                 let addr = self.get_hl();
                 mmu.write_byte(addr, self.a);
+            }
+            opcode @ 0x80..=0x87 => {
+                let src = opcode & 0x07;
+                let val = match src {
+                    0 => self.b,
+                    1 => self.c,
+                    2 => self.d,
+                    3 => self.e,
+                    4 => self.h,
+                    5 => self.l,
+                    6 => mmu.read_byte(self.get_hl()),
+                    7 => self.a,
+                    _ => unreachable!(),
+                };
+                let (res, carry) = self.a.overflowing_add(val);
+                self.f = if res == 0 { 0x80 } else { 0 }
+                    | if (self.a & 0x0F) + (val & 0x0F) > 0x0F {
+                        0x20
+                    } else {
+                        0
+                    }
+                    | if carry { 0x10 } else { 0 };
+                self.a = res;
+            }
+            opcode @ 0x90..=0x97 => {
+                let src = opcode & 0x07;
+                let val = match src {
+                    0 => self.b,
+                    1 => self.c,
+                    2 => self.d,
+                    3 => self.e,
+                    4 => self.h,
+                    5 => self.l,
+                    6 => mmu.read_byte(self.get_hl()),
+                    7 => self.a,
+                    _ => unreachable!(),
+                };
+                let (res, borrow) = self.a.overflowing_sub(val);
+                self.f = 0x40
+                    | if res == 0 { 0x80 } else { 0 }
+                    | if (self.a & 0x0F) < (val & 0x0F) {
+                        0x20
+                    } else {
+                        0
+                    }
+                    | if borrow { 0x10 } else { 0 };
+                self.a = res;
+            }
+            opcode @ 0xA0..=0xA7 => {
+                let src = opcode & 0x07;
+                let val = match src {
+                    0 => self.b,
+                    1 => self.c,
+                    2 => self.d,
+                    3 => self.e,
+                    4 => self.h,
+                    5 => self.l,
+                    6 => mmu.read_byte(self.get_hl()),
+                    7 => self.a,
+                    _ => unreachable!(),
+                };
+                self.a &= val;
+                self.f = if self.a == 0 { 0x80 } else { 0 } | 0x20;
+            }
+            opcode @ 0xA8..=0xAE => {
+                let src = opcode & 0x07;
+                let val = match src {
+                    0 => self.b,
+                    1 => self.c,
+                    2 => self.d,
+                    3 => self.e,
+                    4 => self.h,
+                    5 => self.l,
+                    6 => mmu.read_byte(self.get_hl()),
+                    7 => self.a,
+                    _ => unreachable!(),
+                };
+                self.a ^= val;
+                self.f = if self.a == 0 { 0x80 } else { 0 };
+            }
+            opcode @ 0xB0..=0xB7 => {
+                let src = opcode & 0x07;
+                let val = match src {
+                    0 => self.b,
+                    1 => self.c,
+                    2 => self.d,
+                    3 => self.e,
+                    4 => self.h,
+                    5 => self.l,
+                    6 => mmu.read_byte(self.get_hl()),
+                    7 => self.a,
+                    _ => unreachable!(),
+                };
+                self.a |= val;
+                self.f = if self.a == 0 { 0x80 } else { 0 };
+            }
+            opcode @ 0xB8..=0xBF => {
+                let src = opcode & 0x07;
+                let val = match src {
+                    0 => self.b,
+                    1 => self.c,
+                    2 => self.d,
+                    3 => self.e,
+                    4 => self.h,
+                    5 => self.l,
+                    6 => mmu.read_byte(self.get_hl()),
+                    7 => self.a,
+                    _ => unreachable!(),
+                };
+                let res = self.a.wrapping_sub(val);
+                self.f = 0x40
+                    | if res == 0 { 0x80 } else { 0 }
+                    | if (self.a & 0x0F) < (val & 0x0F) {
+                        0x20
+                    } else {
+                        0
+                    }
+                    | if self.a < val { 0x10 } else { 0 };
             }
             0xAF => {
                 self.a ^= self.a;

@@ -156,3 +156,36 @@ fn alu_immediate_ops() {
     assert_eq!(cpu.a, 0xFF);
     assert_eq!(cpu.f, 0x00);
 }
+
+#[test]
+fn alu_register_ops() {
+    let program = vec![
+        0x3E, 0x10, // LD A,0x10
+        0x06, 0x05, // LD B,0x05
+        0x80, // ADD A,B -> 0x15
+        0x90, // SUB B -> 0x10
+        0xA0, // AND B -> 0x00
+        0x3E, 0x0F, // LD A,0x0F
+        0xA8, // XOR B -> 0x0A
+        0xB0, // OR B -> 0x0F
+        0xB8, // CP B
+        0x21, 0x00, 0xC0, // LD HL,0xC000
+        0x36, 0x12, // LD (HL),0x12
+        0x00, // NOP
+    ];
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    let mut mmu = Mmu::new();
+    mmu.load_cart(Cartridge { rom: program });
+
+    for _ in 0..12 {
+        cpu.step(&mut mmu);
+    }
+
+    assert_eq!(cpu.a, 0x0F);
+    assert_eq!(cpu.b, 0x05);
+    assert_eq!(cpu.f, 0x40);
+    assert_eq!(mmu.read_byte(0xC000), 0x12);
+    assert_eq!(cpu.cycles, 76);
+}
