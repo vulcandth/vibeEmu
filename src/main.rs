@@ -54,4 +54,6 @@ fn main() {
         "Emulator initialized in {} mode",
         if args.dmg { "DMG" } else { "CGB" }
     );
+
+    gb.mmu.save_cart_ram();
 }

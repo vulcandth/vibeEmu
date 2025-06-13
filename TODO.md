@@ -392,7 +392,7 @@ The MMU will have to implement reads and writes to all these areas. In many case
 
 - [x] Manage external RAM: allocate a vector for it if present (size determined by cartridge header). Ensure that when RAM is “disabled” via MBC, reads return 0xFF or open-bus (and writes don’t stick).
 
-- Provide a mechanism to **save** the RAM to disk (battery-backed RAM). This could be an API call from the frontend to dump the RAM to a file when the emulator exits, and load from file when starting. It’s easiest to do this in the cartridge module as it knows the RAM size and content. (SameBoy supports battery save for game progress[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,on%20a%20Game%20Boy%20Color), and we will too, but **not** emulator state save).
+- [x] Provide a mechanism to **save** the RAM to disk (battery-backed RAM). This could be an API call from the frontend to dump the RAM to a file when the emulator exits, and load from file when starting. It’s easiest to do this in the cartridge module as it knows the RAM size and content. (SameBoy supports battery save for game progress[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,on%20a%20Game%20Boy%20Color), and we will too, but **not** emulator state save).
 
 - Identify cartridge type: On loading a ROM, read the header at 0x0147 to determine the MBC type and instantiate the appropriate handler[gbdev.io](https://gbdev.io/pandocs/#:~:text=32,46)[gbdev.io](https://gbdev.io/pandocs/#:~:text=36,M161). For instance, 0x01 means MBC1, 0x13 means MBC3+RAM+Battery, etc. Also check 0x014C (CGB flag) to know if game supports CGB mode (0x80 or 0xC0 means CGB capable) so we start emulator in CGB or DMG mode accordingly.
 
@@ -861,7 +861,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
   
   - Remove or conditionalize any development logs to not flood release version.
   
-  - Ensure battery save files are written on exit (and perhaps periodically to avoid loss on crash).
+  - [x] Ensure battery save files are written on exit (and perhaps periodically to avoid loss on crash).
   
   - Graceful shutdown when window closed or user interrupts.
   

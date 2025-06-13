@@ -13,3 +13,6 @@ env_logger = "0.10"
 
 [lib]
 path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = "3"

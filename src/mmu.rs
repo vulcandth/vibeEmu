@@ -52,6 +52,14 @@ impl Mmu {
         self.cart = Some(cart);
     }
 
+    pub fn save_cart_ram(&self) {
+        if let Some(cart) = &self.cart {
+            if let Err(e) = cart.save_ram() {
+                eprintln!("Failed to save RAM: {e}");
+            }
+        }
+    }
+
     pub fn load_boot_rom(&mut self, data: Vec<u8>) {
         self.boot_rom = Some(data);
         self.boot_mapped = true;
