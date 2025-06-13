@@ -630,7 +630,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
   
   - Flesh out the MMU to cover all regions:  
     
-    * Map 0x0000-0x7FFF and 0xA000-BFFF through Cartridge module (done).  
+    * [x] Map 0x0000-0x7FFF and 0xA000-BFFF through Cartridge module.
     * [x] Allocate 8KB for WRAM, and if CGB mode, 8 banks (bank 1-7) of an additional 4KB each (total 32KB, though one bank is fixed at 0).
     * [x] Map WRAM bank 0 at C000-CFFF, switchable WRAM bank at D000-DFFF (default to bank 1). Implement writes to FF70 (SVBK) to change the bank (on DMG, ignore it).
     * [x] VRAM: allocate 8KB (DMG) or 2×8KB (CGB). Map bank 0 (or selected bank) at 8000-9FFF. Implement FF4F register to switch VRAM bank on CGB.

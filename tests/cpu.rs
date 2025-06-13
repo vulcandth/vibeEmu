@@ -19,7 +19,7 @@ fn simple_program() {
     let mut cpu = Cpu::new();
     cpu.pc = 0; // start executing at 0
     let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge { rom: program });
+    mmu.load_cart(Cartridge::load(program));
 
     for _ in 0..8 {
         cpu.step(&mut mmu);
@@ -42,7 +42,7 @@ fn interrupt_handling() {
     cpu.sp = 0xC100;
     cpu.ime = true;
     let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge { rom: program });
+    mmu.load_cart(Cartridge::load(program));
     mmu.if_reg = 0x01;
     mmu.ie_reg = 0x01;
 
@@ -65,9 +65,7 @@ fn jr_nz_cycles() {
     cpu.pc = 0;
     cpu.f = 0x00; // Z flag cleared
     let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge {
-        rom: program.clone(),
-    });
+    mmu.load_cart(Cartridge::load(program.clone()));
     cpu.step(&mut mmu);
 
     assert_eq!(cpu.pc, 3);
@@ -77,7 +75,7 @@ fn jr_nz_cycles() {
     cpu.pc = 0;
     cpu.f = 0x80; // Z flag set
     let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge { rom: program });
+    mmu.load_cart(Cartridge::load(program));
     cpu.step(&mut mmu);
 
     assert_eq!(cpu.pc, 2);
@@ -91,7 +89,7 @@ fn ei_delay() {
     let mut cpu = Cpu::new();
     cpu.pc = 0;
     let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge { rom: program });
+    mmu.load_cart(Cartridge::load(program));
 
     cpu.step(&mut mmu); // EI
     assert!(!cpu.ime);
@@ -122,7 +120,7 @@ fn ld_rr_instructions() {
     let mut cpu = Cpu::new();
     cpu.pc = 0;
     let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge { rom: program });
+    mmu.load_cart(Cartridge::load(program));
 
     for _ in 0..15 {
         cpu.step(&mut mmu);
@@ -147,7 +145,7 @@ fn alu_immediate_ops() {
     let mut cpu = Cpu::new();
     cpu.pc = 0;
     let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge { rom: program });
+    mmu.load_cart(Cartridge::load(program));
 
     for _ in 0..4 {
         cpu.step(&mut mmu);
@@ -177,7 +175,7 @@ fn alu_register_ops() {
     let mut cpu = Cpu::new();
     cpu.pc = 0;
     let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge { rom: program });
+    mmu.load_cart(Cartridge::load(program));
 
     for _ in 0..12 {
         cpu.step(&mut mmu);
