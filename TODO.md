@@ -620,9 +620,9 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
   
   - Gradually implement all opcodes. Use a reference (like Pan Docs or Game Boy manual) to ensure each sets flags correctly. For CB-prefixed opcodes (bit operations, shifts, etc.), implement those too.
   
-  - Validate instruction timing: maintain a table of cycles per opcode and ensure CPU adds the correct amount. Mark opcodes that have conditional cycle lengths (e.g. JR taken vs not taken).
-  
-  - Implement interrupts in CPU: Check IF & IE after each instruction if IME is enabled. If an interrupt is pending and IME=1, service it (push PC, jump to vector, reset IME). If IME=0 and HALT was executed, handle the halt bug conditions[gbdev.io](https://gbdev.io/pandocs/halt.html#:~:text=When%20a%20,fails%20to%20be%20normally%20incremented).
+  - [x] Validate instruction timing: maintain a table of cycles per opcode and ensure CPU adds the correct amount. Mark opcodes that have conditional cycle lengths (e.g. JR taken vs not taken).
+
+  - [x] Implement interrupts in CPU: Check IF & IE after each instruction if IME is enabled. If an interrupt is pending and IME=1, service it (push PC, jump to vector, reset IME). If IME=0 and HALT was executed, handle the halt bug conditions[gbdev.io](https://gbdev.io/pandocs/halt.html#:~:text=When%20a%20,fails%20to%20be%20normally%20incremented).
   
   - Test: Use known CPU test ROMs (blargg’s **cpu_instrs.gb**). This will require more of the system to be in place (at least a rudimentary PPU or serial output capture for results). Alternatively, implement a partial instruction logger and compare with expected sequence. Blargg’s test can output “Passed” via serial which we can check once serial is in place. Keep this test in mind and revisit after implementing Timer/Serial.
 
