@@ -68,7 +68,12 @@ impl Cartridge {
             }
         }
 
-        println!("Loaded ROM: {} (MBC: {:?})", cart.title, cart.mbc);
+        println!(
+            "Loaded ROM: {} (MBC: {:?}, CGB: {})",
+            cart.title,
+            cart.mbc,
+            if cart.cgb { "yes" } else { "no" }
+        );
         Ok(cart)
     }
 
