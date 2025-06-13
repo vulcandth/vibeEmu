@@ -13,6 +13,7 @@ egui = { version = "0.27.0", default-features = false, features = [] }
 eframe = { version = "0.27.0", default-features = false, features = ["glow", "accesskit"] }
 winit = "0.29.4" # Compatible with eframe 0.27.2
 crossbeam-channel = "0.5"
+crossbeam = "0.8"
 native-dialog = "0.7.0"
 cpal = "0.16"
 

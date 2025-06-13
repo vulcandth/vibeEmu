@@ -1,8 +1,9 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use crossbeam_channel::Sender;
+use crossbeam::queue::ArrayQueue;
+use std::sync::Arc;
 
 pub struct AudioOutput {
-    sender: Option<Sender<(f32, f32)>>,
+    queue: Option<Arc<ArrayQueue<f32>>>,
     sample_rate: u32,
     #[allow(dead_code)]
     channels: u16,
@@ -16,7 +17,7 @@ impl AudioOutput {
             None => {
                 eprintln!("No output audio device available. Audio disabled.");
                 return Self {
-                    sender: None,
+                    queue: None,
                     sample_rate: 44100,
                     channels: 2,
                 };
@@ -36,7 +37,7 @@ impl AudioOutput {
                     None => {
                         eprintln!("No supported audio configs. Audio disabled.");
                         return Self {
-                            sender: None,
+                            queue: None,
                             sample_rate: 44100,
                             channels: 2,
                         };
@@ -50,14 +51,14 @@ impl AudioOutput {
         let channels = config.channels();
         let config: cpal::StreamConfig = config.into();
 
-        let (tx, rx) = crossbeam_channel::bounded::<(f32, f32)>(8192);
+        let queue = Arc::new(ArrayQueue::<f32>::new(8192));
+        let queue_clone = queue.clone();
         let err_fn = |err| eprintln!("Audio stream error: {err}");
-        let mut last_sample = (0.0_f32, 0.0_f32);
         let stream_result = match sample_format {
             cpal::SampleFormat::F32 => device.build_output_stream(
                 &config,
                 move |data: &mut [f32], _| {
-                    write_samples(data, channels, &rx, &mut last_sample);
+                    write_samples(data, channels, &queue_clone);
                 },
                 err_fn,
                 None,
@@ -65,7 +66,7 @@ impl AudioOutput {
             cpal::SampleFormat::I16 => device.build_output_stream(
                 &config,
                 move |data: &mut [i16], _| {
-                    write_samples(data, channels, &rx, &mut last_sample);
+                    write_samples(data, channels, &queue_clone);
                 },
                 err_fn,
                 None,
@@ -73,7 +74,7 @@ impl AudioOutput {
             cpal::SampleFormat::U16 => device.build_output_stream(
                 &config,
                 move |data: &mut [u16], _| {
-                    write_samples(data, channels, &rx, &mut last_sample);
+                    write_samples(data, channels, &queue_clone);
                 },
                 err_fn,
                 None,
@@ -86,7 +87,7 @@ impl AudioOutput {
             Err(e) => {
                 eprintln!("Failed to build audio stream: {e}");
                 return Self {
-                    sender: None,
+                    queue: None,
                     sample_rate,
                     channels,
                 };
@@ -96,7 +97,7 @@ impl AudioOutput {
         if let Err(e) = stream.play() {
             eprintln!("Failed to play audio stream: {e}");
             return Self {
-                sender: None,
+                queue: None,
                 sample_rate,
                 channels,
             };
@@ -105,14 +106,14 @@ impl AudioOutput {
         // Stream will run until process exit.
         std::mem::forget(stream);
         Self {
-            sender: Some(tx),
+            queue: Some(queue),
             sample_rate,
             channels,
         }
     }
 
     pub fn is_enabled(&self) -> bool {
-        self.sender.is_some()
+        self.queue.is_some()
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -125,32 +126,27 @@ impl AudioOutput {
     }
 
     pub fn push_sample(&self, left: f32, right: f32) {
-        if let Some(tx) = &self.sender {
-            let _ = tx.try_send((left, right));
+        if let Some(q) = &self.queue {
+            let _ = q.push(left);
+            let _ = q.push(right);
         }
     }
 }
 
-fn write_samples<T>(
-    output: &mut [T],
-    channels: u16,
-    rx: &crossbeam_channel::Receiver<(f32, f32)>,
-    last_sample: &mut (f32, f32),
-) where
+fn write_samples<T>(output: &mut [T], channels: u16, queue: &ArrayQueue<f32>)
+where
     T: cpal::Sample + cpal::FromSample<f32>,
 {
     let ch = channels as usize;
     for frame in output.chunks_mut(ch) {
-        let (l, r) = match rx.try_recv() {
-            Ok(sample) => {
-                *last_sample = sample;
-                sample
-            }
-            Err(_) => *last_sample,
-        };
-        frame[0] = cpal::Sample::from_sample(l);
+        let left = queue.pop().unwrap_or(0.0);
+        let mut right = left;
         if ch > 1 {
-            frame[1] = cpal::Sample::from_sample(r);
+            right = queue.pop().unwrap_or(0.0);
+        }
+        frame[0] = cpal::Sample::from_sample(left);
+        if ch > 1 {
+            frame[1] = cpal::Sample::from_sample(right);
             for i in 2..ch {
                 frame[i] = cpal::Sample::from_sample(0.0);
             }
