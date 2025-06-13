@@ -606,17 +606,17 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
 - **CPU Core (basic)** – *Dep: Cartridge (for fetching opcodes from ROM).*
   
-  - Implement CPU registers and the main fetch-decode-execute loop. Start with a limited set of opcodes to get something running (e.g. NOP, JP, basic loads).
-  
-  - Set up reset/initial state: If using boot ROM, load it at 0x0000 and set PC=0x0000. If skipping boot, initialize registers to known defaults (AF=$01B0 on DMG, etc., as per Pan Docs).
-  
-  - For now, ignore interrupts and most peripheral effects; focus on the CPU able to read opcodes and advance PC correctly.
-  
-  - Include a cycle counter in CPU and increment by each instruction’s cycles.
-  
-  - MMU integration: The CPU’s fetch and memory access should call MMU. Implement a provisional MMU that can read from cartridge and an array for RAM. (PPU, APU, etc., can be stubbed: e.g., reads from 0xFF00-FF7F return 0xFF, writes do nothing for now).
-  
-  - Implement enough opcodes to run a simple test. For example, write a test in Rust with a small bytecode that loads values, adds, jumps, etc., and verify CPU produces expected register values. *(Unit test)*.
+  - [x] Implement CPU registers and the main fetch-decode-execute loop. Start with a limited set of opcodes to get something running (e.g. NOP, JP, basic loads).
+
+  - [x] Set up reset/initial state: If using boot ROM, load it at 0x0000 and set PC=0x0000. If skipping boot, initialize registers to known defaults (AF=$01B0 on DMG, etc., as per Pan Docs).
+
+  - [x] For now, ignore interrupts and most peripheral effects; focus on the CPU able to read opcodes and advance PC correctly.
+
+  - [x] Include a cycle counter in CPU and increment by each instruction’s cycles.
+
+  - [x] MMU integration: The CPU’s fetch and memory access should call MMU. Implement a provisional MMU that can read from cartridge and an array for RAM. (PPU, APU, etc., can be stubbed: e.g., reads from 0xFF00-FF7F return 0xFF, writes do nothing for now).
+
+  - [x] Implement enough opcodes to run a simple test. For example, write a test in Rust with a small bytecode that loads values, adds, jumps, etc., and verify CPU produces expected register values. *(Unit test)*.
   
   - Gradually implement all opcodes. Use a reference (like Pan Docs or Game Boy manual) to ensure each sets flags correctly. For CB-prefixed opcodes (bit operations, shifts, etc.), implement those too.
   
