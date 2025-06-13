@@ -3,6 +3,8 @@ use crate::cartridge::Cartridge;
 pub struct Mmu {
     pub wram: [u8; 0x2000],
     pub cart: Option<Cartridge>,
+    pub if_reg: u8,
+    pub ie_reg: u8,
 }
 
 impl Mmu {
@@ -10,6 +12,8 @@ impl Mmu {
         Self {
             wram: [0; 0x2000],
             cart: None,
+            if_reg: 0,
+            ie_reg: 0,
         }
     }
 
@@ -27,6 +31,8 @@ impl Mmu {
                 }
             }
             0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
+            0xFF0F => self.if_reg,
+            0xFFFF => self.ie_reg,
             _ => 0xFF,
         }
     }
@@ -34,6 +40,8 @@ impl Mmu {
     pub fn write_byte(&mut self, addr: u16, val: u8) {
         match addr {
             0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize] = val,
+            0xFF0F => self.if_reg = val,
+            0xFFFF => self.ie_reg = val,
             _ => {}
         }
     }

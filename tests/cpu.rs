@@ -32,3 +32,69 @@ fn simple_program() {
     assert_eq!(cpu.pc, 0x0010);
     assert_eq!(cpu.cycles, 68);
 }
+
+#[test]
+fn interrupt_handling() {
+    let program = vec![0x00]; // NOP
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    cpu.sp = 0xC100;
+    cpu.ime = true;
+    let mut mmu = Mmu::new();
+    mmu.load_cart(Cartridge { rom: program });
+    mmu.if_reg = 0x01;
+    mmu.ie_reg = 0x01;
+
+    cpu.step(&mut mmu);
+
+    assert_eq!(cpu.pc, 0x0040);
+    assert_eq!(mmu.if_reg & 0x01, 0);
+    assert_eq!(cpu.sp, 0xC0FE);
+    assert_eq!(mmu.read_byte(0xC0FF), 0x00);
+    assert_eq!(mmu.read_byte(0xC0FE), 0x01);
+    assert_eq!(cpu.cycles, 24); // 4 for NOP + 20 for interrupt
+}
+
+#[test]
+fn jr_nz_cycles() {
+    // JR NZ should take 12 cycles when branch taken and 8 when not
+    let program = vec![0x20, 0x01, 0x00];
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    cpu.f = 0x00; // Z flag cleared
+    let mut mmu = Mmu::new();
+    mmu.load_cart(Cartridge {
+        rom: program.clone(),
+    });
+    cpu.step(&mut mmu);
+
+    assert_eq!(cpu.pc, 3);
+    assert_eq!(cpu.cycles, 12);
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    cpu.f = 0x80; // Z flag set
+    let mut mmu = Mmu::new();
+    mmu.load_cart(Cartridge { rom: program });
+    cpu.step(&mut mmu);
+
+    assert_eq!(cpu.pc, 2);
+    assert_eq!(cpu.cycles, 8);
+}
+
+#[test]
+fn ei_delay() {
+    let program = vec![0xFB, 0x00]; // EI; NOP
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    let mut mmu = Mmu::new();
+    mmu.load_cart(Cartridge { rom: program });
+
+    cpu.step(&mut mmu); // EI
+    assert!(!cpu.ime);
+    cpu.step(&mut mmu); // NOP
+    assert!(cpu.ime);
+}
