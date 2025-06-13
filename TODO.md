@@ -575,7 +575,7 @@ The design ensures each module has a single clear role, but they interlock throu
 
 Implementing a full emulator is complex – breaking it into manageable pieces with a logical sequence is crucial. The following checklist outlines the stages of development, the dependencies of each stage, and the tasks to complete. Each step should be tested (as described in the Testing section) before moving to the next.
 
-- **Project Setup & Skeleton** – *Dependencies: None.*
+- [ ] **Project Setup & Skeleton** – *Dependencies: None.*
   
   - [x] Initialize a Rust project (binary crate for now). Add dependencies: `cpal`, `minifb`/`winit+pixels`, etc.
 
@@ -585,7 +585,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
   - [x] Set up logging (optional) and a basic CLI argument parsing (e.g. accept a ROM file path, and flags like `--serial` for test mode, `--dmg` to force DMG mode, etc.).
 
-- **Cartridge Loading** – *Dep: Project setup.*
+- [ ] **Cartridge Loading** – *Dep: Project setup.*
   
     - [x] Write a function to load a ROM file into memory (Vec<u8>).
   
@@ -604,7 +604,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
   
     - [x] Test: print out some cartridge info (title, MBC type) to ensure parsing is correct.
 
-- **CPU Core (basic)** – *Dep: Cartridge (for fetching opcodes from ROM).*
+- [ ] **CPU Core (basic)** – *Dep: Cartridge (for fetching opcodes from ROM).*
   
   - [x] Implement CPU registers and the main fetch-decode-execute loop. Start with a limited set of opcodes to get something running (e.g. NOP, JP, basic loads).
 
@@ -624,11 +624,11 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
   - [x] Implement interrupts in CPU: Check IF & IE after each instruction if IME is enabled. If an interrupt is pending and IME=1, service it (push PC, jump to vector, reset IME). If IME=0 and HALT was executed, handle the halt bug conditions[gbdev.io](https://gbdev.io/pandocs/halt.html#:~:text=When%20a%20,fails%20to%20be%20normally%20incremented).
   
-  - Test: Use known CPU test ROMs (blargg’s **cpu_instrs.gb**). This will require more of the system to be in place (at least a rudimentary PPU or serial output capture for results). Alternatively, implement a partial instruction logger and compare with expected sequence. Blargg’s test can output “Passed” via serial which we can check once serial is in place. Keep this test in mind and revisit after implementing Timer/Serial.
+  - [ ] Test: Use known CPU test ROMs (blargg’s **cpu_instrs.gb**). This will require more of the system to be in place (at least a rudimentary PPU or serial output capture for results). Alternatively, implement a partial instruction logger and compare with expected sequence. Blargg’s test can output “Passed” via serial which we can check once serial is in place. Keep this test in mind and revisit after implementing Timer/Serial.
 
-- **MMU & Memory Map** – *Dep: CPU (so we can test memory ops).*
+- [ ] **MMU & Memory Map** – *Dep: CPU (so we can test memory ops).*
   
-  - Flesh out the MMU to cover all regions:  
+  - [ ] Flesh out the MMU to cover all regions:  
     
     * [x] Map 0x0000-0x7FFF and 0xA000-BFFF through Cartridge module.
     * [x] Allocate 8KB for WRAM, and if CGB mode, 8 banks (bank 1-7) of an additional 4KB each (total 32KB, though one bank is fixed at 0).
@@ -641,7 +641,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
   
   - [x] Implement read/write functions in MMU that do an address range check and dispatch appropriately. This will be a large match or if-else chain.
   
-  - Integrate PPU, APU, Timer, Input, Serial into MMU: at this stage, those modules might be partially implemented or at least have their data arrays.  
+  - [ ] Integrate PPU, APU, Timer, Input, Serial into MMU: at this stage, those modules might be partially implemented or at least have their data arrays.  
     
     * [x] For PPU registers (FF40-FF4B, etc.), have MMU call `ppu.write_reg(addr, val)` and `ppu.read_reg(addr)` which we will implement soon.
     * [x] Same for APU (NR10-NR52): call `apu.write_reg(addr,val)`. Initially, we can stub APU responses (e.g. return 0 for reads or specific default values, since APU registers often have unused bits returning 1).
@@ -650,16 +650,16 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
     * [x] Joypad (FF00): MMU reads from Input module (combining state with select bits), writes might set the select bits (in practice, games write to FF00 to select mode – we track those bits).
     * [x] Serial (FF01, FF02): Writes to FF01 store the byte (SB). Writes to FF02 with bit7=1 trigger transfer (so call serial module to handle it). Reads return SB or status.
   
-  - Boot ROM handling:
+  - [ ] Boot ROM handling:
 
     * [x] If using a boot ROM, load it into an array. MMU at 0x0000-0x00FF should return boot ROM bytes until a flag `boot_completed` is set (when FF50 is written).
     * [x] Implement write to FF50: set `boot_completed=true`, after which reads from 0x0000 go to cartridge ROM. Ensure FF50 write only works once (actual hardware cannot re-enable boot ROM without reset).
   
   - [x] Test: Write unit tests for MMU addressing (e.g., write to an address and read back to confirm it goes to correct memory). Also, test bank switching logic: e.g., set VRAM bank via FF4F and verify reads go to different memory locations.
 
-- **PPU Implementation (Rendering)** – *Dep: CPU (for timing), MMU (for memory interface).*
+- [ ] **PPU Implementation (Rendering)** – *Dep: CPU (for timing), MMU (for memory interface).*
   
-  - Implement PPU registers and internal data:
+  - [ ] Implement PPU registers and internal data:
 
     * [x] LCDC (FF40) bits: control enabling BG, sprites, sprite size, BG tilemap base, tile data base, window enable, window tilemap base, LCD on/off.
     * [x] STAT (FF41) bits: the mode bits (0-1), coincidence flag (bit2), and interrupt enable flags for LY=LYC, OAM, VBlank, HBlank.
@@ -668,17 +668,17 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
     * [x] OAM memory for 40 sprites (each 4 bytes: y, x, tile, flags).
     * [x] VRAM memory for tiles and maps (with 2 banks in CGB).
   
-  - PPU step function:  
+  - [ ] PPU step function:  
     
     * [x] Aim for a line-based timing at first: e.g., accumulate cycles until 456, then that constitutes one scanline. Within that, you can subdivide: OAM scan maybe 80 cycles, drawing 172 cycles, HBlank 204 cycles (these add to 456). But perhaps implement a simpler model:
-    - Keep a counter, add cycles. Determine current mode based on counter range.  
-    - When counter < 80 (mode 2), when it hits 80 switch to mode 3; when it hits 80+172=252 switch to mode 0; when it hits 456, reset counter to 0, increment LY, potentially change mode to 2 of next line or to 1 if LY==144.  
-    - When LY == 144, enter VBlank (mode 1) and stay in mode 1 for 456*10 lines (10 lines of VBlank). During VBlank, the PPU can just increment LY every 456 cycles without rendering.  
-    - When LY goes from 153 back to 0, that’s end of VBlank, new frame.  
+    - [ ] Keep a counter, add cycles. Determine current mode based on counter range.  
+    - [ ] When counter < 80 (mode 2), when it hits 80 switch to mode 3; when it hits 80+172=252 switch to mode 0; when it hits 456, reset counter to 0, increment LY, potentially change mode to 2 of next line or to 1 if LY==144.  
+    - [ ] When LY == 144, enter VBlank (mode 1) and stay in mode 1 for 456*10 lines (10 lines of VBlank). During VBlank, the PPU can just increment LY every 456 cycles without rendering.  
+    - [ ] When LY goes from 153 back to 0, that’s end of VBlank, new frame.  
     * [x] Implement mode transitions and set STAT mode bits accordingly.
     * [x] Trigger STAT interrupt if enabled when entering OAM (mode2), entering VBlank (mode1) or entering HBlank (mode0). Also check LY==LYC: if LY equals LYC at the *compare time*, set STAT coincidence flag and trigger interrupt if enabled[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,downsampled%20from%202MHz%2C%20and%20accurate).
     * [x] Trigger VBlank interrupt when entering mode1 at line 144.
-    * Rendering: For now, implement a straightforward pixel generation during mode 3:  
+    * [ ] Rendering: For now, implement a straightforward pixel generation during mode 3:  
     - [x] If LCDC says BG enable or the game is in DMG mode (BG cannot be turned off on DMG, it’s always enabled at least as a white background), draw background: For each x of the line, determine the tile from the background tile map (using SCX, SCY plus the current LY), fetch tile data from pattern table (taking into account LCDC tile data area and signed tile indices if using 8800-97FF area), get the correct tile line (using SCY+LY mod 8), and palette color.
     - [x] If window is enabled (LCDC bit and if current line >= WY and WX in range), at WX position, switch to drawing window tiles instead of background.
     - [x] Draw sprites: After drawing BG/window for the line, iterate sprites in OAM (or better, pre-collected during mode 2 OAM scan which we can simulate by collecting the first up to 10 sprites on this line, since only 10 sprites can be drawn per line). Sprites have priority: lowest OAM index has highest priority if overlapping (typical for sprites). If sprite x is in range for this pixel and its priority allows (OBJ-to-BG priority respect), draw sprite pixel (using its tile data, which might come from second tile bank on CGB if specified, and using OBP0/OBP1 or CGB palette).
@@ -687,187 +687,187 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
     - [x] This can be simplified initially (e.g. ignore priority and just draw sprites after background, or implement without window). But to pass many games’ visuals, eventually implement fully.
     * [x] Support both 8x8 and 8x16 sprite sizes (LCDC bit 2).
     * [x] If CGB mode, use tile VRAM bank as specified by tile attributes (BG tile can come from bank 0/1, sprite tiles similarly).
-    * If performance becomes an issue for rendering, consider optimizing using lookup tables (for tile decoding) or caching tile graphics, but correctness first.
+    * [ ] If performance becomes an issue for rendering, consider optimizing using lookup tables (for tile decoding) or caching tile graphics, but correctness first.
   
-  - As each line is rendered, the PPU could optionally output it immediately (some emulators do scanline rendering). But easier is to render to frame buffer and after LY=143, when going into VBlank, we know the frame is done and we can copy or present the frame.
+  - [ ] As each line is rendered, the PPU could optionally output it immediately (some emulators do scanline rendering). But easier is to render to frame buffer and after LY=143, when going into VBlank, we know the frame is done and we can copy or present the frame.
   
   - [x] Handle LCD on/off: If LCD is off (LCDC bit7 = 0), PPU should not draw anything and LY will stay at 0 (or goes immediately to 0?). Actually, turning off LCD mid-frame resets LY to 0 within 1-2 lines and PPU stays in VBlank state effectively. We might handle this by if LCD off, we don’t do normal mode stepping, maybe just reset LY. This is an edge case; games rarely turn it off except to load tiles quickly.
   
-  - Test: To validate PPU, one approach: run known good ROMs like the Nintendo logo (boot ROM) or a simple homebrew that draws something. Alternatively, use test ROMs from the `mooneye-gb` suite (there are many PPU tests). You can also write a simple program to draw a pattern in tile data and see if the frame buffer matches expected values. If using boot ROM, when boot ROM finishes, it displays the Nintendo logo – check that it appears correctly (requires the front end to actually show the frame).
+  - [ ] Test: To validate PPU, one approach: run known good ROMs like the Nintendo logo (boot ROM) or a simple homebrew that draws something. Alternatively, use test ROMs from the `mooneye-gb` suite (there are many PPU tests). You can also write a simple program to draw a pattern in tile data and see if the frame buffer matches expected values. If using boot ROM, when boot ROM finishes, it displays the Nintendo logo – check that it appears correctly (requires the front end to actually show the frame).
 
-- **Basic Frontend (Window + Input)** – *Dep: PPU (to get frame), maybe APU (for audio toggle).*
+- [ ] **Basic Frontend (Window + Input)** – *Dep: PPU (to get frame), maybe APU (for audio toggle).*
   
-  - Create a window using chosen library (e.g. using `minifb`: create Window, or using `winit`: create event loop and window).
+  - [ ] Create a window using chosen library (e.g. using `minifb`: create Window, or using `winit`: create event loop and window).
   
-  - For `minifb`: set up a 160x144 framebuffer (or scaled to 2x, etc.). For `pixels`: set up a surface for 160x144.
+  - [ ] For `minifb`: set up a 160x144 framebuffer (or scaled to 2x, etc.). For `pixels`: set up a surface for 160x144.
   
-  - Each iteration of the emulation loop, once a frame is ready (e.g. after PPU runs LY 0-143 and hits VBlank end), update the texture/pixel buffer and blit to window.
+  - [ ] Each iteration of the emulation loop, once a frame is ready (e.g. after PPU runs LY 0-143 and hits VBlank end), update the texture/pixel buffer and blit to window.
   
-  - Manage timing: Ideally, throttle to ~59.7 FPS (GB frame rate). We can use vsync via the window (if available) or manually sleep the thread to control speed. In early development, running unthrottled is fine (especially if CPU is not heavy yet, it will run too fast – but that’s where a frame limiter is needed for actual play).
+  - [ ] Manage timing: Ideally, throttle to ~59.7 FPS (GB frame rate). We can use vsync via the window (if available) or manually sleep the thread to control speed. In early development, running unthrottled is fine (especially if CPU is not heavy yet, it will run too fast – but that’s where a frame limiter is needed for actual play).
   
-  - Input handling: For `minifb`, use `get_keys_pressed()` etc., for `winit`, handle `WindowEvent::KeyboardInput`. Map keys to Game Boy buttons (e.g., Up/Down/Left/Right arrows, Z = A, X = B, Enter = Start, Backspace = Select as defaults[github.com](https://github.com/mvdnes/rboy#:~:text=Gameplay%20Keybindings)).
+  - [ ] Input handling: For `minifb`, use `get_keys_pressed()` etc., for `winit`, handle `WindowEvent::KeyboardInput`. Map keys to Game Boy buttons (e.g., Up/Down/Left/Right arrows, Z = A, X = B, Enter = Start, Backspace = Select as defaults[github.com](https://github.com/mvdnes/rboy#:~:text=Gameplay%20Keybindings)).
   
-  - Update the Input module’s state accordingly (set bits for pressed buttons). If a button transitions from not pressed to pressed, set the joypad interrupt flag (IF bit 4) in the Interrupt controller.
+  - [ ] Update the Input module’s state accordingly (set bits for pressed buttons). If a button transitions from not pressed to pressed, set the joypad interrupt flag (IF bit 4) in the Interrupt controller.
   
-  - Provide a way to close the emulator (window close event breaks loop).
+  - [ ] Provide a way to close the emulator (window close event breaks loop).
   
-  - Test: Run a simple ROM (like Tetris or Dr. Mario, which don’t require MBC) to see if you get graphics and can control. Many things might still be missing (timing, etc.), but this will shake out integration issues.
+  - [ ] Test: Run a simple ROM (like Tetris or Dr. Mario, which don’t require MBC) to see if you get graphics and can control. Many things might still be missing (timing, etc.), but this will shake out integration issues.
 
-- **Timers & DIV** – *Dep: CPU (timing), MMU.*
+- [ ] **Timers & DIV** – *Dep: CPU (timing), MMU.*
   
-  - Implement the Timer module fully as described:  
+  - [ ] Implement the Timer module fully as described:  
     
-    * Keep track of `div_counter` (16-bit). Perhaps every CPU cycle call `timer.tick()`.  
-    * When `div_counter` overflows 0xFFFF -> 0x0000, it automatically wraps (DIV register goes through 00-FF).  
-    * Use TAC to determine when to increment TIMA. Simplest: whenever the specific bit of `div_counter` goes from 1 to 0 (falling edge) as per TAC selection, increment TIMA (if timer enabled). Use Pan Docs schematic[gbdev.io](https://gbdev.io/pandocs/Timer_Obscure_Behaviour.html#:~:text=On%20DMG%3A) or simpler approach: maintain a separate counter for TIMA that counts down cycles until next increment.  
-    * If TIMA overflows, set TIMA = TMA, request interrupt.  
-    * Respond correctly to writes:  
-    - Write to DIV: set div_counter = 0 (and thus DIV=0). Also, in doing so, handle the edge-case: if the timer was about to tick at that moment, do we skip it or not? (This is a subtle detail; tests exist for it. We can refine later.)  
-    - Write to TAC: note if enabling/disabling timer might immediately cause a tick depending on counter state.  
-    - Write to TIMA: if an overflow was in progress (there’s a known glitch where writing TIMA in the short window after overflow and before it reloads from TMA cancels the interrupt). We can simplify initial implementation by ignoring that glitch, then later add if needed for passing test ROMs.  
-    * Write to TMA: simply sets the modulo for future overflow reload.
+    * [ ] Keep track of `div_counter` (16-bit). Perhaps every CPU cycle call `timer.tick()`.  
+    * [ ] When `div_counter` overflows 0xFFFF -> 0x0000, it automatically wraps (DIV register goes through 00-FF).  
+    * [ ] Use TAC to determine when to increment TIMA. Simplest: whenever the specific bit of `div_counter` goes from 1 to 0 (falling edge) as per TAC selection, increment TIMA (if timer enabled). Use Pan Docs schematic[gbdev.io](https://gbdev.io/pandocs/Timer_Obscure_Behaviour.html#:~:text=On%20DMG%3A) or simpler approach: maintain a separate counter for TIMA that counts down cycles until next increment.  
+    * [ ] If TIMA overflows, set TIMA = TMA, request interrupt.  
+    * [ ] Respond correctly to writes:  
+    - [ ] Write to DIV: set div_counter = 0 (and thus DIV=0). Also, in doing so, handle the edge-case: if the timer was about to tick at that moment, do we skip it or not? (This is a subtle detail; tests exist for it. We can refine later.)  
+    - [ ] Write to TAC: note if enabling/disabling timer might immediately cause a tick depending on counter state.  
+    - [ ] Write to TIMA: if an overflow was in progress (there’s a known glitch where writing TIMA in the short window after overflow and before it reloads from TMA cancels the interrupt). We can simplify initial implementation by ignoring that glitch, then later add if needed for passing test ROMs.  
+    * [ ] Write to TMA: simply sets the modulo for future overflow reload.
   
-  - Integrate with MMU reads/writes (some done in MMU step above).
+  - [ ] Integrate with MMU reads/writes (some done in MMU step above).
   
-  - Test: Use known timer test ROMs from mooneye or blargg (e.g., “timer/div behavior” tests). Also, verify in a game that uses timer (some games use timer interrupt for periodic tasks – if those tasks happen or not can be noticed).
+  - [ ] Test: Use known timer test ROMs from mooneye or blargg (e.g., “timer/div behavior” tests). Also, verify in a game that uses timer (some games use timer interrupt for periodic tasks – if those tasks happen or not can be noticed).
   
-  - Once timer is working, the **Speed of games** will depend on it for certain things (like music tempo if driven by timer interrupt). We also should ensure our CPU loop is generating the correct number of cycles per frame (~70224 cycles per frame for 59.7 Hz) to keep real-time.
+  - [ ] Once timer is working, the **Speed of games** will depend on it for certain things (like music tempo if driven by timer interrupt). We also should ensure our CPU loop is generating the correct number of cycles per frame (~70224 cycles per frame for 59.7 Hz) to keep real-time.
 
-- **Interrupt & HALT behavior** – *Dep: CPU, Timer, PPU integration.*
+- [ ] **Interrupt & HALT behavior** – *Dep: CPU, Timer, PPU integration.*
   
-  - By now, CPU should be checking for interrupts each iteration. But ensure the following:  
+  - [ ] By now, CPU should be checking for interrupts each iteration. But ensure the following:  
     
-    * After an EI instruction, interrupts are not recognized on the immediately following instruction (IME gets set after one instruction delay).  
-    * HALT: implement the two cases as per Pan Docs[gbdev.io](https://gbdev.io/pandocs/halt.html#:~:text=If%20,instruction%20is%20first%20executed). If IF & IE == 0 when HALT executed (no pending enabled interrupts), CPU enters low-power HALT (we can simulate by simply not executing any instruction until an interrupt occurs, i.e., break out of the normal loop until IF & IE != 0). If an interrupt is pending but IME=0, then HALT will immediately exit but the next opcode is not skipped (PC doesn’t advance)[gbdev.io](https://gbdev.io/pandocs/halt.html#:~:text=When%20a%20,fails%20to%20be%20normally%20incremented). We can handle this by a flag in CPU like `halt_bug` that indicates to not increment PC on next instruction fetch.  
-    * STOP: If STOP is executed and KEY1’s speed switch bit is set (CGB double speed toggle), then switch speed and clear that bit. If STOP is executed with no speed switch, we can simply treat it like a very short HALT (or just continue; on DMG it’s basically a no-op for most emulators, unless we want to simulate power saving which we don’t).
+    * [ ] After an EI instruction, interrupts are not recognized on the immediately following instruction (IME gets set after one instruction delay).  
+    * [ ] HALT: implement the two cases as per Pan Docs[gbdev.io](https://gbdev.io/pandocs/halt.html#:~:text=If%20,instruction%20is%20first%20executed). If IF & IE == 0 when HALT executed (no pending enabled interrupts), CPU enters low-power HALT (we can simulate by simply not executing any instruction until an interrupt occurs, i.e., break out of the normal loop until IF & IE != 0). If an interrupt is pending but IME=0, then HALT will immediately exit but the next opcode is not skipped (PC doesn’t advance)[gbdev.io](https://gbdev.io/pandocs/halt.html#:~:text=When%20a%20,fails%20to%20be%20normally%20incremented). We can handle this by a flag in CPU like `halt_bug` that indicates to not increment PC on next instruction fetch.  
+    * [ ] STOP: If STOP is executed and KEY1’s speed switch bit is set (CGB double speed toggle), then switch speed and clear that bit. If STOP is executed with no speed switch, we can simply treat it like a very short HALT (or just continue; on DMG it’s basically a no-op for most emulators, unless we want to simulate power saving which we don’t).
   
-  - Ensure IF and IE are respected properly: e.g., if multiple interrupts pending, service in priority order (VBlank highest, Joypad lowest).
+  - [ ] Ensure IF and IE are respected properly: e.g., if multiple interrupts pending, service in priority order (VBlank highest, Joypad lowest).
   
-  - Test: some of blargg’s instr_timing tests and interrupt tests from mooneye will validate this. Also, input interrupt can be tested by seeing if a game responds to button presses without actively polling (some might rely on interrupt, though most poll).
+  - [ ] Test: some of blargg’s instr_timing tests and interrupt tests from mooneye will validate this. Also, input interrupt can be tested by seeing if a game responds to button presses without actively polling (some might rely on interrupt, though most poll).
 
-- **Audio (APU) Implementation** – *Dep: CPU (timing), Timer (frame sequencer sync).*
+- [ ] **Audio (APU) Implementation** – *Dep: CPU (timing), Timer (frame sequencer sync).*
   
-  - Implement APU channel classes:  
+  - [ ] Implement APU channel classes:  
     
-    * Square Channel (1 & 2): fields for frequency timer, duty cycle (from NR11/NR21), envelope (NR12/NR22), sweep (for Ch1 NR10), length counter.  
-    * Wave Channel (3): waveform RAM (already in MMU at FF30-FF3F), fields for frequency, length, volume code (NR32), position in waveform, enabled flag.  
-    * Noise Channel (4): LFSR state, divisor, clock shift, length, envelope.
+    * [ ] Square Channel (1 & 2): fields for frequency timer, duty cycle (from NR11/NR21), envelope (NR12/NR22), sweep (for Ch1 NR10), length counter.  
+    * [ ] Wave Channel (3): waveform RAM (already in MMU at FF30-FF3F), fields for frequency, length, volume code (NR32), position in waveform, enabled flag.  
+    * [ ] Noise Channel (4): LFSR state, divisor, clock shift, length, envelope.
   
-  - Frame Sequencer: use an internal counter that runs at 512Hz. It ticks 8 steps (0 to 7) in a cycle:  
+  - [ ] Frame Sequencer: use an internal counter that runs at 512Hz. It ticks 8 steps (0 to 7) in a cycle:  
     
-    * Steps 0,2,4,6: clock length counters (if enabled).  
-    * Step 2,6: clock sweep (Ch1).  
-    * Steps 7: clock volume envelopes.  
-    * (This is per Game Boy APU specification.)
+    * [ ] Steps 0,2,4,6: clock length counters (if enabled).  
+    * [ ] Step 2,6: clock sweep (Ch1).  
+    * [ ] Steps 7: clock volume envelopes.  
+    * [ ] (This is per Game Boy APU specification.)
   
-  - Each APU `step(cycles)`:  
+  - [ ] Each APU `step(cycles)`:  
     
-    * Accumulate cycles, and also accumulate a fraction towards the next 512 Hz step. When 8192 cycles have accumulated, that’s one frame sequencer tick.  
-    * Also, for each channel, decrement their frequency timers by `cycles`. If a channel’s timer <= 0, it means the waveform output should tick: for square wave, flip the waveform output according to duty; for wave channel, advance to next sample; for noise, shift the LFSR. Then reload the frequency timer (which is (2048 - frequency) * 4 for squares, or appropriate formula for others). For noise, the timer period is 2^(shift+1)* (divisor?).  
-    * Mix samples: We might generate audio at the same time as emulation cycles, but that’s a lot of samples (4 million per second!). Instead, decide on an output sample rate. A straightforward approach: every X CPU cycles, output one sample. For example, if we choose 44,100 Hz, that’s ~95 cycles per sample (at DMG rate). So we can accumulate a `sample_timer += cycles`, and while `sample_timer >= cycles_per_sample`, do:  
-    - Compute the output of each channel at this moment (each channel either outputs a 4-bit value or is silent if disabled).  
-    - Mix according to NR50/NR51: each channel to left/right.  
-    - Scale to an 8 or 16-bit PCM range.  
-    - Store the sample in the ring buffer.  
-    - `sample_timer -= cycles_per_sample`.  
-    * Handle turning channels on/off: If a channel’s length expires or we write to their disable bits, mark channel as off (no output).  
-    * Handle writes to sound registers:  
-    - NRX1 (length): writing high bits can set length counter.  
-    - NRX2 (envelope): update envelope parameters, maybe even restart envelope.  
-    - NRX3/4 (freq low/high): writing high (with trigger bit) should initialize channel: set length if not already running, reset frequency timer, reset envelope to initial volume, etc., and set channel enabled.  
-    - NR52 (sound on/off): if bit7 goes 0, turn off all sound (clear channels, etc.).  
-    * Many of these behaviors can be guided by Pan Docs and other resources. We can implement a simplified APU that produces recognizable sound, then refine.
+    * [ ] Accumulate cycles, and also accumulate a fraction towards the next 512 Hz step. When 8192 cycles have accumulated, that’s one frame sequencer tick.  
+    * [ ] Also, for each channel, decrement their frequency timers by `cycles`. If a channel’s timer <= 0, it means the waveform output should tick: for square wave, flip the waveform output according to duty; for wave channel, advance to next sample; for noise, shift the LFSR. Then reload the frequency timer (which is (2048 - frequency) * 4 for squares, or appropriate formula for others). For noise, the timer period is 2^(shift+1)* (divisor?).  
+    * [ ] Mix samples: We might generate audio at the same time as emulation cycles, but that’s a lot of samples (4 million per second!). Instead, decide on an output sample rate. A straightforward approach: every X CPU cycles, output one sample. For example, if we choose 44,100 Hz, that’s ~95 cycles per sample (at DMG rate). So we can accumulate a `sample_timer += cycles`, and while `sample_timer >= cycles_per_sample`, do:  
+    - [ ] Compute the output of each channel at this moment (each channel either outputs a 4-bit value or is silent if disabled).  
+    - [ ] Mix according to NR50/NR51: each channel to left/right.  
+    - [ ] Scale to an 8 or 16-bit PCM range.  
+    - [ ] Store the sample in the ring buffer.  
+    - [ ] `sample_timer -= cycles_per_sample`.  
+    * [ ] Handle turning channels on/off: If a channel’s length expires or we write to their disable bits, mark channel as off (no output).  
+    * [ ] Handle writes to sound registers:  
+    - [ ] NRX1 (length): writing high bits can set length counter.  
+    - [ ] NRX2 (envelope): update envelope parameters, maybe even restart envelope.  
+    - [ ] NRX3/4 (freq low/high): writing high (with trigger bit) should initialize channel: set length if not already running, reset frequency timer, reset envelope to initial volume, etc., and set channel enabled.  
+    - [ ] NR52 (sound on/off): if bit7 goes 0, turn off all sound (clear channels, etc.).  
+    * [ ] Many of these behaviors can be guided by Pan Docs and other resources. We can implement a simplified APU that produces recognizable sound, then refine.
   
-  - Integrate with `cpal`:  
+  - [ ] Integrate with `cpal`:  
     
-    * Initialize `cpal` audio output stream in stereo. Use a callback that reads from the APU’s sample buffer and fills the output.  
-    * If buffer underflows (no sample ready), decide to output silence or block. Ideally, our emulator loop keeps it filled. If we run emulator in real-time, we might run one frame (~16.7ms) of emulation then wait to sync with real time, which naturally feeds audio correctly.  
-    * Alternatively, drive emulator by audio callback: not recommended for frame-based systems, easier to produce audio as part of main loop.
+    * [ ] Initialize `cpal` audio output stream in stereo. Use a callback that reads from the APU’s sample buffer and fills the output.  
+    * [ ] If buffer underflows (no sample ready), decide to output silence or block. Ideally, our emulator loop keeps it filled. If we run emulator in real-time, we might run one frame (~16.7ms) of emulation then wait to sync with real time, which naturally feeds audio correctly.  
+    * [ ] Alternatively, drive emulator by audio callback: not recommended for frame-based systems, easier to produce audio as part of main loop.
   
-  - Volume levels: Game Boy audio is not loud; we can multiply the mixed 4-bit sums by a factor to get a nice range. Possibly allow a volume slider in the future.
+  - [ ] Volume levels: Game Boy audio is not loud; we can multiply the mixed 4-bit sums by a factor to get a nice range. Possibly allow a volume slider in the future.
   
-  - Test: Sound is hard to test without listening. Use a known ROM with distinct audio (like a test tone generator or a music ROM) to subjectively verify. Or use blargg’s **dmg_sound** test ROMs for objective pass (they write “Passed” if sound is correct to a certain tolerance).
+  - [ ] Test: Sound is hard to test without listening. Use a known ROM with distinct audio (like a test tone generator or a music ROM) to subjectively verify. Or use blargg’s **dmg_sound** test ROMs for objective pass (they write “Passed” if sound is correct to a certain tolerance).
   
-  - Note: Achieving **exact** APU behavior (like channel initial sweep glitch, exact LFSR taps, etc.) is advanced. Aim for getting most games’ audio sounding correct; refine with test ROMs for any errors.
+  - [ ] Note: Achieving **exact** APU behavior (like channel initial sweep glitch, exact LFSR taps, etc.) is advanced. Aim for getting most games’ audio sounding correct; refine with test ROMs for any errors.
 
-- **Full DMG/CGB Support & Refinements** – *Dep: All components implemented.*
+- [ ] **Full DMG/CGB Support & Refinements** – *Dep: All components implemented.*
   
-  - Ensure CGB mode differences are handled:  
+  - [ ] Ensure CGB mode differences are handled:  
     
-    * Double speed mode: When enabled, the CPU will execute instructions effectively twice as fast relative to PPU and APU. Implementation: we can simply halve the number of cycles the PPU/APU think have passed relative to CPU instructions, or conceptually double the CPU clock and adjust timer, etc. Alternatively, treat our normal cycle as 2 T-cycles in double speed. In practice, you might introduce a `cpu_speed` factor of 1 or 2. When 2, the PPU and Timer should get half the ticks per CPU instruction. Another way: if double speed, PPU, timer, etc. run on every *other* CPU cycle. We need to be careful to emulate how DIV behaves (it ticks at same real-time freq, meaning in double speed it increments every 2x cycles).  
-    * We already handled VRAM banking, WRAM banking, and extra palettes.  
-    * OAM bug is *not present* on CGB[gbdev.io](https://gbdev.io/pandocs/OAM_Corruption_Bug.html#:~:text=Objects%200%20and%201%20,not%20affected%20by%20this%20bug), but present on DMG/Pocket. If we choose to emulate OAM bug, only apply if model is DMG/MGB. This bug can likely be deferred or made optional because few games rely on it (mostly homebrew tests).  
-    * Infrared: CGB has an IR port (register RP at FF56). We can ignore or stub (always not connected).  
-    * Prepare for other model specifics: (If implementing SGB later, that would involve high-level emulation, not needed now.)
+    * [ ] Double speed mode: When enabled, the CPU will execute instructions effectively twice as fast relative to PPU and APU. Implementation: we can simply halve the number of cycles the PPU/APU think have passed relative to CPU instructions, or conceptually double the CPU clock and adjust timer, etc. Alternatively, treat our normal cycle as 2 T-cycles in double speed. In practice, you might introduce a `cpu_speed` factor of 1 or 2. When 2, the PPU and Timer should get half the ticks per CPU instruction. Another way: if double speed, PPU, timer, etc. run on every *other* CPU cycle. We need to be careful to emulate how DIV behaves (it ticks at same real-time freq, meaning in double speed it increments every 2x cycles).  
+    * [ ] We already handled VRAM banking, WRAM banking, and extra palettes.  
+    * [ ] OAM bug is *not present* on CGB[gbdev.io](https://gbdev.io/pandocs/OAM_Corruption_Bug.html#:~:text=Objects%200%20and%201%20,not%20affected%20by%20this%20bug), but present on DMG/Pocket. If we choose to emulate OAM bug, only apply if model is DMG/MGB. This bug can likely be deferred or made optional because few games rely on it (mostly homebrew tests).  
+    * [ ] Infrared: CGB has an IR port (register RP at FF56). We can ignore or stub (always not connected).  
+    * [ ] Prepare for other model specifics: (If implementing SGB later, that would involve high-level emulation, not needed now.)
   
-  - **Link Cable planning**:  
+  - [ ] **Link Cable planning**:  
     
-    * Design the interface such that Serial module could either connect to a partner or loopback. Possibly define a trait `LinkPort` with `send_byte(byte)` and `on_receive(callback)`.  
-    * For now, implement a stub `NullLinkPort` that when send is called, immediately sets received byte to 0xFF (or if loopback mode, echo back the byte).  
-    * Confirm that two instances could be connected by assigning each other’s LinkPort (for future).  
-    * Not implementing the actual link functionality now, just ensuring the design can accommodate.
+    * [ ] Design the interface such that Serial module could either connect to a partner or loopback. Possibly define a trait `LinkPort` with `send_byte(byte)` and `on_receive(callback)`.  
+    * [ ] For now, implement a stub `NullLinkPort` that when send is called, immediately sets received byte to 0xFF (or if loopback mode, echo back the byte).  
+    * [ ] Confirm that two instances could be connected by assigning each other’s LinkPort (for future).  
+    * [ ] Not implementing the actual link functionality now, just ensuring the design can accommodate.
   
-  - **Real-time Clock (RTC)** for MBC3:  
+  - [ ] **Real-time Clock (RTC)** for MBC3:  
     
-    * If a ROM uses MBC3 with RTC, we should have at least a basic RTC implementation so games like Pokémon Gold/Silver keep time.  
-    * Emulate registers: seconds, minutes, hours, day low/high, and latch mechanism.  
-    * Approach: Use system time to seed RTC, and increment an internal counter for time while running. The latch register (0x6000 write 0x00 then 0x01) should copy the current time into the RTC registers so the game can read a stable snapshot.  
-    * Save the RTC state (current time or offset) in the save file too, so it persists between runs.  
-    * This can be added after core functionality, but listing here for completeness.
+    * [ ] If a ROM uses MBC3 with RTC, we should have at least a basic RTC implementation so games like Pokémon Gold/Silver keep time.  
+    * [ ] Emulate registers: seconds, minutes, hours, day low/high, and latch mechanism.  
+    * [ ] Approach: Use system time to seed RTC, and increment an internal counter for time while running. The latch register (0x6000 write 0x00 then 0x01) should copy the current time into the RTC registers so the game can read a stable snapshot.  
+    * [ ] Save the RTC state (current time or offset) in the save file too, so it persists between runs.  
+    * [ ] This can be added after core functionality, but listing here for completeness.
   
-  - **Performance check**: Run a demanding game or test (like a Pokemon battle with many sprites, or a game with lots of sound) and see if the emulator can maintain full speed. Use the host timers to ensure ~60 FPS. If not, consider optimizations:  
+  - [ ] **Performance check**: Run a demanding game or test (like a Pokemon battle with many sprites, or a game with lots of sound) and see if the emulator can maintain full speed. Use the host timers to ensure ~60 FPS. If not, consider optimizations:  
     
-    * Use release mode and LTO in Cargo for final build.  
-    * If PPU rendering is slow, consider caching tile data or optimizing pixel loops (e.g., unrolling, using SIMD for 8 pixels at once).  
-    * If CPU is slow, ensure the opcode match or jump table is not too branchy; possibly use a direct indexed table of function pointers for opcodes.  
-    * If audio causes stutter, increase buffer sizes.  
-    * Profile to find bottleneck.
+    * [ ] Use release mode and LTO in Cargo for final build.  
+    * [ ] If PPU rendering is slow, consider caching tile data or optimizing pixel loops (e.g., unrolling, using SIMD for 8 pixels at once).  
+    * [ ] If CPU is slow, ensure the opcode match or jump table is not too branchy; possibly use a direct indexed table of function pointers for opcodes.  
+    * [ ] If audio causes stutter, increase buffer sizes.  
+    * [ ] Profile to find bottleneck.
   
-  - **Accuracy check**: Run the comprehensive test ROM suites and note any failures:  
+  - [ ] **Accuracy check**: Run the comprehensive test ROM suites and note any failures:  
     
-    * **Blargg’s tests**: cpu_instrs, instr_timing, mem_timing, oam_bug, etc.[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,the%20Demotronic%20trick%2C%20Prehistorik%20Man).  
-    * **Mooneye-gb tests** (for various obscure behaviors).  
-    * Wilbert Pol’s APU tests[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,the%20Demotronic%20trick%2C%20Prehistorik%20Man).  
-    * If any fail, address the specific edge case (some known ones we cited: HALT bug, DIV timing, etc.).  
-    * Our goal is to pass as many as possible to ensure high accuracy. SameBoy reaches 99.9% compatibility[sameboy.github.io](https://sameboy.github.io/features/#:~:text=emulation%20of%20the%20Demotronic%20trick%2C,optional%20frame%20blending%20modes%2017); we aim to approach that with iterative improvements.
+    * [ ] **Blargg’s tests**: cpu_instrs, instr_timing, mem_timing, oam_bug, etc.[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,the%20Demotronic%20trick%2C%20Prehistorik%20Man).  
+    * [ ] **Mooneye-gb tests** (for various obscure behaviors).  
+    * [ ] Wilbert Pol’s APU tests[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,the%20Demotronic%20trick%2C%20Prehistorik%20Man).  
+    * [ ] If any fail, address the specific edge case (some known ones we cited: HALT bug, DIV timing, etc.).  
+    * [ ] Our goal is to pass as many as possible to ensure high accuracy. SameBoy reaches 99.9% compatibility[sameboy.github.io](https://sameboy.github.io/features/#:~:text=emulation%20of%20the%20Demotronic%20trick%2C,optional%20frame%20blending%20modes%2017); we aim to approach that with iterative improvements.
 
-- **Debugging Features** – *Dep: Core features working (for meaningful data).*
+- [ ] **Debugging Features** – *Dep: Core features working (for meaningful data).*
   
-  - **Logging and Tracing**: Implement an optional CPU instruction trace. E.g., a debug mode where every executed instruction (with PC, mnemonic, register state, cycles) is printed to a log or saved to a file. This helps when comparing against known good emulator traces for debugging.
+  - [ ] **Logging and Tracing**: Implement an optional CPU instruction trace. E.g., a debug mode where every executed instruction (with PC, mnemonic, register state, cycles) is printed to a log or saved to a file. This helps when comparing against known good emulator traces for debugging.
   
-  - **Debugger Breakpoints**: Allow some interface (maybe a console command or a special key) to pause execution. Internally, you can have a global flag to break out of the main loop. Once paused, allow stepping one instruction at a time or dumping state. This could be via a simple REPL on stdin or a TCP socket or integration with `gdbstub` crate to allow GDB connections.
+  - [ ] **Debugger Breakpoints**: Allow some interface (maybe a console command or a special key) to pause execution. Internally, you can have a global flag to break out of the main loop. Once paused, allow stepping one instruction at a time or dumping state. This could be via a simple REPL on stdin or a TCP socket or integration with `gdbstub` crate to allow GDB connections.
   
-  - **Memory Inspection**: Provide a function to dump a region of memory or registers for debugging. Could integrate with the above REPL or simply use logs.
+  - [ ] **Memory Inspection**: Provide a function to dump a region of memory or registers for debugging. Could integrate with the above REPL or simply use logs.
   
-  - **VRAM Viewer**: To emulate BGB’s VRAM viewer, one approach:  
+  - [ ] **VRAM Viewer**: To emulate BGB’s VRAM viewer, one approach:  
     
-    * When paused, take the contents of VRAM and interpret them to generate an image of the tile set or background map. For instance, you can render the 256 tiles of the tile data as a 128x128 image. Or render the current BG map (32x32 tiles) using the tiles and palette.  
-    * If using a GUI library (like egui or a separate window), you could display these. Alternatively, dump them to a PNG file for external viewing.  
-    * At design time, plan the PPU to expose methods to get tile pixel data easily (since PPU already decodes tiles to draw the screen, we can reuse that logic to draw all tiles).
+    * [ ] When paused, take the contents of VRAM and interpret them to generate an image of the tile set or background map. For instance, you can render the 256 tiles of the tile data as a 128x128 image. Or render the current BG map (32x32 tiles) using the tiles and palette.  
+    * [ ] If using a GUI library (like egui or a separate window), you could display these. Alternatively, dump them to a PNG file for external viewing.  
+    * [ ] At design time, plan the PPU to expose methods to get tile pixel data easily (since PPU already decodes tiles to draw the screen, we can reuse that logic to draw all tiles).
   
-  - **Register Viewer**: In debug mode, overlay text of current register values, current instruction, etc., on the screen (if using a library that can draw text, or simply print to console every frame which is spammy).
+  - [ ] **Register Viewer**: In debug mode, overlay text of current register values, current instruction, etc., on the screen (if using a library that can draw text, or simply print to console every frame which is spammy).
   
-  - Many of these features can be added gradually. The key is that our architecture doesn’t hinder them:  
+  - [ ] Many of these features can be added gradually. The key is that our architecture doesn’t hinder them:  
     
-    * We have a global `Emulator` state accessible so any dev tool can read memory, VRAM, etc.  
-    * We ensure the emulator can pause (which means breaking out of the tight loop that runs frames).  
-    * It might be useful to run the emulation loop step-by-step rather than frame-by-frame when debugging.
+    * [ ] We have a global `Emulator` state accessible so any dev tool can read memory, VRAM, etc.  
+    * [ ] We ensure the emulator can pause (which means breaking out of the tight loop that runs frames).  
+    * [ ] It might be useful to run the emulation loop step-by-step rather than frame-by-frame when debugging.
   
-  - Plan a **CLI flag** like `--debug` to enable a simple interactive debugger. Or even integrate with an existing debugger UI (some emulators allow connecting a remote GDB to the emulated CPU).
+  - [ ] Plan a **CLI flag** like `--debug` to enable a simple interactive debugger. Or even integrate with an existing debugger UI (some emulators allow connecting a remote GDB to the emulated CPU).
   
-  - Document how to use these debugging features for developers.
+  - [ ] Document how to use these debugging features for developers.
 
-- **Final Polish** – *Dep: All features implemented.*
+- [ ] **Final Polish** – *Dep: All features implemented.*
   
-  - Remove or conditionalize any development logs to not flood release version.
+  - [ ] Remove or conditionalize any development logs to not flood release version.
   
   - [x] Ensure battery save files are written on exit (and perhaps periodically to avoid loss on crash).
   
-  - Graceful shutdown when window closed or user interrupts.
+  - [ ] Graceful shutdown when window closed or user interrupts.
   
-  - Packaging: Make sure the emulator runs on Windows (maybe requiring bundling the SDL2 DLL if we used SDL2, or no extra steps if using winit/pixels).
+  - [ ] Packaging: Make sure the emulator runs on Windows (maybe requiring bundling the SDL2 DLL if we used SDL2, or no extra steps if using winit/pixels).
   
-  - Update README (if this were a real project) with usage instructions.
+  - [ ] Update README (if this were a real project) with usage instructions.
 
 The above steps can be grouped into **milestones** such as: *CPU + minimal MMU*, *Basic PPU output*, *Interrupts/Timers*, *Complete PPU*, *Audio*, *Accuracy fixes*, *Debug features*. Tackle them in order, as later ones depend on earlier components working. This checklist ensures that by the end, we have a fully functioning, accurate, and extensible Game Boy Color emulator.
 
