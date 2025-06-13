@@ -341,8 +341,8 @@ fn main() {
     // Audio output via cpal
     let audio_output = AudioOutput::new();
     let audio_sample_rate = audio_output.sample_rate();
-    let cpu_cycles_per_audio_sample: u32 = CPU_CLOCK_HZ / audio_sample_rate;
-    let mut audio_cycle_counter: u32 = 0;
+    let cpu_cycles_per_audio_sample: u64 = (CPU_CLOCK_HZ as u64) / audio_sample_rate as u64;
+    let mut audio_cycle_counter: u64 = 0;
 
     while running {
         // --- Input and Pause Toggle ---
@@ -433,11 +433,11 @@ fn main() {
 
                     // Audio sample generation
                     if audio_output.is_enabled() {
-                        audio_cycle_counter += t_cycles_for_step;
-                        if audio_cycle_counter >= cpu_cycles_per_audio_sample {
-                            audio_cycle_counter -= cpu_cycles_per_audio_sample;
-                            let (left_sample, right_sample) =
-                                bus_mut.apu.get_mixed_audio_samples();
+                        audio_cycle_counter += t_cycles_for_step as u64;
+                        let samples_to_generate = audio_cycle_counter / cpu_cycles_per_audio_sample;
+                        audio_cycle_counter %= cpu_cycles_per_audio_sample;
+                        for _ in 0..samples_to_generate {
+                            let (left_sample, right_sample) = bus_mut.apu.get_mixed_audio_samples();
                             audio_output.push_sample(left_sample, right_sample);
                         }
                     }
