@@ -670,16 +670,16 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
   
   - PPU step function:  
     
-    * Aim for a line-based timing at first: e.g., accumulate cycles until 456, then that constitutes one scanline. Within that, you can subdivide: OAM scan maybe 80 cycles, drawing 172 cycles, HBlank 204 cycles (these add to 456). But perhaps implement a simpler model:  
+    * [x] Aim for a line-based timing at first: e.g., accumulate cycles until 456, then that constitutes one scanline. Within that, you can subdivide: OAM scan maybe 80 cycles, drawing 172 cycles, HBlank 204 cycles (these add to 456). But perhaps implement a simpler model:
     - Keep a counter, add cycles. Determine current mode based on counter range.  
     - When counter < 80 (mode 2), when it hits 80 switch to mode 3; when it hits 80+172=252 switch to mode 0; when it hits 456, reset counter to 0, increment LY, potentially change mode to 2 of next line or to 1 if LY==144.  
     - When LY == 144, enter VBlank (mode 1) and stay in mode 1 for 456*10 lines (10 lines of VBlank). During VBlank, the PPU can just increment LY every 456 cycles without rendering.  
     - When LY goes from 153 back to 0, that’s end of VBlank, new frame.  
-    * Implement mode transitions and set STAT mode bits accordingly.  
-    * Trigger STAT interrupt if enabled when entering OAM (mode2), entering VBlank (mode1) or entering HBlank (mode0). Also check LY==LYC: if LY equals LYC at the *compare time*, set STAT coincidence flag and trigger interrupt if enabled[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,downsampled%20from%202MHz%2C%20and%20accurate).  
-    * Trigger VBlank interrupt when entering mode1 at line 144.  
+    * [x] Implement mode transitions and set STAT mode bits accordingly.
+    * [x] Trigger STAT interrupt if enabled when entering OAM (mode2), entering VBlank (mode1) or entering HBlank (mode0). Also check LY==LYC: if LY equals LYC at the *compare time*, set STAT coincidence flag and trigger interrupt if enabled[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,downsampled%20from%202MHz%2C%20and%20accurate).
+    * [x] Trigger VBlank interrupt when entering mode1 at line 144.
     * Rendering: For now, implement a straightforward pixel generation during mode 3:  
-    - If LCDC says BG enable or the game is in DMG mode (BG cannot be turned off on DMG, it’s always enabled at least as a white background), draw background: For each x of the line, determine the tile from the background tile map (using SCX, SCY plus the current LY), fetch tile data from pattern table (taking into account LCDC tile data area and signed tile indices if using 8800-97FF area), get the correct tile line (using SCY+LY mod 8), and palette color.  
+    - [x] If LCDC says BG enable or the game is in DMG mode (BG cannot be turned off on DMG, it’s always enabled at least as a white background), draw background: For each x of the line, determine the tile from the background tile map (using SCX, SCY plus the current LY), fetch tile data from pattern table (taking into account LCDC tile data area and signed tile indices if using 8800-97FF area), get the correct tile line (using SCY+LY mod 8), and palette color.
     - If window is enabled (LCDC bit and if current line >= WY and WX in range), at WX position, switch to drawing window tiles instead of background.  
     - Draw sprites: After drawing BG/window for the line, iterate sprites in OAM (or better, pre-collected during mode 2 OAM scan which we can simulate by collecting the first up to 10 sprites on this line, since only 10 sprites can be drawn per line). Sprites have priority: lowest OAM index has highest priority if overlapping (typical for sprites). If sprite x is in range for this pixel and its priority allows (OBJ-to-BG priority respect), draw sprite pixel (using its tile data, which might come from second tile bank on CGB if specified, and using OBP0/OBP1 or CGB palette).  
     - Mark sprite pixel as drawn to enforce the 10 sprites/line limit.  
