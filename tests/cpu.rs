@@ -98,3 +98,39 @@ fn ei_delay() {
     cpu.step(&mut mmu); // NOP
     assert!(cpu.ime);
 }
+
+#[test]
+fn ld_rr_instructions() {
+    let program = vec![
+        0x01, 0x00, 0xC0, // LD BC,0xC000
+        0x11, 0x00, 0xC1, // LD DE,0xC100
+        0x21, 0x00, 0xC0, // LD HL,0xC000
+        0x31, 0xFE, 0xFF, // LD SP,0xFFFE
+        0x3E, 0x11, // LD A,0x11
+        0x02, // LD (BC),A
+        0x0A, // LD A,(BC)
+        0x12, // LD (DE),A
+        0x1A, // LD A,(DE)
+        0x22, // LDI (HL),A
+        0x2A, // LDI A,(HL)
+        0x32, // LDD (HL),A
+        0x3A, // LDD A,(HL)
+        0x7E, // LD A,(HL)
+        0x70, // LD (HL),B
+    ];
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    let mut mmu = Mmu::new();
+    mmu.load_cart(Cartridge { rom: program });
+
+    for _ in 0..15 {
+        cpu.step(&mut mmu);
+    }
+
+    assert_eq!(mmu.read_byte(0xC000), cpu.b);
+    assert_eq!(mmu.read_byte(0xC100), 0x11);
+    assert_eq!(cpu.a, 0x11);
+    assert_eq!(cpu.sp, 0xFFFE);
+    assert_eq!(cpu.get_hl(), 0xC000);
+}
