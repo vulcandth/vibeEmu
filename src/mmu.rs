@@ -1,9 +1,18 @@
 use crate::cartridge::Cartridge;
 
+const WRAM_BANK_SIZE: usize = 0x1000;
+const VRAM_BANK_SIZE: usize = 0x2000;
+
 pub struct Mmu {
-    pub wram: [u8; 0x2000],
-    pub hram: [u8; 0x80],
+    pub wram: [[u8; WRAM_BANK_SIZE]; 8],
+    pub wram_bank: usize,
+    pub vram: [[u8; VRAM_BANK_SIZE]; 2],
+    pub vram_bank: usize,
+    pub hram: [u8; 0x7F],
+    pub oam: [u8; 0xA0],
     pub cart: Option<Cartridge>,
+    pub boot_rom: Option<Vec<u8>>,
+    pub boot_mapped: bool,
     pub if_reg: u8,
     pub ie_reg: u8,
     sb: u8,
@@ -14,9 +23,15 @@ pub struct Mmu {
 impl Mmu {
     pub fn new() -> Self {
         Self {
-            wram: [0; 0x2000],
-            hram: [0; 0x80],
+            wram: [[0; WRAM_BANK_SIZE]; 8],
+            wram_bank: 1,
+            vram: [[0; VRAM_BANK_SIZE]; 2],
+            vram_bank: 0,
+            hram: [0; 0x7F],
+            oam: [0; 0xA0],
             cart: None,
+            boot_rom: None,
+            boot_mapped: false,
             if_reg: 0,
             ie_reg: 0,
             sb: 0,
@@ -29,20 +44,37 @@ impl Mmu {
         self.cart = Some(cart);
     }
 
+    pub fn load_boot_rom(&mut self, data: Vec<u8>) {
+        self.boot_rom = Some(data);
+        self.boot_mapped = true;
+    }
+
     pub fn read_byte(&self, addr: u16) -> u8 {
         match addr {
-            0x0000..=0x7FFF => {
-                if let Some(cart) = &self.cart {
-                    cart.rom.get(addr as usize).copied().unwrap_or(0xFF)
-                } else {
-                    0xFF
-                }
-            }
-            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
-            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
+            0x0000..=0x00FF if self.boot_mapped => self
+                .boot_rom
+                .as_ref()
+                .and_then(|b| b.get(addr as usize).copied())
+                .unwrap_or(0xFF),
+            0x0000..=0x7FFF => self
+                .cart
+                .as_ref()
+                .and_then(|c| c.rom.get(addr as usize).copied())
+                .unwrap_or(0xFF),
+            0x8000..=0x9FFF => self.vram[self.vram_bank][(addr - 0x8000) as usize],
+            0xA000..=0xBFFF => 0xFF,
+            0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize],
+            0xD000..=0xDFFF => self.wram[self.wram_bank][(addr - 0xD000) as usize],
+            0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize],
+            0xF000..=0xFDFF => self.wram[self.wram_bank][(addr - 0xF000) as usize],
+            0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize],
+            0xFEA0..=0xFEFF => 0xFF,
             0xFF01 => self.sb,
             0xFF02 => self.sc,
             0xFF0F => self.if_reg,
+            0xFF4F => self.vram_bank as u8,
+            0xFF70 => self.wram_bank as u8,
+            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
             _ => 0xFF,
         }
@@ -50,8 +82,16 @@ impl Mmu {
 
     pub fn write_byte(&mut self, addr: u16, val: u8) {
         match addr {
-            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize] = val,
-            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
+            0x8000..=0x9FFF => {
+                self.vram[self.vram_bank][(addr - 0x8000) as usize] = val;
+            }
+            0xA000..=0xBFFF => {}
+            0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize] = val,
+            0xD000..=0xDFFF => self.wram[self.wram_bank][(addr - 0xD000) as usize] = val,
+            0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize] = val,
+            0xF000..=0xFDFF => self.wram[self.wram_bank][(addr - 0xF000) as usize] = val,
+            0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize] = val,
+            0xFEA0..=0xFEFF => {}
             0xFF01 => self.sb = val,
             0xFF02 => {
                 self.sc = val;
@@ -62,6 +102,13 @@ impl Mmu {
                 }
             }
             0xFF0F => self.if_reg = val,
+            0xFF4F => self.vram_bank = (val & 0x01) as usize,
+            0xFF50 => self.boot_mapped = false,
+            0xFF70 => {
+                let bank = (val & 0x07) as usize;
+                self.wram_bank = if bank == 0 { 1 } else { bank };
+            }
+            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = val,
             _ => {}
         }
