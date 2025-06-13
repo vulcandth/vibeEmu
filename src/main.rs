@@ -1,10 +1,10 @@
-mod cpu;
-mod mmu;
-mod ppu;
 mod apu;
 mod cartridge;
-mod timer;
+mod cpu;
 mod gameboy;
+mod mmu;
+mod ppu;
+mod timer;
 
 use clap::Parser;
 use log::info;
@@ -34,7 +34,7 @@ fn main() {
     if let Some(path) = args.rom {
         match std::fs::read(path) {
             Ok(data) => {
-                gb.cart = Some(cartridge::Cartridge::load(data));
+                gb.mmu.load_cart(cartridge::Cartridge::load(data));
             }
             Err(e) => {
                 eprintln!("Failed to load ROM: {e}");
@@ -47,5 +47,8 @@ fn main() {
     }
 
     // TODO: main emulation loop will go here
-    println!("Emulator initialized in {} mode", if args.dmg { "DMG" } else { "CGB" });
+    println!(
+        "Emulator initialized in {} mode",
+        if args.dmg { "DMG" } else { "CGB" }
+    );
 }
