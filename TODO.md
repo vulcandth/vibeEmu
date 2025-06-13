@@ -618,7 +618,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
   - [x] Implement enough opcodes to run a simple test. For example, write a test in Rust with a small bytecode that loads values, adds, jumps, etc., and verify CPU produces expected register values. *(Unit test)*.
   
-  - Gradually implement all opcodes. Use a reference (like Pan Docs or Game Boy manual) to ensure each sets flags correctly. For CB-prefixed opcodes (bit operations, shifts, etc.), implement those too.
+  - [x] Gradually implement all opcodes. Use a reference (like Pan Docs or Game Boy manual) to ensure each sets flags correctly. For CB-prefixed opcodes (bit operations, shifts, etc.), implement those too.
   
   - [x] Validate instruction timing: maintain a table of cycles per opcode and ensure CPU adds the correct amount. Mark opcodes that have conditional cycle lengths (e.g. JR taken vs not taken).
 
