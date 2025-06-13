@@ -587,22 +587,22 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
 - **Cartridge Loading** – *Dep: Project setup.*
   
-  - Write a function to load a ROM file into memory (Vec<u8>).
+    - [x] Write a function to load a ROM file into memory (Vec<u8>).
   
-  - Parse the cartridge header to determine MBC type, RAM size, and whether the game supports CGB mode (if CGB and the user’s emulator is in “CGB capable” mode, we’ll emulate in color mode, otherwise DMG mode).
+    - [x] Parse the cartridge header to determine MBC type, RAM size, and whether the game supports CGB mode (if CGB and the user’s emulator is in “CGB capable” mode, we’ll emulate in color mode, otherwise DMG mode).
   
-  - Instantiate the appropriate MBC state (for now, implement **No MBC** (ROM only), **MBC1**, **MBC3**, **MBC5** as these cover most games[github.com](https://github.com/mvdnes/rboy#:~:text=%2A%20MMU%20%2A%20MBC,Printing). Others can be stubbed or added later).
+    - [x] Instantiate the appropriate MBC state (for now, implement **No MBC** (ROM only), **MBC1**, **MBC3**, **MBC5** as these cover most games[github.com](https://github.com/mvdnes/rboy#:~:text=%2A%20MMU%20%2A%20MBC,Printing). Others can be stubbed or added later).
   
-  - Initialize cartridge RAM (Vec<u8> of correct size, filled with 0xFF or 0x00). If a battery save file exists for this ROM (determine filename by ROM name), load it into RAM.
+    - [x] Initialize cartridge RAM (Vec<u8> of correct size, filled with 0xFF or 0x00). If a battery save file exists for this ROM (determine filename by ROM name), load it into RAM.
   
-  - Implement basic `read(addr)` and `write(addr, val)` for ROM/RAM:  
+    - [x] Implement basic `read(addr)` and `write(addr, val)` for ROM/RAM:  
     
     * For No MBC: reading 0x0000-0x7FFF just returns from ROM (no banking), writing 0xA000-BFFF writes to RAM if present.  
     * For MBC1: support bank switching (5-bit ROM bank number, 2-bit RAM bank or upper ROM bits, mode select), and RAM enable.  
     * For MBC3: support 7-bit ROM bank, 4 8KB RAM banks, RTC registers mapping (just stub the RTC read/write logic initially), RAM enable.  
     * For MBC5: support 9-bit ROM bank, up to 16 RAM banks, RAM enable, possibly rumble enable bit (can ignore actual rumble feedback for now).
   
-  - Test: print out some cartridge info (title, MBC type) to ensure parsing is correct.
+    - [x] Test: print out some cartridge info (title, MBC type) to ensure parsing is correct.
 
 - **CPU Core (basic)** – *Dep: Cartridge (for fetching opcodes from ROM).*
   
