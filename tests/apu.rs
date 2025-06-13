@@ -9,3 +9,21 @@ fn frame_sequencer_tick() {
     apu.step(8192 * 7);
     assert_eq!(apu.sequencer_step(), 0);
 }
+
+#[test]
+fn sample_generation() {
+    let mut apu = Apu::new();
+    // enable sound and channel 2 with simple settings
+    apu.write_reg(0xFF26, 0x80); // master enable
+    apu.write_reg(0xFF24, 0x77); // max volume
+    apu.write_reg(0xFF25, 0x22); // ch2 left+right
+    apu.write_reg(0xFF16, 0); // length
+    apu.write_reg(0xFF17, 0xF0); // envelope
+    apu.write_reg(0xFF18, 0); // freq low
+    apu.write_reg(0xFF19, 0x80); // trigger
+    // step enough cycles for a few samples
+    for _ in 0..10 {
+        apu.step(95);
+    }
+    assert!(apu.pop_sample().is_some());
+}

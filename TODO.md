@@ -763,18 +763,18 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
     * [x] Accumulate cycles, and also accumulate a fraction towards the next 512 Hz step. When 8192 cycles have accumulated, that’s one frame sequencer tick.
     * [x] Also, for each channel, decrement their frequency timers by `cycles`. If a channel’s timer <= 0, it means the waveform output should tick: for square wave, flip the waveform output according to duty; for wave channel, advance to next sample; for noise, shift the LFSR. Then reload the frequency timer (which is (2048 - frequency) * 4 for squares, or appropriate formula for others). For noise, the timer period is 2^(shift+1)* (divisor?).
-    * [ ] Mix samples: We might generate audio at the same time as emulation cycles, but that’s a lot of samples (4 million per second!). Instead, decide on an output sample rate. A straightforward approach: every X CPU cycles, output one sample. For example, if we choose 44,100 Hz, that’s ~95 cycles per sample (at DMG rate). So we can accumulate a `sample_timer += cycles`, and while `sample_timer >= cycles_per_sample`, do:  
-    - [ ] Compute the output of each channel at this moment (each channel either outputs a 4-bit value or is silent if disabled).  
-    - [ ] Mix according to NR50/NR51: each channel to left/right.  
-    - [ ] Scale to an 8 or 16-bit PCM range.  
-    - [ ] Store the sample in the ring buffer.  
-    - [ ] `sample_timer -= cycles_per_sample`.  
-    * [ ] Handle turning channels on/off: If a channel’s length expires or we write to their disable bits, mark channel as off (no output).  
-    * [ ] Handle writes to sound registers:  
-    - [ ] NRX1 (length): writing high bits can set length counter.  
-    - [ ] NRX2 (envelope): update envelope parameters, maybe even restart envelope.  
-    - [ ] NRX3/4 (freq low/high): writing high (with trigger bit) should initialize channel: set length if not already running, reset frequency timer, reset envelope to initial volume, etc., and set channel enabled.  
-    - [ ] NR52 (sound on/off): if bit7 goes 0, turn off all sound (clear channels, etc.).  
+    * [x] Mix samples: We might generate audio at the same time as emulation cycles, but that’s a lot of samples (4 million per second!). Instead, decide on an output sample rate. A straightforward approach: every X CPU cycles, output one sample. For example, if we choose 44,100 Hz, that’s ~95 cycles per sample (at DMG rate). So we can accumulate a `sample_timer += cycles`, and while `sample_timer >= cycles_per_sample`, do:
+    - [x] Compute the output of each channel at this moment (each channel either outputs a 4-bit value or is silent if disabled).
+    - [x] Mix according to NR50/NR51: each channel to left/right.
+    - [x] Scale to an 8 or 16-bit PCM range.
+    - [x] Store the sample in the ring buffer.
+    - [x] `sample_timer -= cycles_per_sample`.
+    * [x] Handle turning channels on/off: If a channel’s length expires or we write to their disable bits, mark channel as off (no output).
+    * [x] Handle writes to sound registers:
+    - [x] NRX1 (length): writing high bits can set length counter.
+    - [x] NRX2 (envelope): update envelope parameters, maybe even restart envelope.
+    - [x] NRX3/4 (freq low/high): writing high (with trigger bit) should initialize channel: set length if not already running, reset frequency timer, reset envelope to initial volume, etc., and set channel enabled.
+    - [x] NR52 (sound on/off): if bit7 goes 0, turn off all sound (clear channels, etc.).
     * [ ] Many of these behaviors can be guided by Pan Docs and other resources. We can implement a simplified APU that produces recognizable sound, then refine.
   
   - [ ] Integrate with `cpal`:  

@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+const CPU_CLOCK_HZ: u32 = 4_194_304;
+
 #[derive(Default, Clone, Copy)]
 struct Envelope {
     initial: u8,
@@ -557,7 +559,61 @@ impl Apu {
         self.ch2.step(cycles);
         self.ch3.step(cycles);
         self.ch4.step(cycles);
-        // sample generation not yet implemented
+        self.sample_timer += cycles;
+        let cps = CPU_CLOCK_HZ / self.sample_rate;
+        while self.sample_timer >= cps {
+            self.sample_timer -= cps;
+            let (left, right) = self.mix_output();
+            self.samples.push_back(left);
+            self.samples.push_back(right);
+        }
+    }
+
+    fn mix_output(&self) -> (i16, i16) {
+        let ch1 = self.ch1.output() as u16;
+        let ch2 = self.ch2.output() as u16;
+        let ch3 = self.ch3.output(&self.wave_ram) as u16;
+        let ch4 = self.ch4.output() as u16;
+
+        let mut left = 0u16;
+        let mut right = 0u16;
+
+        if self.nr51 & 0x10 != 0 {
+            left += ch1;
+        }
+        if self.nr51 & 0x01 != 0 {
+            right += ch1;
+        }
+        if self.nr51 & 0x20 != 0 {
+            left += ch2;
+        }
+        if self.nr51 & 0x02 != 0 {
+            right += ch2;
+        }
+        if self.nr51 & 0x40 != 0 {
+            left += ch3;
+        }
+        if self.nr51 & 0x04 != 0 {
+            right += ch3;
+        }
+        if self.nr51 & 0x80 != 0 {
+            left += ch4;
+        }
+        if self.nr51 & 0x08 != 0 {
+            right += ch4;
+        }
+
+        let left_vol = ((self.nr50 >> 4) & 0x07) + 1;
+        let right_vol = (self.nr50 & 0x07) + 1;
+
+        let left_sample = (left * left_vol as u16) as i16;
+        let right_sample = (right * right_vol as u16) as i16;
+
+        (left_sample, right_sample)
+    }
+
+    pub fn pop_sample(&mut self) -> Option<i16> {
+        self.samples.pop_front()
     }
 
     pub fn sequencer_step(&self) -> u8 {
