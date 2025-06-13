@@ -187,3 +187,39 @@ fn alu_register_ops() {
     assert_eq!(mmu.read_byte(0xC000), 0x12);
     assert_eq!(cpu.cycles, 76);
 }
+
+#[test]
+fn halt_bug() {
+    // DI; HALT; LD A,0x12
+    let program = vec![0xF3, 0x76, 0x3E, 0x12];
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    let mut mmu = Mmu::new();
+    mmu.load_cart(Cartridge::load(program));
+    mmu.if_reg = 0x01;
+    mmu.ie_reg = 0x01;
+
+    cpu.step(&mut mmu); // DI
+    cpu.step(&mut mmu); // HALT -> triggers halt bug
+    cpu.step(&mut mmu); // LD A,(bugged immediate)
+
+    assert_eq!(cpu.a, 0x3E); // immediate read again
+    assert_eq!(cpu.pc, 3);
+}
+
+#[test]
+fn stop_speed_switch() {
+    // STOP 0x00 ; NOP
+    let program = vec![0x10, 0x00, 0x00];
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    let mut mmu = Mmu::new_with_mode(true);
+    mmu.load_cart(Cartridge::load(program));
+    mmu.key1 = 0x01; // request speed switch
+
+    cpu.step(&mut mmu); // STOP
+
+    assert_eq!(mmu.key1 & 0x81, 0x80);
+    assert!(cpu.double_speed);
+    assert_eq!(cpu.pc, 2);
+}
