@@ -257,7 +257,7 @@ impl Cpu {
         (hi << 8) | lo
     }
 
-    fn read_reg(&self, mmu: &crate::mmu::Mmu, index: u8) -> u8 {
+    fn read_reg(&self, mmu: &mut crate::mmu::Mmu, index: u8) -> u8 {
         match index {
             0 => self.b,
             1 => self.c,
