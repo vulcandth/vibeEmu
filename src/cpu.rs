@@ -16,6 +16,7 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0x0D] = 4; // DEC C
     arr[0x0E] = 8; // LD C,d8
     arr[0x0F] = 4; // RRCA
+    arr[0x10] = 4; // STOP
     arr[0x11] = 12; // LD DE,d16
     arr[0x12] = 8; // LD (DE),A
     arr[0x13] = 8; // INC DE
@@ -190,6 +191,8 @@ pub struct Cpu {
     pub cycles: u64,
     pub ime: bool,
     pub halted: bool,
+    pub double_speed: bool,
+    halt_bug: bool,
     ime_delay: bool,
 }
 
@@ -211,6 +214,8 @@ impl Cpu {
             cycles: 0,
             ime: false,
             halted: false,
+            double_speed: false,
+            halt_bug: false,
             ime_delay: false,
         }
     }
@@ -417,7 +422,11 @@ impl Cpu {
 
         let enable_after = self.ime_delay;
         let opcode = mmu.read_byte(self.pc);
-        self.pc = self.pc.wrapping_add(1);
+        if self.halt_bug {
+            self.halt_bug = false;
+        } else {
+            self.pc = self.pc.wrapping_add(1);
+        }
         let mut extra_cycles = 0u8;
 
         match opcode {
@@ -518,6 +527,16 @@ impl Cpu {
                 let carry = (self.a & 0x01) != 0;
                 self.a = self.a.rotate_right(1);
                 self.f = if carry { 0x10 } else { 0 };
+            }
+            0x10 => {
+                // STOP
+                let _ = mmu.read_byte(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                if mmu.key1 & 0x01 != 0 {
+                    mmu.key1 &= !0x01;
+                    mmu.key1 ^= 0x80;
+                    self.double_speed = mmu.key1 & 0x80 != 0;
+                }
             }
             0x11 => {
                 let lo = mmu.read_byte(self.pc) as u16;
@@ -864,7 +883,12 @@ impl Cpu {
                 }
             }
             0x76 => {
-                self.halted = true;
+                let pending = mmu.if_reg & mmu.ie_reg;
+                if self.ime || pending == 0 {
+                    self.halted = true;
+                } else {
+                    self.halt_bug = true;
+                }
             }
             0x77 => {
                 let addr = self.get_hl();
