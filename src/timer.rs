@@ -7,7 +7,7 @@ pub struct Timer {
     pub tma: u8,
     /// Timer control
     pub tac: u8,
-    last_bit: bool,
+    last_signal: bool,
 }
 
 impl Timer {
@@ -17,7 +17,7 @@ impl Timer {
             tima: 0,
             tma: 0,
             tac: 0,
-            last_bit: false,
+            last_signal: false,
         }
     }
 
@@ -31,17 +31,27 @@ impl Timer {
         }
     }
 
-    pub fn write(&mut self, addr: u16, val: u8) {
+    pub fn write(&mut self, addr: u16, val: u8, if_reg: &mut u8) {
         match addr {
             0xFF04 => {
+                let prev = Self::signal_with(self.div, self.tac);
                 self.div = 0;
-                self.last_bit = false;
+                let new = Self::signal_with(self.div, self.tac);
+                if prev && !new {
+                    self.increment(if_reg);
+                }
+                self.last_signal = new;
             }
             0xFF05 => self.tima = val,
             0xFF06 => self.tma = val,
             0xFF07 => {
+                let prev = Self::signal_with(self.div, self.tac);
                 self.tac = val & 0x07;
-                self.last_bit = self.timer_bit() != 0;
+                let new = Self::signal_with(self.div, self.tac);
+                if prev && !new {
+                    self.increment(if_reg);
+                }
+                self.last_signal = new;
             }
             _ => {}
         }
@@ -51,19 +61,23 @@ impl Timer {
     /// overflows.
     pub fn step(&mut self, cycles: u16, if_reg: &mut u8) {
         for _ in 0..cycles {
-            let prev_bit = self.timer_bit();
+            let prev = self.last_signal;
             self.div = self.div.wrapping_add(1);
-            let new_bit = self.timer_bit();
-            if self.tac & 0x04 != 0 && prev_bit == 1 && new_bit == 0 {
-                if self.tima == 0xFF {
-                    self.tima = self.tma;
-                    *if_reg |= 0x04;
-                } else {
-                    self.tima = self.tima.wrapping_add(1);
-                }
+            let new = self.signal();
+            if prev && !new {
+                self.increment(if_reg);
             }
+            self.last_signal = new;
         }
-        self.last_bit = self.timer_bit() != 0;
+    }
+
+    fn increment(&mut self, if_reg: &mut u8) {
+        if self.tima == 0xFF {
+            self.tima = self.tma;
+            *if_reg |= 0x04;
+        } else {
+            self.tima = self.tima.wrapping_add(1);
+        }
     }
 
     fn timer_bit(&self) -> u8 {
@@ -73,6 +87,32 @@ impl Timer {
             0x02 => ((self.div >> 5) & 1) as u8,
             0x03 => ((self.div >> 7) & 1) as u8,
             _ => 0,
+        }
+    }
+
+    fn timer_bit_with(div: u16, tac: u8) -> u8 {
+        match tac & 0x03 {
+            0x00 => ((div >> 9) & 1) as u8,
+            0x01 => ((div >> 3) & 1) as u8,
+            0x02 => ((div >> 5) & 1) as u8,
+            0x03 => ((div >> 7) & 1) as u8,
+            _ => 0,
+        }
+    }
+
+    fn signal(&self) -> bool {
+        if self.tac & 0x04 == 0 {
+            false
+        } else {
+            self.timer_bit() != 0
+        }
+    }
+
+    fn signal_with(div: u16, tac: u8) -> bool {
+        if tac & 0x04 == 0 {
+            false
+        } else {
+            Self::timer_bit_with(div, tac) != 0
         }
     }
 }
