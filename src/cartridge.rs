@@ -20,6 +20,7 @@ pub struct Cartridge {
     pub cgb: bool,
     pub title: String,
     cart_type: u8,
+    save_path: Option<PathBuf>,
     mbc_state: MbcState,
 }
 
@@ -59,7 +60,8 @@ impl Cartridge {
         if cart.has_battery() {
             let mut save = PathBuf::from(path.as_ref());
             save.set_extension("sav");
-            if let Ok(bytes) = fs::read(save) {
+            cart.save_path = Some(save.clone());
+            if let Ok(bytes) = fs::read(&save) {
                 for (d, s) in cart.ram.iter_mut().zip(bytes.iter()) {
                     *d = *s;
                 }
@@ -107,6 +109,7 @@ impl Cartridge {
             cgb,
             title,
             cart_type,
+            save_path: None,
             mbc_state,
         }
     }
@@ -116,14 +119,7 @@ impl Cartridge {
             (MbcState::NoMbc, 0x0000..=0x7FFF) => {
                 self.rom.get(addr as usize).copied().unwrap_or(0xFF)
             }
-            (
-                MbcState::Mbc1 {
-                    ram_bank,
-                    mode,
-                    ..
-                },
-                0x0000..=0x3FFF,
-            ) => {
+            (MbcState::Mbc1 { ram_bank, mode, .. }, 0x0000..=0x3FFF) => {
                 let bank = if *mode == 0 {
                     0
                 } else {
@@ -312,6 +308,15 @@ impl Cartridge {
             self.cart_type,
             0x03 | 0x06 | 0x09 | 0x0F | 0x10 | 0x13 | 0x1B | 0x1E
         )
+    }
+
+    pub fn save_ram(&self) -> io::Result<()> {
+        if let (true, Some(path)) = (self.has_battery(), &self.save_path) {
+            if !self.ram.is_empty() {
+                fs::write(path, &self.ram)?;
+            }
+        }
+        Ok(())
     }
 }
 
