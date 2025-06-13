@@ -42,8 +42,24 @@ fn boot_rom_disable() {
     mmu.load_boot_rom(vec![0xAA; 0x100]);
     mmu.load_cart(Cartridge {
         rom: vec![0xBB; 0x200],
+        ram: vec![0; 0x2000],
     });
     assert_eq!(mmu.read_byte(0x00), 0xAA);
     mmu.write_byte(0xFF50, 1);
     assert_eq!(mmu.read_byte(0x00), 0xBB);
+}
+
+#[test]
+fn cartridge_ram_access() {
+    let mut mmu = Mmu::new();
+    mmu.load_cart(Cartridge {
+        rom: vec![0; 0x200],
+        ram: vec![0; 0x2000],
+    });
+
+    mmu.write_byte(0xA000, 0x55);
+    assert_eq!(mmu.read_byte(0xA000), 0x55);
+
+    mmu.write_byte(0xBFFF, 0xAA);
+    assert_eq!(mmu.read_byte(0xBFFF), 0xAA);
 }

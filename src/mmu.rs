@@ -70,7 +70,11 @@ impl Mmu {
                 .and_then(|c| c.rom.get(addr as usize).copied())
                 .unwrap_or(0xFF),
             0x8000..=0x9FFF => self.vram[self.vram_bank][(addr - 0x8000) as usize],
-            0xA000..=0xBFFF => 0xFF,
+            0xA000..=0xBFFF => self
+                .cart
+                .as_ref()
+                .map(|c| c.read_ram(addr - 0xA000))
+                .unwrap_or(0xFF),
             0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize],
             0xD000..=0xDFFF => self.wram[self.wram_bank][(addr - 0xD000) as usize],
             0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize],
@@ -97,7 +101,11 @@ impl Mmu {
             0x8000..=0x9FFF => {
                 self.vram[self.vram_bank][(addr - 0x8000) as usize] = val;
             }
-            0xA000..=0xBFFF => {}
+            0xA000..=0xBFFF => {
+                if let Some(cart) = self.cart.as_mut() {
+                    cart.write_ram(addr - 0xA000, val);
+                }
+            }
             0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize] = val,
             0xD000..=0xDFFF => self.wram[self.wram_bank][(addr - 0xD000) as usize] = val,
             0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize] = val,
