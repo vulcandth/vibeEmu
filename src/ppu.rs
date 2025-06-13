@@ -11,7 +11,7 @@ pub struct Ppu {
     scx: u8,
     ly: u8,
     lyc: u8,
-    dma: u8,
+    pub dma: u8,
     bgp: u8,
     obp0: u8,
     obp1: u8,
@@ -24,7 +24,7 @@ pub struct Ppu {
     obpd: [u8; 0x40],
 
     mode_clock: u16,
-    mode: u8,
+    pub mode: u8,
 
     pub framebuffer: [u8; 160 * 144],
     line_priority: [bool; 160],

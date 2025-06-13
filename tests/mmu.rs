@@ -103,3 +103,32 @@ fn mbc1_ram_enable() {
     mmu.write_byte(0x0000, 0x00); // disable RAM
     assert_eq!(mmu.read_byte(0xA000), 0xFF);
 }
+
+#[test]
+fn oam_dma_transfer() {
+    let mut mmu = Mmu::new();
+    for i in 0..0xA0u16 {
+        mmu.write_byte(0x8000 + i, i as u8);
+    }
+    mmu.write_byte(0xFF46, 0x80); // copy from 0x8000
+    assert_eq!(mmu.ppu.oam[0], 0x00);
+    assert_eq!(mmu.ppu.oam[0x9F], 0x9F);
+}
+
+#[test]
+fn vram_oam_access_blocking() {
+    let mut mmu = Mmu::new();
+    mmu.ppu.mode = 3;
+    mmu.write_byte(0x8000, 0x12);
+    assert_eq!(mmu.read_byte(0x8000), 0xFF);
+    mmu.ppu.mode = 0;
+    mmu.write_byte(0x8000, 0x34);
+    assert_eq!(mmu.read_byte(0x8000), 0x34);
+
+    mmu.ppu.mode = 2;
+    mmu.write_byte(0xFE00, 0x56);
+    assert_eq!(mmu.read_byte(0xFE00), 0xFF);
+    mmu.ppu.mode = 0;
+    mmu.write_byte(0xFE00, 0x56);
+    assert_eq!(mmu.read_byte(0xFE00), 0x56);
+}
