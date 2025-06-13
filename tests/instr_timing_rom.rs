@@ -17,7 +17,6 @@ fn run_instr_timing<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> 
 }
 
 #[test]
-#[ignore]
 fn instr_timing() {
     let output = run_instr_timing("roms/blargg/instr_timing/instr_timing.gb", 10_000_000);
     assert!(output.contains("Passed"), "instr_timing failed: {}", output);
