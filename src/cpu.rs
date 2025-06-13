@@ -11,6 +11,7 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0x08] = 20; // LD (a16),SP
     arr[0x09] = 8; // ADD HL,BC
     arr[0x0A] = 8; // LD A,(BC)
+    arr[0x0B] = 8; // DEC BC
     arr[0x0C] = 4; // INC C
     arr[0x0D] = 4; // DEC C
     arr[0x0E] = 8; // LD C,d8
@@ -25,6 +26,7 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0x18] = 12; // JR r8
     arr[0x19] = 8; // ADD HL,DE
     arr[0x1A] = 8; // LD A,(DE)
+    arr[0x1B] = 8; // DEC DE
     arr[0x1C] = 4; // INC E
     arr[0x1D] = 4; // DEC E
     arr[0x1E] = 8; // LD E,d8
@@ -39,6 +41,7 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0x28] = 8; // JR Z,r8 (not taken)
     arr[0x29] = 8; // ADD HL,HL
     arr[0x2A] = 8; // LDI A,(HL)
+    arr[0x2B] = 8; // DEC HL
     arr[0x2C] = 4; // INC L
     arr[0x2D] = 4; // DEC L
     arr[0x2E] = 8; // LD L,d8
@@ -486,6 +489,10 @@ impl Cpu {
                 let addr = self.get_bc();
                 self.a = mmu.read_byte(addr);
             }
+            0x0B => {
+                let val = self.get_bc().wrapping_sub(1);
+                self.set_bc(val);
+            }
             0x0C => {
                 let res = self.c.wrapping_add(1);
                 self.f = (self.f & 0x10)
@@ -575,6 +582,10 @@ impl Cpu {
             0x1A => {
                 let addr = self.get_de();
                 self.a = mmu.read_byte(addr);
+            }
+            0x1B => {
+                let val = self.get_de().wrapping_sub(1);
+                self.set_de(val);
             }
             0x1C => {
                 let res = self.e.wrapping_add(1);
@@ -668,6 +679,10 @@ impl Cpu {
                 let addr = self.get_hl();
                 self.a = mmu.read_byte(addr);
                 self.set_hl(addr.wrapping_add(1));
+            }
+            0x2B => {
+                let val = self.get_hl().wrapping_sub(1);
+                self.set_hl(val);
             }
             0x2C => {
                 let res = self.l.wrapping_add(1);
