@@ -4,6 +4,7 @@ mod apu;
 mod cartridge;
 mod cpu;
 mod gameboy;
+mod input;
 mod mmu;
 mod ppu;
 mod timer;
