@@ -70,13 +70,25 @@ impl Mmu {
                 .and_then(|b| b.get(addr as usize).copied())
                 .unwrap_or(0xFF),
             0x0000..=0x7FFF => self.cart.as_ref().map(|c| c.read(addr)).unwrap_or(0xFF),
-            0x8000..=0x9FFF => self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize],
+            0x8000..=0x9FFF => {
+                if self.ppu.mode == 3 {
+                    0xFF
+                } else {
+                    self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize]
+                }
+            }
             0xA000..=0xBFFF => self.cart.as_ref().map(|c| c.read(addr)).unwrap_or(0xFF),
             0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize],
             0xD000..=0xDFFF => self.wram[self.wram_bank][(addr - 0xD000) as usize],
             0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize],
             0xF000..=0xFDFF => self.wram[self.wram_bank][(addr - 0xF000) as usize],
-            0xFE00..=0xFE9F => self.ppu.oam[(addr - 0xFE00) as usize],
+            0xFE00..=0xFE9F => {
+                if self.ppu.mode == 2 || self.ppu.mode == 3 {
+                    0xFF
+                } else {
+                    self.ppu.oam[(addr - 0xFE00) as usize]
+                }
+            }
             0xFEA0..=0xFEFF => 0xFF,
             0xFF00 => self.input.read(),
             0xFF01 => self.sb,
@@ -96,7 +108,9 @@ impl Mmu {
     pub fn write_byte(&mut self, addr: u16, val: u8) {
         match addr {
             0x8000..=0x9FFF => {
-                self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize] = val;
+                if self.ppu.mode != 3 {
+                    self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize] = val;
+                }
             }
             0x0000..=0x7FFF | 0xA000..=0xBFFF => {
                 if let Some(cart) = self.cart.as_mut() {
@@ -107,7 +121,11 @@ impl Mmu {
             0xD000..=0xDFFF => self.wram[self.wram_bank][(addr - 0xD000) as usize] = val,
             0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize] = val,
             0xF000..=0xFDFF => self.wram[self.wram_bank][(addr - 0xF000) as usize] = val,
-            0xFE00..=0xFE9F => self.ppu.oam[(addr - 0xFE00) as usize] = val,
+            0xFE00..=0xFE9F => {
+                if self.ppu.mode != 2 && self.ppu.mode != 3 {
+                    self.ppu.oam[(addr - 0xFE00) as usize] = val;
+                }
+            }
             0xFEA0..=0xFEFF => {}
             0xFF00 => self.input.write(val),
             0xFF01 => self.sb = val,
@@ -122,8 +140,16 @@ impl Mmu {
             0xFF04..=0xFF07 => self.timer.write(addr, val),
             0xFF0F => self.if_reg = val,
             0xFF10..=0xFF3F => self.apu.write_reg(addr, val),
-            0xFF40..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
             0xFF4F => self.ppu.vram_bank = (val & 0x01) as usize,
+            0xFF46 => {
+                self.ppu.dma = val;
+                let src = (val as u16) << 8;
+                for i in 0..0xA0 {
+                    let byte = self.read_byte(src.wrapping_add(i));
+                    self.ppu.oam[i as usize] = byte;
+                }
+            }
             0xFF50 => self.boot_mapped = false,
             0xFF70 => {
                 let bank = (val & 0x07) as usize;
