@@ -21,7 +21,7 @@ pub struct Mmu {
 }
 
 impl Mmu {
-    pub fn new() -> Self {
+    pub fn new_with_mode(cgb: bool) -> Self {
         Self {
             wram: [[0; WRAM_BANK_SIZE]; 8],
             wram_bank: 1,
@@ -34,11 +34,15 @@ impl Mmu {
             sb: 0,
             sc: 0,
             serial_out: Vec::new(),
-            ppu: Ppu::new(),
+            ppu: Ppu::new_with_mode(cgb),
             apu: Apu::new(),
             timer: Timer::new(),
             input: Input::new(),
         }
+    }
+
+    pub fn new() -> Self {
+        Self::new_with_mode(false)
     }
 
     pub fn load_cart(&mut self, cart: Cartridge) {
