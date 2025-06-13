@@ -631,15 +631,15 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
   - Flesh out the MMU to cover all regions:  
     
     * Map 0x0000-0x7FFF and 0xA000-BFFF through Cartridge module (done).  
-    * Allocate 8KB for WRAM, and if CGB mode, 8 banks (bank 1-7) of an additional 4KB each (total 32KB, though one bank is fixed at 0).  
-    * Map WRAM bank 0 at C000-CFFF, switchable WRAM bank at D000-DFFF (default to bank 1). Implement writes to FF70 (SVBK) to change the bank (on DMG, ignore it).  
-    * VRAM: allocate 8KB (DMG) or 2×8KB (CGB). Map bank 0 (or selected bank) at 8000-9FFF. Implement FF4F register to switch VRAM bank on CGB.  
-    * HRAM: 127 bytes at FF80-FFFE.  
-    * OAM: 160 bytes at FE00-FE9F.  
-    * Echo RAM: E000-EFFF mirror of C000-CFFF, F000-FDFF mirror of D000-DDFF. We can handle this by masking address (addr & 0x1FFF) and using the same WRAM array. Writes to echo should write to main RAM. Reads likewise.  
-    * Unusable memory FEA0-FEFF: if read, return 0xFF; if written, ignore.
+    * [x] Allocate 8KB for WRAM, and if CGB mode, 8 banks (bank 1-7) of an additional 4KB each (total 32KB, though one bank is fixed at 0).
+    * [x] Map WRAM bank 0 at C000-CFFF, switchable WRAM bank at D000-DFFF (default to bank 1). Implement writes to FF70 (SVBK) to change the bank (on DMG, ignore it).
+    * [x] VRAM: allocate 8KB (DMG) or 2×8KB (CGB). Map bank 0 (or selected bank) at 8000-9FFF. Implement FF4F register to switch VRAM bank on CGB.
+    * [x] HRAM: 127 bytes at FF80-FFFE.
+    * [x] OAM: 160 bytes at FE00-FE9F.
+    * [x] Echo RAM: E000-EFFF mirror of C000-CFFF, F000-FDFF mirror of D000-DDFF. We can handle this by masking address (addr & 0x1FFF) and using the same WRAM array. Writes to echo should write to main RAM. Reads likewise.
+    * [x] Unusable memory FEA0-FEFF: if read, return 0xFF; if written, ignore.
   
-  - Implement read/write functions in MMU that do an address range check and dispatch appropriately. This will be a large match or if-else chain.
+  - [x] Implement read/write functions in MMU that do an address range check and dispatch appropriately. This will be a large match or if-else chain.
   
   - Integrate PPU, APU, Timer, Input, Serial into MMU: at this stage, those modules might be partially implemented or at least have their data arrays.  
     
@@ -650,12 +650,12 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
     * Joypad (FF00): MMU reads from Input module (combining state with select bits), writes might set the select bits (in practice, games write to FF00 to select mode – we track those bits).  
     * Serial (FF01, FF02): Writes to FF01 store the byte (SB). Writes to FF02 with bit7=1 trigger transfer (so call serial module to handle it). Reads return SB or status.
   
-  - Boot ROM handling:  
-    
-    * If using a boot ROM, load it into an array. MMU at 0x0000-0x00FF should return boot ROM bytes until a flag `boot_completed` is set (when FF50 is written).  
-    * Implement write to FF50: set `boot_completed=true`, after which reads from 0x0000 go to cartridge ROM. Ensure FF50 write only works once (actual hardware cannot re-enable boot ROM without reset).
+  - Boot ROM handling:
+
+    * [x] If using a boot ROM, load it into an array. MMU at 0x0000-0x00FF should return boot ROM bytes until a flag `boot_completed` is set (when FF50 is written).
+    * [x] Implement write to FF50: set `boot_completed=true`, after which reads from 0x0000 go to cartridge ROM. Ensure FF50 write only works once (actual hardware cannot re-enable boot ROM without reset).
   
-  - Test: Write unit tests for MMU addressing (e.g., write to an address and read back to confirm it goes to correct memory). Also, test bank switching logic: e.g., set VRAM bank via FF4F and verify reads go to different memory locations.
+  - [x] Test: Write unit tests for MMU addressing (e.g., write to an address and read back to confirm it goes to correct memory). Also, test bank switching logic: e.g., set VRAM bank via FF4F and verify reads go to different memory locations.
 
 - **PPU Implementation (Rendering)** – *Dep: CPU (for timing), MMU (for memory interface).*
   
