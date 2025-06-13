@@ -410,6 +410,7 @@ impl Cpu {
     pub fn step(&mut self, mmu: &mut crate::mmu::Mmu) {
         if self.halted {
             self.cycles += 4;
+            mmu.timer.step(4, &mut mmu.if_reg);
             self.handle_interrupts(mmu);
             return;
         }
@@ -1387,7 +1388,9 @@ impl Cpu {
             _ => panic!("unhandled opcode {:02X}", opcode),
         }
 
-        self.cycles += OPCODE_CYCLES[opcode as usize] as u64 + extra_cycles as u64;
+        let cycles = OPCODE_CYCLES[opcode as usize] as u16 + extra_cycles as u16;
+        self.cycles += cycles as u64;
+        mmu.timer.step(cycles, &mut mmu.if_reg);
 
         if enable_after {
             self.ime = true;

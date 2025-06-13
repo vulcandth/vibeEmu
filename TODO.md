@@ -715,19 +715,18 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
 - [ ] **Timers & DIV** – *Dep: CPU (timing), MMU.*
   
-  - [ ] Implement the Timer module fully as described:  
-    
-    * [ ] Keep track of `div_counter` (16-bit). Perhaps every CPU cycle call `timer.tick()`.  
-    * [ ] When `div_counter` overflows 0xFFFF -> 0x0000, it automatically wraps (DIV register goes through 00-FF).  
-    * [ ] Use TAC to determine when to increment TIMA. Simplest: whenever the specific bit of `div_counter` goes from 1 to 0 (falling edge) as per TAC selection, increment TIMA (if timer enabled). Use Pan Docs schematic[gbdev.io](https://gbdev.io/pandocs/Timer_Obscure_Behaviour.html#:~:text=On%20DMG%3A) or simpler approach: maintain a separate counter for TIMA that counts down cycles until next increment.  
-    * [ ] If TIMA overflows, set TIMA = TMA, request interrupt.  
-    * [ ] Respond correctly to writes:  
+  - [ ] Implement the Timer module fully as described:
+    * [x] Keep track of `div_counter` (16-bit). Perhaps every CPU cycle call `timer.tick()`.
+    * [x] When `div_counter` overflows 0xFFFF -> 0x0000, it automatically wraps (DIV register goes through 00-FF).
+    * [x] Use TAC to determine when to increment TIMA. Simplest: whenever the specific bit of `div_counter` goes from 1 to 0 (falling edge) as per TAC selection, increment TIMA (if timer enabled). Use Pan Docs schematic[gbdev.io](https://gbdev.io/pandocs/Timer_Obscure_Behaviour.html#:~:text=On%20DMG%3A) or simpler approach: maintain a separate counter for TIMA that counts down cycles until next increment.
+    * [x] If TIMA overflows, set TIMA = TMA, request interrupt.
+    * [ ] Respond correctly to writes:
     - [ ] Write to DIV: set div_counter = 0 (and thus DIV=0). Also, in doing so, handle the edge-case: if the timer was about to tick at that moment, do we skip it or not? (This is a subtle detail; tests exist for it. We can refine later.)  
-    - [ ] Write to TAC: note if enabling/disabling timer might immediately cause a tick depending on counter state.  
-    - [ ] Write to TIMA: if an overflow was in progress (there’s a known glitch where writing TIMA in the short window after overflow and before it reloads from TMA cancels the interrupt). We can simplify initial implementation by ignoring that glitch, then later add if needed for passing test ROMs.  
-    * [ ] Write to TMA: simply sets the modulo for future overflow reload.
+    - [ ] Write to TAC: note if enabling/disabling timer might immediately cause a tick depending on counter state.
+    - [x] Write to TIMA: if an overflow was in progress (there’s a known glitch where writing TIMA in the short window after overflow and before it reloads from TMA cancels the interrupt). We can simplify initial implementation by ignoring that glitch, then later add if needed for passing test ROMs.
+    * [x] Write to TMA: simply sets the modulo for future overflow reload.
   
-  - [ ] Integrate with MMU reads/writes (some done in MMU step above).
+  - [x] Integrate with MMU reads/writes (some done in MMU step above).
   
   - [ ] Test: Use known timer test ROMs from mooneye or blargg (e.g., “timer/div behavior” tests). Also, verify in a game that uses timer (some games use timer interrupt for periodic tasks – if those tasks happen or not can be noticed).
   
