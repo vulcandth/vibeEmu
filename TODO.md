@@ -659,14 +659,14 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
 - **PPU Implementation (Rendering)** – *Dep: CPU (for timing), MMU (for memory interface).*
   
-  - Implement PPU registers and internal data:  
-    
-    * LCDC (FF40) bits: control enabling BG, sprites, sprite size, BG tilemap base, tile data base, window enable, window tilemap base, LCD on/off.  
-    * STAT (FF41) bits: the mode bits (0-1), coincidence flag (bit2), and interrupt enable flags for LY=LYC, OAM, VBlank, HBlank.  
-    * SCY, SCX (scroll), LY, LYC, WY, WX, BGP, OBP0, OBP1 (DMG palettes).  
-    * If CGB mode: BG palette index/register (FF68/69) and OBJ palette index/register (FF6A/6B), which allow access to CGB palette tables.  
-    * OAM memory for 40 sprites (each 4 bytes: y, x, tile, flags).  
-    * VRAM memory for tiles and maps (with 2 banks in CGB).
+  - Implement PPU registers and internal data:
+
+    * [x] LCDC (FF40) bits: control enabling BG, sprites, sprite size, BG tilemap base, tile data base, window enable, window tilemap base, LCD on/off.
+    * [x] STAT (FF41) bits: the mode bits (0-1), coincidence flag (bit2), and interrupt enable flags for LY=LYC, OAM, VBlank, HBlank.
+    * [x] SCY, SCX (scroll), LY, LYC, WY, WX, BGP, OBP0, OBP1 (DMG palettes).
+    * [x] If CGB mode: BG palette index/register (FF68/69) and OBJ palette index/register (FF6A/6B), which allow access to CGB palette tables.
+    * [x] OAM memory for 40 sprites (each 4 bytes: y, x, tile, flags).
+    * [x] VRAM memory for tiles and maps (with 2 banks in CGB).
   
   - PPU step function:  
     
