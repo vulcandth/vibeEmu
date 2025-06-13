@@ -35,9 +35,9 @@ fn main() {
     let mut gb = gameboy::GameBoy::new();
 
     if let Some(path) = args.rom {
-        match std::fs::read(path) {
-            Ok(data) => {
-                gb.mmu.load_cart(cartridge::Cartridge::load(data));
+        match cartridge::Cartridge::from_file(&path) {
+            Ok(cart) => {
+                gb.mmu.load_cart(cart);
             }
             Err(e) => {
                 eprintln!("Failed to load ROM: {e}");

@@ -40,10 +40,7 @@ fn vram_bank_switch() {
 fn boot_rom_disable() {
     let mut mmu = Mmu::new();
     mmu.load_boot_rom(vec![0xAA; 0x100]);
-    mmu.load_cart(Cartridge {
-        rom: vec![0xBB; 0x200],
-        ram: vec![0; 0x2000],
-    });
+    mmu.load_cart(Cartridge::from_bytes_with_ram(vec![0xBB; 0x200], 0x2000));
     assert_eq!(mmu.read_byte(0x00), 0xAA);
     mmu.write_byte(0xFF50, 1);
     assert_eq!(mmu.read_byte(0x00), 0xBB);
@@ -52,10 +49,7 @@ fn boot_rom_disable() {
 #[test]
 fn cartridge_ram_access() {
     let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge {
-        rom: vec![0; 0x200],
-        ram: vec![0; 0x2000],
-    });
+    mmu.load_cart(Cartridge::from_bytes_with_ram(vec![0; 0x200], 0x2000));
 
     mmu.write_byte(0xA000, 0x55);
     assert_eq!(mmu.read_byte(0xA000), 0x55);
