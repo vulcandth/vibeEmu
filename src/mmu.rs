@@ -1,4 +1,4 @@
-use crate::cartridge::Cartridge;
+use crate::{apu::Apu, cartridge::Cartridge, input::Input, ppu::Ppu, timer::Timer};
 
 const WRAM_BANK_SIZE: usize = 0x1000;
 const VRAM_BANK_SIZE: usize = 0x2000;
@@ -18,6 +18,10 @@ pub struct Mmu {
     sb: u8,
     sc: u8,
     pub serial_out: Vec<u8>,
+    pub ppu: Ppu,
+    pub apu: Apu,
+    pub timer: Timer,
+    pub input: Input,
 }
 
 impl Mmu {
@@ -37,6 +41,10 @@ impl Mmu {
             sb: 0,
             sc: 0,
             serial_out: Vec::new(),
+            ppu: Ppu::new(),
+            apu: Apu::new(),
+            timer: Timer::new(),
+            input: Input::new(),
         }
     }
 
@@ -69,9 +77,13 @@ impl Mmu {
             0xF000..=0xFDFF => self.wram[self.wram_bank][(addr - 0xF000) as usize],
             0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize],
             0xFEA0..=0xFEFF => 0xFF,
+            0xFF00 => self.input.read(),
             0xFF01 => self.sb,
             0xFF02 => self.sc,
+            0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg,
+            0xFF10..=0xFF3F => self.apu.read_reg(addr),
+            0xFF40..=0xFF4B => self.ppu.read_reg(addr),
             0xFF4F => self.vram_bank as u8,
             0xFF70 => self.wram_bank as u8,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
@@ -92,6 +104,7 @@ impl Mmu {
             0xF000..=0xFDFF => self.wram[self.wram_bank][(addr - 0xF000) as usize] = val,
             0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize] = val,
             0xFEA0..=0xFEFF => {}
+            0xFF00 => self.input.write(val),
             0xFF01 => self.sb = val,
             0xFF02 => {
                 self.sc = val;
@@ -101,7 +114,10 @@ impl Mmu {
                     self.sc &= 0x7F;
                 }
             }
+            0xFF04..=0xFF07 => self.timer.write(addr, val),
             0xFF0F => self.if_reg = val,
+            0xFF10..=0xFF3F => self.apu.write_reg(addr, val),
+            0xFF40..=0xFF4B => self.ppu.write_reg(addr, val),
             0xFF4F => self.vram_bank = (val & 0x01) as usize,
             0xFF50 => self.boot_mapped = false,
             0xFF70 => {

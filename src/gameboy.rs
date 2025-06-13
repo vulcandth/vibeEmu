@@ -1,11 +1,8 @@
-use crate::{apu::Apu, cpu::Cpu, mmu::Mmu, ppu::Ppu, timer::Timer};
+use crate::{cpu::Cpu, mmu::Mmu};
 
 pub struct GameBoy {
     pub cpu: Cpu,
     pub mmu: Mmu,
-    pub ppu: Ppu,
-    pub apu: Apu,
-    pub timer: Timer,
 }
 
 impl GameBoy {
@@ -13,9 +10,6 @@ impl GameBoy {
         Self {
             cpu: Cpu::new(),
             mmu: Mmu::new(),
-            ppu: Ppu::new(),
-            apu: Apu::new(),
-            timer: Timer::new(),
         }
     }
 }

@@ -643,12 +643,12 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
   
   - Integrate PPU, APU, Timer, Input, Serial into MMU: at this stage, those modules might be partially implemented or at least have their data arrays.  
     
-    * For PPU registers (FF40-FF4B, etc.), have MMU call `ppu.write_reg(addr, val)` and `ppu.read_reg(addr)` which we will implement soon.  
-    * Same for APU (NR10-NR52): call `apu.write_reg(addr,val)`. Initially, we can stub APU responses (e.g. return 0 for reads or specific default values, since APU registers often have unused bits returning 1).  
-    * Timer registers FF04-FF07: MMU can directly update Timer module (e.g. writing FF04 calls `timer.reset_div()`, writing FF05 sets TIMA, etc.). Or the Timer module can expose read/write.  
-    * IF (FF0F) and IE (FFFF): These can be stored in an `interrupt` module or simply in MMU. We can store `mmu.if` and `mmu.ie`. Writes to them update the value, reads return current.  
-    * Joypad (FF00): MMU reads from Input module (combining state with select bits), writes might set the select bits (in practice, games write to FF00 to select mode – we track those bits).  
-    * Serial (FF01, FF02): Writes to FF01 store the byte (SB). Writes to FF02 with bit7=1 trigger transfer (so call serial module to handle it). Reads return SB or status.
+    * [x] For PPU registers (FF40-FF4B, etc.), have MMU call `ppu.write_reg(addr, val)` and `ppu.read_reg(addr)` which we will implement soon.
+    * [x] Same for APU (NR10-NR52): call `apu.write_reg(addr,val)`. Initially, we can stub APU responses (e.g. return 0 for reads or specific default values, since APU registers often have unused bits returning 1).
+    * [x] Timer registers FF04-FF07: MMU can directly update Timer module (e.g. writing FF04 calls `timer.reset_div()`, writing FF05 sets TIMA, etc.). Or the Timer module can expose read/write.
+    * [x] IF (FF0F) and IE (FFFF): These can be stored in an `interrupt` module or simply in MMU. We can store `mmu.if` and `mmu.ie`. Writes to them update the value, reads return current.
+    * [x] Joypad (FF00): MMU reads from Input module (combining state with select bits), writes might set the select bits (in practice, games write to FF00 to select mode – we track those bits).
+    * [x] Serial (FF01, FF02): Writes to FF01 store the byte (SB). Writes to FF02 with bit7=1 trigger transfer (so call serial module to handle it). Reads return SB or status.
   
   - Boot ROM handling:
 
