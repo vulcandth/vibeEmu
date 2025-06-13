@@ -394,9 +394,9 @@ The MMU will have to implement reads and writes to all these areas. In many case
 
 - [x] Provide a mechanism to **save** the RAM to disk (battery-backed RAM). This could be an API call from the frontend to dump the RAM to a file when the emulator exits, and load from file when starting. It’s easiest to do this in the cartridge module as it knows the RAM size and content. (SameBoy supports battery save for game progress[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,on%20a%20Game%20Boy%20Color), and we will too, but **not** emulator state save).
 
-- Identify cartridge type: On loading a ROM, read the header at 0x0147 to determine the MBC type and instantiate the appropriate handler[gbdev.io](https://gbdev.io/pandocs/#:~:text=32,46)[gbdev.io](https://gbdev.io/pandocs/#:~:text=36,M161). For instance, 0x01 means MBC1, 0x13 means MBC3+RAM+Battery, etc. Also check 0x014C (CGB flag) to know if game supports CGB mode (0x80 or 0xC0 means CGB capable) so we start emulator in CGB or DMG mode accordingly.
+- [x] Identify cartridge type: On loading a ROM, read the header at 0x0147 to determine the MBC type and instantiate the appropriate handler[gbdev.io](https://gbdev.io/pandocs/#:~:text=32,46)[gbdev.io](https://gbdev.io/pandocs/#:~:text=36,M161). For instance, 0x01 means MBC1, 0x13 means MBC3+RAM+Battery, etc. Also check 0x014C (CGB flag) to know if game supports CGB mode (0x80 or 0xC0 means CGB capable) so we start emulator in CGB or DMG mode accordingly.
 
-- Map the **boot ROM**: Not exactly cartridge, but we should consider how to handle the boot ROM mapping. Possibly the MMU can have a flag that first 0x100 bytes come from an internal boot ROM until disabled.
+- [x] Map the **boot ROM**: Not exactly cartridge, but we should consider how to handle the boot ROM mapping. Possibly the MMU can have a flag that first 0x100 bytes come from an internal boot ROM until disabled.
 
 **Interactions:**
 
