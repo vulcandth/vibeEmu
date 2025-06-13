@@ -27,6 +27,7 @@ pub struct Ppu {
     mode: u8,
 
     pub framebuffer: [u8; 160 * 144],
+    line_priority: [bool; 160],
 }
 
 impl Ppu {
@@ -55,6 +56,7 @@ impl Ppu {
             mode_clock: 0,
             mode: 2,
             framebuffer: [0; 160 * 144],
+            line_priority: [false; 160],
         }
     }
 
@@ -125,6 +127,8 @@ impl Ppu {
             return;
         }
 
+        self.line_priority.fill(false);
+
         let tile_map_base = if self.lcdc & 0x08 != 0 {
             0x1C00
         } else {
@@ -142,7 +146,7 @@ impl Ppu {
             let px = x.wrapping_add(scx) & 0xFF;
             let tile_col = (px / 8) as usize;
             let tile_row = ((self.ly as u16 + self.scy as u16) / 8) as usize;
-            let tile_y = ((self.ly as u16 + self.scy as u16) % 8) as usize;
+            let mut tile_y = ((self.ly as u16 + self.scy as u16) % 8) as usize;
 
             let tile_index = self.vram[0][tile_map_base + tile_row * 32 + tile_col];
             let mut addr = if self.lcdc & 0x10 != 0 {
@@ -150,18 +154,28 @@ impl Ppu {
             } else {
                 tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
             };
+            let mut bit = 7 - (px % 8) as usize;
+            let mut priority = false;
             if self.cgb {
                 let attr = self.vram[1][tile_map_base + tile_row * 32 + tile_col];
                 if attr & 0x08 != 0 {
                     addr += 0x2000;
                 }
+                if attr & 0x20 != 0 {
+                    bit = (px % 8) as usize;
+                }
+                if attr & 0x40 != 0 {
+                    tile_y = 7 - tile_y;
+                }
+                priority = attr & 0x80 != 0;
             }
             let lo = self.vram[0][addr + tile_y * 2];
             let hi = self.vram[0][addr + tile_y * 2 + 1];
-            let bit = 7 - (px % 8) as usize;
             let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
             let color = (self.bgp >> (color_id * 2)) & 0x03;
-            self.framebuffer[self.ly as usize * 160 + x as usize] = color;
+            let idx = self.ly as usize * 160 + x as usize;
+            self.framebuffer[idx] = color;
+            self.line_priority[x as usize] = priority;
         }
 
         // window
@@ -177,7 +191,7 @@ impl Ppu {
                 let window_x = (x - wx) as usize;
                 let tile_col = window_x / 8;
                 let tile_row = window_y / 8;
-                let tile_y = window_y % 8;
+                let mut tile_y = window_y % 8;
                 let tile_x = window_x % 8;
                 let tile_index = self.vram[0][window_map_base + tile_row * 32 + tile_col];
                 let mut addr = if self.lcdc & 0x10 != 0 {
@@ -185,67 +199,94 @@ impl Ppu {
                 } else {
                     tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
                 };
+                let mut bit = 7 - tile_x;
+                let mut priority = false;
                 if self.cgb {
                     let attr = self.vram[1][window_map_base + tile_row * 32 + tile_col];
                     if attr & 0x08 != 0 {
                         addr += 0x2000;
                     }
+                    if attr & 0x20 != 0 {
+                        bit = tile_x;
+                    }
+                    if attr & 0x40 != 0 {
+                        tile_y = 7 - tile_y;
+                    }
+                    priority = attr & 0x80 != 0;
                 }
                 let lo = self.vram[0][addr + tile_y * 2];
                 let hi = self.vram[0][addr + tile_y * 2 + 1];
-                let bit = 7 - tile_x;
                 let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
                 let color = (self.bgp >> (color_id * 2)) & 0x03;
-                self.framebuffer[self.ly as usize * 160 + x as usize] = color;
+                let idx = self.ly as usize * 160 + x as usize;
+                self.framebuffer[idx] = color;
+                if (x as usize) < 160 {
+                    self.line_priority[x as usize] = priority;
+                }
             }
         }
 
         // sprites
         if self.lcdc & 0x02 != 0 {
             let sprite_height: i16 = if self.lcdc & 0x04 != 0 { 16 } else { 8 };
-            let mut count = 0;
+            let mut visible = Vec::new();
             for i in 0..40 {
-                if count >= 10 {
+                if visible.len() >= 10 {
                     break;
                 }
                 let base = i * 4;
                 let y = self.oam[base] as i16 - 16;
                 if self.ly as i16 >= y && (self.ly as i16) < y + sprite_height {
-                    let mut tile = self.oam[base + 2];
-                    if sprite_height == 16 {
-                        tile &= 0xFE;
+                    visible.push(i);
+                }
+            }
+
+            for &i in visible.iter().rev() {
+                let base = i * 4;
+                let mut tile = self.oam[base + 2];
+                if sprite_height == 16 {
+                    tile &= 0xFE;
+                }
+                let flags = self.oam[base + 3];
+                let x_pos = self.oam[base + 1] as i16 - 8;
+                let mut line_idx = self.ly as i16 - (self.oam[base] as i16 - 16);
+                if flags & 0x40 != 0 {
+                    line_idx = sprite_height - 1 - line_idx;
+                }
+                let bank = if self.cgb {
+                    ((flags >> 3) & 0x01) as usize
+                } else {
+                    0
+                };
+                for px in 0..8 {
+                    let bit = if flags & 0x20 != 0 { px } else { 7 - px };
+                    let addr = tile as usize * 16 + (line_idx as usize % 8) * 2;
+                    let lo = self.vram[bank][addr];
+                    let hi = self.vram[bank][addr + 1];
+                    let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                    if color_id == 0 {
+                        continue;
                     }
-                    let flags = self.oam[base + 3];
-                    let x_pos = self.oam[base + 1] as i16 - 8;
-                    let mut line_idx = self.ly as i16 - y;
-                    if flags & 0x40 != 0 {
-                        line_idx = sprite_height - 1 - line_idx;
+                    let sx = x_pos + px as i16;
+                    if !(0i16..160i16).contains(&sx) {
+                        continue;
                     }
-                    let bank = if self.cgb {
-                        (flags as usize >> 3) & 0x01
+                    let idx = self.ly as usize * 160 + sx as usize;
+                    let bg_color = self.framebuffer[idx];
+                    let bg_prio = self.line_priority[sx as usize];
+                    let obj_prio = flags & 0x80 != 0;
+                    if obj_prio && bg_color != 0 {
+                        continue;
+                    }
+                    if bg_prio && bg_color != 0 {
+                        continue;
+                    }
+                    let color = if flags & 0x10 != 0 {
+                        (self.obp1 >> (color_id * 2)) & 0x03
                     } else {
-                        0
+                        (self.obp0 >> (color_id * 2)) & 0x03
                     };
-                    for px in 0..8 {
-                        let bit = if flags & 0x20 != 0 { px } else { 7 - px };
-                        let addr = tile as usize * 16 + (line_idx as usize % 8) * 2;
-                        let lo = self.vram[bank][addr];
-                        let hi = self.vram[bank][addr + 1];
-                        let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                        if color_id == 0 {
-                            continue;
-                        }
-                        let color = if flags & 0x10 != 0 {
-                            (self.obp1 >> (color_id * 2)) & 0x03
-                        } else {
-                            (self.obp0 >> (color_id * 2)) & 0x03
-                        };
-                        let sx = x_pos + px as i16;
-                        if (0i16..160i16).contains(&sx) {
-                            self.framebuffer[self.ly as usize * 160 + sx as usize] = color;
-                        }
-                    }
-                    count += 1;
+                    self.framebuffer[idx] = color;
                 }
             }
         }
