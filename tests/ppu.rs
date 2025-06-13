@@ -33,3 +33,21 @@ fn step_vblank_interrupt() {
     assert_eq!(ppu.read_reg(0xFF41) & 0x03, 1); // mode 1
     assert!(if_reg & 0x01 != 0);
 }
+
+#[test]
+fn render_bg_scanline() {
+    let mut ppu = Ppu::new();
+    // enable LCD and BG with tile data at 0x8000
+    ppu.write_reg(0xFF40, 0x91);
+    // palette mapping: color 1 -> value 1
+    ppu.write_reg(0xFF47, 0xE4);
+    for i in 0..8 {
+        ppu.vram[0][i * 2] = 0xFF;
+        ppu.vram[0][i * 2 + 1] = 0x00;
+    }
+    ppu.vram[0][0x1800] = 0x00;
+    let mut if_reg = 0u8;
+    ppu.step(456, &mut if_reg);
+    assert_eq!(ppu.framebuffer[0], 1);
+    assert_eq!(ppu.framebuffer[7], 1);
+}

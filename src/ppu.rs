@@ -113,6 +113,59 @@ impl Ppu {
         }
     }
 
+    fn render_scanline(&mut self) {
+        if self.lcdc & 0x80 == 0 {
+            return;
+        }
+
+        if self.ly >= 144 {
+            return;
+        }
+
+        let bg_enable = self.lcdc & 0x01 != 0 || self.bgp != 0;
+        if !bg_enable {
+            return;
+        }
+
+        let tile_map_base = if self.lcdc & 0x08 != 0 {
+            0x1C00
+        } else {
+            0x1800
+        };
+        let tile_data_base = if self.lcdc & 0x10 != 0 {
+            0x0000
+        } else {
+            0x0800
+        };
+
+        let y = self.ly.wrapping_add(self.scy) as u16;
+        let tile_row = (y / 8) as usize;
+        let tile_y = (y % 8) as usize;
+
+        for x in 0..160u16 {
+            let scx = self.scx as u16;
+            let px = x.wrapping_add(scx) & 0xFF;
+            let tile_col = (px / 8) as usize;
+            let tile_x = (px % 8) as usize;
+
+            let tile_index = self.vram[0][tile_map_base + tile_row * 32 + tile_col];
+            let addr = if self.lcdc & 0x10 != 0 {
+                tile_data_base + tile_index as usize * 16
+            } else {
+                tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
+            };
+
+            let lo = self.vram[0][addr + tile_y * 2];
+            let hi = self.vram[0][addr + tile_y * 2 + 1];
+            let bit = 7 - tile_x;
+            let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+            let color = (self.bgp >> (color_id * 2)) & 0x03;
+
+            let idx = self.ly as usize * 160 + x as usize;
+            self.framebuffer[idx] = color;
+        }
+    }
+
     pub fn step(&mut self, cycles: u16, if_reg: &mut u8) {
         let mut remaining = cycles;
         while remaining > 0 {
@@ -161,6 +214,7 @@ impl Ppu {
                 3 => {
                     if self.mode_clock >= 172 {
                         self.mode_clock -= 172;
+                        self.render_scanline();
                         self.mode = 0;
                         if self.stat & 0x08 != 0 {
                             *if_reg |= 0x02;
