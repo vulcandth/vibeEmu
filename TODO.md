@@ -671,10 +671,10 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
   - [ ] PPU step function:  
     
     * [x] Aim for a line-based timing at first: e.g., accumulate cycles until 456, then that constitutes one scanline. Within that, you can subdivide: OAM scan maybe 80 cycles, drawing 172 cycles, HBlank 204 cycles (these add to 456). But perhaps implement a simpler model:
-    - [ ] Keep a counter, add cycles. Determine current mode based on counter range.  
-    - [ ] When counter < 80 (mode 2), when it hits 80 switch to mode 3; when it hits 80+172=252 switch to mode 0; when it hits 456, reset counter to 0, increment LY, potentially change mode to 2 of next line or to 1 if LY==144.  
-    - [ ] When LY == 144, enter VBlank (mode 1) and stay in mode 1 for 456*10 lines (10 lines of VBlank). During VBlank, the PPU can just increment LY every 456 cycles without rendering.  
-    - [ ] When LY goes from 153 back to 0, that’s end of VBlank, new frame.  
+    - [x] Keep a counter, add cycles. Determine current mode based on counter range.
+    - [x] When counter < 80 (mode 2), when it hits 80 switch to mode 3; when it hits 80+172=252 switch to mode 0; when it hits 456, reset counter to 0, increment LY, potentially change mode to 2 of next line or to 1 if LY==144.
+    - [x] When LY == 144, enter VBlank (mode 1) and stay in mode 1 for 456*10 lines (10 lines of VBlank). During VBlank, the PPU can just increment LY every 456 cycles without rendering.
+    - [x] When LY goes from 153 back to 0, that’s end of VBlank, new frame.
     * [x] Implement mode transitions and set STAT mode bits accordingly.
     * [x] Trigger STAT interrupt if enabled when entering OAM (mode2), entering VBlank (mode1) or entering HBlank (mode0). Also check LY==LYC: if LY equals LYC at the *compare time*, set STAT coincidence flag and trigger interrupt if enabled[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,downsampled%20from%202MHz%2C%20and%20accurate).
     * [x] Trigger VBlank interrupt when entering mode1 at line 144.
@@ -689,7 +689,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
     * [x] If CGB mode, use tile VRAM bank as specified by tile attributes (BG tile can come from bank 0/1, sprite tiles similarly).
     * [ ] If performance becomes an issue for rendering, consider optimizing using lookup tables (for tile decoding) or caching tile graphics, but correctness first.
   
-  - [ ] As each line is rendered, the PPU could optionally output it immediately (some emulators do scanline rendering). But easier is to render to frame buffer and after LY=143, when going into VBlank, we know the frame is done and we can copy or present the frame.
+  - [x] As each line is rendered, the PPU could optionally output it immediately (some emulators do scanline rendering). But easier is to render to frame buffer and after LY=143, when going into VBlank, we know the frame is done and we can copy or present the frame.
   
   - [x] Handle LCD on/off: If LCD is off (LCDC bit7 = 0), PPU should not draw anything and LY will stay at 0 (or goes immediately to 0?). Actually, turning off LCD mid-frame resets LY to 0 within 1-2 lines and PPU stays in VBlank state effectively. We might handle this by if LCD off, we don’t do normal mode stepping, maybe just reset LY. This is an edge case; games rarely turn it off except to load tiles quickly.
   

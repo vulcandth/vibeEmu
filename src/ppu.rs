@@ -28,6 +28,8 @@ pub struct Ppu {
 
     pub framebuffer: [u8; 160 * 144],
     line_priority: [bool; 160],
+    /// Indicates a completed frame is available in `framebuffer`
+    frame_ready: bool,
 }
 
 impl Ppu {
@@ -57,11 +59,28 @@ impl Ppu {
             mode: 2,
             framebuffer: [0; 160 * 144],
             line_priority: [false; 160],
+            frame_ready: false,
         }
     }
 
     pub fn new() -> Self {
         Self::new_with_mode(false)
+    }
+
+    /// Returns true if a full frame has been rendered and is ready to display.
+    pub fn frame_ready(&self) -> bool {
+        self.frame_ready
+    }
+
+    /// Returns the current framebuffer. Call `frame_ready()` to check if a
+    /// frame is complete. After presenting, call `clear_frame_flag()`.
+    pub fn framebuffer(&self) -> &[u8; 160 * 144] {
+        &self.framebuffer
+    }
+
+    /// Clears the frame ready flag after a frame has been consumed.
+    pub fn clear_frame_flag(&mut self) {
+        self.frame_ready = false;
     }
 
     pub fn read_reg(&mut self, addr: u16) -> u8 {
@@ -312,6 +331,7 @@ impl Ppu {
                         self.mode_clock -= 204;
                         self.ly += 1;
                         if self.ly == 144 {
+                            self.frame_ready = true;
                             self.mode = 1;
                             if self.stat & 0x10 != 0 {
                                 *if_reg |= 0x02;
@@ -331,6 +351,7 @@ impl Ppu {
                         self.ly += 1;
                         if self.ly > 153 {
                             self.ly = 0;
+                            self.frame_ready = false;
                             self.mode = 2;
                             if self.stat & 0x20 != 0 {
                                 *if_reg |= 0x02;
