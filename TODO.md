@@ -577,13 +577,13 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
 - **Project Setup & Skeleton** – *Dependencies: None.*
   
-  - Initialize a Rust project (binary crate for now). Add dependencies: `cpal`, `minifb`/`winit+pixels`, etc.
-  
-  - Define module structure (Rust `mod` files) for core components: `cpu.rs`, `mmu.rs`, `ppu.rs`, `apu.rs`, `cartridge.rs`, `timer.rs`, etc. Define basic structs (fields only) for each, allowing cross-references via passing mutable references or storing within a `GameBoy` struct.
-  
-  - Plan a `GameBoy` or `Emulator` struct that contains all modules or acts as the top-level, orchestrating the main loop.
-  
-  - Set up logging (optional) and a basic CLI argument parsing (e.g. accept a ROM file path, and flags like `--serial` for test mode, `--dmg` to force DMG mode, etc.).
+  - [x] Initialize a Rust project (binary crate for now). Add dependencies: `cpal`, `minifb`/`winit+pixels`, etc.
+
+  - [x] Define module structure (Rust `mod` files) for core components: `cpu.rs`, `mmu.rs`, `ppu.rs`, `apu.rs`, `cartridge.rs`, `timer.rs`, etc. Define basic structs (fields only) for each, allowing cross-references via passing mutable references or storing within a `GameBoy` struct.
+
+  - [x] Plan a `GameBoy` or `Emulator` struct that contains all modules or acts as the top-level, orchestrating the main loop.
+
+  - [x] Set up logging (optional) and a basic CLI argument parsing (e.g. accept a ROM file path, and flags like `--serial` for test mode, `--dmg` to force DMG mode, etc.).
 
 - **Cartridge Loading** – *Dep: Project setup.*
   
