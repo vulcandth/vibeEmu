@@ -69,3 +69,9 @@ impl Mmu {
         out
     }
 }
+
+impl Default for Mmu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
