@@ -390,7 +390,7 @@ The MMU will have to implement reads and writes to all these areas. In many case
   
   - Other MBCs (MBC6, MBC7 with accelerometer, HuC3, etc.) are rare and can be omitted initially or stubbed.
 
-- Manage external RAM: allocate a vector for it if present (size determined by cartridge header). Ensure that when RAM is “disabled” via MBC, reads return 0xFF or open-bus (and writes don’t stick).
+- [x] Manage external RAM: allocate a vector for it if present (size determined by cartridge header). Ensure that when RAM is “disabled” via MBC, reads return 0xFF or open-bus (and writes don’t stick).
 
 - Provide a mechanism to **save** the RAM to disk (battery-backed RAM). This could be an API call from the frontend to dump the RAM to a file when the emulator exits, and load from file when starting. It’s easiest to do this in the cartridge module as it knows the RAM size and content. (SameBoy supports battery save for game progress[sameboy.github.io](https://sameboy.github.io/features/#:~:text=,on%20a%20Game%20Boy%20Color), and we will too, but **not** emulator state save).
 

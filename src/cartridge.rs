@@ -116,22 +116,40 @@ impl Cartridge {
             (MbcState::NoMbc, 0x0000..=0x7FFF) => {
                 self.rom.get(addr as usize).copied().unwrap_or(0xFF)
             }
-            (MbcState::Mbc1 { rom_bank, mode, .. }, 0x0000..=0x3FFF) => {
+            (
+                MbcState::Mbc1 {
+                    ram_bank,
+                    mode,
+                    ..
+                },
+                0x0000..=0x3FFF,
+            ) => {
                 let bank = if *mode == 0 {
                     0
                 } else {
-                    *rom_bank as usize & 0x60
+                    (*ram_bank as usize) << 5
                 };
                 let offset = bank * 0x4000 + addr as usize;
                 self.rom.get(offset).copied().unwrap_or(0xFF)
             }
-            (MbcState::Mbc1 { rom_bank, mode, .. }, 0x4000..=0x7FFF) => {
-                let bank_hi = if *mode == 0 {
-                    *rom_bank as usize & 0x7F
+            (
+                MbcState::Mbc1 {
+                    rom_bank,
+                    ram_bank,
+                    mode,
+                    ..
+                },
+                0x4000..=0x7FFF,
+            ) => {
+                let high = if *mode == 0 {
+                    (*ram_bank as usize) << 5
                 } else {
-                    *rom_bank as usize
+                    0
                 };
-                let bank = if bank_hi == 0 { 1 } else { bank_hi };
+                let mut bank = high | (*rom_bank as usize & 0x1F);
+                if bank & 0x1F == 0 {
+                    bank += 1;
+                }
                 let offset = bank * 0x4000 + (addr as usize - 0x4000);
                 self.rom.get(offset).copied().unwrap_or(0xFF)
             }
@@ -150,9 +168,19 @@ impl Cartridge {
                 let offset = (*rom_bank as usize) * 0x4000 + (addr as usize - 0x4000);
                 self.rom.get(offset).copied().unwrap_or(0xFF)
             }
-            (_, 0xA000..=0xBFFF) => {
+            (MbcState::NoMbc, 0xA000..=0xBFFF) => {
                 let idx = self.ram_index(addr);
                 self.ram.get(idx).copied().unwrap_or(0xFF)
+            }
+            (MbcState::Mbc1 { ram_enable, .. }, 0xA000..=0xBFFF)
+            | (MbcState::Mbc3 { ram_enable, .. }, 0xA000..=0xBFFF)
+            | (MbcState::Mbc5 { ram_enable, .. }, 0xA000..=0xBFFF) => {
+                if !*ram_enable {
+                    0xFF
+                } else {
+                    let idx = self.ram_index(addr);
+                    self.ram.get(idx).copied().unwrap_or(0xFF)
+                }
             }
             _ => 0xFF,
         }
