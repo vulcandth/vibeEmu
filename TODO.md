@@ -684,7 +684,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
     - [x] Draw sprites: After drawing BG/window for the line, iterate sprites in OAM (or better, pre-collected during mode 2 OAM scan which we can simulate by collecting the first up to 10 sprites on this line, since only 10 sprites can be drawn per line). Sprites have priority: lowest OAM index has highest priority if overlapping (typical for sprites). If sprite x is in range for this pixel and its priority allows (OBJ-to-BG priority respect), draw sprite pixel (using its tile data, which might come from second tile bank on CGB if specified, and using OBP0/OBP1 or CGB palette).
     - [x] Mark sprite pixel as drawn to enforce the 10 sprites/line limit.
     - [x] Write the final pixel color into the frame buffer.
-    - [ ] This can be simplified initially (e.g. ignore priority and just draw sprites after background, or implement without window). But to pass many games’ visuals, eventually implement fully.
+    - [x] This can be simplified initially (e.g. ignore priority and just draw sprites after background, or implement without window). But to pass many games’ visuals, eventually implement fully.
     * [x] Support both 8x8 and 8x16 sprite sizes (LCDC bit 2).
     * [x] If CGB mode, use tile VRAM bank as specified by tile attributes (BG tile can come from bank 0/1, sprite tiles similarly).
     * If performance becomes an issue for rendering, consider optimizing using lookup tables (for tile decoding) or caching tile graphics, but correctness first.
