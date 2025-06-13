@@ -8,10 +8,12 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0x05] = 4; // DEC B
     arr[0x06] = 8; // LD B,d8
     arr[0x07] = 4; // RLCA
-    arr[0x0E] = 8; // LD C,d8
+    arr[0x08] = 20; // LD (a16),SP
+    arr[0x09] = 8; // ADD HL,BC
+    arr[0x0A] = 8; // LD A,(BC)
     arr[0x0C] = 4; // INC C
     arr[0x0D] = 4; // DEC C
-    arr[0x0A] = 8; // LD A,(BC)
+    arr[0x0E] = 8; // LD C,d8
     arr[0x0F] = 4; // RRCA
     arr[0x11] = 12; // LD DE,d16
     arr[0x12] = 8; // LD (DE),A
@@ -19,41 +21,64 @@ const fn opcode_cycles() -> [u8; 256] {
     arr[0x14] = 4; // INC D
     arr[0x15] = 4; // DEC D
     arr[0x16] = 8; // LD D,d8
-    arr[0x1E] = 8; // LD E,d8
+    arr[0x17] = 4; // RLA
+    arr[0x18] = 12; // JR r8
+    arr[0x19] = 8; // ADD HL,DE
+    arr[0x1A] = 8; // LD A,(DE)
     arr[0x1C] = 4; // INC E
     arr[0x1D] = 4; // DEC E
-    arr[0x1A] = 8; // LD A,(DE)
-    arr[0x17] = 4; // RLA
+    arr[0x1E] = 8; // LD E,d8
     arr[0x1F] = 4; // RRA
+    arr[0x20] = 8; // JR NZ,r8 (not taken)
     arr[0x21] = 12; // LD HL,d16
-    arr[0x08] = 20; // LD (a16),SP
-    arr[0x09] = 8; // ADD HL,BC
     arr[0x22] = 8; // LDI (HL),A
     arr[0x23] = 8; // INC HL
     arr[0x24] = 4; // INC H
     arr[0x25] = 4; // DEC H
-    arr[0x19] = 8; // ADD HL,DE
-    arr[0x2A] = 8; // LDI A,(HL)
     arr[0x26] = 8; // LD H,d8
-    arr[0x2E] = 8; // LD L,d8
+    arr[0x28] = 8; // JR Z,r8 (not taken)
+    arr[0x29] = 8; // ADD HL,HL
+    arr[0x2A] = 8; // LDI A,(HL)
     arr[0x2C] = 4; // INC L
     arr[0x2D] = 4; // DEC L
-    arr[0x29] = 8; // ADD HL,HL
-    arr[0x39] = 8; // ADD HL,SP
+    arr[0x2E] = 8; // LD L,d8
     arr[0x2F] = 4; // CPL
-    arr[0x37] = 4; // SCF
-    arr[0x3F] = 4; // CCF
+    arr[0x30] = 8; // JR NC,r8 (not taken)
+    arr[0x31] = 12; // LD SP,d16
+    arr[0x32] = 8; // LDD (HL),A
     arr[0x33] = 8; // INC SP
     arr[0x34] = 12; // INC (HL)
     arr[0x35] = 12; // DEC (HL)
-    arr[0x31] = 12; // LD SP,d16
-    arr[0x32] = 8; // LDD (HL),A
+    arr[0x37] = 4; // SCF
+    arr[0x38] = 8; // JR C,r8 (not taken)
+    arr[0x39] = 8; // ADD HL,SP
     arr[0x3A] = 8; // LDD A,(HL)
     arr[0x3B] = 8; // DEC SP
     arr[0x3C] = 4; // INC A
     arr[0x3D] = 4; // DEC A
     arr[0x3E] = 8; // LD A,d8
+    arr[0x3F] = 4; // CCF
+    arr[0x76] = 4; // HALT
     arr[0x77] = 8; // LD (HL),A
+    arr[0xAF] = 4; // XOR A
+    arr[0xC3] = 16; // JP a16
+    arr[0xC6] = 8; // ADD A,d8
+    arr[0xC9] = 16; // RET
+    arr[0xCE] = 8; // ADC A,d8
+    arr[0xD6] = 8; // SUB d8
+    arr[0xD9] = 16; // RETI
+    arr[0xDE] = 8; // SBC A,d8
+    arr[0xE6] = 8; // AND d8
+    arr[0xE8] = 16; // ADD SP,r8
+    arr[0xEA] = 16; // LD (a16),A
+    arr[0xEE] = 8; // XOR d8
+    arr[0xF3] = 4; // DI
+    arr[0xF6] = 8; // OR d8
+    arr[0xF8] = 12; // LD HL,SP+r8
+    arr[0xF9] = 8; // LD SP,HL
+    arr[0xFA] = 16; // LD A,(a16)
+    arr[0xFB] = 4; // EI
+    arr[0xFE] = 8; // CP d8
     // LD r,r and LD r,(HL)/(HL),r
     let mut op = 0x40u8;
     while op <= 0x7F {
@@ -67,31 +92,6 @@ const fn opcode_cycles() -> [u8; 256] {
         }
         op += 1;
     }
-    arr[0xAF] = 4; // XOR A
-    arr[0xC9] = 16; // RET
-    arr[0xC6] = 8; // ADD A,d8
-    arr[0xCE] = 8; // ADC A,d8
-    arr[0xD6] = 8; // SUB d8
-    arr[0xDE] = 8; // SBC A,d8
-    arr[0xE6] = 8; // AND d8
-    arr[0xEE] = 8; // XOR d8
-    arr[0xF6] = 8; // OR d8
-    arr[0xFE] = 8; // CP d8
-    arr[0xFA] = 16; // LD A,(a16)
-    arr[0xF9] = 8; // LD SP,HL
-    arr[0xE8] = 16; // ADD SP,r8
-    arr[0xF8] = 12; // LD HL,SP+r8
-    arr[0x18] = 12; // JR r8
-    arr[0x20] = 8; // JR NZ,r8 (not taken)
-    arr[0x28] = 8; // JR Z,r8 (not taken)
-    arr[0x30] = 8; // JR NC,r8 (not taken)
-    arr[0x38] = 8; // JR C,r8 (not taken)
-    arr[0xC3] = 16; // JP a16
-    arr[0xF3] = 4; // DI
-    arr[0xFB] = 4; // EI
-    arr[0x76] = 4; // HALT
-    arr[0xD9] = 16; // RETI
-    arr[0xEA] = 16; // LD (a16),A
     arr
 }
 
@@ -267,10 +267,34 @@ impl Cpu {
                 self.a = self.a.rotate_left(1);
                 self.f = if carry { 0x10 } else { 0 };
             }
-            0x0E => {
-                let val = mmu.read_byte(self.pc);
-                self.pc = self.pc.wrapping_add(1);
-                self.c = val;
+            0x08 => {
+                let lo = mmu.read_byte(self.pc) as u16;
+                let hi = mmu.read_byte(self.pc.wrapping_add(1)) as u16;
+                self.pc = self.pc.wrapping_add(2);
+                let addr = (hi << 8) | lo;
+                mmu.write_byte(addr, (self.sp & 0xFF) as u8);
+                mmu.write_byte(addr.wrapping_add(1), (self.sp >> 8) as u8);
+            }
+            0x09 => {
+                let hl = self.get_hl();
+                let bc = self.get_bc();
+                let res = hl.wrapping_add(bc);
+                self.f = (self.f & 0x80)
+                    | if ((hl & 0x0FFF) + (bc & 0x0FFF)) & 0x1000 != 0 {
+                        0x20
+                    } else {
+                        0
+                    }
+                    | if (hl as u32 + bc as u32) > 0xFFFF {
+                        0x10
+                    } else {
+                        0
+                    };
+                self.set_hl(res);
+            }
+            0x0A => {
+                let addr = self.get_bc();
+                self.a = mmu.read_byte(addr);
             }
             0x0C => {
                 let res = self.c.wrapping_add(1);
@@ -287,14 +311,15 @@ impl Cpu {
                     | if self.c & 0x0F == 0 { 0x20 } else { 0 };
                 self.c = res;
             }
+            0x0E => {
+                let val = mmu.read_byte(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                self.c = val;
+            }
             0x0F => {
                 let carry = (self.a & 0x01) != 0;
                 self.a = self.a.rotate_right(1);
                 self.f = if carry { 0x10 } else { 0 };
-            }
-            0x0A => {
-                let addr = self.get_bc();
-                self.a = mmu.read_byte(addr);
             }
             0x11 => {
                 let lo = mmu.read_byte(self.pc) as u16;
@@ -335,10 +360,31 @@ impl Cpu {
                 self.a = (self.a << 1) | if self.f & 0x10 != 0 { 1 } else { 0 };
                 self.f = if carry { 0x10 } else { 0 };
             }
-            0x1E => {
-                let val = mmu.read_byte(self.pc);
+            0x18 => {
+                let offset = mmu.read_byte(self.pc) as i8;
                 self.pc = self.pc.wrapping_add(1);
-                self.e = val;
+                self.pc = self.pc.wrapping_add(offset as u16);
+            }
+            0x19 => {
+                let hl = self.get_hl();
+                let de = self.get_de();
+                let res = hl.wrapping_add(de);
+                self.f = (self.f & 0x80)
+                    | if ((hl & 0x0FFF) + (de & 0x0FFF)) & 0x1000 != 0 {
+                        0x20
+                    } else {
+                        0
+                    }
+                    | if (hl as u32 + de as u32) > 0xFFFF {
+                        0x10
+                    } else {
+                        0
+                    };
+                self.set_hl(res);
+            }
+            0x1A => {
+                let addr = self.get_de();
+                self.a = mmu.read_byte(addr);
             }
             0x1C => {
                 let res = self.e.wrapping_add(1);
@@ -355,45 +401,29 @@ impl Cpu {
                     | if self.e & 0x0F == 0 { 0x20 } else { 0 };
                 self.e = res;
             }
+            0x1E => {
+                let val = mmu.read_byte(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                self.e = val;
+            }
             0x1F => {
                 let carry = (self.a & 0x01) != 0;
                 self.a = (self.a >> 1) | if self.f & 0x10 != 0 { 0x80 } else { 0 };
                 self.f = if carry { 0x10 } else { 0 };
             }
-            0x1A => {
-                let addr = self.get_de();
-                self.a = mmu.read_byte(addr);
+            0x20 => {
+                let offset = mmu.read_byte(self.pc) as i8;
+                self.pc = self.pc.wrapping_add(1);
+                if self.f & 0x80 == 0 {
+                    self.pc = self.pc.wrapping_add(offset as u16);
+                    extra_cycles = 4;
+                }
             }
             0x21 => {
                 let lo = mmu.read_byte(self.pc) as u16;
                 let hi = mmu.read_byte(self.pc.wrapping_add(1)) as u16;
                 self.pc = self.pc.wrapping_add(2);
                 self.set_hl((hi << 8) | lo);
-            }
-            0x08 => {
-                let lo = mmu.read_byte(self.pc) as u16;
-                let hi = mmu.read_byte(self.pc.wrapping_add(1)) as u16;
-                self.pc = self.pc.wrapping_add(2);
-                let addr = (hi << 8) | lo;
-                mmu.write_byte(addr, (self.sp & 0xFF) as u8);
-                mmu.write_byte(addr.wrapping_add(1), (self.sp >> 8) as u8);
-            }
-            0x09 => {
-                let hl = self.get_hl();
-                let bc = self.get_bc();
-                let res = hl.wrapping_add(bc);
-                self.f = (self.f & 0x80)
-                    | if ((hl & 0x0FFF) + (bc & 0x0FFF)) & 0x1000 != 0 {
-                        0x20
-                    } else {
-                        0
-                    }
-                    | if (hl as u32 + bc as u32) > 0xFFFF {
-                        0x10
-                    } else {
-                        0
-                    };
-                self.set_hl(res);
             }
             0x22 => {
                 let addr = self.get_hl();
@@ -419,37 +449,35 @@ impl Cpu {
                     | if self.h & 0x0F == 0 { 0x20 } else { 0 };
                 self.h = res;
             }
-            0x19 => {
+            0x26 => {
+                let val = mmu.read_byte(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                self.h = val;
+            }
+            0x28 => {
+                let offset = mmu.read_byte(self.pc) as i8;
+                self.pc = self.pc.wrapping_add(1);
+                if self.f & 0x80 != 0 {
+                    self.pc = self.pc.wrapping_add(offset as u16);
+                    extra_cycles = 4;
+                }
+            }
+            0x29 => {
                 let hl = self.get_hl();
-                let de = self.get_de();
-                let res = hl.wrapping_add(de);
+                let res = hl.wrapping_add(hl);
                 self.f = (self.f & 0x80)
-                    | if ((hl & 0x0FFF) + (de & 0x0FFF)) & 0x1000 != 0 {
+                    | if ((hl & 0x0FFF) << 1) & 0x1000 != 0 {
                         0x20
                     } else {
                         0
                     }
-                    | if (hl as u32 + de as u32) > 0xFFFF {
-                        0x10
-                    } else {
-                        0
-                    };
+                    | if (hl as u32 * 2) > 0xFFFF { 0x10 } else { 0 };
                 self.set_hl(res);
             }
             0x2A => {
                 let addr = self.get_hl();
                 self.a = mmu.read_byte(addr);
                 self.set_hl(addr.wrapping_add(1));
-            }
-            0x26 => {
-                let val = mmu.read_byte(self.pc);
-                self.pc = self.pc.wrapping_add(1);
-                self.h = val;
-            }
-            0x2E => {
-                let val = mmu.read_byte(self.pc);
-                self.pc = self.pc.wrapping_add(1);
-                self.l = val;
             }
             0x2C => {
                 let res = self.l.wrapping_add(1);
@@ -466,17 +494,22 @@ impl Cpu {
                     | if self.l & 0x0F == 0 { 0x20 } else { 0 };
                 self.l = res;
             }
-            0x29 => {
-                let hl = self.get_hl();
-                let res = hl.wrapping_add(hl);
-                self.f = (self.f & 0x80)
-                    | if ((hl & 0x0FFF) << 1) & 0x1000 != 0 {
-                        0x20
-                    } else {
-                        0
-                    }
-                    | if (hl as u32 * 2) > 0xFFFF { 0x10 } else { 0 };
-                self.set_hl(res);
+            0x2E => {
+                let val = mmu.read_byte(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                self.l = val;
+            }
+            0x2F => {
+                self.a ^= 0xFF;
+                self.f = (self.f & 0x90) | 0x60;
+            }
+            0x30 => {
+                let offset = mmu.read_byte(self.pc) as i8;
+                self.pc = self.pc.wrapping_add(1);
+                if self.f & 0x10 == 0 {
+                    self.pc = self.pc.wrapping_add(offset as u16);
+                    extra_cycles = 4;
+                }
             }
             0x31 => {
                 let lo = mmu.read_byte(self.pc) as u16;
@@ -510,6 +543,17 @@ impl Cpu {
                     | 0x40
                     | if val == 0 { 0x80 } else { 0 }
                     | if old & 0x0F == 0 { 0x20 } else { 0 };
+            }
+            0x37 => {
+                self.f = (self.f & 0x80) | 0x10;
+            }
+            0x38 => {
+                let offset = mmu.read_byte(self.pc) as i8;
+                self.pc = self.pc.wrapping_add(1);
+                if self.f & 0x10 != 0 {
+                    self.pc = self.pc.wrapping_add(offset as u16);
+                    extra_cycles = 4;
+                }
             }
             0x39 => {
                 let hl = self.get_hl();
@@ -551,20 +595,45 @@ impl Cpu {
                     | if self.a & 0x0F == 0 { 0x20 } else { 0 };
                 self.a = res;
             }
-            0x2F => {
-                self.a ^= 0xFF;
-                self.f = (self.f & 0x90) | 0x60;
-            }
-            0x37 => {
-                self.f = (self.f & 0x80) | 0x10;
-            }
-            0x3F => {
-                self.f = (self.f & 0x80) | if self.f & 0x10 != 0 { 0 } else { 0x10 };
-            }
             0x3E => {
                 let val = mmu.read_byte(self.pc);
                 self.pc = self.pc.wrapping_add(1);
                 self.a = val;
+            }
+            0x3F => {
+                self.f = (self.f & 0x80) | if self.f & 0x10 != 0 { 0 } else { 0x10 };
+            }
+            opcode @ 0x40..=0x7F if opcode != 0x76 => {
+                let dest = (opcode >> 3) & 0x07;
+                let src = opcode & 0x07;
+                let val = match src {
+                    0 => self.b,
+                    1 => self.c,
+                    2 => self.d,
+                    3 => self.e,
+                    4 => self.h,
+                    5 => self.l,
+                    6 => mmu.read_byte(self.get_hl()),
+                    7 => self.a,
+                    _ => unreachable!(),
+                };
+                match dest {
+                    0 => self.b = val,
+                    1 => self.c = val,
+                    2 => self.d = val,
+                    3 => self.e = val,
+                    4 => self.h = val,
+                    5 => self.l = val,
+                    6 => {
+                        let addr = self.get_hl();
+                        mmu.write_byte(addr, val);
+                    }
+                    7 => self.a = val,
+                    _ => unreachable!(),
+                }
+            }
+            0x76 => {
+                self.halted = true;
             }
             0x77 => {
                 let addr = self.get_hl();
@@ -575,8 +644,10 @@ impl Cpu {
                 // XOR A resets NF, HF, CF and sets Z
                 self.f = 0x80;
             }
-            0xC9 => {
-                self.pc = self.pop_stack(mmu);
+            0xC3 => {
+                let lo = mmu.read_byte(self.pc) as u16;
+                let hi = mmu.read_byte(self.pc.wrapping_add(1)) as u16;
+                self.pc = (hi << 8) | lo;
             }
             0xC6 => {
                 let val = mmu.read_byte(self.pc);
@@ -590,6 +661,9 @@ impl Cpu {
                     }
                     | if carry { 0x10 } else { 0 };
                 self.a = res;
+            }
+            0xC9 => {
+                self.pc = self.pop_stack(mmu);
             }
             0xCE => {
                 let val = mmu.read_byte(self.pc);
@@ -620,6 +694,10 @@ impl Cpu {
                     | if borrow { 0x10 } else { 0 };
                 self.a = res;
             }
+            0xD9 => {
+                self.pc = self.pop_stack(mmu);
+                self.ime = true;
+            }
             0xDE => {
                 let val = mmu.read_byte(self.pc);
                 self.pc = self.pc.wrapping_add(1);
@@ -642,17 +720,54 @@ impl Cpu {
                 self.a &= val;
                 self.f = if self.a == 0 { 0x80 } else { 0 } | 0x20;
             }
+            0xE8 => {
+                let val = mmu.read_byte(self.pc) as i8 as i16 as u16;
+                self.pc = self.pc.wrapping_add(1);
+                let sp = self.sp;
+                self.f = 0;
+                self.sp = sp.wrapping_add(val);
+            }
+            0xEA => {
+                let lo = mmu.read_byte(self.pc) as u16;
+                let hi = mmu.read_byte(self.pc.wrapping_add(1)) as u16;
+                self.pc = self.pc.wrapping_add(2);
+                let addr = (hi << 8) | lo;
+                mmu.write_byte(addr, self.a);
+            }
             0xEE => {
                 let val = mmu.read_byte(self.pc);
                 self.pc = self.pc.wrapping_add(1);
                 self.a ^= val;
                 self.f = if self.a == 0 { 0x80 } else { 0 };
             }
+            0xF3 => {
+                self.ime = false;
+            }
             0xF6 => {
                 let val = mmu.read_byte(self.pc);
                 self.pc = self.pc.wrapping_add(1);
                 self.a |= val;
                 self.f = if self.a == 0 { 0x80 } else { 0 };
+            }
+            0xF8 => {
+                let val = mmu.read_byte(self.pc) as i8 as i16 as u16;
+                self.pc = self.pc.wrapping_add(1);
+                let res = self.sp.wrapping_add(val);
+                self.f = 0;
+                self.set_hl(res);
+            }
+            0xF9 => {
+                self.sp = self.get_hl();
+            }
+            0xFA => {
+                let lo = mmu.read_byte(self.pc) as u16;
+                let hi = mmu.read_byte(self.pc.wrapping_add(1)) as u16;
+                self.pc = self.pc.wrapping_add(2);
+                let addr = (hi << 8) | lo;
+                self.a = mmu.read_byte(addr);
+            }
+            0xFB => {
+                self.ime_delay = true;
             }
             0xFE => {
                 let val = mmu.read_byte(self.pc);
@@ -666,121 +781,6 @@ impl Cpu {
                         0
                     }
                     | if self.a < val { 0x10 } else { 0 };
-            }
-            0xFA => {
-                let lo = mmu.read_byte(self.pc) as u16;
-                let hi = mmu.read_byte(self.pc.wrapping_add(1)) as u16;
-                self.pc = self.pc.wrapping_add(2);
-                let addr = (hi << 8) | lo;
-                self.a = mmu.read_byte(addr);
-            }
-            0xF9 => {
-                self.sp = self.get_hl();
-            }
-            0xE8 => {
-                let val = mmu.read_byte(self.pc) as i8 as i16 as u16;
-                self.pc = self.pc.wrapping_add(1);
-                let sp = self.sp;
-                self.f = 0;
-                self.sp = sp.wrapping_add(val);
-            }
-            0xF8 => {
-                let val = mmu.read_byte(self.pc) as i8 as i16 as u16;
-                self.pc = self.pc.wrapping_add(1);
-                let res = self.sp.wrapping_add(val);
-                self.f = 0;
-                self.set_hl(res);
-            }
-            0x18 => {
-                let offset = mmu.read_byte(self.pc) as i8;
-                self.pc = self.pc.wrapping_add(1);
-                self.pc = self.pc.wrapping_add(offset as u16);
-            }
-            0x20 => {
-                let offset = mmu.read_byte(self.pc) as i8;
-                self.pc = self.pc.wrapping_add(1);
-                if self.f & 0x80 == 0 {
-                    self.pc = self.pc.wrapping_add(offset as u16);
-                    extra_cycles = 4;
-                }
-            }
-            0x28 => {
-                let offset = mmu.read_byte(self.pc) as i8;
-                self.pc = self.pc.wrapping_add(1);
-                if self.f & 0x80 != 0 {
-                    self.pc = self.pc.wrapping_add(offset as u16);
-                    extra_cycles = 4;
-                }
-            }
-            0x30 => {
-                let offset = mmu.read_byte(self.pc) as i8;
-                self.pc = self.pc.wrapping_add(1);
-                if self.f & 0x10 == 0 {
-                    self.pc = self.pc.wrapping_add(offset as u16);
-                    extra_cycles = 4;
-                }
-            }
-            0x38 => {
-                let offset = mmu.read_byte(self.pc) as i8;
-                self.pc = self.pc.wrapping_add(1);
-                if self.f & 0x10 != 0 {
-                    self.pc = self.pc.wrapping_add(offset as u16);
-                    extra_cycles = 4;
-                }
-            }
-            0xC3 => {
-                let lo = mmu.read_byte(self.pc) as u16;
-                let hi = mmu.read_byte(self.pc.wrapping_add(1)) as u16;
-                self.pc = (hi << 8) | lo;
-            }
-            0xF3 => {
-                self.ime = false;
-            }
-            0xFB => {
-                self.ime_delay = true;
-            }
-            0x76 => {
-                self.halted = true;
-            }
-            0xD9 => {
-                self.pc = self.pop_stack(mmu);
-                self.ime = true;
-            }
-            0xEA => {
-                let lo = mmu.read_byte(self.pc) as u16;
-                let hi = mmu.read_byte(self.pc.wrapping_add(1)) as u16;
-                self.pc = self.pc.wrapping_add(2);
-                let addr = (hi << 8) | lo;
-                mmu.write_byte(addr, self.a);
-            }
-            opcode @ 0x40..=0x7F if opcode != 0x76 => {
-                let dest = (opcode >> 3) & 0x07;
-                let src = opcode & 0x07;
-                let val = match src {
-                    0 => self.b,
-                    1 => self.c,
-                    2 => self.d,
-                    3 => self.e,
-                    4 => self.h,
-                    5 => self.l,
-                    6 => mmu.read_byte(self.get_hl()),
-                    7 => self.a,
-                    _ => unreachable!(),
-                };
-                match dest {
-                    0 => self.b = val,
-                    1 => self.c = val,
-                    2 => self.d = val,
-                    3 => self.e = val,
-                    4 => self.h = val,
-                    5 => self.l = val,
-                    6 => {
-                        let addr = self.get_hl();
-                        mmu.write_byte(addr, val);
-                    }
-                    7 => self.a = val,
-                    _ => unreachable!(),
-                }
             }
             _ => panic!("unhandled opcode {:02X}", opcode),
         }
