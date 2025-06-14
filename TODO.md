@@ -697,19 +697,19 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
 - [ ] **Basic Frontend (Window + Input)** – *Dep: PPU (to get frame), maybe APU (for audio toggle).*
   
-  - [ ] Create a window using chosen library (e.g. using `minifb`: create Window, or using `winit`: create event loop and window).
-  
-  - [ ] For `minifb`: set up a 160x144 framebuffer (or scaled to 2x, etc.). For `pixels`: set up a surface for 160x144.
-  
-  - [ ] Each iteration of the emulation loop, once a frame is ready (e.g. after PPU runs LY 0-143 and hits VBlank end), update the texture/pixel buffer and blit to window.
-  
-  - [ ] Manage timing: Ideally, throttle to ~59.7 FPS (GB frame rate). We can use vsync via the window (if available) or manually sleep the thread to control speed. In early development, running unthrottled is fine (especially if CPU is not heavy yet, it will run too fast – but that’s where a frame limiter is needed for actual play).
-  
-  - [ ] Input handling: For `minifb`, use `get_keys_pressed()` etc., for `winit`, handle `WindowEvent::KeyboardInput`. Map keys to Game Boy buttons (e.g., Up/Down/Left/Right arrows, Z = A, X = B, Enter = Start, Backspace = Select as defaults[github.com](https://github.com/mvdnes/rboy#:~:text=Gameplay%20Keybindings)).
-  
-  - [ ] Update the Input module’s state accordingly (set bits for pressed buttons). If a button transitions from not pressed to pressed, set the joypad interrupt flag (IF bit 4) in the Interrupt controller.
-  
-  - [ ] Provide a way to close the emulator (window close event breaks loop).
+  - [x] Create a window using chosen library (e.g. using `minifb`: create Window, or using `winit`: create event loop and window).
+
+  - [x] For `minifb`: set up a 160x144 framebuffer (or scaled to 2x, etc.). For `pixels`: set up a surface for 160x144.
+
+  - [x] Each iteration of the emulation loop, once a frame is ready (e.g. after PPU runs LY 0-143 and hits VBlank end), update the texture/pixel buffer and blit to window.
+
+  - [x] Manage timing: Ideally, throttle to ~59.7 FPS (GB frame rate). We can use vsync via the window (if available) or manually sleep the thread to control speed. In early development, running unthrottled is fine (especially if CPU is not heavy yet, it will run too fast – but that’s where a frame limiter is needed for actual play).
+
+  - [x] Input handling: For `minifb`, use `get_keys_pressed()` etc., for `winit`, handle `WindowEvent::KeyboardInput`. Map keys to Game Boy buttons (e.g., Up/Down/Left/Right arrows, Z = A, X = B, Enter = Start, Backspace = Select as defaults[github.com](https://github.com/mvdnes/rboy#:~:text=Gameplay%20Keybindings)).
+
+  - [x] Update the Input module’s state accordingly (set bits for pressed buttons). If a button transitions from not pressed to pressed, set the joypad interrupt flag (IF bit 4) in the Interrupt controller.
+
+  - [x] Provide a way to close the emulator (window close event breaks loop).
   
   - [ ] Test: Run a simple ROM (like Tetris or Dr. Mario, which don’t require MBC) to see if you get graphics and can control. Many things might still be missing (timing, etc.), but this will shake out integration issues.
 

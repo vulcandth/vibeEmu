@@ -30,6 +30,17 @@ impl Input {
     pub fn set_state(&mut self, state: u8) {
         self.state = state;
     }
+
+    /// Update the input state and set the joypad interrupt flag if any
+    /// button transitioned from released to pressed.
+    pub fn update_state(&mut self, state: u8, if_reg: &mut u8) {
+        // Bits are active-low: 0 = pressed
+        let newly_pressed = self.state & !state;
+        if newly_pressed != 0 {
+            *if_reg |= 0x10; // Joypad interrupt
+        }
+        self.state = state;
+    }
 }
 
 impl Default for Input {

@@ -1449,6 +1449,7 @@ impl Cpu {
         let cycles = OPCODE_CYCLES[opcode as usize] as u16 + extra_cycles as u16;
         self.cycles += cycles as u64;
         mmu.timer.step(cycles, &mut mmu.if_reg);
+        mmu.ppu.step(cycles, &mut mmu.if_reg);
 
         if enable_after {
             self.ime = true;
