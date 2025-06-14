@@ -232,25 +232,50 @@ pub struct Cpu {
 
 impl Cpu {
     pub fn new() -> Self {
-        // Default post-boot state for DMG as documented in Pan Docs. PC is
-        // normally 0x0100 after the boot ROM, but tests may override this.
-        Self {
-            a: 0x01,
-            f: 0xB0,
-            b: 0x00,
-            c: 0x13,
-            d: 0x00,
-            e: 0xD8,
-            h: 0x01,
-            l: 0x4D,
-            pc: 0x0100,
-            sp: 0xFFFE,
-            cycles: 0,
-            ime: false,
-            halted: false,
-            double_speed: false,
-            halt_bug: false,
-            ime_delay: false,
+        Self::new_with_mode(false)
+    }
+
+    /// Create a CPU initialized to the post-boot register state for the
+    /// selected hardware mode.
+    pub fn new_with_mode(cgb: bool) -> Self {
+        if cgb {
+            Self {
+                a: 0x11,
+                f: 0x80,
+                b: 0x00,
+                c: 0x00,
+                d: 0xFF,
+                e: 0x56,
+                h: 0x00,
+                l: 0x0D,
+                pc: 0x0100,
+                sp: 0xFFFE,
+                cycles: 0,
+                ime: false,
+                halted: false,
+                double_speed: false,
+                halt_bug: false,
+                ime_delay: false,
+            }
+        } else {
+            Self {
+                a: 0x01,
+                f: 0xB0,
+                b: 0x00,
+                c: 0x13,
+                d: 0x00,
+                e: 0xD8,
+                h: 0x01,
+                l: 0x4D,
+                pc: 0x0100,
+                sp: 0xFFFE,
+                cycles: 0,
+                ime: false,
+                halted: false,
+                double_speed: false,
+                halt_bug: false,
+                ime_delay: false,
+            }
         }
     }
 

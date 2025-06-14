@@ -67,6 +67,16 @@ impl Ppu {
         Self::new_with_mode(false)
     }
 
+    /// Initialize registers to the state expected after the boot ROM
+    /// has finished executing.
+    pub fn apply_boot_state(&mut self) {
+        self.lcdc = 0x91;
+        self.stat = 0x85;
+        self.dma = 0xFF;
+        self.bgp = 0xFC;
+        self.mode = 1;
+    }
+
     /// Returns true if a full frame has been rendered and is ready to display.
     pub fn frame_ready(&self) -> bool {
         self.frame_ready
