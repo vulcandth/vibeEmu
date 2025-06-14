@@ -26,11 +26,14 @@ pub struct Ppu {
     mode_clock: u16,
     pub mode: u8,
 
-    pub framebuffer: [u8; 160 * 144],
+    pub framebuffer: [u32; 160 * 144],
     line_priority: [bool; 160],
+    line_color_zero: [bool; 160],
     /// Indicates a completed frame is available in `framebuffer`
     frame_ready: bool,
 }
+
+const DMG_PALETTE: [u32; 4] = [0x9BBC0FFF, 0x8BAC0FFF, 0x306230FF, 0x0F380FFF];
 
 impl Ppu {
     pub fn new_with_mode(cgb: bool) -> Self {
@@ -59,12 +62,21 @@ impl Ppu {
             mode: 2,
             framebuffer: [0; 160 * 144],
             line_priority: [false; 160],
+            line_color_zero: [false; 160],
             frame_ready: false,
         }
     }
 
     pub fn new() -> Self {
         Self::new_with_mode(false)
+    }
+
+    fn decode_cgb_color(lo: u8, hi: u8) -> u32 {
+        let raw = ((hi as u16) << 8) | lo as u16;
+        let r = ((raw & 0x1F) as u8) << 3 | ((raw & 0x1F) as u8 >> 2);
+        let g = (((raw >> 5) & 0x1F) as u8) << 3 | (((raw >> 5) & 0x1F) as u8 >> 2);
+        let b = (((raw >> 10) & 0x1F) as u8) << 3 | (((raw >> 10) & 0x1F) as u8 >> 2);
+        ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | 0xFF
     }
 
     /// Initialize registers to the state expected after the boot ROM
@@ -84,7 +96,7 @@ impl Ppu {
 
     /// Returns the current framebuffer. Call `frame_ready()` to check if a
     /// frame is complete. After presenting, call `clear_frame_flag()`.
-    pub fn framebuffer(&self) -> &[u8; 160 * 144] {
+    pub fn framebuffer(&self) -> &[u32; 160 * 144] {
         &self.framebuffer
     }
 
@@ -157,6 +169,7 @@ impl Ppu {
         }
 
         self.line_priority.fill(false);
+        self.line_color_zero.fill(false);
 
         let tile_map_base = if self.lcdc & 0x08 != 0 {
             0x1C00
@@ -185,8 +198,10 @@ impl Ppu {
             };
             let mut bit = 7 - (px % 8) as usize;
             let mut priority = false;
+            let mut palette = 0usize;
             if self.cgb {
                 let attr = self.vram[1][tile_map_base + tile_row * 32 + tile_col];
+                palette = (attr & 0x07) as usize;
                 if attr & 0x08 != 0 {
                     addr += 0x2000;
                 }
@@ -201,10 +216,17 @@ impl Ppu {
             let lo = self.vram[0][addr + tile_y * 2];
             let hi = self.vram[0][addr + tile_y * 2 + 1];
             let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-            let color = (self.bgp >> (color_id * 2)) & 0x03;
+            let color = if self.cgb {
+                let off = palette * 8 + color_id as usize * 2;
+                Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+            } else {
+                let idx = (self.bgp >> (color_id * 2)) & 0x03;
+                DMG_PALETTE[idx as usize]
+            };
             let idx = self.ly as usize * 160 + x as usize;
             self.framebuffer[idx] = color;
             self.line_priority[x as usize] = priority;
+            self.line_color_zero[x as usize] = color_id == 0;
         }
 
         // window
@@ -230,8 +252,10 @@ impl Ppu {
                 };
                 let mut bit = 7 - tile_x;
                 let mut priority = false;
+                let mut palette = 0usize;
                 if self.cgb {
                     let attr = self.vram[1][window_map_base + tile_row * 32 + tile_col];
+                    palette = (attr & 0x07) as usize;
                     if attr & 0x08 != 0 {
                         addr += 0x2000;
                     }
@@ -246,11 +270,18 @@ impl Ppu {
                 let lo = self.vram[0][addr + tile_y * 2];
                 let hi = self.vram[0][addr + tile_y * 2 + 1];
                 let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                let color = (self.bgp >> (color_id * 2)) & 0x03;
+                let color = if self.cgb {
+                    let off = palette * 8 + color_id as usize * 2;
+                    Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+                } else {
+                    let idx = (self.bgp >> (color_id * 2)) & 0x03;
+                    DMG_PALETTE[idx as usize]
+                };
                 let idx = self.ly as usize * 160 + x as usize;
                 self.framebuffer[idx] = color;
                 if (x as usize) < 160 {
                     self.line_priority[x as usize] = priority;
+                    self.line_color_zero[x as usize] = color_id == 0;
                 }
             }
         }
@@ -301,19 +332,25 @@ impl Ppu {
                         continue;
                     }
                     let idx = self.ly as usize * 160 + sx as usize;
-                    let bg_color = self.framebuffer[idx];
                     let bg_prio = self.line_priority[sx as usize];
+                    let bg_zero = self.line_color_zero[sx as usize];
                     let obj_prio = flags & 0x80 != 0;
-                    if obj_prio && bg_color != 0 {
+                    if obj_prio && !bg_zero {
                         continue;
                     }
-                    if bg_prio && bg_color != 0 {
+                    if bg_prio && !bg_zero {
                         continue;
                     }
-                    let color = if flags & 0x10 != 0 {
-                        (self.obp1 >> (color_id * 2)) & 0x03
+                    let color = if self.cgb {
+                        let palette = (flags & 0x07) as usize;
+                        let off = palette * 8 + color_id as usize * 2;
+                        Self::decode_cgb_color(self.obpd[off], self.obpd[off + 1])
+                    } else if flags & 0x10 != 0 {
+                        let idxc = (self.obp1 >> (color_id * 2)) & 0x03;
+                        DMG_PALETTE[idxc as usize]
                     } else {
-                        (self.obp0 >> (color_id * 2)) & 0x03
+                        let idxc = (self.obp0 >> (color_id * 2)) & 0x03;
+                        DMG_PALETTE[idxc as usize]
                     };
                     self.framebuffer[idx] = color;
                 }

@@ -78,12 +78,6 @@ fn main() {
         if cgb_mode { "CGB" } else { "DMG" }
     );
 
-    let palette: [u32; 4] = if cgb_mode {
-        [0xFFFFFFFF, 0xAAAAAAFF, 0x555555FF, 0x000000FF]
-    } else {
-        // classic DMG green shades
-        [0x9BBC0FFF, 0x8BAC0FFF, 0x306230FF, 0x0F380FFF]
-    };
     let mut frame = vec![0u32; 160 * 144];
     let mut frame_count = 0u64;
 
@@ -133,9 +127,7 @@ fn main() {
                 gb.cpu.step(&mut gb.mmu);
             }
 
-            for (i, &px) in gb.mmu.ppu.framebuffer().iter().enumerate() {
-                frame[i] = palette[px as usize];
-            }
+            frame.copy_from_slice(gb.mmu.ppu.framebuffer());
             gb.mmu.ppu.clear_frame_flag();
 
             window
@@ -159,7 +151,6 @@ fn main() {
                 println!("{}", gb.cpu.debug_state());
             }
 
-            let non_zero = frame.iter().filter(|&&v| v != palette[0]).count();
             frame_count += 1;
         }
     } else {
@@ -169,9 +160,7 @@ fn main() {
                 gb.cpu.step(&mut gb.mmu);
             }
 
-            for (i, &px) in gb.mmu.ppu.framebuffer().iter().enumerate() {
-                frame[i] = palette[px as usize];
-            }
+            frame.copy_from_slice(gb.mmu.ppu.framebuffer());
             gb.mmu.ppu.clear_frame_flag();
 
             if args.debug && frame_count % 60 == 0 {
@@ -191,7 +180,6 @@ fn main() {
                 println!("{}", gb.cpu.debug_state());
             }
 
-            let non_zero = frame.iter().filter(|&&v| v != palette[0]).count();
             frame_count += 1;
         }
     }
