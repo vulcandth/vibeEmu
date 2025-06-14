@@ -24,6 +24,12 @@ pub struct Mmu {
 
 impl Mmu {
     pub fn new_with_mode(cgb: bool) -> Self {
+        let mut timer = Timer::new();
+        timer.div = 0xAB00;
+
+        let mut ppu = Ppu::new_with_mode(cgb);
+        ppu.apply_boot_state();
+
         Self {
             wram: [[0; WRAM_BANK_SIZE]; 8],
             wram_bank: 1,
@@ -31,16 +37,16 @@ impl Mmu {
             cart: None,
             boot_rom: None,
             boot_mapped: false,
-            if_reg: 0,
+            if_reg: 0xE1,
             ie_reg: 0,
             sb: 0,
-            sc: 0,
+            sc: if cgb { 0x7F } else { 0x7E },
             serial_out: Vec::new(),
-            ppu: Ppu::new_with_mode(cgb),
+            ppu,
             apu: Apu::new(),
-            timer: Timer::new(),
+            timer,
             input: Input::new(),
-            key1: 0,
+            key1: if cgb { 0x7E } else { 0 },
             cgb_mode: cgb,
         }
     }

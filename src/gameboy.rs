@@ -13,7 +13,7 @@ impl GameBoy {
 
     pub fn new_with_mode(cgb: bool) -> Self {
         Self {
-            cpu: Cpu::new(),
+            cpu: Cpu::new_with_mode(cgb),
             mmu: Mmu::new_with_mode(cgb),
             cgb,
         }
