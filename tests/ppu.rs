@@ -49,8 +49,8 @@ fn render_bg_scanline() {
     ppu.vram[0][0x1800] = 0x00;
     let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
-    assert_eq!(ppu.framebuffer[0], 1);
-    assert_eq!(ppu.framebuffer[7], 1);
+    assert_eq!(ppu.framebuffer[0], 0x8BAC0FFF);
+    assert_eq!(ppu.framebuffer[7], 0x8BAC0FFF);
 }
 
 #[test]
@@ -67,7 +67,7 @@ fn render_window_scanline() {
     ppu.vram[0][0x1800] = 0x01;
     let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
-    assert_eq!(ppu.framebuffer[0], 1);
+    assert_eq!(ppu.framebuffer[0], 0x8BAC0FFF);
 }
 
 #[test]
@@ -85,5 +85,26 @@ fn render_sprite_scanline() {
     ppu.oam[3] = 0; // flags
     let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
-    assert_eq!(ppu.framebuffer[0], 1);
+    assert_eq!(ppu.framebuffer[0], 0x8BAC0FFF);
+}
+
+#[test]
+fn cgb_bg_palette() {
+    let mut ppu = Ppu::new_with_mode(true);
+    ppu.write_reg(0xFF40, 0x91);
+    // palette 2 color 1 -> red
+    ppu.write_reg(0xFF68, 0x80 | 0x10); // index 0x10 with auto inc
+    ppu.write_reg(0xFF69, 0x00); // color 0
+    ppu.write_reg(0xFF69, 0x00);
+    ppu.write_reg(0xFF69, 0x1F); // color 1 lo
+    ppu.write_reg(0xFF69, 0x00); // color 1 hi
+    for i in 0..8 {
+        ppu.vram[0][i * 2] = 0xFF;
+        ppu.vram[0][i * 2 + 1] = 0x00;
+    }
+    ppu.vram[0][0x1800] = 0x00;
+    ppu.vram[1][0x1800] = 0x02; // use palette 2
+    let mut if_reg = 0u8;
+    ppu.step(456, &mut if_reg);
+    assert_eq!(ppu.framebuffer[0], 0xFF0000FF);
 }

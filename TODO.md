@@ -196,7 +196,7 @@ This section details each major module in the emulator core, its role, and how i
 
 - Constructing each scanline’s pixel data by reading background tile maps, window tile maps, tile patterns, and sprite data, obeying priorities and attribute flags (flips, palette, behind-background flags, etc.).
 
-- Managing palettes: On DMG, there are 4 shades of gray and two palette registers (BG and OBJ palettes) that assign those shades to color indices. On CGB, there are 8 palettes for background and 8 for sprites, each with 4 colors (from a 15-bit RGB palette), and these are stored in separate palette RAM. The PPU must apply the correct palette to each pixel.
+- [x] Managing palettes: On DMG, there are 4 shades of gray and two palette registers (BG and OBJ palettes) that assign those shades to color indices. On CGB, there are 8 palettes for background and 8 for sprites, each with 4 colors (from a 15-bit RGB palette), and these are stored in separate palette RAM. The PPU must apply the correct palette to each pixel.
 
 - Triggering **LCD STAT interrupts** for various conditions: LY==LYC compare, mode transition interrupts (OAM (mode2) interrupt, VBlank (mode1) interrupt, HBlank (mode0) if enabled).
 
