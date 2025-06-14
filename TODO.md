@@ -777,13 +777,13 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
     - [x] NR52 (sound on/off): if bit7 goes 0, turn off all sound (clear channels, etc.).
     * [ ] Many of these behaviors can be guided by Pan Docs and other resources. We can implement a simplified APU that produces recognizable sound, then refine.
   
-  - [ ] Integrate with `cpal`:  
-    
-    * [ ] Initialize `cpal` audio output stream in stereo. Use a callback that reads from the APU’s sample buffer and fills the output.  
-    * [ ] If buffer underflows (no sample ready), decide to output silence or block. Ideally, our emulator loop keeps it filled. If we run emulator in real-time, we might run one frame (~16.7ms) of emulation then wait to sync with real time, which naturally feeds audio correctly.  
+  - [ ] Integrate with `cpal`:
+
+    * [x] Initialize `cpal` audio output stream in stereo. Use a callback that reads from the APU’s sample buffer and fills the output.
+    * [x] If buffer underflows (no sample ready), decide to output silence or block. Ideally, our emulator loop keeps it filled. If we run emulator in real-time, we might run one frame (~16.7ms) of emulation then wait to sync with real time, which naturally feeds audio correctly.
     * [ ] Alternatively, drive emulator by audio callback: not recommended for frame-based systems, easier to produce audio as part of main loop.
-  
-  - [ ] Volume levels: Game Boy audio is not loud; we can multiply the mixed 4-bit sums by a factor to get a nice range. Possibly allow a volume slider in the future.
+
+  - [x] Volume levels: Game Boy audio is not loud; we can multiply the mixed 4-bit sums by a factor to get a nice range. Possibly allow a volume slider in the future.
   
   - [ ] Test: Sound is hard to test without listening. Use a known ROM with distinct audio (like a test tone generator or a music ROM) to subjectively verify. Or use blargg’s **dmg_sound** test ROMs for objective pass (they write “Passed” if sound is correct to a certain tolerance).
   
