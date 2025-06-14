@@ -30,6 +30,10 @@ struct Args {
     /// Path to boot ROM file
     #[arg(long)]
     bootrom: Option<std::path::PathBuf>,
+
+    /// Enable debug logging of CPU state and serial output
+    #[arg(long)]
+    debug: bool,
 }
 
 fn main() {
@@ -126,6 +130,23 @@ fn main() {
         window
             .update_with_buffer(&frame, 160, 144)
             .expect("Failed to update window");
+
+        if args.debug {
+            let serial = gb.mmu.take_serial();
+            if !serial.is_empty() {
+                print!("[SERIAL] ");
+                for b in &serial {
+                    if b.is_ascii_graphic() || *b == b' ' {
+                        print!("{}", *b as char);
+                    } else {
+                        print!("\\x{:02X}", b);
+                    }
+                }
+                println!();
+            }
+
+            println!("{}", gb.cpu.debug_state());
+        }
     }
 
     gb.mmu.save_cart_ram();

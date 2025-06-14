@@ -306,6 +306,20 @@ impl Cpu {
         self.l = val as u8;
     }
 
+    /// Return a formatted string of the current CPU state for debugging.
+    pub fn debug_state(&self) -> String {
+        format!(
+            "AF:{:04X} BC:{:04X} DE:{:04X} HL:{:04X} PC:{:04X} SP:{:04X} CY:{}",
+            ((self.a as u16) << 8) | self.f as u16,
+            ((self.b as u16) << 8) | self.c as u16,
+            ((self.d as u16) << 8) | self.e as u16,
+            self.get_hl(),
+            self.pc,
+            self.sp,
+            self.cycles
+        )
+    }
+
     fn push_stack(&mut self, mmu: &mut crate::mmu::Mmu, val: u16) {
         self.sp = self.sp.wrapping_sub(1);
         mmu.write_byte(self.sp, (val >> 8) as u8);
