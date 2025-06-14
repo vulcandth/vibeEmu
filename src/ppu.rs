@@ -33,7 +33,8 @@ pub struct Ppu {
     frame_ready: bool,
 }
 
-const DMG_PALETTE: [u32; 4] = [0x9BBC0FFF, 0x8BAC0FFF, 0x306230FF, 0x0F380FFF];
+/// Default DMG palette colors in 0x00RRGGBB order for `minifb`.
+const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
 impl Ppu {
     pub fn new_with_mode(cgb: bool) -> Self {
@@ -76,7 +77,7 @@ impl Ppu {
         let r = ((raw & 0x1F) as u8) << 3 | ((raw & 0x1F) as u8 >> 2);
         let g = (((raw >> 5) & 0x1F) as u8) << 3 | (((raw >> 5) & 0x1F) as u8 >> 2);
         let b = (((raw >> 10) & 0x1F) as u8) << 3 | (((raw >> 10) & 0x1F) as u8 >> 2);
-        ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | 0xFF
+        ((r as u32) << 16) | ((g as u32) << 8) | b as u32
     }
 
     /// Initialize registers to the state expected after the boot ROM

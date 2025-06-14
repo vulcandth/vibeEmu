@@ -49,8 +49,8 @@ fn render_bg_scanline() {
     ppu.vram[0][0x1800] = 0x00;
     let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
-    assert_eq!(ppu.framebuffer[0], 0x8BAC0FFF);
-    assert_eq!(ppu.framebuffer[7], 0x8BAC0FFF);
+    assert_eq!(ppu.framebuffer[0], 0x008BAC0F);
+    assert_eq!(ppu.framebuffer[7], 0x008BAC0F);
 }
 
 #[test]
@@ -67,7 +67,7 @@ fn render_window_scanline() {
     ppu.vram[0][0x1800] = 0x01;
     let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
-    assert_eq!(ppu.framebuffer[0], 0x8BAC0FFF);
+    assert_eq!(ppu.framebuffer[0], 0x008BAC0F);
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn render_sprite_scanline() {
     ppu.oam[3] = 0; // flags
     let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
-    assert_eq!(ppu.framebuffer[0], 0x8BAC0FFF);
+    assert_eq!(ppu.framebuffer[0], 0x008BAC0F);
 }
 
 #[test]
@@ -106,5 +106,5 @@ fn cgb_bg_palette() {
     ppu.vram[1][0x1800] = 0x02; // use palette 2
     let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
-    assert_eq!(ppu.framebuffer[0], 0xFF0000FF);
+    assert_eq!(ppu.framebuffer[0], 0x00FF0000);
 }
