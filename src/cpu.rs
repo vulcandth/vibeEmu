@@ -227,6 +227,8 @@ pub struct Cpu {
     pub halted: bool,
     pub double_speed: bool,
     halt_bug: bool,
+    halt_bug_after_ei: bool,
+    last_opcode: u8,
     ime_delay: bool,
 }
 
@@ -255,6 +257,8 @@ impl Cpu {
                 halted: false,
                 double_speed: false,
                 halt_bug: false,
+                halt_bug_after_ei: false,
+                last_opcode: 0,
                 ime_delay: false,
             }
         } else {
@@ -274,6 +278,8 @@ impl Cpu {
                 halted: false,
                 double_speed: false,
                 halt_bug: false,
+                halt_bug_after_ei: false,
+                last_opcode: 0,
                 ime_delay: false,
             }
         }
@@ -475,7 +481,12 @@ impl Cpu {
                 0x60
             };
 
-            let pc = self.pc;
+            let pc = if self.halt_bug_after_ei {
+                self.halt_bug_after_ei = false;
+                self.pc.wrapping_sub(1)
+            } else {
+                self.pc
+            };
             self.push_stack(mmu, pc);
             self.pc = vector;
             self.ime = false;
@@ -962,6 +973,9 @@ impl Cpu {
                 if self.ime || pending == 0 {
                     self.halted = true;
                 } else {
+                    if self.last_opcode == 0xFB {
+                        self.halt_bug_after_ei = true;
+                    }
                     self.halt_bug = true;
                 }
             }
@@ -1497,6 +1511,7 @@ impl Cpu {
             self.ime = true;
             self.ime_delay = false;
         }
+        self.last_opcode = opcode;
         self.handle_interrupts(mmu);
     }
 }
