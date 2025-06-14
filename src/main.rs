@@ -86,7 +86,12 @@ fn main() {
     .expect("Failed to create window");
     window.limit_update_rate(Some(Duration::from_micros(16_700)));
 
-    let palette: [u32; 4] = [0xFFFFFFFF, 0xAAAAAAFF, 0x555555FF, 0x000000FF];
+    let palette: [u32; 4] = if cgb_mode {
+        [0xFFFFFFFF, 0xAAAAAAFF, 0x555555FF, 0x000000FF]
+    } else {
+        // classic DMG green shades
+        [0x9BBC0FFF, 0x8BAC0FFF, 0x306230FF, 0x0F380FFF]
+    };
     let mut frame = vec![0u32; 160 * 144];
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
