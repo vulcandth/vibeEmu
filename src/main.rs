@@ -11,6 +11,8 @@ mod timer;
 
 use clap::Parser;
 use log::info;
+use minifb::{Key, Scale, Window, WindowOptions};
+use std::time::Duration;
 
 #[derive(Parser)]
 struct Args {
@@ -63,11 +65,68 @@ fn main() {
         }
     }
 
-    // TODO: main emulation loop will go here
     println!(
         "Emulator initialized in {} mode",
         if cgb_mode { "CGB" } else { "DMG" }
     );
+
+    let mut window = Window::new(
+        "vibeEmu",
+        160,
+        144,
+        WindowOptions {
+            scale: Scale::X2,
+            ..WindowOptions::default()
+        },
+    )
+    .expect("Failed to create window");
+    window.limit_update_rate(Some(Duration::from_micros(16_700)));
+
+    let palette: [u32; 4] = [0xFFFFFFFF, 0xAAAAAAFF, 0x555555FF, 0x000000FF];
+    let mut frame = vec![0u32; 160 * 144];
+
+    while window.is_open() && !window.is_key_down(Key::Escape) {
+        // Gather input
+        let mut state = 0xFFu8;
+        if window.is_key_down(Key::Right) {
+            state &= !0x01;
+        }
+        if window.is_key_down(Key::Left) {
+            state &= !0x02;
+        }
+        if window.is_key_down(Key::Up) {
+            state &= !0x04;
+        }
+        if window.is_key_down(Key::Down) {
+            state &= !0x08;
+        }
+        if window.is_key_down(Key::Z) {
+            state &= !0x10;
+        }
+        if window.is_key_down(Key::X) {
+            state &= !0x20;
+        }
+        if window.is_key_down(Key::Backspace) {
+            state &= !0x40;
+        }
+        if window.is_key_down(Key::Enter) {
+            state &= !0x80;
+        }
+        gb.mmu.input.update_state(state, &mut gb.mmu.if_reg);
+
+        while !gb.mmu.ppu.frame_ready() {
+            gb.cpu.step(&mut gb.mmu);
+        }
+
+        for (i, &px) in gb.mmu.ppu.framebuffer().iter().enumerate() {
+            frame[i] = palette[px as usize];
+        }
+        gb.mmu.ppu.clear_frame_flag();
+
+        window
+            .update_with_buffer(&frame, 160, 144)
+            .expect("Failed to update window");
+    }
 
     gb.mmu.save_cart_ram();
 }

@@ -10,6 +10,9 @@ Ensure you have a recent Rust toolchain installed. To build the project run:
 cargo build
 ```
 
+The frontend uses the `minifb` crate for window creation. On Linux you may need
+X11 development packages installed (e.g. `libx11-dev`).
+
 ## Running
 
 The emulator expects the path to a ROM file. The command below will start the emulator in CGB mode by default:
