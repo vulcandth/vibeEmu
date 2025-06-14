@@ -160,7 +160,6 @@ fn main() {
             }
 
             let non_zero = frame.iter().filter(|&&v| v != palette[0]).count();
-            println!("Frame {frame_count}: non-zero pixels {non_zero}");
             frame_count += 1;
         }
     } else {
@@ -193,7 +192,6 @@ fn main() {
             }
 
             let non_zero = frame.iter().filter(|&&v| v != palette[0]).count();
-            println!("Frame {frame_count}: non-zero pixels {non_zero}");
             frame_count += 1;
         }
     }

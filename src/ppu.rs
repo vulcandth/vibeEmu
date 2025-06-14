@@ -174,8 +174,8 @@ impl Ppu {
             let scx = self.scx as u16;
             let px = x.wrapping_add(scx) & 0xFF;
             let tile_col = (px / 8) as usize;
-            let tile_row = ((self.ly as u16 + self.scy as u16) / 8) as usize;
-            let mut tile_y = ((self.ly as u16 + self.scy as u16) % 8) as usize;
+            let tile_row = (((self.ly as u16 + self.scy as u16) & 0xFF) / 8) as usize;
+            let mut tile_y = (((self.ly as u16 + self.scy as u16) & 0xFF) % 8) as usize;
 
             let tile_index = self.vram[0][tile_map_base + tile_row * 32 + tile_col];
             let mut addr = if self.lcdc & 0x10 != 0 {
