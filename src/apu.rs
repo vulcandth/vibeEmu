@@ -370,13 +370,12 @@ impl Apu {
         self.ch2 = SquareChannel::new(false);
         self.ch3 = WaveChannel::default();
         self.ch4 = NoiseChannel::default();
-        self.wave_ram = [0; 0x10];
         self.nr50 = 0;
         self.nr51 = 0;
         self.samples.clear();
     }
     pub fn new() -> Self {
-        Self {
+        let mut apu = Self {
             ch1: SquareChannel::new(true),
             ch2: SquareChannel::new(false),
             ch3: WaveChannel::default(),
@@ -390,7 +389,26 @@ impl Apu {
             sample_timer: 0,
             sample_rate: 44100,
             samples: VecDeque::with_capacity(4096),
-        }
+        };
+
+        // Initialize channels to power-on register defaults
+        apu.ch1.duty = 2;
+        apu.ch1.length = 0x3F;
+        apu.ch1.envelope.initial = 0xF;
+        apu.ch1.envelope.volume = 0xF;
+        apu.ch1.envelope.period = 3;
+        apu.ch1.frequency = 0x03FF;
+
+        apu.ch2.length = 0x3F;
+        apu.ch2.frequency = 0x03FF;
+
+        apu.ch3.dac_enabled = true;
+        apu.ch3.length = 0xFF;
+        apu.ch3.frequency = 0x03FF;
+
+        apu.ch4.length = 0xFF;
+
+        apu
     }
 
     pub fn read_reg(&self, addr: u16) -> u8 {

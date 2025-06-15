@@ -41,5 +41,5 @@ fn writes_ignored_when_disabled() {
 #[test]
 fn read_mask_unused_bits() {
     let apu = Apu::new();
-    assert_eq!(apu.read_reg(0xFF11), 0x3F);
+    assert_eq!(apu.read_reg(0xFF11), 0xBF);
 }
