@@ -108,3 +108,24 @@ fn cgb_bg_palette() {
     ppu.step(456, &mut if_reg);
     assert_eq!(ppu.framebuffer[0], 0x00FF0000);
 }
+
+#[test]
+fn cgb_bg_bank_select() {
+    let mut ppu = Ppu::new_with_mode(true);
+    ppu.write_reg(0xFF40, 0x91);
+    // palette 0 color 1 -> red
+    ppu.write_reg(0xFF68, 0x80); // index 0 with auto inc
+    ppu.write_reg(0xFF69, 0x00); // color 0 lo
+    ppu.write_reg(0xFF69, 0x00); // color 0 hi
+    ppu.write_reg(0xFF69, 0x1F); // color 1 lo
+    ppu.write_reg(0xFF69, 0x00); // color 1 hi
+    for i in 0..8 {
+        ppu.vram[1][i * 2] = 0xFF;
+        ppu.vram[1][i * 2 + 1] = 0x00;
+    }
+    ppu.vram[0][0x1800] = 0x00; // tile index
+    ppu.vram[1][0x1800] = 0x08; // use bank 1
+    let mut if_reg = 0u8;
+    ppu.step(456, &mut if_reg);
+    assert_eq!(ppu.framebuffer[0], 0x00FF0000);
+}

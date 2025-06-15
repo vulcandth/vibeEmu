@@ -192,7 +192,7 @@ impl Ppu {
             let mut tile_y = (((self.ly as u16 + self.scy as u16) & 0xFF) % 8) as usize;
 
             let tile_index = self.vram[0][tile_map_base + tile_row * 32 + tile_col];
-            let mut addr = if self.lcdc & 0x10 != 0 {
+            let addr = if self.lcdc & 0x10 != 0 {
                 tile_data_base + tile_index as usize * 16
             } else {
                 tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
@@ -200,12 +200,11 @@ impl Ppu {
             let mut bit = 7 - (px % 8) as usize;
             let mut priority = false;
             let mut palette = 0usize;
+            let mut bank = 0usize;
             if self.cgb {
                 let attr = self.vram[1][tile_map_base + tile_row * 32 + tile_col];
                 palette = (attr & 0x07) as usize;
-                if attr & 0x08 != 0 {
-                    addr += 0x2000;
-                }
+                bank = if attr & 0x08 != 0 { 1 } else { 0 };
                 if attr & 0x20 != 0 {
                     bit = (px % 8) as usize;
                 }
@@ -214,8 +213,8 @@ impl Ppu {
                 }
                 priority = attr & 0x80 != 0;
             }
-            let lo = self.vram[0][addr + tile_y * 2];
-            let hi = self.vram[0][addr + tile_y * 2 + 1];
+            let lo = self.vram[bank][addr + tile_y * 2];
+            let hi = self.vram[bank][addr + tile_y * 2 + 1];
             let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
             let color = if self.cgb {
                 let off = palette * 8 + color_id as usize * 2;
@@ -246,7 +245,7 @@ impl Ppu {
                 let mut tile_y = window_y % 8;
                 let tile_x = window_x % 8;
                 let tile_index = self.vram[0][window_map_base + tile_row * 32 + tile_col];
-                let mut addr = if self.lcdc & 0x10 != 0 {
+                let addr = if self.lcdc & 0x10 != 0 {
                     tile_data_base + tile_index as usize * 16
                 } else {
                     tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
@@ -254,12 +253,11 @@ impl Ppu {
                 let mut bit = 7 - tile_x;
                 let mut priority = false;
                 let mut palette = 0usize;
+                let mut bank = 0usize;
                 if self.cgb {
                     let attr = self.vram[1][window_map_base + tile_row * 32 + tile_col];
                     palette = (attr & 0x07) as usize;
-                    if attr & 0x08 != 0 {
-                        addr += 0x2000;
-                    }
+                    bank = if attr & 0x08 != 0 { 1 } else { 0 };
                     if attr & 0x20 != 0 {
                         bit = tile_x;
                     }
@@ -268,8 +266,8 @@ impl Ppu {
                     }
                     priority = attr & 0x80 != 0;
                 }
-                let lo = self.vram[0][addr + tile_y * 2];
-                let hi = self.vram[0][addr + tile_y * 2 + 1];
+                let lo = self.vram[bank][addr + tile_y * 2];
+                let hi = self.vram[bank][addr + tile_y * 2 + 1];
                 let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
                 let color = if self.cgb {
                     let off = palette * 8 + color_id as usize * 2;
