@@ -262,3 +262,15 @@ fn cgb_bg_palette_autoinc_read() {
     assert_eq!(ppu.read_reg(0xFF69), 0x44);
     assert_eq!(ppu.read_reg(0xFF68) & 0x3F, 2);
 }
+
+#[test]
+fn bg_disable_yields_color0() {
+    let mut ppu = Ppu::new();
+    // LCD enabled, background/window disabled
+    ppu.write_reg(0xFF40, 0x80);
+    ppu.write_reg(0xFF47, 0xFC); // default palette
+    let mut if_reg = 0u8;
+    ppu.step(456, &mut if_reg);
+    assert_eq!(ppu.framebuffer[0], 0x009BBC0F);
+    assert_eq!(ppu.framebuffer[159], 0x009BBC0F);
+}
