@@ -7,6 +7,7 @@ mod gameboy;
 mod input;
 mod mmu;
 mod ppu;
+mod serial;
 mod timer;
 
 use clap::Parser;
