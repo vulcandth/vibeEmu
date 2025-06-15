@@ -1,4 +1,4 @@
-use crate::{apu::Apu, cartridge::Cartridge, input::Input, ppu::Ppu, timer::Timer};
+use crate::{apu::Apu, cartridge::Cartridge, input::Input, ppu::Ppu, serial::Serial, timer::Timer};
 
 const WRAM_BANK_SIZE: usize = 0x1000;
 
@@ -11,9 +11,7 @@ pub struct Mmu {
     pub boot_mapped: bool,
     pub if_reg: u8,
     pub ie_reg: u8,
-    sb: u8,
-    sc: u8,
-    pub serial_out: Vec<u8>,
+    pub serial: Serial,
     pub ppu: Ppu,
     pub apu: Apu,
     pub timer: Timer,
@@ -39,9 +37,7 @@ impl Mmu {
             boot_mapped: false,
             if_reg: 0xE1,
             ie_reg: 0,
-            sb: 0,
-            sc: if cgb { 0x7F } else { 0x7E },
-            serial_out: Vec::new(),
+            serial: Serial::new(cgb),
             ppu,
             apu: Apu::new(),
             timer,
@@ -101,8 +97,7 @@ impl Mmu {
             }
             0xFEA0..=0xFEFF => 0xFF,
             0xFF00 => self.input.read(),
-            0xFF01 => self.sb,
-            0xFF02 => self.sc,
+            0xFF01 | 0xFF02 => self.serial.read(addr),
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg,
             0xFF10..=0xFF3F => self.apu.read_reg(addr),
@@ -145,15 +140,7 @@ impl Mmu {
             }
             0xFEA0..=0xFEFF => {}
             0xFF00 => self.input.write(val),
-            0xFF01 => self.sb = val,
-            0xFF02 => {
-                self.sc = val;
-                if val & 0x80 != 0 {
-                    self.serial_out.push(self.sb);
-                    self.if_reg |= 0x08;
-                    self.sc &= 0x7F;
-                }
-            }
+            0xFF01 | 0xFF02 => self.serial.write(addr, val, &mut self.if_reg),
             0xFF04..=0xFF07 => self.timer.write(addr, val, &mut self.if_reg),
             0xFF0F => self.if_reg = (val & 0x1F) | (self.if_reg & 0xE0),
             0xFF10..=0xFF3F => self.apu.write_reg(addr, val),
@@ -184,9 +171,7 @@ impl Mmu {
     }
 
     pub fn take_serial(&mut self) -> Vec<u8> {
-        let out = self.serial_out.clone();
-        self.serial_out.clear();
-        out
+        self.serial.take_output()
     }
 }
 
