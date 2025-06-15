@@ -225,97 +225,58 @@ impl Ppu {
         self.line_priority.fill(false);
         self.line_color_zero.fill(false);
 
-        let tile_map_base = if self.lcdc & 0x08 != 0 {
-            0x1C00
+        // Pre-fill the scanline. When the background is disabled via LCDC bit 0
+        // the Game Boy outputs color 0 for every pixel and sprites treat the
+        // line as having color 0. The framebuffer is initialized with this
+        // color so sprite rendering can overlay on top.
+        let bg_color = if self.cgb {
+            Self::decode_cgb_color(self.bgpd[0], self.bgpd[1])
         } else {
-            0x1800
+            let idx = self.bgp & 0x03;
+            DMG_PALETTE[idx as usize]
         };
-        let tile_data_base = if self.lcdc & 0x10 != 0 {
-            0x0000
-        } else {
-            0x0800
-        };
-
-        // draw background
-        for x in 0..160u16 {
-            let scx = self.scx as u16;
-            let px = x.wrapping_add(scx) & 0xFF;
-            let tile_col = (px / 8) as usize;
-            let tile_row = (((self.ly as u16 + self.scy as u16) & 0xFF) / 8) as usize;
-            let mut tile_y = (((self.ly as u16 + self.scy as u16) & 0xFF) % 8) as usize;
-
-            let tile_index = self.vram[0][tile_map_base + tile_row * 32 + tile_col];
-            let addr = if self.lcdc & 0x10 != 0 {
-                tile_data_base + tile_index as usize * 16
-            } else {
-                tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
-            };
-            let mut bit = 7 - (px % 8) as usize;
-            let mut priority = false;
-            let mut palette = 0usize;
-            let mut bank = 0usize;
-            if self.cgb {
-                let attr = self.vram[1][tile_map_base + tile_row * 32 + tile_col];
-                palette = (attr & 0x07) as usize;
-                bank = if attr & 0x08 != 0 { 1 } else { 0 };
-                if attr & 0x20 != 0 {
-                    bit = (px % 8) as usize;
-                }
-                if attr & 0x40 != 0 {
-                    tile_y = 7 - tile_y;
-                }
-                priority = attr & 0x80 != 0;
-            }
-            let lo = self.vram[bank][addr + tile_y * 2];
-            let hi = self.vram[bank][addr + tile_y * 2 + 1];
-            let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-            let (color, color_idx) = if self.cgb {
-                let off = palette * 8 + color_id as usize * 2;
-                (
-                    Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1]),
-                    color_id,
-                )
-            } else {
-                let idx = (self.bgp >> (color_id * 2)) & 0x03;
-                (DMG_PALETTE[idx as usize], idx)
-            };
-            let idx = self.ly as usize * 160 + x as usize;
-            self.framebuffer[idx] = color;
-            self.line_priority[x as usize] = priority;
-            self.line_color_zero[x as usize] = color_idx == 0;
+        for x in 0..160usize {
+            let idx = self.ly as usize * 160 + x;
+            self.framebuffer[idx] = bg_color;
+            self.line_color_zero[x] = true;
         }
 
-        // window
-        if self.lcdc & 0x20 != 0 && self.ly >= self.wy {
-            let wx = self.wx.wrapping_sub(7) as u16;
-            let window_map_base = if self.lcdc & 0x40 != 0 {
+        if self.lcdc & 0x01 != 0 {
+            let tile_map_base = if self.lcdc & 0x08 != 0 {
                 0x1C00
             } else {
                 0x1800
             };
-            let window_y = (self.ly - self.wy) as usize;
-            for x in wx..160 {
-                let window_x = (x - wx) as usize;
-                let tile_col = window_x / 8;
-                let tile_row = window_y / 8;
-                let mut tile_y = window_y % 8;
-                let tile_x = window_x % 8;
-                let tile_index = self.vram[0][window_map_base + tile_row * 32 + tile_col];
+            let tile_data_base = if self.lcdc & 0x10 != 0 {
+                0x0000
+            } else {
+                0x0800
+            };
+
+            // draw background
+            for x in 0..160u16 {
+                let scx = self.scx as u16;
+                let px = x.wrapping_add(scx) & 0xFF;
+                let tile_col = (px / 8) as usize;
+                let tile_row = (((self.ly as u16 + self.scy as u16) & 0xFF) / 8) as usize;
+                let mut tile_y = (((self.ly as u16 + self.scy as u16) & 0xFF) % 8) as usize;
+
+                let tile_index = self.vram[0][tile_map_base + tile_row * 32 + tile_col];
                 let addr = if self.lcdc & 0x10 != 0 {
                     tile_data_base + tile_index as usize * 16
                 } else {
                     tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
                 };
-                let mut bit = 7 - tile_x;
+                let mut bit = 7 - (px % 8) as usize;
                 let mut priority = false;
                 let mut palette = 0usize;
                 let mut bank = 0usize;
                 if self.cgb {
-                    let attr = self.vram[1][window_map_base + tile_row * 32 + tile_col];
+                    let attr = self.vram[1][tile_map_base + tile_row * 32 + tile_col];
                     palette = (attr & 0x07) as usize;
                     bank = if attr & 0x08 != 0 { 1 } else { 0 };
                     if attr & 0x20 != 0 {
-                        bit = tile_x;
+                        bit = (px % 8) as usize;
                     }
                     if attr & 0x40 != 0 {
                         tile_y = 7 - tile_y;
@@ -337,9 +298,66 @@ impl Ppu {
                 };
                 let idx = self.ly as usize * 160 + x as usize;
                 self.framebuffer[idx] = color;
-                if (x as usize) < 160 {
-                    self.line_priority[x as usize] = priority;
-                    self.line_color_zero[x as usize] = color_idx == 0;
+                self.line_priority[x as usize] = priority;
+                self.line_color_zero[x as usize] = color_idx == 0;
+            }
+
+            // window
+            if self.lcdc & 0x20 != 0 && self.ly >= self.wy {
+                let wx = self.wx.wrapping_sub(7) as u16;
+                let window_map_base = if self.lcdc & 0x40 != 0 {
+                    0x1C00
+                } else {
+                    0x1800
+                };
+                let window_y = (self.ly - self.wy) as usize;
+                for x in wx..160 {
+                    let window_x = (x - wx) as usize;
+                    let tile_col = window_x / 8;
+                    let tile_row = window_y / 8;
+                    let mut tile_y = window_y % 8;
+                    let tile_x = window_x % 8;
+                    let tile_index = self.vram[0][window_map_base + tile_row * 32 + tile_col];
+                    let addr = if self.lcdc & 0x10 != 0 {
+                        tile_data_base + tile_index as usize * 16
+                    } else {
+                        tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
+                    };
+                    let mut bit = 7 - tile_x;
+                    let mut priority = false;
+                    let mut palette = 0usize;
+                    let mut bank = 0usize;
+                    if self.cgb {
+                        let attr = self.vram[1][window_map_base + tile_row * 32 + tile_col];
+                        palette = (attr & 0x07) as usize;
+                        bank = if attr & 0x08 != 0 { 1 } else { 0 };
+                        if attr & 0x20 != 0 {
+                            bit = tile_x;
+                        }
+                        if attr & 0x40 != 0 {
+                            tile_y = 7 - tile_y;
+                        }
+                        priority = attr & 0x80 != 0;
+                    }
+                    let lo = self.vram[bank][addr + tile_y * 2];
+                    let hi = self.vram[bank][addr + tile_y * 2 + 1];
+                    let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                    let (color, color_idx) = if self.cgb {
+                        let off = palette * 8 + color_id as usize * 2;
+                        (
+                            Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1]),
+                            color_id,
+                        )
+                    } else {
+                        let idx = (self.bgp >> (color_id * 2)) & 0x03;
+                        (DMG_PALETTE[idx as usize], idx)
+                    };
+                    let idx = self.ly as usize * 160 + x as usize;
+                    self.framebuffer[idx] = color;
+                    if (x as usize) < 160 {
+                        self.line_priority[x as usize] = priority;
+                        self.line_color_zero[x as usize] = color_idx == 0;
+                    }
                 }
             }
         }
