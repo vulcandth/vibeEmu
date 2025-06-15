@@ -67,3 +67,14 @@ fn wave_ram_access() {
     apu.write_reg(0xFF26, 0x80);
     assert_eq!(apu.read_reg(0xFF30), 0x56);
 }
+
+#[test]
+fn dac_off_disables_channel() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80); // enable
+    apu.write_reg(0xFF12, 0xF0); // envelope with volume
+    apu.write_reg(0xFF14, 0x80); // trigger channel 1
+    assert_eq!(apu.read_reg(0xFF26) & 0x01, 0x01);
+    apu.write_reg(0xFF12, 0x00); // turn DAC off
+    assert_eq!(apu.read_reg(0xFF26) & 0x01, 0x00);
+}
