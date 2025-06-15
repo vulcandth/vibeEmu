@@ -575,7 +575,7 @@ The design ensures each module has a single clear role, but they interlock throu
 
 Implementing a full emulator is complex – breaking it into manageable pieces with a logical sequence is crucial. The following checklist outlines the stages of development, the dependencies of each stage, and the tasks to complete. Each step should be tested (as described in the Testing section) before moving to the next.
 
-- [ ] **Project Setup & Skeleton** – *Dependencies: None.*
+- [x] **Project Setup & Skeleton** – *Dependencies: None.*
   
   - [x] Initialize a Rust project (binary crate for now). Add dependencies: `cpal`, `minifb`/`winit+pixels`, etc.
 
@@ -626,9 +626,9 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
   
   - [ ] Test: Use known CPU test ROMs (blargg’s **cpu_instrs.gb**). This will require more of the system to be in place (at least a rudimentary PPU or serial output capture for results). Alternatively, implement a partial instruction logger and compare with expected sequence. Blargg’s test can output “Passed” via serial which we can check once serial is in place. Keep this test in mind and revisit after implementing Timer/Serial.
 
-- [ ] **MMU & Memory Map** – *Dep: CPU (so we can test memory ops).*
+- [x] **MMU & Memory Map** – *Dep: CPU (so we can test memory ops).*
   
-  - [ ] Flesh out the MMU to cover all regions:  
+  - [x] Flesh out the MMU to cover all regions:
     
     * [x] Map 0x0000-0x7FFF and 0xA000-BFFF through Cartridge module.
     * [x] Allocate 8KB for WRAM, and if CGB mode, 8 banks (bank 1-7) of an additional 4KB each (total 32KB, though one bank is fixed at 0).
@@ -641,7 +641,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
   
   - [x] Implement read/write functions in MMU that do an address range check and dispatch appropriately. This will be a large match or if-else chain.
   
-  - [ ] Integrate PPU, APU, Timer, Input, Serial into MMU: at this stage, those modules might be partially implemented or at least have their data arrays.  
+  - [x] Integrate PPU, APU, Timer, Input, Serial into MMU: at this stage, those modules might be partially implemented or at least have their data arrays.
     
     * [x] For PPU registers (FF40-FF4B, etc.), have MMU call `ppu.write_reg(addr, val)` and `ppu.read_reg(addr)` which we will implement soon.
     * [x] Same for APU (NR10-NR52): call `apu.write_reg(addr,val)`. Initially, we can stub APU responses (e.g. return 0 for reads or specific default values, since APU registers often have unused bits returning 1).
@@ -650,7 +650,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
     * [x] Joypad (FF00): MMU reads from Input module (combining state with select bits), writes might set the select bits (in practice, games write to FF00 to select mode – we track those bits).
     * [x] Serial (FF01, FF02): Writes to FF01 store the byte (SB). Writes to FF02 with bit7=1 trigger transfer (so call serial module to handle it). Reads return SB or status.
   
-  - [ ] Boot ROM handling:
+  - [x] Boot ROM handling:
 
     * [x] If using a boot ROM, load it into an array. MMU at 0x0000-0x00FF should return boot ROM bytes until a flag `boot_completed` is set (when FF50 is written).
     * [x] Implement write to FF50: set `boot_completed=true`, after which reads from 0x0000 go to cartridge ROM. Ensure FF50 write only works once (actual hardware cannot re-enable boot ROM without reset).
@@ -659,7 +659,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
 - [ ] **PPU Implementation (Rendering)** – *Dep: CPU (for timing), MMU (for memory interface).*
   
-  - [ ] Implement PPU registers and internal data:
+  - [x] Implement PPU registers and internal data:
 
     * [x] LCDC (FF40) bits: control enabling BG, sprites, sprite size, BG tilemap base, tile data base, window enable, window tilemap base, LCD on/off.
     * [x] STAT (FF41) bits: the mode bits (0-1), coincidence flag (bit2), and interrupt enable flags for LY=LYC, OAM, VBlank, HBlank.
@@ -715,12 +715,12 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
 - [ ] **Timers & DIV** – *Dep: CPU (timing), MMU.*
   
-  - [ ] Implement the Timer module fully as described:
+  - [x] Implement the Timer module fully as described:
     * [x] Keep track of `div_counter` (16-bit). Perhaps every CPU cycle call `timer.tick()`.
     * [x] When `div_counter` overflows 0xFFFF -> 0x0000, it automatically wraps (DIV register goes through 00-FF).
     * [x] Use TAC to determine when to increment TIMA. Simplest: whenever the specific bit of `div_counter` goes from 1 to 0 (falling edge) as per TAC selection, increment TIMA (if timer enabled). Use Pan Docs schematic[gbdev.io](https://gbdev.io/pandocs/Timer_Obscure_Behaviour.html#:~:text=On%20DMG%3A) or simpler approach: maintain a separate counter for TIMA that counts down cycles until next increment.
     * [x] If TIMA overflows, set TIMA = TMA, request interrupt.
-  * [ ] Respond correctly to writes:
+  * [x] Respond correctly to writes:
   - [x] Write to DIV: set div_counter = 0 (and thus DIV=0). Also, in doing so, handle the edge-case: if the timer was about to tick at that moment, do we skip it or not? (This is a subtle detail; tests exist for it. We can refine later.)
   - [x] Write to TAC: note if enabling/disabling timer might immediately cause a tick depending on counter state.
     - [x] Write to TIMA: if an overflow was in progress (there’s a known glitch where writing TIMA in the short window after overflow and before it reloads from TMA cancels the interrupt). We can simplify initial implementation by ignoring that glitch, then later add if needed for passing test ROMs.
@@ -734,7 +734,7 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
 - [ ] **Interrupt & HALT behavior** – *Dep: CPU, Timer, PPU integration.*
   
-  - [ ] By now, CPU should be checking for interrupts each iteration. But ensure the following:  
+  - [x] By now, CPU should be checking for interrupts each iteration. But ensure the following:  
     
     * [x] After an EI instruction, interrupts are not recognized on the immediately following instruction (IME gets set after one instruction delay).
     * [x] HALT: implement the two cases as per Pan Docs[gbdev.io](https://gbdev.io/pandocs/halt.html#:~:text=If%20,instruction%20is%20first%20executed). If IF & IE == 0 when HALT executed (no pending enabled interrupts), CPU enters low-power HALT (we can simulate by simply not executing any instruction until an interrupt occurs, i.e., break out of the normal loop until IF & IE != 0). If an interrupt is pending but IME=0, then HALT will immediately exit but the next opcode is not skipped (PC doesn’t advance)[gbdev.io](https://gbdev.io/pandocs/halt.html#:~:text=When%20a%20,fails%20to%20be%20normally%20incremented). We can handle this by a flag in CPU like `halt_bug` that indicates to not increment PC on next instruction fetch.
