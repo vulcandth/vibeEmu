@@ -164,9 +164,21 @@ impl Ppu {
             0xFF4A => self.wy,
             0xFF4B => self.wx,
             0xFF68 => self.bgpi,
-            0xFF69 => self.bgpd[(self.bgpi & 0x3F) as usize],
+            0xFF69 => {
+                let val = self.bgpd[(self.bgpi & 0x3F) as usize];
+                if self.bgpi & 0x80 != 0 {
+                    self.bgpi = (self.bgpi & 0x80) | ((self.bgpi.wrapping_add(1)) & 0x3F);
+                }
+                val
+            }
             0xFF6A => self.obpi,
-            0xFF6B => self.obpd[(self.obpi & 0x3F) as usize],
+            0xFF6B => {
+                let val = self.obpd[(self.obpi & 0x3F) as usize];
+                if self.obpi & 0x80 != 0 {
+                    self.obpi = (self.obpi & 0x80) | ((self.obpi.wrapping_add(1)) & 0x3F);
+                }
+                val
+            }
             _ => 0xFF,
         }
     }
