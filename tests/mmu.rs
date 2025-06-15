@@ -111,6 +111,7 @@ fn oam_dma_transfer() {
         mmu.write_byte(0x8000 + i, i as u8);
     }
     mmu.write_byte(0xFF46, 0x80); // copy from 0x8000
+    mmu.dma_step(640);
     assert_eq!(mmu.ppu.oam[0], 0x00);
     assert_eq!(mmu.ppu.oam[0x9F], 0x9F);
 }

@@ -19,6 +19,8 @@ pub struct Mmu {
     pub input: Input,
     pub key1: u8,
     pub rp: u8,
+    pub dma_cycles: u16,
+    dma_source: u16,
     cgb_mode: bool,
 }
 
@@ -46,6 +48,8 @@ impl Mmu {
             input: Input::new(),
             key1: if cgb { 0x7E } else { 0 },
             rp: 0,
+            dma_cycles: 0,
+            dma_source: 0,
             cgb_mode: cgb,
         }
     }
@@ -168,11 +172,8 @@ impl Mmu {
             0xFF4F => self.ppu.vram_bank = (val & 0x01) as usize,
             0xFF46 => {
                 self.ppu.dma = val;
-                let src = (val as u16) << 8;
-                for i in 0..0xA0 {
-                    let byte = self.read_byte(src.wrapping_add(i));
-                    self.ppu.oam[i as usize] = byte;
-                }
+                self.dma_source = (val as u16) << 8;
+                self.dma_cycles = 640;
             }
             0xFF50 => self.boot_mapped = false,
             0xFF70 => {
@@ -187,6 +188,27 @@ impl Mmu {
 
     pub fn take_serial(&mut self) -> Vec<u8> {
         self.serial.take_output()
+    }
+
+    /// Advance the ongoing OAM DMA transfer if active.
+    pub fn dma_step(&mut self, cycles: u16) {
+        for _ in 0..cycles {
+            if self.dma_cycles == 0 {
+                break;
+            }
+            let progress = 640 - self.dma_cycles;
+            if progress % 4 == 0 && progress / 4 < 0xA0 {
+                let idx: u16 = progress / 4;
+                let byte = self.read_byte(self.dma_source.wrapping_add(idx));
+                self.ppu.oam[idx as usize] = byte;
+            }
+            self.dma_cycles -= 1;
+        }
+    }
+
+    /// Return true if a DMA transfer is in progress.
+    pub fn dma_active(&self) -> bool {
+        self.dma_cycles > 0
     }
 }
 

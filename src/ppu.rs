@@ -34,6 +34,7 @@ pub struct Ppu {
     sprite_count: usize,
     /// Indicates a completed frame is available in `framebuffer`
     frame_ready: bool,
+    prev_stat_irq: u8,
 }
 
 /// Default DMG palette colors in 0x00RRGGBB order for `minifb`.
@@ -79,6 +80,7 @@ impl Ppu {
             line_sprites: [Sprite::default(); 10],
             sprite_count: 0,
             frame_ready: false,
+            prev_stat_irq: 0,
         }
     }
 
@@ -460,10 +462,37 @@ impl Ppu {
                 _ => {}
             }
 
-            if self.ly == self.lyc && self.stat & 0x40 != 0 {
-                *if_reg |= 0x02;
-            }
+            self.update_stat_irq(if_reg);
         }
+    }
+
+    fn update_stat_irq(&mut self, if_reg: &mut u8) {
+        let mut current = 0u8;
+        if self.ly == self.lyc && self.stat & 0x40 != 0 {
+            current |= 0x40;
+        }
+        match self.mode {
+            0 => {
+                if self.stat & 0x08 != 0 {
+                    current |= 0x08;
+                }
+            }
+            1 => {
+                if self.stat & 0x10 != 0 {
+                    current |= 0x10;
+                }
+            }
+            2 => {
+                if self.stat & 0x20 != 0 {
+                    current |= 0x20;
+                }
+            }
+            _ => {}
+        }
+        if current & !self.prev_stat_irq != 0 {
+            *if_reg |= 0x02;
+        }
+        self.prev_stat_irq = current;
     }
 }
 
