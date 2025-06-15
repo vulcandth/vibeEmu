@@ -235,10 +235,21 @@ impl Ppu {
         self.line_priority.fill(false);
         self.line_color_zero.fill(false);
 
+        let bg_enabled = if self.cgb {
+            true
+        } else {
+            self.lcdc & 0x01 != 0
+        };
+        let master_priority = if self.cgb {
+            self.lcdc & 0x01 != 0
+        } else {
+            true
+        };
+
         // Pre-fill the scanline. When the background is disabled via LCDC bit 0
-        // the Game Boy outputs color 0 for every pixel and sprites treat the
-        // line as having color 0. The framebuffer is initialized with this
-        // color so sprite rendering can overlay on top.
+        // in DMG mode, the Game Boy outputs color 0 for every pixel and sprites
+        // treat the line as having color 0. The framebuffer is initialized with
+        // this color so sprite rendering can overlay on top.
         let bg_color = if self.cgb {
             Self::decode_cgb_color(self.bgpd[0], self.bgpd[1])
         } else {
@@ -251,7 +262,7 @@ impl Ppu {
             self.line_color_zero[x] = true;
         }
 
-        if self.lcdc & 0x01 != 0 {
+        if bg_enabled {
             let tile_map_base = if self.lcdc & 0x08 != 0 {
                 0x1C00
             } else {
@@ -409,16 +420,18 @@ impl Ppu {
                     if !(0i16..160i16).contains(&sx) || drawn[sx as usize] {
                         continue;
                     }
-                    let bg_zero = if self.lcdc & 0x01 == 0 {
+                    let bg_zero = if !bg_enabled {
                         true
                     } else {
                         self.line_color_zero[sx as usize]
                     };
-                    if self.cgb && self.line_priority[sx as usize] && !bg_zero {
-                        continue;
-                    }
-                    if s.flags & 0x80 != 0 && !bg_zero {
-                        continue;
+                    if master_priority {
+                        if self.cgb && self.line_priority[sx as usize] && !bg_zero {
+                            continue;
+                        }
+                        if s.flags & 0x80 != 0 && !bg_zero {
+                            continue;
+                        }
                     }
                     let color = if self.cgb {
                         let palette = (s.flags & 0x07) as usize;
