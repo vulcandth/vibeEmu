@@ -22,9 +22,11 @@ jobs:
           sudo apt-get install -y libasound2-dev libx11-dev
 
       - name: Set up Rust
-        uses: actions/setup-rust@v1
+        uses: actions-rs/toolchain@v1
         with:
-          rust-version: stable
+          toolchain: stable
+          profile: minimal
+          override: true
 
       - name: Cache cargo
         uses: actions/cache@v3
