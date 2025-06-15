@@ -191,7 +191,7 @@ impl SquareChannel {
 struct WaveChannel {
     enabled: bool,
     dac_enabled: bool,
-    length: u8,
+    length: u16,
     length_enable: bool,
     volume: u8,
     position: u8,
@@ -491,7 +491,7 @@ impl Apu {
                     0
                 }
             }
-            0xFF1B => self.ch3.length,
+            0xFF1B => self.ch3.length as u8,
             0xFF1C => (self.ch3.volume << 5) | 0x9F,
             0xFF1D => (self.ch3.frequency & 0xFF) as u8,
             0xFF1E => {
@@ -536,7 +536,7 @@ impl Apu {
             }
             0xFF11 => {
                 self.ch1.duty = val >> 6;
-                self.ch1.length = val & 0x3F;
+                self.ch1.length = 64 - (val & 0x3F);
             }
             0xFF12 => {
                 self.ch1.envelope.reset(val);
@@ -555,7 +555,7 @@ impl Apu {
             }
             0xFF16 => {
                 self.ch2.duty = val >> 6;
-                self.ch2.length = val & 0x3F;
+                self.ch2.length = 64 - (val & 0x3F);
             }
             0xFF17 => {
                 self.ch2.envelope.reset(val);
@@ -573,7 +573,7 @@ impl Apu {
                 }
             }
             0xFF1A => self.ch3.dac_enabled = val & 0x80 != 0,
-            0xFF1B => self.ch3.length = val,
+            0xFF1B => self.ch3.length = 256 - val as u16,
             0xFF1C => self.ch3.volume = (val >> 5) & 0x03,
             0xFF1D => self.ch3.frequency = (self.ch3.frequency & 0x700) | val as u16,
             0xFF1E => {
@@ -583,7 +583,7 @@ impl Apu {
                     self.trigger_wave();
                 }
             }
-            0xFF20 => self.ch4.length = val & 0x3F,
+            0xFF20 => self.ch4.length = 64 - (val & 0x3F),
             0xFF21 => {
                 self.ch4.envelope.reset(val);
                 self.ch4.dac_enabled = val & 0xF0 != 0;
@@ -650,7 +650,7 @@ impl Apu {
         self.ch3.position = 0;
         self.ch3.timer = self.ch3.period();
         if self.ch3.length == 0 {
-            self.ch3.length = 255;
+            self.ch3.length = 256;
         }
     }
 
