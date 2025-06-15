@@ -18,6 +18,9 @@ pub struct Ppu {
     wy: u8,
     wx: u8,
 
+    /// Internal window line counter
+    win_line_counter: u8,
+
     bgpi: u8,
     bgpd: [u8; 0x40],
     obpi: u8,
@@ -68,6 +71,7 @@ impl Ppu {
             obp1: 0,
             wy: 0,
             wx: 0,
+            win_line_counter: 0,
             bgpi: 0,
             bgpd: [0; 0x40],
             obpi: 0,
@@ -129,11 +133,17 @@ impl Ppu {
         self.dma = 0xFF;
         self.bgp = 0xFC;
         self.mode = 1;
+        self.win_line_counter = 0;
     }
 
     /// Returns true if a full frame has been rendered and is ready to display.
     pub fn frame_ready(&self) -> bool {
         self.frame_ready
+    }
+
+    /// Returns the current value of the internal window line counter.
+    pub fn window_line_counter(&self) -> u8 {
+        self.win_line_counter
     }
 
     /// Returns the current framebuffer. Call `frame_ready()` to check if a
@@ -303,14 +313,15 @@ impl Ppu {
             }
 
             // window
-            if self.lcdc & 0x20 != 0 && self.ly >= self.wy {
+            let mut window_drawn = false;
+            if self.lcdc & 0x20 != 0 && self.ly >= self.wy && self.wx <= 166 {
                 let wx = self.wx.wrapping_sub(7) as u16;
                 let window_map_base = if self.lcdc & 0x40 != 0 {
                     0x1C00
                 } else {
                     0x1800
                 };
-                let window_y = (self.ly - self.wy) as usize;
+                let window_y = self.win_line_counter as usize;
                 for x in wx..160 {
                     let window_x = (x - wx) as usize;
                     let tile_col = window_x / 8;
@@ -359,6 +370,10 @@ impl Ppu {
                         self.line_color_zero[x as usize] = color_idx == 0;
                     }
                 }
+                window_drawn = true;
+            }
+            if window_drawn {
+                self.win_line_counter = self.win_line_counter.wrapping_add(1);
             }
         }
 
@@ -433,6 +448,7 @@ impl Ppu {
                 self.mode = 0;
                 self.ly = 0;
                 self.mode_clock = 0;
+                self.win_line_counter = 0;
                 continue;
             }
 
@@ -465,6 +481,7 @@ impl Ppu {
                         if self.ly > 153 {
                             self.ly = 0;
                             self.frame_ready = false;
+                            self.win_line_counter = 0;
                             self.mode = 2;
                             if self.stat & 0x20 != 0 {
                                 *if_reg |= 0x02;
