@@ -486,6 +486,21 @@ impl Cpu {
     }
 
     pub fn step(&mut self, mmu: &mut crate::mmu::Mmu) {
+        if mmu.dma_active() {
+            let cpu_cycles = 4u16;
+            mmu.dma_step(cpu_cycles);
+            let hw_cycles = if self.double_speed {
+                cpu_cycles / 2
+            } else {
+                cpu_cycles
+            };
+            self.cycles += cpu_cycles as u64;
+            mmu.timer.step(hw_cycles, &mut mmu.if_reg);
+            mmu.ppu.step(hw_cycles, &mut mmu.if_reg);
+            mmu.apu.lock().unwrap().step(hw_cycles);
+            return;
+        }
+
         if self.halted {
             let cpu_cycles = 4u16;
             let hw_cycles = if self.double_speed {
