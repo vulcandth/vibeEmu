@@ -32,7 +32,7 @@ fn writes_ignored_when_disabled() {
     let mut apu = Apu::new();
     apu.write_reg(0xFF26, 0x00); // disable
     apu.write_reg(0xFF12, 0xF0);
-    assert_eq!(apu.read_reg(0xFF12), 0x00);
+    assert_eq!(apu.read_reg(0xFF12), 0x08);
     apu.write_reg(0xFF26, 0x80); // enable
     apu.write_reg(0xFF12, 0xF0);
     assert_eq!(apu.read_reg(0xFF12) & 0xF0, 0xF0);
@@ -77,4 +77,31 @@ fn dac_off_disables_channel() {
     assert_eq!(apu.read_reg(0xFF26) & 0x01, 0x01);
     apu.write_reg(0xFF12, 0x00); // turn DAC off
     assert_eq!(apu.read_reg(0xFF26) & 0x01, 0x00);
+}
+
+#[test]
+fn env_bit3_readback() {
+    let apu = Apu::new();
+    assert_eq!(apu.read_reg(0xFF12) & 0x08, 0x08);
+    assert_eq!(apu.read_reg(0xFF17) & 0x08, 0x08);
+    assert_eq!(apu.read_reg(0xFF21) & 0x08, 0x08);
+}
+
+#[test]
+fn freq_low_echo() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF10, 0x11);
+    apu.write_reg(0xFF12, 0xF0);
+    apu.write_reg(0xFF13, 0x55);
+    apu.write_reg(0xFF14, 0x80);
+    apu.step(8192 * 2);
+    assert_eq!(apu.read_reg(0xFF13), 0x55);
+}
+
+#[test]
+fn unimplemented_regs_return_ff() {
+    let apu = Apu::new();
+    assert_eq!(apu.read_reg(0xFF15), 0xFF);
+    assert_eq!(apu.read_reg(0xFF1F), 0xFF);
 }

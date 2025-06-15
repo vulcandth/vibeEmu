@@ -103,6 +103,7 @@ struct SquareChannel {
     duty: u8,
     duty_pos: u8,
     frequency: u16,
+    freq_lo: u8,
     timer: i32,
     envelope: Envelope,
     sweep: Option<Sweep>,
@@ -197,6 +198,7 @@ struct WaveChannel {
     position: u8,
     last_sample: u8,
     frequency: u16,
+    freq_lo: u8,
     timer: i32,
 }
 
@@ -346,20 +348,20 @@ impl Apu {
         match addr {
             0xFF10 => 0x80,
             0xFF11 => 0x3F,
-            0xFF12 => 0x00,
-            0xFF13 => 0xFF,
+            0xFF12 => 0x08,
+            0xFF13 => 0x00,
             0xFF14 => 0xBF,
             0xFF16 => 0x3F,
-            0xFF17 => 0x00,
-            0xFF18 => 0xFF,
+            0xFF17 => 0x08,
+            0xFF18 => 0x00,
             0xFF19 => 0xBF,
             0xFF1A => 0x7F,
             0xFF1B => 0xFF,
             0xFF1C => 0x9F,
-            0xFF1D => 0xFF,
+            0xFF1D => 0x00,
             0xFF1E => 0xBF,
             0xFF20 => 0xFF,
-            0xFF21 => 0x00,
+            0xFF21 => 0x08,
             0xFF22 => 0x00,
             0xFF23 => 0xBF,
             0xFF24 => 0x00,
@@ -404,15 +406,18 @@ impl Apu {
         apu.ch1.envelope.volume = 0xF;
         apu.ch1.envelope.period = 3;
         apu.ch1.frequency = 0x03FF;
+        apu.ch1.freq_lo = 0xFF;
         apu.ch1.dac_enabled = true;
 
         apu.ch2.length = 0x3F;
         apu.ch2.frequency = 0x03FF;
+        apu.ch2.freq_lo = 0xFF;
         apu.ch2.dac_enabled = false;
 
         apu.ch3.dac_enabled = true;
         apu.ch3.length = 0xFF;
         apu.ch3.frequency = 0x03FF;
+        apu.ch3.freq_lo = 0xFF;
 
         apu.ch4.length = 0xFF;
         apu.ch4.dac_enabled = false;
@@ -458,7 +463,7 @@ impl Apu {
                     | ((self.ch1.envelope.add as u8) << 3)
                     | self.ch1.envelope.period
             }
-            0xFF13 => (self.ch1.frequency & 0xFF) as u8,
+            0xFF13 => self.ch1.freq_lo,
             0xFF14 => {
                 ((self.ch1.length_enable as u8) << 6) | ((self.ch1.frequency >> 8) as u8 & 0x07)
             }
@@ -468,7 +473,7 @@ impl Apu {
                     | ((self.ch2.envelope.add as u8) << 3)
                     | self.ch2.envelope.period
             }
-            0xFF18 => (self.ch2.frequency & 0xFF) as u8,
+            0xFF18 => self.ch2.freq_lo,
             0xFF19 => {
                 ((self.ch2.length_enable as u8) << 6) | ((self.ch2.frequency >> 8) as u8 & 0x07)
             }
@@ -481,7 +486,7 @@ impl Apu {
             }
             0xFF1B => self.ch3.length,
             0xFF1C => (self.ch3.volume << 5) | 0x9F,
-            0xFF1D => (self.ch3.frequency & 0xFF) as u8,
+            0xFF1D => self.ch3.freq_lo,
             0xFF1E => {
                 ((self.ch3.length_enable as u8) << 6) | ((self.ch3.frequency >> 8) as u8 & 0x07)
             }
@@ -533,7 +538,10 @@ impl Apu {
                     self.ch1.enabled = false;
                 }
             }
-            0xFF13 => self.ch1.frequency = (self.ch1.frequency & 0x700) | val as u16,
+            0xFF13 => {
+                self.ch1.freq_lo = val;
+                self.ch1.frequency = (self.ch1.frequency & 0x700) | val as u16;
+            }
             0xFF14 => {
                 self.ch1.length_enable = val & 0x40 != 0;
                 self.ch1.frequency = (self.ch1.frequency & 0xFF) | (((val & 0x07) as u16) << 8);
@@ -552,7 +560,10 @@ impl Apu {
                     self.ch2.enabled = false;
                 }
             }
-            0xFF18 => self.ch2.frequency = (self.ch2.frequency & 0x700) | val as u16,
+            0xFF18 => {
+                self.ch2.freq_lo = val;
+                self.ch2.frequency = (self.ch2.frequency & 0x700) | val as u16;
+            }
             0xFF19 => {
                 self.ch2.length_enable = val & 0x40 != 0;
                 self.ch2.frequency = (self.ch2.frequency & 0xFF) | (((val & 0x07) as u16) << 8);
@@ -563,7 +574,10 @@ impl Apu {
             0xFF1A => self.ch3.dac_enabled = val & 0x80 != 0,
             0xFF1B => self.ch3.length = val,
             0xFF1C => self.ch3.volume = (val >> 5) & 0x03,
-            0xFF1D => self.ch3.frequency = (self.ch3.frequency & 0x700) | val as u16,
+            0xFF1D => {
+                self.ch3.freq_lo = val;
+                self.ch3.frequency = (self.ch3.frequency & 0x700) | val as u16;
+            }
             0xFF1E => {
                 self.ch3.length_enable = val & 0x40 != 0;
                 self.ch3.frequency = (self.ch3.frequency & 0xFF) | (((val & 0x07) as u16) << 8);
