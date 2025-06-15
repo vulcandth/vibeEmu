@@ -362,10 +362,14 @@ impl Ppu {
                     if !(0i16..160i16).contains(&sx) || drawn[sx as usize] {
                         continue;
                     }
-                    if self.cgb && self.line_priority[sx as usize] {
+                    let bg_zero = if self.lcdc & 0x01 == 0 {
+                        true
+                    } else {
+                        self.line_color_zero[sx as usize]
+                    };
+                    if self.cgb && self.line_priority[sx as usize] && !bg_zero {
                         continue;
                     }
-                    let bg_zero = self.line_color_zero[sx as usize];
                     if s.flags & 0x80 != 0 && !bg_zero {
                         continue;
                     }

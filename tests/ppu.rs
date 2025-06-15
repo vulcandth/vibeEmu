@@ -139,6 +139,28 @@ fn sprite_x_priority() {
 }
 
 #[test]
+fn obj_priority_color0() {
+    let mut ppu = Ppu::new();
+    ppu.write_reg(0xFF40, 0x83); // LCD on, BG and OBJ
+    ppu.write_reg(0xFF47, 0xE4);
+    ppu.write_reg(0xFF48, 0xE4);
+    // BG tile -> color 0
+    ppu.vram[0][0] = 0x00;
+    ppu.vram[0][1] = 0x00;
+    ppu.vram[0][0x1800] = 0x00;
+    // sprite tile -> color 1
+    ppu.vram[0][16] = 0xFF;
+    ppu.vram[0][17] = 0x00;
+    ppu.oam[0] = 16;
+    ppu.oam[1] = 8;
+    ppu.oam[2] = 1;
+    ppu.oam[3] = 0x80; // behind BG
+    let mut if_reg = 0u8;
+    ppu.step(456, &mut if_reg);
+    assert_eq!(ppu.framebuffer[0], 0x008BAC0F);
+}
+
+#[test]
 fn cgb_bg_attr_priority() {
     let mut ppu = Ppu::new_with_mode(true);
     ppu.write_reg(0xFF40, 0x93); // BG and OBJ
