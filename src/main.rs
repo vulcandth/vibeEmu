@@ -113,13 +113,13 @@ fn main() {
             if window.is_key_down(Key::Down) {
                 state &= !0x08;
             }
-            if window.is_key_down(Key::Z) {
+            if window.is_key_down(Key::S) {
                 state &= !0x10;
             }
-            if window.is_key_down(Key::X) {
+            if window.is_key_down(Key::A) {
                 state &= !0x20;
             }
-            if window.is_key_down(Key::Backspace) {
+            if window.is_key_down(Key::LeftShift) || window.is_key_down(Key::RightShift) {
                 state &= !0x40;
             }
             if window.is_key_down(Key::Enter) {
