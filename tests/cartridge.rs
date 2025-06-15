@@ -1,6 +1,6 @@
 use std::fs;
 use tempfile::tempdir;
-use vibeEmu::cartridge::Cartridge;
+use vibeEmu::cartridge::{Cartridge, MbcType};
 
 #[test]
 fn battery_ram_saved_to_disk() {
@@ -19,4 +19,14 @@ fn battery_ram_saved_to_disk() {
     let save_path = rom_path.with_extension("sav");
     let data = fs::read(save_path).unwrap();
     assert_eq!(data[0], 0xAA);
+}
+
+#[test]
+fn mbc30_header_detection() {
+    let mut rom = vec![0u8; 0x8000];
+    rom[0x0147] = 0x13; // MBC3 + RAM + Battery
+    rom[0x0149] = 0x05; // 64KB RAM -> MBC30
+
+    let cart = Cartridge::load(rom);
+    assert_eq!(cart.mbc, MbcType::Mbc30);
 }
