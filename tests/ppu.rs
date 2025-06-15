@@ -232,3 +232,33 @@ fn cgb_bg_bank_select() {
     ppu.step(456, &mut if_reg);
     assert_eq!(ppu.framebuffer[0], 0x00FF0000);
 }
+
+#[test]
+fn cgb_obj_palette_autoinc_read() {
+    let mut ppu = Ppu::new_with_mode(true);
+    // write two values with auto-increment
+    ppu.write_reg(0xFF6A, 0x80); // index 0, auto inc
+    ppu.write_reg(0xFF6B, 0x11);
+    ppu.write_reg(0xFF6B, 0x22);
+
+    // read back with auto-increment
+    ppu.write_reg(0xFF6A, 0x80); // index 0, auto inc
+    assert_eq!(ppu.read_reg(0xFF6B), 0x11);
+    assert_eq!(ppu.read_reg(0xFF6A) & 0x3F, 1);
+    assert_eq!(ppu.read_reg(0xFF6B), 0x22);
+    assert_eq!(ppu.read_reg(0xFF6A) & 0x3F, 2);
+}
+
+#[test]
+fn cgb_bg_palette_autoinc_read() {
+    let mut ppu = Ppu::new_with_mode(true);
+    ppu.write_reg(0xFF68, 0x80); // index 0, auto inc
+    ppu.write_reg(0xFF69, 0x33);
+    ppu.write_reg(0xFF69, 0x44);
+
+    ppu.write_reg(0xFF68, 0x80); // index 0, auto inc
+    assert_eq!(ppu.read_reg(0xFF69), 0x33);
+    assert_eq!(ppu.read_reg(0xFF68) & 0x3F, 1);
+    assert_eq!(ppu.read_reg(0xFF69), 0x44);
+    assert_eq!(ppu.read_reg(0xFF68) & 0x3F, 2);
+}
