@@ -185,7 +185,24 @@ impl Ppu {
 
     pub fn write_reg(&mut self, addr: u16, val: u8) {
         match addr {
-            0xFF40 => self.lcdc = val,
+            0xFF40 => {
+                let was_on = self.lcdc & 0x80 != 0;
+                self.lcdc = val;
+                let now_on = self.lcdc & 0x80 != 0;
+                if !was_on && now_on {
+                    // LCD turned on: start scanning from the top
+                    self.mode = 2;
+                    self.mode_clock = 0;
+                    self.ly = 0;
+                    self.frame_ready = false;
+                } else if was_on && !now_on {
+                    // LCD turned off: reset PPU state
+                    self.mode = 0;
+                    self.mode_clock = 0;
+                    self.ly = 0;
+                    self.frame_ready = false;
+                }
+            }
             0xFF41 => self.stat = (self.stat & 0x07) | (val & 0xF8),
             0xFF42 => self.scy = val,
             0xFF43 => self.scx = val,
