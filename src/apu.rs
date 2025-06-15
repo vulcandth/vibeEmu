@@ -3,6 +3,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 const CPU_CLOCK_HZ: u32 = 4_194_304;
+// 512 Hz frame sequencer tick (not doubled in CGB mode)
+const FRAME_SEQUENCER_PERIOD: u32 = 8192;
 const VOLUME_FACTOR: i16 = 64;
 
 #[derive(Default, Clone, Copy)]
@@ -16,11 +18,9 @@ struct Envelope {
 
 impl Envelope {
     fn clock(&mut self) {
-        if self.period == 0 {
-            return;
-        }
+        let period = if self.period == 0 { 8 } else { self.period };
         if self.timer == 0 {
-            self.timer = self.period;
+            self.timer = period;
             if self.add && self.volume < 15 {
                 self.volume += 1;
             } else if !self.add && self.volume > 0 {
@@ -36,7 +36,7 @@ impl Envelope {
         self.volume = self.initial;
         self.period = val & 0x07;
         self.add = val & 0x08 != 0;
-        self.timer = self.period;
+        self.timer = if self.period == 0 { 8 } else { self.period };
     }
 }
 
@@ -52,7 +52,7 @@ struct Sweep {
 
 impl Sweep {
     fn clock(&mut self, ch: &mut SquareChannel) {
-        if !self.enabled || self.period == 0 {
+        if !self.enabled {
             return;
         }
         if self.timer == 0 {
@@ -160,7 +160,7 @@ impl SquareChannel {
 
     fn clock_sweep(&mut self) {
         if let Some(sweep) = self.sweep.as_mut() {
-            if !sweep.enabled || sweep.period == 0 {
+            if !sweep.enabled {
                 return;
             }
             if sweep.timer == 0 {
@@ -642,8 +642,8 @@ impl Apu {
     pub fn step(&mut self, cycles: u16) {
         let cycles = cycles as u32;
         self.seq_counter += cycles;
-        while self.seq_counter >= 8192 {
-            self.seq_counter -= 8192;
+        while self.seq_counter >= FRAME_SEQUENCER_PERIOD {
+            self.seq_counter -= FRAME_SEQUENCER_PERIOD;
             let step = self.sequencer.advance();
             self.clock_frame_sequencer(step);
         }
