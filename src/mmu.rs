@@ -59,7 +59,11 @@ impl Mmu {
     }
 
     pub fn load_cart(&mut self, cart: Cartridge) {
+        let is_dmg = !cart.cgb;
         self.cart = Some(cart);
+        if self.cgb_mode && is_dmg {
+            self.ppu.apply_dmg_compatibility_palettes();
+        }
     }
 
     pub fn save_cart_ram(&self) {
