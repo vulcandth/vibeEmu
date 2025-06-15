@@ -791,12 +791,12 @@ Implementing a full emulator is complex – breaking it into manageable pieces w
 
 - [ ] **Full DMG/CGB Support & Refinements** – *Dep: All components implemented.*
   
-  - [ ] Ensure CGB mode differences are handled:  
-    
-    * [ ] Double speed mode: When enabled, the CPU will execute instructions effectively twice as fast relative to PPU and APU. Implementation: we can simply halve the number of cycles the PPU/APU think have passed relative to CPU instructions, or conceptually double the CPU clock and adjust timer, etc. Alternatively, treat our normal cycle as 2 T-cycles in double speed. In practice, you might introduce a `cpu_speed` factor of 1 or 2. When 2, the PPU and Timer should get half the ticks per CPU instruction. Another way: if double speed, PPU, timer, etc. run on every *other* CPU cycle. We need to be careful to emulate how DIV behaves (it ticks at same real-time freq, meaning in double speed it increments every 2x cycles).  
-    * [ ] We already handled VRAM banking, WRAM banking, and extra palettes.  
-    * [ ] OAM bug is *not present* on CGB[gbdev.io](https://gbdev.io/pandocs/OAM_Corruption_Bug.html#:~:text=Objects%200%20and%201%20,not%20affected%20by%20this%20bug), but present on DMG/Pocket. If we choose to emulate OAM bug, only apply if model is DMG/MGB. This bug can likely be deferred or made optional because few games rely on it (mostly homebrew tests).  
-    * [ ] Infrared: CGB has an IR port (register RP at FF56). We can ignore or stub (always not connected).  
+  - [ ] Ensure CGB mode differences are handled:
+
+    * [x] Double speed mode: When enabled, the CPU will execute instructions effectively twice as fast relative to PPU and APU. Implementation: we can simply halve the number of cycles the PPU/APU think have passed relative to CPU instructions, or conceptually double the CPU clock and adjust timer, etc. Alternatively, treat our normal cycle as 2 T-cycles in double speed. In practice, you might introduce a `cpu_speed` factor of 1 or 2. When 2, the PPU and Timer should get half the ticks per CPU instruction. Another way: if double speed, PPU, timer, etc. run on every *other* CPU cycle. We need to be careful to emulate how DIV behaves (it ticks at same real-time freq, meaning in double speed it increments every 2x cycles).
+    * [x] We already handled VRAM banking, WRAM banking, and extra palettes.
+    * [ ] OAM bug is *not present* on CGB[gbdev.io](https://gbdev.io/pandocs/OAM_Corruption_Bug.html#:~:text=Objects%200%20and%201%20,not%20affected%20by%20this%20bug), but present on DMG/Pocket. If we choose to emulate OAM bug, only apply if model is DMG/MGB. This bug can likely be deferred or made optional because few games rely on it (mostly homebrew tests).
+    * [x] Infrared: CGB has an IR port (register RP at FF56). We can ignore or stub (always not connected).
     * [ ] Prepare for other model specifics: (If implementing SGB later, that would involve high-level emulation, not needed now.)
   
   - [ ] **Link Cable planning**:  

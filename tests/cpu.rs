@@ -223,3 +223,22 @@ fn stop_speed_switch() {
     assert!(cpu.double_speed);
     assert_eq!(cpu.pc, 2);
 }
+
+#[test]
+fn double_speed_timer_scaling() {
+    // STOP to switch speed, then NOP
+    let program = vec![0x10, 0x00, 0x00];
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    let mut mmu = Mmu::new_with_mode(true);
+    mmu.load_cart(Cartridge::load(program));
+    mmu.key1 = 0x01;
+
+    cpu.step(&mut mmu); // STOP
+    let div_before = mmu.timer.div;
+    cpu.step(&mut mmu); // NOP
+
+    assert!(cpu.double_speed);
+    // In double speed, hardware advances half the cycles (2) for a NOP
+    assert_eq!(mmu.timer.div.wrapping_sub(div_before), 2);
+}
