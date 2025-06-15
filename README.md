@@ -23,7 +23,7 @@ The emulator expects the path to a ROM file. The command below will start the em
 cargo run -- path/to/rom.gb
 ```
 
-Pass `--dmg` to force DMG mode or `--serial` to run in serial test mode.
+Pass `--dmg` to force DMG mode, `--cgb` to force CGB mode, or `--serial` to run in serial test mode.
 
 Test ROMs used for development are located in the `roms/` directory.
 

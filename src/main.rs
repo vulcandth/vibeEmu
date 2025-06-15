@@ -22,8 +22,12 @@ struct Args {
     rom: Option<std::path::PathBuf>,
 
     /// Force DMG mode
-    #[arg(long)]
+    #[arg(long, conflicts_with = "cgb")]
     dmg: bool,
+
+    /// Force CGB mode
+    #[arg(long, conflicts_with = "dmg")]
+    cgb: bool,
 
     /// Run in serial test mode
     #[arg(long)]
@@ -64,7 +68,13 @@ fn main() {
         }
     };
 
-    let cgb_mode = if args.dmg { false } else { cart.cgb };
+    let cgb_mode = if args.dmg {
+        false
+    } else if args.cgb {
+        true
+    } else {
+        cart.cgb
+    };
     let mut gb = gameboy::GameBoy::new_with_mode(cgb_mode);
     gb.mmu.load_cart(cart);
 

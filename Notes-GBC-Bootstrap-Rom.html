@@ -1,0 +1,2831 @@
+<!DOCTYPE html>
+<html class="client-nojs" lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8"/>
+<title>Notes:Game Boy Color Bootstrap ROM - The Cutting Room Floor</title>
+<script>document.documentElement.className="client-js";RLCONF={"wgCanonicalNamespace":"Notes","wgCanonicalSpecialPageName":!1,"wgNamespaceNumber":100,"wgPageName":"Notes:Game_Boy_Color_Bootstrap_ROM","wgTitle":"Game Boy Color Bootstrap ROM","wgCurRevisionId":1256473,"wgRevisionId":1256473,"wgArticleId":180304,"wgIsArticle":!0,"wgIsRedirect":!1,"wgAction":"view","wgUserName":null,"wgUserGroups":["*"],"wgCategories":["Game notes"],"wgBreakFrames":!1,"wgPageContentLanguage":"en","wgPageContentModel":"wikitext","wgSeparatorTransformTable":["",""],"wgDigitTransformTable":["",""],"wgDefaultDateFormat":"dmy","wgMonthNames":["","January","February","March","April","May","June","July","August","September","October","November","December"],"wgMonthNamesShort":["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"],"wgRelevantPageName":"Notes:Game_Boy_Color_Bootstrap_ROM","wgRelevantArticleId":180304,"wgRequestId":"448998def7575e752ce8bbb8","wgCSPNonce":!1,
+"wgIsProbablyEditable":!1,"wgRelevantPageIsProbablyEditable":!1,"wgRestrictionEdit":[],"wgRestrictionMove":[],"wgULSAcceptLanguageList":["en-us","en","es"],"wgULSCurrentAutonym":"English","simpleBatchUploadMaxFilesPerBatch":{"*":1000}};RLSTATE={"site.styles":"ready","noscript":"ready","user.styles":"ready","user":"ready","user.options":"ready","user.tokens":"loading","mediawiki.legacy.shared":"ready","mediawiki.legacy.commonPrint":"ready","ext.uls.pt":"ready","mediawiki.skinning.interface":"ready","skins.vector.styles":"ready"};RLPAGEMODULES=["site","mediawiki.page.startup","mediawiki.page.ready","mediawiki.searchSuggest","ext.uls.interface","skins.vector.js"];</script>
+<script>(RLQ=window.RLQ||[]).push(function(){mw.loader.implement("user.tokens@tffin",function($,jQuery,require,module){/*@nomin*/mw.user.tokens.set({"editToken":"+\\","patrolToken":"+\\","watchToken":"+\\","csrfToken":"+\\"});
+});});</script>
+<link rel="stylesheet" href="/load.php?lang=en&amp;modules=ext.uls.pt%7Cmediawiki.legacy.commonPrint%2Cshared%7Cmediawiki.skinning.interface%7Cskins.vector.styles&amp;only=styles&amp;skin=vector"/>
+<script async="" src="/load.php?lang=en&amp;modules=startup&amp;only=scripts&amp;raw=1&amp;skin=vector"></script>
+<meta name="ResourceLoaderDynamicStyles" content=""/>
+<link rel="stylesheet" href="/load.php?lang=en&amp;modules=site.styles&amp;only=styles&amp;skin=vector"/>
+<meta name="generator" content="MediaWiki 1.34.0"/>
+<link rel="shortcut icon" href="/images/c/c4/SMB2-smiley.png"/>
+<link rel="search" type="application/opensearchdescription+xml" href="/opensearch_desc.php" title="The Cutting Room Floor (en)"/>
+<link rel="EditURI" type="application/rsd+xml" href="https://tcrf.net/api.php?action=rsd"/>
+<link rel="license" href="https://creativecommons.org/licenses/by/3.0/"/>
+<link rel="alternate" type="application/atom+xml" title="The Cutting Room Floor Atom feed" href="/index.php?title=Special:RecentChanges&amp;feed=atom"/>
+<!--[if lt IE 9]><script src="/resources/lib/html5shiv/html5shiv.js"></script><![endif]-->
+</head>
+<body class="mediawiki ltr sitedir-ltr mw-hide-empty-elt ns-100 ns-subject page-Notes_Game_Boy_Color_Bootstrap_ROM rootpage-Notes_Game_Boy_Color_Bootstrap_ROM skin-vector action-view">
+<div id="mw-page-base" class="noprint"></div>
+<div id="mw-head-base" class="noprint"></div>
+<div id="content" class="mw-body" role="main">
+	<a id="top"></a>
+	<div id="siteNotice" class="mw-body-content"><div id="localNotice" lang="en" dir="ltr"><div class="msgbox" style="border: 1px solid #4a4; background: #efe; padding: 0.5em 1em 0.5em 1em; color: #171; text-align: center; margin-bottom: 0.5em; margin-top: 0.5em;">
+<b>We have been working to mitigate <a class="external text" href="https://blog.xkeeper.net/uncategorized/tcrf-has-been-getting-ddosed/">ongoing DDoS attacks</a>.</b> Thank you for your patience.<br />Please consider supporting us on <a class="external text" href="https://www.patreon.com/tcrfwiki">Patreon</a>. <br /></div></div></div>
+	<div class="mw-indicators mw-body-content">
+</div>
+
+	<h1 id="firstHeading" class="firstHeading" lang="en">Notes:Game Boy Color Bootstrap ROM</h1>
+	
+	<div id="bodyContent" class="mw-body-content">
+		<div id="siteSub" class="noprint">From The Cutting Room Floor</div>
+		<div id="contentSub"></div>
+		
+		
+		
+		<div id="jump-to-nav"></div>
+		<a class="mw-jump-link" href="#mw-head">Jump to navigation</a>
+		<a class="mw-jump-link" href="#p-search">Jump to search</a>
+		<div id="mw-content-text" lang="en" dir="ltr" class="mw-content-ltr"><div class="mw-parser-output"><blockquote><p><b>This page contains notes for the game <i><a href="/Game_Boy_Color_Bootstrap_ROM" title="Game Boy Color Bootstrap ROM">Game Boy Color Bootstrap ROM</a></i>.</b></p></blockquote>
+<p>To complement the unused palettes documented on the main page, the many <i>used</i> palettes are documented here.
+</p>
+<h2><span class="mw-headline" id="Manual_Select_Palette_Configurations">Manual Select Palette Configurations</span></h2>
+<p>A total of twelve palette configurations are in here. Six of these are unique to the manual selection mode and are <u>underlined</u> in the table. The button combinations trigger the respective configuration and are previewed in the respective shades while the Nintendo Game Boy Color logo is still being displayed on the screen.
+</p><p>The entries are listed here in the order they are stored in the ROM.
+</p>
+<center>
+<table class="wikitable" style="text-align: center; width: 50%;">
+
+<tbody><tr>
+<th>Button&#160;Combo
+</th>
+<th>Entry
+</th>
+<th>Shuffling flags
+</th>
+<th>Palettes
+</th>
+<th>Color 0x00
+</th>
+<th>Color 0x01
+</th>
+<th>Color 0x02
+</th>
+<th>Color 0x03
+</th>
+<th colspan="2">Preview Shades
+</th></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Up</li></ul>
+</td>
+<td rowspan="3">0x12
+</td>
+<td rowspan="3">0x00
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td rowspan="3" style="background-color: #F7C5A5; color: #000000;">0xF7C5A5
+</td>
+<td rowspan="3" style="background-color: #843100; color: #FFFFFF;">0x843100
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>A + Up</li></ul>
+</td>
+<td rowspan="3"><u>0x10</u>
+</td>
+<td rowspan="3"><u>0x05</u>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td rowspan="3" style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td rowspan="3" style="background-color: #E60000; color: #000000;">0xE60000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #008400; color: #FFFFFF;">0x008400
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>B + Up</li></ul>
+</td>
+<td rowspan="3"><u>0x19</u>
+</td>
+<td rowspan="3"><u>0x03</u>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFE6C5; color: #000000;">0xFFE6C5
+</td>
+<td style="background-color: #CE9C84; color: #000000;">0xCE9C84
+</td>
+<td style="background-color: #846B29; color: #FFFFFF;">0x846B29
+</td>
+<td style="background-color: #5A3108; color: #FFFFFF;">0x5A3108
+</td>
+<td rowspan="3" style="background-color: #A58452; color: #000000;">0xA58452
+</td>
+<td rowspan="3" style="background-color: #6B5231; color: #FFFFFF;">0x6B5231
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Left</li></ul>
+</td>
+<td rowspan="3"><u>0x18</u>
+</td>
+<td rowspan="3"><u>0x05</u>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td rowspan="3" style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td rowspan="3" style="background-color: #0000FF; color: #000000;">0x0000FF
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #008400; color: #FFFFFF;">0x008400
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>A + Left</li></ul>
+</td>
+<td rowspan="3">0x0D
+</td>
+<td rowspan="3">0x05
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #8C8CDE; color: #000000;">0x8C8CDE
+</td>
+<td style="background-color: #52528C; color: #FFFFFF;">0x52528C
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td rowspan="3" style="background-color: #8C8CDE; color: #000000;">0x8C8CDE
+</td>
+<td rowspan="3" style="background-color: #52528C; color: #FFFFFF;">0x52528C
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>B + Left</li></ul>
+</td>
+<td rowspan="3">0x16
+</td>
+<td rowspan="3">0x00
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #A5A5A5; color: #000000;">0xA5A5A5
+</td>
+<td style="background-color: #525252; color: #FFFFFF;">0x525252
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td rowspan="3" style="background-color: #949494; color: #000000;">0x949494
+</td>
+<td rowspan="3" style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #A5A5A5; color: #000000;">0xA5A5A5
+</td>
+<td style="background-color: #525252; color: #FFFFFF;">0x525252
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #A5A5A5; color: #000000;">0xA5A5A5
+</td>
+<td style="background-color: #525252; color: #FFFFFF;">0x525252
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Down</li></ul>
+</td>
+<td rowspan="3"><u>0x17</u>
+</td>
+<td rowspan="3"><u>0x00</u>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFA5; color: #000000;">0xFFFFA5
+</td>
+<td style="background-color: #FF9494; color: #000000;">0xFF9494
+</td>
+<td style="background-color: #9494FF; color: #000000;">0x9494FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td rowspan="3" style="background-color: #FFFFA5; color: #000000;">0xFFFFA5
+</td>
+<td rowspan="3" style="background-color: #FF00FF; color: #000000;">0xFF00FF
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFA5; color: #000000;">0xFFFFA5
+</td>
+<td style="background-color: #FF9494; color: #000000;">0xFF9494
+</td>
+<td style="background-color: #9494FF; color: #000000;">0x9494FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFA5; color: #000000;">0xFFFFA5
+</td>
+<td style="background-color: #FF9494; color: #000000;">0xFF9494
+</td>
+<td style="background-color: #9494FF; color: #000000;">0x9494FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>A + Down</li></ul>
+</td>
+<td rowspan="3">0x07
+</td>
+<td rowspan="3">0x00
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td rowspan="3" style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td rowspan="3" style="background-color: #FF0000; color: #000000;">0xFF0000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>B + Down</li></ul>
+</td>
+<td rowspan="3"><u>0x1A</u>
+</td>
+<td rowspan="3"><u>0x05</u>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #7B4A00; color: #FFFFFF;">0x7B4A00
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td rowspan="3" style="background-color: #FFFF3A; color: #000000;">0xFFFF3A
+</td>
+<td rowspan="3" style="background-color: #3A2900; color: #FFFFFF;">0x3A2900
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #008400; color: #FFFFFF;">0x008400
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Right</li></ul>
+</td>
+<td rowspan="3"><u>0x05</u>
+</td>
+<td rowspan="3"><u>0x00</u>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #52FF00; color: #000000;">0x52FF00
+</td>
+<td style="background-color: #FF4200; color: #000000;">0xFF4200
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td rowspan="3" style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td rowspan="3" style="background-color: #FF0000; color: #000000;">0xFF0000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #52FF00; color: #000000;">0x52FF00
+</td>
+<td style="background-color: #FF4200; color: #000000;">0xFF4200
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #52FF00; color: #000000;">0x52FF00
+</td>
+<td style="background-color: #FF4200; color: #000000;">0xFF4200
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>A + Right</li></ul>
+</td>
+<td rowspan="3">0x1C
+</td>
+<td rowspan="3">0x03
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #0063C5; color: #FFFFFF;">0x0063C5
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td rowspan="3" style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td rowspan="3" style="background-color: #0000FF; color: #000000;">0x0000FF
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3" style="text-align: left;">
+<ul><li>B + Right</li></ul>
+</td>
+<td rowspan="3">0x13
+</td>
+<td rowspan="3">0x00
+</td>
+<td>BG
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td style="background-color: #008484; color: #FFFFFF;">0x008484
+</td>
+<td style="background-color: #FFDE00; color: #000000;">0xFFDE00
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td rowspan="3" style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td rowspan="3" style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td style="background-color: #008484; color: #FFFFFF;">0x008484
+</td>
+<td style="background-color: #FFDE00; color: #000000;">0xFFDE00
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td style="background-color: #008484; color: #FFFFFF;">0x008484
+</td>
+<td style="background-color: #FFDE00; color: #000000;">0xFFDE00
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td></tr>
+</tbody></table></center>
+<p><br />
+</p>
+<div style="text-align:right;font-size:smaller;"><i>(Source: <a class="external text" href="https://github.com/ISSOtm/gb-bootroms/blob/45a21c573d7aec7efd15f8745479e09c30463bc7/src/cgb.asm#L1260-L1412">boot ROM disassembly</a>)</i></div>
+<h2><span class="mw-headline" id="Assigned_Palette_Configurations">Assigned Palette Configurations</span></h2>
+<p>There are a total of 45 unique palette configurations in here, six of which are shared with the <a href="#Manual_Select_Palette_Configurations">Manual Select Palette Configurations</a>. The <i>hash</i> column contains all hashes (and disambiguation characters in parentheses) that result in the respective entry being chosen, the games for which are listed as well.
+</p><p>Notice that entry <span style="font-size: 110%; font-family: Consolas, DejaVu Sans Mono, Droid Sans Mono, Lucida Console, Courier New, monospace;"><b>0x1C</b></span>, flags <span style="font-size: 110%; font-family: Consolas, DejaVu Sans Mono, Droid Sans Mono, Lucida Console, Courier New, monospace;"><b>0x03</b></span>, hash <span style="font-size: 110%; font-family: Consolas, DejaVu Sans Mono, Droid Sans Mono, Lucida Console, Courier New, monospace;"><b>0x00</b></span> is actually a dummy entry, used for all games that are not found in the hash table or don't have a Nintendo Licensee code.
+</p>
+<center>
+<table class="wikitable" style="text-align: center; width: 80%;">
+
+<tbody><tr>
+<th>Entry
+</th>
+<th>Shuffling flags
+</th>
+<th>Hashes
+</th>
+<th>Games
+</th>
+<th>Palettes
+</th>
+<th>Color 0
+</th>
+<th>Color 1
+</th>
+<th>Color 2
+</th>
+<th>Color 3
+</th></tr>
+<tr>
+<td rowspan="6">0x00
+</td>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0xB3 ('U')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Moguranya (Japan)</li>
+<li>Mole Mania (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #ADAD84; color: #000000;">0xADAD84
+</td>
+<td style="background-color: #42737B; color: #FFFFFF;">0x42737B
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF7300; color: #000000;">0xFF7300
+</td>
+<td style="background-color: #944200; color: #FFFFFF;">0x944200
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF7300; color: #000000;">0xFF7300
+</td>
+<td style="background-color: #944200; color: #FFFFFF;">0x944200
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x59</li>
+<li>0xC6 ('A')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Game Boy Wars (Japan)</li>
+<li>Wario Land - Super Mario Land 3 (World)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #ADAD84; color: #000000;">0xADAD84
+</td>
+<td style="background-color: #42737B; color: #FFFFFF;">0x42737B
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF7300; color: #000000;">0xFF7300
+</td>
+<td style="background-color: #944200; color: #FFFFFF;">0x944200
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #5ABDFF; color: #000000;">0x5ABDFF
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td></tr>
+<tr>
+<td rowspan="6">0x01
+</td>
+<td rowspan="3">0x00
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x8C</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Radar Mission (Japan)</li>
+<li>Radar Mission (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFF9C; color: #000000;">0xFFFF9C
+</td>
+<td style="background-color: #94B5FF; color: #000000;">0x94B5FF
+</td>
+<td style="background-color: #639473; color: #000000;">0x639473
+</td>
+<td style="background-color: #003A3A; color: #FFFFFF;">0x003A3A
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFF9C; color: #000000;">0xFFFF9C
+</td>
+<td style="background-color: #94B5FF; color: #000000;">0x94B5FF
+</td>
+<td style="background-color: #639473; color: #000000;">0x639473
+</td>
+<td style="background-color: #003A3A; color: #FFFFFF;">0x003A3A
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFF9C; color: #000000;">0xFFFF9C
+</td>
+<td style="background-color: #94B5FF; color: #000000;">0x94B5FF
+</td>
+<td style="background-color: #639473; color: #000000;">0x639473
+</td>
+<td style="background-color: #003A3A; color: #FFFFFF;">0x003A3A
+</td></tr>
+<tr>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x86</li>
+<li>0xA8</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Donkey Kong Land (USA, Europe)</li>
+<li>Super Donkey Kong GB (Japan)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFF9C; color: #000000;">0xFFFF9C
+</td>
+<td style="background-color: #94B5FF; color: #000000;">0x94B5FF
+</td>
+<td style="background-color: #639473; color: #000000;">0x639473
+</td>
+<td style="background-color: #003A3A; color: #FFFFFF;">0x003A3A
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFC542; color: #000000;">0xFFC542
+</td>
+<td style="background-color: #FFD600; color: #000000;">0xFFD600
+</td>
+<td style="background-color: #943A00; color: #FFFFFF;">0x943A00
+</td>
+<td style="background-color: #4A0000; color: #FFFFFF;">0x4A0000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x02
+</td>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0xBF ('C')</li>
+<li>0xCE</li>
+<li>0xD1</li>
+<li>0xF0</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Soccer (Europe) (En,Fr,De)</li>
+<li>Tennis (World)</li>
+<li>Top Rank Tennis (USA)</li>
+<li>Top Ranking Tennis (Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #6BFF00; color: #000000;">0x6BFF00
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF524A; color: #000000;">0xFF524A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x36</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Baseball (World)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #52DE00; color: #FFFFFF;">0x52DE00
+</td>
+<td style="background-color: #FF8400; color: #000000;">0xFF8400
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x04
+</td>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x34</li>
+<li>0x66 ('E')</li>
+<li>0xF4 (' ')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Game &amp; Watch Gallery (Europe)</li>
+<li>Game &amp; Watch Gallery (USA)</li>
+<li>Game &amp; Watch Gallery (USA) (Rev A)</li>
+<li>Game Boy Gallery (Japan)</li>
+<li>Game Boy Gallery 2 (Australia)</li>
+<li>Game Boy Gallery 2 (Japan)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF00; color: #000000;">0x7BFF00
+</td>
+<td style="background-color: #B57300; color: #FFFFFF;">0xB57300
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="6">0x05
+</td>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x3D</li>
+<li>0x6A ('I')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Mario &amp; Yoshi (Europe)</li>
+<li>Yoshi (USA)</li>
+<li>Yoshi no Tamago (Japan)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #52FF00; color: #000000;">0x52FF00
+</td>
+<td style="background-color: #FF4200; color: #000000;">0xFF4200
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x04
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x95</li>
+<li>0xB3 ('R')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Tetris Attack (USA)</li>
+<li>Tetris Attack (USA, Europe) (Rev A)</li>
+<li>Yoshi no Panepon (Japan)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #52FF00; color: #000000;">0x52FF00
+</td>
+<td style="background-color: #FF4200; color: #000000;">0xFF4200
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #52FF00; color: #000000;">0x52FF00
+</td>
+<td style="background-color: #FF4200; color: #000000;">0xFF4200
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #5ABDFF; color: #000000;">0x5ABDFF
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td></tr>
+<tr>
+<td rowspan="9">0x06
+</td>
+<td rowspan="3">0x00
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x71</li>
+<li>0xFF</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Balloon Kid (USA, Europe)</li>
+<li>Tetris Blast (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF9C00; color: #000000;">0xFF9C00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF9C00; color: #000000;">0xFF9C00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF9C00; color: #000000;">0xFF9C00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x19</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Donkey Kong (World)</li>
+<li>Donkey Kong (World) (Rev A)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF9C00; color: #000000;">0xFF9C00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x04
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x3E</li>
+<li>0xE0</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Yoshi no Cookie (Japan)</li>
+<li>Yoshi's Cookie (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF9C00; color: #000000;">0xFF9C00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF9C00; color: #000000;">0xFF9C00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #5ABDFF; color: #000000;">0x5ABDFF
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td></tr>
+<tr>
+<td rowspan="6">0x07
+</td>
+<td rowspan="3">0x00
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x15</li>
+<li>0xDB</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Pocket Monsters - Pikachu (Japan) (Rev 0A)</li>
+<li>Pocket Monsters - Pikachu (Japan) (Rev B)</li>
+<li>Pocket Monsters - Pikachu (Japan) (Rev C)</li>
+<li>Pocket Monsters - Pikachu (Japan) (Rev D)</li>
+<li>Tetris (World)</li>
+<li>Tetris (World) (Rev A)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x04
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x0D ('R')</li>
+<li>0x69</li>
+<li>0xF2</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Qix (World)</li>
+<li>Tetris 2 (Europe)</li>
+<li>Tetris 2 (USA)</li>
+<li>Tetris Flash (Japan)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #5ABDFF; color: #000000;">0x5ABDFF
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td></tr>
+<tr>
+<td rowspan="9">0x08
+</td>
+<td rowspan="3">0x00
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x88</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Alleyway (World)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #A59CFF; color: #000000;">0xA59CFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #006300; color: #FFFFFF;">0x006300
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #A59CFF; color: #000000;">0xA59CFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #006300; color: #FFFFFF;">0x006300
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #A59CFF; color: #000000;">0xA59CFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #006300; color: #FFFFFF;">0x006300
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x1D</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Kirby no Pinball (Japan)</li>
+<li>Kirby's Pinball Land (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #A59CFF; color: #000000;">0xA59CFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #006300; color: #FFFFFF;">0x006300
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FF6352; color: #000000;">0xFF6352
+</td>
+<td style="background-color: #D60000; color: #FFFFFF;">0xD60000
+</td>
+<td style="background-color: #630000; color: #FFFFFF;">0x630000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FF6352; color: #000000;">0xFF6352
+</td>
+<td style="background-color: #D60000; color: #FFFFFF;">0xD60000
+</td>
+<td style="background-color: #630000; color: #FFFFFF;">0x630000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x27 ('B')</li>
+<li>0x49</li>
+<li>0x5C</li>
+<li>0xB3 ('B')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Hoshi no Kirby (Japan)</li>
+<li>Hoshi no Kirby (Japan) (Rev A)</li>
+<li>Hoshi no Kirby 2 (Japan)</li>
+<li>Kirby no Block Ball (Japan)</li>
+<li>Kirby's Block Ball (USA, Europe)</li>
+<li>Kirby's Dream Land (USA, Europe)</li>
+<li>Kirby's Dream Land 2 (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #A59CFF; color: #000000;">0xA59CFF
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #006300; color: #FFFFFF;">0x006300
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FF6352; color: #000000;">0xFF6352
+</td>
+<td style="background-color: #D60000; color: #FFFFFF;">0xD60000
+</td>
+<td style="background-color: #630000; color: #FFFFFF;">0x630000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFF7B; color: #000000;">0xFFFF7B
+</td>
+<td style="background-color: #0084FF; color: #000000;">0x0084FF
+</td></tr>
+<tr>
+<td rowspan="3">0x09
+</td>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0xC9</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Super Mario Land 2 - 6 Golden Coins (USA, Europe)</li>
+<li>Super Mario Land 2 - 6 Golden Coins (USA, Europe) (Rev A)</li>
+<li>Super Mario Land 2 - 6 Golden Coins (USA, Europe) (Rev B)</li>
+<li>Super Mario Land 2 - 6-tsu no Kinka (Japan)</li>
+<li>Super Mario Land 2 - 6-tsu no Kinka (Japan) (Rev B)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFCE; color: #000000;">0xFFFFCE
+</td>
+<td style="background-color: #63EFEF; color: #000000;">0x63EFEF
+</td>
+<td style="background-color: #9C8431; color: #FFFFFF;">0x9C8431
+</td>
+<td style="background-color: #5A5A5A; color: #FFFFFF;">0x5A5A5A
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF7300; color: #000000;">0xFF7300
+</td>
+<td style="background-color: #944200; color: #FFFFFF;">0x944200
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x0A
+</td>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x46 ('E')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Super Mario Land (World)</li>
+<li>Super Mario Land (World) (Rev A)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #B5B5FF; color: #000000;">0xB5B5FF
+</td>
+<td style="background-color: #FFFF94; color: #000000;">0xFFFF94
+</td>
+<td style="background-color: #AD5A42; color: #000000;">0xAD5A42
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td></tr>
+<tr>
+<td rowspan="9">0x0B
+</td>
+<td rowspan="3">0x01
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x61 ('E')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Pocket Monsters Ao (Japan)</li>
+<li>Pokemon - Blaue Edition (Germany)</li>
+<li>Pokemon - Blue Version (USA, Europe)</li>
+<li>Pokemon - Edicion Azul (Spain)</li>
+<li>Pokemon - Version Bleue (France)</li>
+<li>Pokemon - Versione Blu (Italy)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x02
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x3C</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Dr. Mario (World)</li>
+<li>Dr. Mario (World) (Rev A)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x4E</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Wave Race (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFFF7B; color: #000000;">0xFFFF7B
+</td>
+<td style="background-color: #0084FF; color: #000000;">0x0084FF
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td></tr>
+<tr>
+<td rowspan="9">0x0C
+</td>
+<td rowspan="3">0x02
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x9C</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Pinocchio (Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #8C8CDE; color: #000000;">0x8C8CDE
+</td>
+<td style="background-color: #52528C; color: #FFFFFF;">0x52528C
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #8C8CDE; color: #000000;">0x8C8CDE
+</td>
+<td style="background-color: #52528C; color: #FFFFFF;">0x52528C
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFC542; color: #000000;">0xFFC542
+</td>
+<td style="background-color: #FFD600; color: #000000;">0xFFD600
+</td>
+<td style="background-color: #943A00; color: #FFFFFF;">0x943A00
+</td>
+<td style="background-color: #4A0000; color: #FFFFFF;">0x4A0000
+</td></tr>
+<tr>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x0D ('E')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Pocket Bomberman (Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #8C8CDE; color: #000000;">0x8C8CDE
+</td>
+<td style="background-color: #52528C; color: #FFFFFF;">0x52528C
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFC542; color: #000000;">0xFFC542
+</td>
+<td style="background-color: #FFD600; color: #000000;">0xFFD600
+</td>
+<td style="background-color: #943A00; color: #FFFFFF;">0x943A00
+</td>
+<td style="background-color: #4A0000; color: #FFFFFF;">0x4A0000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFC542; color: #000000;">0xFFC542
+</td>
+<td style="background-color: #FFD600; color: #000000;">0xFFD600
+</td>
+<td style="background-color: #943A00; color: #FFFFFF;">0x943A00
+</td>
+<td style="background-color: #4A0000; color: #FFFFFF;">0x4A0000
+</td></tr>
+<tr>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x18 ('K')</li>
+<li>0x6A ('K')</li>
+<li>0x6B</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Donkey Kong Land (Japan)</li>
+<li>Donkey Kong Land 2 (USA, Europe)</li>
+<li>Donkey Kong Land III (USA, Europe)</li>
+<li>Donkey Kong Land III (USA, Europe) (Rev A)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #8C8CDE; color: #000000;">0x8C8CDE
+</td>
+<td style="background-color: #52528C; color: #FFFFFF;">0x52528C
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFC542; color: #000000;">0xFFC542
+</td>
+<td style="background-color: #FFD600; color: #000000;">0xFFD600
+</td>
+<td style="background-color: #943A00; color: #FFFFFF;">0x943A00
+</td>
+<td style="background-color: #4A0000; color: #FFFFFF;">0x4A0000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #5ABDFF; color: #000000;">0x5ABDFF
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td></tr>
+<tr>
+<td rowspan="9">0x0D
+</td>
+<td rowspan="3">0x01
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0xD3 ('R')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Kaeru no Tame ni Kane wa Naru (Japan)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #8C8CDE; color: #000000;">0x8C8CDE
+</td>
+<td style="background-color: #52528C; color: #FFFFFF;">0x52528C
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #8C8CDE; color: #000000;">0x8C8CDE
+</td>
+<td style="background-color: #52528C; color: #FFFFFF;">0x52528C
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0xBF (' ')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Kid Icarus - Of Myths and Monsters (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #8C8CDE; color: #000000;">0x8C8CDE
+</td>
+<td style="background-color: #52528C; color: #FFFFFF;">0x52528C
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x9D</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Killer Instinct (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #8C8CDE; color: #000000;">0x8C8CDE
+</td>
+<td style="background-color: #52528C; color: #FFFFFF;">0x52528C
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="6">0x0E
+</td>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x28 ('F')</li>
+<li>0x4B</li>
+<li>0x90</li>
+<li>0x9A</li>
+<li>0xBD</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Arcade Classic No. 1 - Asteroids &amp; Missile Command (USA, Europe)</li>
+<li>Golf (World)</li>
+<li>Nintendo World Cup (USA, Europe)</li>
+<li>Play Action Football (USA)</li>
+<li>Toy Story (Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #008400; color: #FFFFFF;">0x008400
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x17</li>
+<li>0x27 ('N')</li>
+<li>0x61 ('A')</li>
+<li>0x8B</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Magnetic Soccer (Europe)</li>
+<li>Mystic Quest (Europe)</li>
+<li>Mystic Quest (France)</li>
+<li>Mystic Quest (Germany)</li>
+<li>Othello (Europe)</li>
+<li>Vegas Stakes (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #008400; color: #FFFFFF;">0x008400
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="6">0x0F
+</td>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x39</li>
+<li>0x43</li>
+<li>0x97</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Chessmaster, The (Europe)</li>
+<li>Dynablaster (Europe)</li>
+<li>King of the Zoo (Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x01</li>
+<li>0x10</li>
+<li>0x29</li>
+<li>0x52</li>
+<li>0x5D</li>
+<li>0x68</li>
+<li>0x6D</li>
+<li>0xF6</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Adventures of Lolo (Europe)</li>
+<li>Arcade Classic No. 4 - Defender &amp; Joust (USA, Europe)</li>
+<li>Battle Arena Toshinden (USA)</li>
+<li>King of Fighters '95, The (USA)</li>
+<li>Mega Man - Dr. Wily's Revenge (Europe)</li>
+<li>Mega Man II (Europe)</li>
+<li>Mega Man III (Europe)</li>
+<li>Street Fighter II (USA, Europe) (Rev A)</li>
+<li>Super R.C. Pro-Am (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #008400; color: #FFFFFF;">0x008400
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x10
+</td>
+<td rowspan="3">0x01
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x14</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Game Boy Camera Gold (USA)</li>
+<li>Pocket Monsters Aka (Japan)</li>
+<li>Pocket Monsters Aka (Japan) (Rev A)</li>
+<li>Pokemon - Edicion Roja (Spain)</li>
+<li>Pokemon - Red Version (USA, Europe)</li>
+<li>Pokemon - Rote Edition (Germany)</li>
+<li>Pokemon - Version Rouge (France)</li>
+<li>Pokemon - Versione Rossa (Italy)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #008400; color: #FFFFFF;">0x008400
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x11
+</td>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x70</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Legend of Zelda, The - Link's Awakening (France)</li>
+<li>Legend of Zelda, The - Link's Awakening (Germany)</li>
+<li>Legend of Zelda, The - Link's Awakening (USA, Europe)</li>
+<li>Legend of Zelda, The - Link's Awakening (USA, Europe) (Rev A)</li>
+<li>Legend of Zelda, The - Link's Awakening (USA, Europe) (Rev B)</li>
+<li>Zelda no Densetsu - Yume o Miru Shima (Japan)</li>
+<li>Zelda no Densetsu - Yume o Miru Shima (Japan) (Rev A)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #00FF00; color: #000000;">0x00FF00
+</td>
+<td style="background-color: #318400; color: #FFFFFF;">0x318400
+</td>
+<td style="background-color: #004A00; color: #FFFFFF;">0x004A00
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="9">0x12
+</td>
+<td rowspan="3">0x00
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x0C</li>
+<li>0x16</li>
+<li>0x35</li>
+<li>0x67</li>
+<li>0x75</li>
+<li>0x92</li>
+<li>0x99</li>
+<li>0xB7</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>F-1 Race (World)</li>
+<li>F-1 Race (World) (Rev A)</li>
+<li>Game Boy Gallery (Europe)</li>
+<li>Kirby no Kirakira Kids (Japan)</li>
+<li>Kirby's Star Stacker (USA, Europe)</li>
+<li>Mario no Picross (Japan)</li>
+<li>Mario's Picross (USA, Europe)</li>
+<li>Nigel Mansell's World Championship Racing (Europe)</li>
+<li>Picross 2 (Japan)</li>
+<li>Yakuman (Japan)</li>
+<li>Yakuman (Japan) (Rev A)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0xA5 ('R')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Battletoads in Ragnarok's World (Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #008400; color: #FFFFFF;">0x008400
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #008400; color: #FFFFFF;">0x008400
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0xA2</li>
+<li>0xF7</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Boy and His Blob in the Rescue of Princess Blobette, A (Europe)</li>
+<li>Star Wars (USA, Europe) (Rev A)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #008400; color: #FFFFFF;">0x008400
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x13
+</td>
+<td rowspan="3">0x00
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x28 ('A')</li>
+<li>0xA5 ('A')</li>
+<li>0xE8</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Arcade Classic No. 3 - Galaga &amp; Galaxian (USA)</li>
+<li>Solar Striker (World)</li>
+<li>Space Invaders (Europe)</li>
+<li>Space Invaders (USA)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td style="background-color: #008484; color: #FFFFFF;">0x008484
+</td>
+<td style="background-color: #FFDE00; color: #000000;">0xFFDE00
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td style="background-color: #008484; color: #FFFFFF;">0x008484
+</td>
+<td style="background-color: #FFDE00; color: #000000;">0xFFDE00
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td>
+<td style="background-color: #008484; color: #FFFFFF;">0x008484
+</td>
+<td style="background-color: #FFDE00; color: #000000;">0xFFDE00
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td></tr>
+<tr>
+<td rowspan="3">0x14
+</td>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x46 ('R')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Metroid II - Return of Samus (World)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFF00; color: #000000;">0xFFFF00
+</td>
+<td style="background-color: #FF0000; color: #000000;">0xFF0000
+</td>
+<td style="background-color: #630000; color: #FFFFFF;">0x630000
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #008400; color: #FFFFFF;">0x008400
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x15
+</td>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0xD3 ('I')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Wario Land II (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #ADAD84; color: #000000;">0xADAD84
+</td>
+<td style="background-color: #42737B; color: #FFFFFF;">0x42737B
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFAD63; color: #000000;">0xFFAD63
+</td>
+<td style="background-color: #843100; color: #FFFFFF;">0x843100
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x16
+</td>
+<td rowspan="3">0x00
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x58</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>X (Japan)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #A5A5A5; color: #000000;">0xA5A5A5
+</td>
+<td style="background-color: #525252; color: #FFFFFF;">0x525252
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #A5A5A5; color: #000000;">0xA5A5A5
+</td>
+<td style="background-color: #525252; color: #FFFFFF;">0x525252
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #A5A5A5; color: #000000;">0xA5A5A5
+</td>
+<td style="background-color: #525252; color: #FFFFFF;">0x525252
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x1B
+</td>
+<td rowspan="3">0x00
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x6F</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Pocket Camera (Japan) (Rev A)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFCE00; color: #000000;">0xFFCE00
+</td>
+<td style="background-color: #9C6300; color: #FFFFFF;">0x9C6300
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFCE00; color: #000000;">0xFFCE00
+</td>
+<td style="background-color: #9C6300; color: #FFFFFF;">0x9C6300
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FFCE00; color: #000000;">0xFFCE00
+</td>
+<td style="background-color: #9C6300; color: #FFFFFF;">0x9C6300
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="9">0x1C
+</td>
+<td rowspan="3">0x01
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0xAA</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>James Bond 007 (USA, Europe)</li>
+<li>Pocket Monsters Midori (Japan)</li>
+<li>Pocket Monsters Midori (Japan) (Rev A)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #0063C5; color: #FFFFFF;">0x0063C5
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #0063C5; color: #FFFFFF;">0x0063C5
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x03
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0x00</li>
+<li>0x18 ('I')</li>
+<li>0x3F</li>
+<li>0x66 ('L')</li>
+<li>0xC6 (' ')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Arcade Classic No. 2 - Centipede &amp; Millipede (USA, Europe)</li>
+<li>Ken Griffey Jr. presents Major League Baseball (USA, Europe)</li>
+<li>Tetris Plus (USA, Europe)</li>
+<li>Wario Blast Featuring Bomberman! (USA, Europe)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #0063C5; color: #FFFFFF;">0x0063C5
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td rowspan="3">0x05
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>0xF4 ('-')</li></ul>
+</td>
+<td rowspan="3" style="text-align: left;">
+<ul><li>Pac-In-Time (USA)</li></ul>
+</td>
+<td>BG
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #7BFF31; color: #000000;">0x7BFF31
+</td>
+<td style="background-color: #0063C5; color: #FFFFFF;">0x0063C5
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ0
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #FF8484; color: #000000;">0xFF8484
+</td>
+<td style="background-color: #943A3A; color: #FFFFFF;">0x943A3A
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+<tr>
+<td>OBJ1
+</td>
+<td style="background-color: #FFFFFF; color: #000000;">0xFFFFFF
+</td>
+<td style="background-color: #63A5FF; color: #000000;">0x63A5FF
+</td>
+<td style="background-color: #0000FF; color: #000000;">0x0000FF
+</td>
+<td style="background-color: #000000; color: #FFFFFF;">0x000000
+</td></tr>
+</tbody></table></center>
+<p><br />
+</p>
+<div style="text-align:right;font-size:smaller;"><i>(Source: <a class="external text" href="https://github.com/ISSOtm/gb-bootroms/blob/45a21c573d7aec7efd15f8745479e09c30463bc7/src/cgb.asm#L1231-L1365">boot ROM disassembly</a>)</i></div>
+<h2><span class="mw-headline" id="Plain-Text_Format_Download">Plain-Text Format Download</span></h2>
+<p>The same information that is provided in the tables above and on the main page in handy plain-text format:
+</p>
+<table style="border-radius: 10px; border: 1px solid #aaa; padding:.5em 1.5em; margin:1em 0; box-shadow: 0px 1px 10px 0px rgba(0,0,0,.25);">
+
+<tbody><tr>
+<td align="left" width="50px"><a href="/Special:FilePath/CGB_Bootstrap_ROM_tables.7z" title="Special:FilePath/CGB Bootstrap ROM tables.7z"><img alt="Download.png" src="/images/thumb/f/f1/Download.png/35px-Download.png" decoding="async" width="35" height="35" srcset="/images/f/f1/Download.png 1.5x" /></a>
+</td>
+<td><a href="/images/a/af/CGB_Bootstrap_ROM_tables.7z" class="internal" title="CGB Bootstrap ROM tables.7z"><span style="font-weight:bold;font-size:120%">Download ROM tables</span></a>
+<div><b>File:</b>  <span style="font-size:95%">CGB_Bootstrap_ROM_tables.7z (4.4 KB) (<a href="/File:CGB_Bootstrap_ROM_tables.7z" title="File:CGB Bootstrap ROM tables.7z">info</a>)</span><br />
+</div>
+</td></tr></tbody></table>
+
+<!-- 
+NewPP limit report
+Cached time: 20250615074006
+Cache expiry: 86400
+Dynamic content: false
+Complications: [vary‐page‐id]
+CPU time usage: 0.106 seconds
+Real time usage: 0.108 seconds
+Preprocessor visited node count: 112/1000000
+Preprocessor generated node count: 0/1000000
+Post‐expand include size: 1686/2097152 bytes
+Template argument size: 412/2097152 bytes
+Highest expansion depth: 6/40
+Expensive parser function count: 2/500
+Unstrip recursion depth: 0/20
+Unstrip post‐expand size: 0/5000000 bytes
+-->
+<!--
+Transclusion expansion time report (%,ms,calls,template)
+100.00%    9.424      1 -total
+ 51.76%    4.878      1 Template:Notes
+ 20.03%    1.888      1 Template:Download
+ 16.80%    1.583      1 Template:UnimportantAwards
+ 13.54%    1.276      1 Template:TalkIndicator
+ 13.40%    1.263      2 Template:Source
+ 10.82%    1.020      3 Template:Hex
+-->
+
+<!-- Saved in parser cache with key tcrfwiki:pcache:idhash:180304-0!canonical and timestamp 20250615074006 and revision id 1256473
+ -->
+</div></div>
+		
+		<div class="printfooter">Retrieved from "<a dir="ltr" href="https://tcrf.net/index.php?title=Notes:Game_Boy_Color_Bootstrap_ROM&amp;oldid=1256473">https://tcrf.net/index.php?title=Notes:Game_Boy_Color_Bootstrap_ROM&amp;oldid=1256473</a>"</div>
+		
+		<div id="catlinks" class="catlinks" data-mw="interface"><div id="mw-normal-catlinks" class="mw-normal-catlinks"><a href="/Special:Categories" title="Special:Categories">Category</a>: <ul><li><a href="/Category:Game_notes" title="Category:Game notes">Game notes</a></li></ul></div><br /><hr /><a href="/Category:Games" title="Category:Games">Games</a> &gt; <a href="/Category:Game_notes" title="Category:Game notes">Game notes</a></div>
+		<div class="visualClear"></div>
+		
+	</div>
+</div>
+
+
+		<div id="mw-navigation">
+			<h2>Navigation menu</h2>
+			<div id="mw-head">
+									<div id="p-personal" role="navigation" aria-labelledby="p-personal-label">
+						<h3 id="p-personal-label">Personal tools</h3>
+						<ul>
+							<li id="pt-uls" class="active"><a href="#" class="uls-trigger">English</a></li><li id="pt-createaccount"><a href="/index.php?title=Special:CreateAccount&amp;returnto=Notes%3AGame+Boy+Color+Bootstrap+ROM" title="You are encouraged to create an account and log in; however, it is not mandatory">Create account</a></li><li id="pt-login"><a href="/index.php?title=Special:UserLogin&amp;returnto=Notes%3AGame+Boy+Color+Bootstrap+ROM" title="You are encouraged to log in; however, it is not mandatory [o]" accesskey="o">Log in</a></li>						</ul>
+					</div>
+									<div id="left-navigation">
+										<div id="p-namespaces" role="navigation" class="vectorTabs" aria-labelledby="p-namespaces-label">
+						<h3 id="p-namespaces-label">Namespaces</h3>
+						<ul>
+							<li id="ca-nstab-notes" class="selected"><span><a href="/Notes:Game_Boy_Color_Bootstrap_ROM">Notes</a></span></li><li id="ca-talk" class="new"><span><a href="/index.php?title=Notes_talk:Game_Boy_Color_Bootstrap_ROM&amp;action=edit&amp;redlink=1" rel="discussion" title="Discussion about the content page (page does not exist) [t]" accesskey="t">Discussion</a></span></li>						</ul>
+					</div>
+										<div id="p-variants" role="navigation" class="vectorMenu emptyPortlet" aria-labelledby="p-variants-label">
+												<input type="checkbox" class="vectorMenuCheckbox" aria-labelledby="p-variants-label" />
+						<h3 id="p-variants-label">
+							<span>Variants</span>
+						</h3>
+						<ul class="menu">
+													</ul>
+					</div>
+									</div>
+				<div id="right-navigation">
+										<div id="p-views" role="navigation" class="vectorTabs" aria-labelledby="p-views-label">
+						<h3 id="p-views-label">Views</h3>
+						<ul>
+							<li id="ca-view" class="collapsible selected"><span><a href="/Notes:Game_Boy_Color_Bootstrap_ROM">Read</a></span></li><li id="ca-viewsource" class="collapsible"><span><a href="/index.php?title=Notes:Game_Boy_Color_Bootstrap_ROM&amp;action=edit" title="This page is protected.&#10;You can view its source [e]" accesskey="e">View source</a></span></li><li id="ca-history" class="collapsible"><span><a href="/index.php?title=Notes:Game_Boy_Color_Bootstrap_ROM&amp;action=history" title="Past revisions of this page [h]" accesskey="h">View history</a></span></li>						</ul>
+					</div>
+										<div id="p-cactions" role="navigation" class="vectorMenu emptyPortlet" aria-labelledby="p-cactions-label">
+						<input type="checkbox" class="vectorMenuCheckbox" aria-labelledby="p-cactions-label" />
+						<h3 id="p-cactions-label"><span>More</span></h3>
+						<ul class="menu">
+													</ul>
+					</div>
+										<div id="p-search" role="search">
+						<h3>
+							<label for="searchInput">Search</label>
+						</h3>
+						<form action="/index.php" id="searchform">
+							<div id="simpleSearch">
+								<input type="search" name="search" placeholder="Search The Cutting Room Floor" title="Search The Cutting Room Floor [f]" accesskey="f" id="searchInput"/><input type="hidden" value="Special:Search" name="title"/><input type="submit" name="fulltext" value="Search" title="Search the pages for this text" id="mw-searchButton" class="searchButton mw-fallbackSearchButton"/><input type="submit" name="go" value="Go" title="Go to a page with this exact name if it exists" id="searchButton" class="searchButton"/>							</div>
+						</form>
+					</div>
+									</div>
+			</div>
+			<div id="mw-panel">
+				<div id="p-logo" role="banner"><a class="mw-wiki-logo" href="/The_Cutting_Room_Floor" title="Visit the main page"></a></div>
+						<div class="portal" role="navigation" id="p-Main" aria-labelledby="p-Main-label">
+			<h3 id="p-Main-label">Main</h3>
+			<div class="body">
+								<ul>
+					<li id="n-mainpage-description"><a href="/The_Cutting_Room_Floor" title="Visit the main page [z]" accesskey="z">Main page</a></li><li id="n-recentchanges"><a href="/Special:RecentChanges" title="A list of recent changes in the wiki [r]" accesskey="r">Recent changes</a></li><li id="n-randompage"><a href="/Special:RandomRootpage" title="Load a random page [x]" accesskey="x">Random page</a></li><li id="n-Rules-.26-Editing-Help"><a href="https://tcrf.net/Help:Contents">Rules &amp; Editing Help</a></li><li id="n-FAQ"><a href="/Help:Contents/FAQ">FAQ</a></li><li id="n-To-do-list"><a href="/Category:To_do">To-do list</a></li>				</ul>
+							</div>
+		</div>
+			<div class="portal" role="navigation" id="p-Community_.2B_Links" aria-labelledby="p-Community_.2B_Links-label">
+			<h3 id="p-Community_.2B_Links-label">Community + Links</h3>
+			<div class="body">
+								<ul>
+					<li id="n-Discord"><a href="https://discord.com/invite/SGeE8dcWR6">Discord</a></li><li id="n-IRC-Channel"><a href="https://kiwiirc.com/client/irc.badnik.zone/tcrf">IRC Channel</a></li><li id="n-Message-Board"><a href="https://jul.rustedlogic.net/forum.php?id=12">Message Board</a></li><li id="n-Bluesky"><a href="https://bsky.app/profile/tcrf.net">Bluesky</a></li><li id="n-Patreon"><a href="https://www.patreon.com/tcrfwiki">Patreon</a></li><li id="n-Donate"><a href="/The_Cutting_Room_Floor:Donate">Donate</a></li><li id="n-Data-Crystal"><a href="https://datacrystal.tcrf.net">Data Crystal</a></li><li id="n-Related-Sites"><a href="/The_Cutting_Room_Floor:Related_Links">Related Sites</a></li>				</ul>
+							</div>
+		</div>
+			<div class="portal" role="navigation" id="p-Games" aria-labelledby="p-Games-label">
+			<h3 id="p-Games-label">Games</h3>
+			<div class="body">
+								<ul>
+					<li id="n-By-platform"><a href="/Category:Games_by_platform">By platform</a></li><li id="n-By-series"><a href="/Category:Games_by_series">By series</a></li><li id="n-By-content"><a href="/Category:Games_by_content">By content</a></li><li id="n-By-release-date"><a href="/Category:Games_by_release_date">By release date</a></li><li id="n-By-developer"><a href="/Category:Games_by_developer">By developer</a></li><li id="n-By-publisher"><a href="/Category:Games_by_publisher">By publisher</a></li><li id="n-Featured-articles"><a href="/Category:Featured_articles">Featured articles</a></li>				</ul>
+							</div>
+		</div>
+			<div class="portal" role="navigation" id="p-tb" aria-labelledby="p-tb-label">
+			<h3 id="p-tb-label">Tools</h3>
+			<div class="body">
+								<ul>
+					<li id="t-whatlinkshere"><a href="/Special:WhatLinksHere/Notes:Game_Boy_Color_Bootstrap_ROM" title="A list of all wiki pages that link here [j]" accesskey="j">What links here</a></li><li id="t-recentchangeslinked"><a href="/Special:RecentChangesLinked/Notes:Game_Boy_Color_Bootstrap_ROM" rel="nofollow" title="Recent changes in pages linked from this page [k]" accesskey="k">Related changes</a></li><li id="t-specialpages"><a href="/Special:SpecialPages" title="A list of all special pages [q]" accesskey="q">Special pages</a></li><li id="t-print"><a href="/index.php?title=Notes:Game_Boy_Color_Bootstrap_ROM&amp;printable=yes" rel="alternate" title="Printable version of this page [p]" accesskey="p">Printable version</a></li><li id="t-permalink"><a href="/index.php?title=Notes:Game_Boy_Color_Bootstrap_ROM&amp;oldid=1256473" title="Permanent link to this revision of the page">Permanent link</a></li><li id="t-info"><a href="/index.php?title=Notes:Game_Boy_Color_Bootstrap_ROM&amp;action=info" title="More information about this page">Page information</a></li>				</ul>
+							</div>
+		</div>
+				</div>
+		</div>
+				<div id="footer" role="contentinfo">
+						<ul id="footer-info">
+								<li id="footer-info-lastmod"> This page was last edited on 4 July 2022, at 18:48.</li>
+								<li id="footer-info-copyright">Content is available under <a class="external" href="https://creativecommons.org/licenses/by/3.0/">Attribution 3.0 Unported</a> unless otherwise noted.</li>
+							</ul>
+						<ul id="footer-places">
+								<li id="footer-places-privacy"><a href="/The_Cutting_Room_Floor:Privacy_policy" title="The Cutting Room Floor:Privacy policy">Privacy policy</a></li>
+								<li id="footer-places-about"><a href="/The_Cutting_Room_Floor:About" title="The Cutting Room Floor:About">About The Cutting Room Floor</a></li>
+								<li id="footer-places-disclaimer"><a href="/The_Cutting_Room_Floor:General_disclaimer" title="The Cutting Room Floor:General disclaimer">Disclaimers</a></li>
+							</ul>
+										<ul id="footer-icons" class="noprint">
+										<li id="footer-copyrightico">
+						<a href="https://creativecommons.org/licenses/by/3.0/"><img src="https://i.creativecommons.org/l/by/3.0/88x31.png" alt="Attribution 3.0 Unported" width="88" height="31"/></a>					</li>
+										<li id="footer-poweredbyico">
+						<a href="https://www.mediawiki.org/"><img src="/resources/assets/poweredby_mediawiki_88x31.png" alt="Powered by MediaWiki" srcset="/resources/assets/poweredby_mediawiki_132x47.png 1.5x, /resources/assets/poweredby_mediawiki_176x62.png 2x" width="88" height="31"/></a>					</li>
+									</ul>
+						<div style="clear: both;"></div>
+		</div>
+		
+
+<script>(RLQ=window.RLQ||[]).push(function(){mw.config.set({"wgPageParseReport":{"limitreport":{"cputime":"0.106","walltime":"0.108","ppvisitednodes":{"value":112,"limit":1000000},"ppgeneratednodes":{"value":0,"limit":1000000},"postexpandincludesize":{"value":1686,"limit":2097152},"templateargumentsize":{"value":412,"limit":2097152},"expansiondepth":{"value":6,"limit":40},"expensivefunctioncount":{"value":2,"limit":500},"unstrip-depth":{"value":0,"limit":20},"unstrip-size":{"value":0,"limit":5000000},"timingprofile":["100.00%    9.424      1 -total"," 51.76%    4.878      1 Template:Notes"," 20.03%    1.888      1 Template:Download"," 16.80%    1.583      1 Template:UnimportantAwards"," 13.54%    1.276      1 Template:TalkIndicator"," 13.40%    1.263      2 Template:Source"," 10.82%    1.020      3 Template:Hex"]},"cachereport":{"timestamp":"20250615074006","ttl":86400,"transientcontent":false}}});mw.config.set({"wgBackendResponseTime":71});});</script>
+</body>
+</html>
