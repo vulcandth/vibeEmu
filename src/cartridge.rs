@@ -8,6 +8,7 @@ pub enum MbcType {
     NoMbc,
     Mbc1,
     Mbc3,
+    Mbc30,
     Mbc5,
     Unknown(u8),
 }
@@ -34,6 +35,11 @@ enum MbcState {
         ram_enable: bool,
     },
     Mbc3 {
+        rom_bank: u8,
+        ram_bank: u8,
+        ram_enable: bool,
+    },
+    Mbc30 {
         rom_bank: u8,
         ram_bank: u8,
         ram_enable: bool,
@@ -99,6 +105,11 @@ impl Cartridge {
                 ram_bank: 0,
                 ram_enable: false,
             },
+            MbcType::Mbc30 => MbcState::Mbc30 {
+                rom_bank: 1,
+                ram_bank: 0,
+                ram_enable: false,
+            },
             MbcType::Mbc5 => MbcState::Mbc5 {
                 rom_bank: 1,
                 ram_bank: 0,
@@ -154,10 +165,12 @@ impl Cartridge {
                 let offset = bank * 0x4000 + (addr as usize - 0x4000);
                 self.rom.get(offset).copied().unwrap_or(0xFF)
             }
-            (MbcState::Mbc3 { .. }, 0x0000..=0x3FFF) => {
+            (MbcState::Mbc3 { .. }, 0x0000..=0x3FFF)
+            | (MbcState::Mbc30 { .. }, 0x0000..=0x3FFF) => {
                 self.rom.get(addr as usize).copied().unwrap_or(0xFF)
             }
-            (MbcState::Mbc3 { rom_bank, .. }, 0x4000..=0x7FFF) => {
+            (MbcState::Mbc3 { rom_bank, .. }, 0x4000..=0x7FFF)
+            | (MbcState::Mbc30 { rom_bank, .. }, 0x4000..=0x7FFF) => {
                 let bank = if *rom_bank == 0 { 1 } else { *rom_bank } as usize;
                 let offset = bank * 0x4000 + (addr as usize - 0x4000);
                 self.rom.get(offset).copied().unwrap_or(0xFF)
@@ -175,6 +188,7 @@ impl Cartridge {
             }
             (MbcState::Mbc1 { ram_enable, .. }, 0xA000..=0xBFFF)
             | (MbcState::Mbc3 { ram_enable, .. }, 0xA000..=0xBFFF)
+            | (MbcState::Mbc30 { ram_enable, .. }, 0xA000..=0xBFFF)
             | (MbcState::Mbc5 { ram_enable, .. }, 0xA000..=0xBFFF) => {
                 if !*ram_enable {
                     0xFF
@@ -230,7 +244,8 @@ impl Cartridge {
                     }
                 }
             }
-            (MbcState::Mbc3 { ram_enable, .. }, 0x0000..=0x1FFF) => {
+            (MbcState::Mbc3 { ram_enable, .. }, 0x0000..=0x1FFF)
+            | (MbcState::Mbc30 { ram_enable, .. }, 0x0000..=0x1FFF) => {
                 *ram_enable = val & 0x0F == 0x0A;
             }
             (MbcState::Mbc3 { rom_bank, .. }, 0x2000..=0x3FFF) => {
@@ -239,11 +254,35 @@ impl Cartridge {
                     *rom_bank = 1;
                 }
             }
+            (MbcState::Mbc30 { rom_bank, .. }, 0x2000..=0x3FFF) => {
+                *rom_bank = val;
+                if *rom_bank == 0 {
+                    *rom_bank = 1;
+                }
+            }
             (MbcState::Mbc3 { ram_bank, .. }, 0x4000..=0x5FFF) => {
                 *ram_bank = val & 0x03;
             }
+            (MbcState::Mbc30 { ram_bank, .. }, 0x4000..=0x5FFF) => {
+                *ram_bank = val & 0x07;
+            }
             (
                 MbcState::Mbc3 {
+                    ram_enable,
+                    ram_bank,
+                    ..
+                },
+                0xA000..=0xBFFF,
+            ) => {
+                if *ram_enable {
+                    let idx = (*ram_bank as usize) * 0x2000 + addr as usize - 0xA000;
+                    if let Some(b) = self.ram.get_mut(idx) {
+                        *b = val;
+                    }
+                }
+            }
+            (
+                MbcState::Mbc30 {
                     ram_enable,
                     ram_bank,
                     ..
@@ -301,6 +340,9 @@ impl Cartridge {
             MbcState::Mbc3 { ram_bank, .. } => {
                 (*ram_bank as usize) * 0x2000 + addr as usize - 0xA000
             }
+            MbcState::Mbc30 { ram_bank, .. } => {
+                (*ram_bank as usize) * 0x2000 + addr as usize - 0xA000
+            }
             MbcState::Mbc5 { ram_bank, .. } => {
                 (*ram_bank as usize) * 0x2000 + addr as usize - 0xA000
             }
@@ -351,10 +393,18 @@ impl<'a> Header<'a> {
         if self.data.len() < 0x150 {
             return MbcType::NoMbc;
         }
-        match self.data.get(0x0147).copied().unwrap_or(0) {
+        let cart = self.data.get(0x0147).copied().unwrap_or(0);
+        let ram_code = self.data.get(0x0149).copied().unwrap_or(0);
+        match cart {
             0x00 => MbcType::NoMbc,
             0x01..=0x03 => MbcType::Mbc1,
-            0x0F..=0x13 => MbcType::Mbc3,
+            0x0F..=0x13 => {
+                if ram_code == 0x05 {
+                    MbcType::Mbc30
+                } else {
+                    MbcType::Mbc3
+                }
+            }
             0x19..=0x1E => MbcType::Mbc5,
             _ => MbcType::NoMbc,
         }
