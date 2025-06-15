@@ -337,8 +337,46 @@ pub struct Apu {
 }
 
 impl Apu {
+    fn read_mask(addr: u16) -> u8 {
+        match addr {
+            0xFF10 => 0x80,
+            0xFF11 => 0x3F,
+            0xFF12 => 0x00,
+            0xFF13 => 0xFF,
+            0xFF14 => 0xBF,
+            0xFF16 => 0x3F,
+            0xFF17 => 0x00,
+            0xFF18 => 0xFF,
+            0xFF19 => 0xBF,
+            0xFF1A => 0x7F,
+            0xFF1B => 0xFF,
+            0xFF1C => 0x9F,
+            0xFF1D => 0xFF,
+            0xFF1E => 0xBF,
+            0xFF20 => 0xFF,
+            0xFF21 => 0x00,
+            0xFF22 => 0x00,
+            0xFF23 => 0xBF,
+            0xFF24 => 0x00,
+            0xFF25 => 0x00,
+            0xFF26 => 0x70,
+            0xFF15 | 0xFF1F => 0xFF,
+            0xFF30..=0xFF3F => 0x00,
+            _ => 0xFF,
+        }
+    }
+
+    fn power_off(&mut self) {
+        self.ch1 = SquareChannel::new(true);
+        self.ch2 = SquareChannel::new(false);
+        self.ch3 = WaveChannel::default();
+        self.ch4 = NoiseChannel::default();
+        self.nr50 = 0;
+        self.nr51 = 0;
+        self.samples.clear();
+    }
     pub fn new() -> Self {
-        Self {
+        let mut apu = Self {
             ch1: SquareChannel::new(true),
             ch2: SquareChannel::new(false),
             ch3: WaveChannel::default(),
@@ -352,11 +390,54 @@ impl Apu {
             sample_timer: 0,
             sample_rate: 44100,
             samples: VecDeque::with_capacity(4096),
-        }
+        };
+
+        // Initialize channels to power-on register defaults
+        apu.ch1.duty = 2;
+        apu.ch1.length = 0x3F;
+        apu.ch1.envelope.initial = 0xF;
+        apu.ch1.envelope.volume = 0xF;
+        apu.ch1.envelope.period = 3;
+        apu.ch1.frequency = 0x03FF;
+
+        apu.ch2.length = 0x3F;
+        apu.ch2.frequency = 0x03FF;
+
+        apu.ch3.dac_enabled = true;
+        apu.ch3.length = 0xFF;
+        apu.ch3.frequency = 0x03FF;
+
+        apu.ch4.length = 0xFF;
+
+        apu
     }
 
     pub fn read_reg(&self, addr: u16) -> u8 {
-        match addr {
+        if addr == 0xFF26 {
+            let mut val = 0x70;
+            if self.nr52 & 0x80 != 0 {
+                val |= 0x80;
+            }
+            if self.ch1.enabled {
+                val |= 0x01;
+            }
+            if self.ch2.enabled {
+                val |= 0x02;
+            }
+            if self.ch3.enabled {
+                val |= 0x04;
+            }
+            if self.ch4.enabled {
+                val |= 0x08;
+            }
+            return val;
+        }
+
+        if self.nr52 & 0x80 == 0 && !(0xFF30..=0xFF3F).contains(&addr) {
+            return Apu::read_mask(addr);
+        }
+
+        let value = match addr {
             0xFF10 => self
                 .ch1
                 .sweep
@@ -408,13 +489,23 @@ impl Apu {
             0xFF23 => (self.ch4.length_enable as u8) << 6,
             0xFF24 => self.nr50,
             0xFF25 => self.nr51,
-            0xFF26 => self.nr52 | 0x70,
-            0xFF30..=0xFF3F => self.wave_ram[(addr - 0xFF30) as usize],
+            0xFF30..=0xFF3F => {
+                if self.ch3.enabled && self.ch3.dac_enabled {
+                    0xFF
+                } else {
+                    self.wave_ram[(addr - 0xFF30) as usize]
+                }
+            }
             _ => 0xFF,
-        }
+        };
+
+        value | Apu::read_mask(addr)
     }
 
     pub fn write_reg(&mut self, addr: u16, val: u8) {
+        if self.nr52 & 0x80 == 0 && addr != 0xFF26 && !(0xFF30..=0xFF3F).contains(&addr) {
+            return;
+        }
         match addr {
             0xFF10 => {
                 if let Some(s) = self.ch1.sweep.as_mut() {
@@ -478,17 +569,15 @@ impl Apu {
             0xFF26 => {
                 if val & 0x80 == 0 {
                     self.nr52 &= 0x7F;
-                    self.ch1.enabled = false;
-                    self.ch2.enabled = false;
-                    self.ch3.enabled = false;
-                    self.ch4.enabled = false;
-                    self.samples.clear();
+                    self.power_off();
                 } else {
                     self.nr52 |= 0x80;
                 }
             }
             0xFF30..=0xFF3F => {
-                self.wave_ram[(addr - 0xFF30) as usize] = val;
+                if !(self.ch3.enabled && self.ch3.dac_enabled) {
+                    self.wave_ram[(addr - 0xFF30) as usize] = val;
+                }
             }
             _ => {}
         }

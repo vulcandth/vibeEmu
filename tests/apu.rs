@@ -27,3 +27,43 @@ fn sample_generation() {
     }
     assert!(apu.pop_sample().is_some());
 }
+#[test]
+fn writes_ignored_when_disabled() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x00); // disable
+    apu.write_reg(0xFF12, 0xF0);
+    assert_eq!(apu.read_reg(0xFF12), 0x00);
+    apu.write_reg(0xFF26, 0x80); // enable
+    apu.write_reg(0xFF12, 0xF0);
+    assert_eq!(apu.read_reg(0xFF12) & 0xF0, 0xF0);
+}
+
+#[test]
+fn read_mask_unused_bits() {
+    let apu = Apu::new();
+    assert_eq!(apu.read_reg(0xFF11), 0xBF);
+}
+
+#[test]
+fn wave_ram_access() {
+    let mut apu = Apu::new();
+    // write while channel 3 inactive
+    apu.write_reg(0xFF30, 0x12);
+    assert_eq!(apu.read_reg(0xFF30), 0x12);
+
+    // start channel 3
+    apu.write_reg(0xFF1A, 0x80); // DAC on
+    apu.write_reg(0xFF1E, 0x80); // trigger
+    apu.write_reg(0xFF30, 0x34); // should be ignored
+    assert_eq!(apu.read_reg(0xFF30), 0xFF);
+
+    // disable DAC while length counter still running
+    apu.write_reg(0xFF1A, 0x00);
+    apu.write_reg(0xFF30, 0x56);
+    assert_eq!(apu.read_reg(0xFF30), 0x56);
+
+    // power cycle should not clear wave RAM
+    apu.write_reg(0xFF26, 0x00);
+    apu.write_reg(0xFF26, 0x80);
+    assert_eq!(apu.read_reg(0xFF30), 0x56);
+}
