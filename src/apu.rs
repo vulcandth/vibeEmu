@@ -361,6 +361,7 @@ impl Apu {
             0xFF25 => 0x00,
             0xFF26 => 0x70,
             0xFF15 | 0xFF1F => 0xFF,
+            0xFF30..=0xFF3F => 0x00,
             _ => 0xFF,
         }
     }
@@ -488,7 +489,13 @@ impl Apu {
             0xFF23 => (self.ch4.length_enable as u8) << 6,
             0xFF24 => self.nr50,
             0xFF25 => self.nr51,
-            0xFF30..=0xFF3F => self.wave_ram[(addr - 0xFF30) as usize],
+            0xFF30..=0xFF3F => {
+                if self.ch3.enabled {
+                    0xFF
+                } else {
+                    self.wave_ram[(addr - 0xFF30) as usize]
+                }
+            }
             _ => 0xFF,
         };
 
@@ -568,7 +575,9 @@ impl Apu {
                 }
             }
             0xFF30..=0xFF3F => {
-                self.wave_ram[(addr - 0xFF30) as usize] = val;
+                if !self.ch3.enabled {
+                    self.wave_ram[(addr - 0xFF30) as usize] = val;
+                }
             }
             _ => {}
         }
