@@ -27,6 +27,16 @@ Pass `--dmg` to force DMG mode, `--cgb` to force CGB mode, or `--serial` to run 
 
 Test ROMs used for development are located in the `roms/` directory.
 
+## Controls
+
+The default keyboard mapping is:
+
+- **Arrow Keys**: D-pad
+- **S**: A button
+- **A**: B button
+- **Shift**: Select
+- **Enter**: Start
+
 ## Testing
 
 Unit tests can be executed with:
