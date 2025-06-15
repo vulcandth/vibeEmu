@@ -53,8 +53,10 @@ jobs:
           $outDir = "$env:RUNNER_TEMP\sccache"
           Invoke-WebRequest -Uri $url -OutFile $zipPath
           Expand-Archive -Path $zipPath -DestinationPath $outDir
-          mkdir -p $env:USERPROFILE\.cargo\bin
-          Move-Item "$outDir\sccache.exe" "$env:USERPROFILE\.cargo\bin\sccache.exe"
+          if (-Not (Test-Path "$env:USERPROFILE\.cargo\bin")) {
+            New-Item -ItemType Directory -Path "$env:USERPROFILE\.cargo\bin" | Out-Null
+          }
+          Move-Item "$outDir\sccache.exe" "$env:USERPROFILE\.cargo\bin\sccache.exe" -Force
 
       - name: Install sccache (Linux)
         if: runner.os == 'Linux'
