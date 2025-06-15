@@ -25,6 +25,8 @@ pub struct Ppu {
     bgpd: [u8; 0x40],
     obpi: u8,
     obpd: [u8; 0x40],
+    /// Object priority mode register (OPRI)
+    opri: u8,
 
     mode_clock: u16,
     pub mode: u8,
@@ -76,6 +78,7 @@ impl Ppu {
             bgpd: [0; 0x40],
             obpi: 0,
             obpd: [0; 0x40],
+            opri: 0,
             mode_clock: 0,
             mode: 2,
             framebuffer: [0; 160 * 144],
@@ -109,8 +112,13 @@ impl Ppu {
                 self.sprite_count += 1;
             }
         }
-        // sort by X then index, stable to preserve arrival order
-        self.line_sprites[..self.sprite_count].sort_by_key(|s| (s.x, s.oam_index));
+        if self.cgb && self.opri & 0x01 == 0 {
+            // CGB-style priority: use OAM order only
+            self.line_sprites[..self.sprite_count].sort_by_key(|s| s.oam_index);
+        } else {
+            // DMG-style priority: sort by X position then OAM index
+            self.line_sprites[..self.sprite_count].sort_by_key(|s| (s.x, s.oam_index));
+        }
     }
 
     pub fn new() -> Self {
@@ -189,6 +197,7 @@ impl Ppu {
                 }
                 val
             }
+            0xFF6C => self.opri | 0xFE,
             _ => 0xFF,
         }
     }
@@ -223,6 +232,7 @@ impl Ppu {
                     self.obpi = (self.obpi & 0x80) | ((idx as u8 + 1) & 0x3F);
                 }
             }
+            0xFF6C => self.opri = val & 0x01,
             _ => {}
         }
     }

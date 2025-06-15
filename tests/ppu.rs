@@ -139,6 +139,73 @@ fn sprite_x_priority() {
 }
 
 #[test]
+fn cgb_obj_priority_mode_cgb() {
+    let mut ppu = Ppu::new_with_mode(true);
+    ppu.write_reg(0xFF40, 0x82); // LCD on, sprites enabled
+    ppu.write_reg(0xFF48, 0xE4);
+    // two sprite tiles -> color1
+    ppu.vram[0][0] = 0xFF;
+    ppu.vram[0][1] = 0x00;
+    ppu.vram[0][16] = 0xFF;
+    ppu.vram[0][17] = 0x00;
+    // sprite 0 at x=9 (should be drawn on top)
+    ppu.oam[0] = 16;
+    ppu.oam[1] = 9;
+    ppu.oam[2] = 0;
+    ppu.oam[3] = 0;
+    // sprite 1 at x=8
+    ppu.oam[4] = 16;
+    ppu.oam[5] = 8;
+    ppu.oam[6] = 1;
+    ppu.oam[7] = 0;
+    // sprite palette 0 color1 -> blue
+    ppu.write_reg(0xFF6A, 0x80); // index 0 with auto inc
+    ppu.write_reg(0xFF6B, 0x00);
+    ppu.write_reg(0xFF6B, 0x00);
+    ppu.write_reg(0xFF6B, 0x00);
+    ppu.write_reg(0xFF6B, 0x7C);
+    // CGB-style priority: prioritize by OAM order
+    ppu.write_reg(0xFF6C, 0);
+    let mut if_reg = 0u8;
+    ppu.step(456, &mut if_reg);
+    // sprite 0 should be visible at x=1
+    assert_eq!(ppu.framebuffer[1], 0x000000FF);
+}
+
+#[test]
+fn cgb_obj_priority_mode_dmg() {
+    let mut ppu = Ppu::new_with_mode(true);
+    ppu.write_reg(0xFF40, 0x82); // LCD on, sprites enabled
+    ppu.write_reg(0xFF48, 0xE4);
+    ppu.vram[0][0] = 0xFF;
+    ppu.vram[0][1] = 0x00;
+    ppu.vram[0][16] = 0xFF;
+    ppu.vram[0][17] = 0x00;
+    // sprite 0 at x=9
+    ppu.oam[0] = 16;
+    ppu.oam[1] = 9;
+    ppu.oam[2] = 0;
+    ppu.oam[3] = 0;
+    // sprite 1 at x=8 (should be drawn on top when DMG priority)
+    ppu.oam[4] = 16;
+    ppu.oam[5] = 8;
+    ppu.oam[6] = 1;
+    ppu.oam[7] = 0;
+    // sprite palette 0 color1 -> blue
+    ppu.write_reg(0xFF6A, 0x80);
+    ppu.write_reg(0xFF6B, 0x00);
+    ppu.write_reg(0xFF6B, 0x00);
+    ppu.write_reg(0xFF6B, 0x00);
+    ppu.write_reg(0xFF6B, 0x7C);
+    // DMG-style priority
+    ppu.write_reg(0xFF6C, 1);
+    let mut if_reg = 0u8;
+    ppu.step(456, &mut if_reg);
+    // sprite 1 should be visible at x=1
+    assert_eq!(ppu.framebuffer[1], 0x000000FF);
+}
+
+#[test]
 fn obj_priority_color0() {
     let mut ppu = Ppu::new();
     ppu.write_reg(0xFF40, 0x83); // LCD on, BG and OBJ
