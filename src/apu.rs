@@ -339,6 +339,10 @@ pub struct Apu {
     sample_timer: u32,
     sample_rate: u32,
     samples: VecDeque<i16>,
+    hp_prev_input_left: f32,
+    hp_prev_output_left: f32,
+    hp_prev_input_right: f32,
+    hp_prev_output_right: f32,
 }
 
 impl Apu {
@@ -379,6 +383,10 @@ impl Apu {
         self.nr50 = 0;
         self.nr51 = 0;
         self.samples.clear();
+        self.hp_prev_input_left = 0.0;
+        self.hp_prev_output_left = 0.0;
+        self.hp_prev_input_right = 0.0;
+        self.hp_prev_output_right = 0.0;
     }
     pub fn new() -> Self {
         let mut apu = Self {
@@ -395,6 +403,10 @@ impl Apu {
             sample_timer: 0,
             sample_rate: 44100,
             samples: VecDeque::with_capacity(4096),
+            hp_prev_input_left: 0.0,
+            hp_prev_output_left: 0.0,
+            hp_prev_input_right: 0.0,
+            hp_prev_output_right: 0.0,
         };
 
         // Initialize channels to power-on register defaults
@@ -691,14 +703,14 @@ impl Apu {
         }
     }
 
-    fn mix_output(&self) -> (i16, i16) {
-        let ch1 = self.ch1.output() as u16;
-        let ch2 = self.ch2.output() as u16;
-        let ch3 = self.ch3.output() as u16;
-        let ch4 = self.ch4.output() as u16;
+    fn mix_output(&mut self) -> (i16, i16) {
+        let ch1 = self.ch1.output() as i16 - 8;
+        let ch2 = self.ch2.output() as i16 - 8;
+        let ch3 = self.ch3.output() as i16 - 8;
+        let ch4 = self.ch4.output() as i16 - 8;
 
-        let mut left = 0u16;
-        let mut right = 0u16;
+        let mut left = 0i16;
+        let mut right = 0i16;
 
         if self.nr51 & 0x10 != 0 {
             left += ch1;
@@ -728,10 +740,24 @@ impl Apu {
         let left_vol = ((self.nr50 >> 4) & 0x07) + 1;
         let right_vol = (self.nr50 & 0x07) + 1;
 
-        let left_sample = ((left * left_vol as u16) as i16) * VOLUME_FACTOR;
-        let right_sample = ((right * right_vol as u16) as i16) * VOLUME_FACTOR;
+        let left_sample = left * left_vol as i16 * VOLUME_FACTOR;
+        let right_sample = right * right_vol as i16 * VOLUME_FACTOR;
 
-        (left_sample, right_sample)
+        self.dc_block(left_sample, right_sample)
+    }
+
+    fn dc_block(&mut self, left: i16, right: i16) -> (i16, i16) {
+        const DC_FILTER_R: f32 = 0.999;
+        let left_in = left as f32;
+        let right_in = right as f32;
+        let left_out = left_in - self.hp_prev_input_left + DC_FILTER_R * self.hp_prev_output_left;
+        let right_out =
+            right_in - self.hp_prev_input_right + DC_FILTER_R * self.hp_prev_output_right;
+        self.hp_prev_input_left = left_in;
+        self.hp_prev_output_left = left_out;
+        self.hp_prev_input_right = right_in;
+        self.hp_prev_output_right = right_out;
+        (left_out.round() as i16, right_out.round() as i16)
     }
 
     pub fn pop_sample(&mut self) -> Option<i16> {
