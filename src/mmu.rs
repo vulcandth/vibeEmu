@@ -1,4 +1,5 @@
 use crate::{apu::Apu, cartridge::Cartridge, input::Input, ppu::Ppu, serial::Serial, timer::Timer};
+use std::sync::{Arc, Mutex};
 
 const WRAM_BANK_SIZE: usize = 0x1000;
 
@@ -13,7 +14,7 @@ pub struct Mmu {
     pub ie_reg: u8,
     pub serial: Serial,
     pub ppu: Ppu,
-    pub apu: Apu,
+    pub apu: Arc<Mutex<Apu>>,
     pub timer: Timer,
     pub input: Input,
     pub key1: u8,
@@ -39,7 +40,7 @@ impl Mmu {
             ie_reg: 0,
             serial: Serial::new(cgb),
             ppu,
-            apu: Apu::new(),
+            apu: Arc::new(Mutex::new(Apu::new())),
             timer,
             input: Input::new(),
             key1: if cgb { 0x7E } else { 0 },
@@ -100,7 +101,7 @@ impl Mmu {
             0xFF01 | 0xFF02 => self.serial.read(addr),
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg,
-            0xFF10..=0xFF3F => self.apu.read_reg(addr),
+            0xFF10..=0xFF3F => self.apu.lock().unwrap().read_reg(addr),
             0xFF40..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.read_reg(addr),
             0xFF4D => {
                 if self.cgb_mode {
@@ -143,7 +144,7 @@ impl Mmu {
             0xFF01 | 0xFF02 => self.serial.write(addr, val, &mut self.if_reg),
             0xFF04..=0xFF07 => self.timer.write(addr, val, &mut self.if_reg),
             0xFF0F => self.if_reg = (val & 0x1F) | (self.if_reg & 0xE0),
-            0xFF10..=0xFF3F => self.apu.write_reg(addr, val),
+            0xFF10..=0xFF3F => self.apu.lock().unwrap().write_reg(addr, val),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
             0xFF4D => {
                 if self.cgb_mode {

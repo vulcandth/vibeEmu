@@ -490,7 +490,7 @@ impl Cpu {
             self.cycles += 4;
             mmu.timer.step(4, &mut mmu.if_reg);
             mmu.ppu.step(4, &mut mmu.if_reg);
-            mmu.apu.step(4);
+            mmu.apu.lock().unwrap().step(4);
             self.handle_interrupts(mmu);
             return;
         }
@@ -1491,7 +1491,7 @@ impl Cpu {
         self.cycles += cycles as u64;
         mmu.timer.step(cycles, &mut mmu.if_reg);
         mmu.ppu.step(cycles, &mut mmu.if_reg);
-        mmu.apu.step(cycles);
+        mmu.apu.lock().unwrap().step(cycles);
 
         if enable_after {
             self.ime = true;

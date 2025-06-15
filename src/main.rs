@@ -13,6 +13,7 @@ mod timer;
 use clap::Parser;
 use log::info;
 use minifb::{Key, Scale, Window, WindowOptions};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Parser)]
@@ -78,6 +79,8 @@ fn main() {
         "Emulator initialized in {} mode",
         if cgb_mode { "CGB" } else { "DMG" }
     );
+
+    let _stream = apu::Apu::start_stream(Arc::clone(&gb.mmu.apu));
 
     let mut frame = vec![0u32; 160 * 144];
     let mut frame_count = 0u64;
