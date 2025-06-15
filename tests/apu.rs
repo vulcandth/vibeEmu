@@ -57,8 +57,13 @@ fn wave_ram_access() {
     apu.write_reg(0xFF30, 0x34); // should be ignored
     assert_eq!(apu.read_reg(0xFF30), 0xFF);
 
-    // power off and on, wave RAM should retain original value
+    // disable DAC while length counter still running
+    apu.write_reg(0xFF1A, 0x00);
+    apu.write_reg(0xFF30, 0x56);
+    assert_eq!(apu.read_reg(0xFF30), 0x56);
+
+    // power cycle should not clear wave RAM
     apu.write_reg(0xFF26, 0x00);
     apu.write_reg(0xFF26, 0x80);
-    assert_eq!(apu.read_reg(0xFF30), 0x12);
+    assert_eq!(apu.read_reg(0xFF30), 0x56);
 }

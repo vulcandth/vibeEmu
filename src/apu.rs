@@ -490,7 +490,7 @@ impl Apu {
             0xFF24 => self.nr50,
             0xFF25 => self.nr51,
             0xFF30..=0xFF3F => {
-                if self.ch3.enabled {
+                if self.ch3.enabled && self.ch3.dac_enabled {
                     0xFF
                 } else {
                     self.wave_ram[(addr - 0xFF30) as usize]
@@ -575,7 +575,7 @@ impl Apu {
                 }
             }
             0xFF30..=0xFF3F => {
-                if !self.ch3.enabled {
+                if !(self.ch3.enabled && self.ch3.dac_enabled) {
                     self.wave_ram[(addr - 0xFF30) as usize] = val;
                 }
             }
