@@ -404,15 +404,18 @@ impl Apu {
         apu.ch1.envelope.volume = 0xF;
         apu.ch1.envelope.period = 3;
         apu.ch1.frequency = 0x03FF;
+        apu.ch1.dac_enabled = true;
 
         apu.ch2.length = 0x3F;
         apu.ch2.frequency = 0x03FF;
+        apu.ch2.dac_enabled = false;
 
         apu.ch3.dac_enabled = true;
         apu.ch3.length = 0xFF;
         apu.ch3.frequency = 0x03FF;
 
         apu.ch4.length = 0xFF;
+        apu.ch4.dac_enabled = false;
 
         apu
     }
@@ -523,7 +526,13 @@ impl Apu {
                 self.ch1.duty = val >> 6;
                 self.ch1.length = val & 0x3F;
             }
-            0xFF12 => self.ch1.envelope.reset(val),
+            0xFF12 => {
+                self.ch1.envelope.reset(val);
+                self.ch1.dac_enabled = val & 0xF0 != 0;
+                if !self.ch1.dac_enabled {
+                    self.ch1.enabled = false;
+                }
+            }
             0xFF13 => self.ch1.frequency = (self.ch1.frequency & 0x700) | val as u16,
             0xFF14 => {
                 self.ch1.length_enable = val & 0x40 != 0;
@@ -536,7 +545,13 @@ impl Apu {
                 self.ch2.duty = val >> 6;
                 self.ch2.length = val & 0x3F;
             }
-            0xFF17 => self.ch2.envelope.reset(val),
+            0xFF17 => {
+                self.ch2.envelope.reset(val);
+                self.ch2.dac_enabled = val & 0xF0 != 0;
+                if !self.ch2.dac_enabled {
+                    self.ch2.enabled = false;
+                }
+            }
             0xFF18 => self.ch2.frequency = (self.ch2.frequency & 0x700) | val as u16,
             0xFF19 => {
                 self.ch2.length_enable = val & 0x40 != 0;
@@ -557,7 +572,13 @@ impl Apu {
                 }
             }
             0xFF20 => self.ch4.length = val & 0x3F,
-            0xFF21 => self.ch4.envelope.reset(val),
+            0xFF21 => {
+                self.ch4.envelope.reset(val);
+                self.ch4.dac_enabled = val & 0xF0 != 0;
+                if !self.ch4.dac_enabled {
+                    self.ch4.enabled = false;
+                }
+            }
             0xFF22 => {
                 let new_width7 = val & 0x08 != 0;
                 if !self.ch4.width7 && new_width7 && (self.ch4.lfsr & 0x7F) == 0x7F {
