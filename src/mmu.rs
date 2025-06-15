@@ -18,6 +18,7 @@ pub struct Mmu {
     pub timer: Timer,
     pub input: Input,
     pub key1: u8,
+    pub rp: u8,
     cgb_mode: bool,
 }
 
@@ -44,6 +45,7 @@ impl Mmu {
             timer,
             input: Input::new(),
             key1: if cgb { 0x7E } else { 0 },
+            rp: 0,
             cgb_mode: cgb,
         }
     }
@@ -110,6 +112,13 @@ impl Mmu {
                     0xFF
                 }
             }
+            0xFF56 => {
+                if self.cgb_mode {
+                    self.rp | 0xC0
+                } else {
+                    0xFF
+                }
+            }
             0xFF4F => self.ppu.vram_bank as u8,
             0xFF70 => self.wram_bank as u8,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
@@ -149,6 +158,11 @@ impl Mmu {
             0xFF4D => {
                 if self.cgb_mode {
                     self.key1 = (self.key1 & 0x80) | (val & 0x01);
+                }
+            }
+            0xFF56 => {
+                if self.cgb_mode {
+                    self.rp = val & 0xC1;
                 }
             }
             0xFF4F => self.ppu.vram_bank = (val & 0x01) as usize,
