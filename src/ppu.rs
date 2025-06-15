@@ -29,12 +29,24 @@ pub struct Ppu {
     pub framebuffer: [u32; 160 * 144],
     line_priority: [bool; 160],
     line_color_zero: [bool; 160],
+    /// Latched sprites for the current scanline
+    line_sprites: [Sprite; 10],
+    sprite_count: usize,
     /// Indicates a completed frame is available in `framebuffer`
     frame_ready: bool,
 }
 
 /// Default DMG palette colors in 0x00RRGGBB order for `minifb`.
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
+
+#[derive(Copy, Clone, Default)]
+struct Sprite {
+    x: i16,
+    y: i16,
+    tile: u8,
+    flags: u8,
+    oam_index: usize,
+}
 
 impl Ppu {
     pub fn new_with_mode(cgb: bool) -> Self {
@@ -64,8 +76,35 @@ impl Ppu {
             framebuffer: [0; 160 * 144],
             line_priority: [false; 160],
             line_color_zero: [false; 160],
+            line_sprites: [Sprite::default(); 10],
+            sprite_count: 0,
             frame_ready: false,
         }
+    }
+
+    /// Collect up to 10 sprites visible on the current scanline.
+    fn oam_scan(&mut self) {
+        let sprite_height: i16 = if self.lcdc & 0x04 != 0 { 16 } else { 8 };
+        self.sprite_count = 0;
+        for i in 0..40 {
+            if self.sprite_count >= 10 {
+                break;
+            }
+            let base = i * 4;
+            let y = self.oam[base] as i16 - 16;
+            if self.ly as i16 >= y && (self.ly as i16) < y + sprite_height {
+                self.line_sprites[self.sprite_count] = Sprite {
+                    x: self.oam[base + 1] as i16 - 8,
+                    y,
+                    tile: self.oam[base + 2],
+                    flags: self.oam[base + 3],
+                    oam_index: i,
+                };
+                self.sprite_count += 1;
+            }
+        }
+        // sort by X then index, stable to preserve arrival order
+        self.line_sprites[..self.sprite_count].sort_by_key(|s| (s.x, s.oam_index));
     }
 
     pub fn new() -> Self {
@@ -216,17 +255,20 @@ impl Ppu {
             let lo = self.vram[bank][addr + tile_y * 2];
             let hi = self.vram[bank][addr + tile_y * 2 + 1];
             let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-            let color = if self.cgb {
+            let (color, color_idx) = if self.cgb {
                 let off = palette * 8 + color_id as usize * 2;
-                Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+                (
+                    Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1]),
+                    color_id,
+                )
             } else {
                 let idx = (self.bgp >> (color_id * 2)) & 0x03;
-                DMG_PALETTE[idx as usize]
+                (DMG_PALETTE[idx as usize], idx)
             };
             let idx = self.ly as usize * 160 + x as usize;
             self.framebuffer[idx] = color;
             self.line_priority[x as usize] = priority;
-            self.line_color_zero[x as usize] = color_id == 0;
+            self.line_color_zero[x as usize] = color_idx == 0;
         }
 
         // window
@@ -269,18 +311,21 @@ impl Ppu {
                 let lo = self.vram[bank][addr + tile_y * 2];
                 let hi = self.vram[bank][addr + tile_y * 2 + 1];
                 let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                let color = if self.cgb {
+                let (color, color_idx) = if self.cgb {
                     let off = palette * 8 + color_id as usize * 2;
-                    Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+                    (
+                        Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1]),
+                        color_id,
+                    )
                 } else {
                     let idx = (self.bgp >> (color_id * 2)) & 0x03;
-                    DMG_PALETTE[idx as usize]
+                    (DMG_PALETTE[idx as usize], idx)
                 };
                 let idx = self.ly as usize * 160 + x as usize;
                 self.framebuffer[idx] = color;
                 if (x as usize) < 160 {
                     self.line_priority[x as usize] = priority;
-                    self.line_color_zero[x as usize] = color_id == 0;
+                    self.line_color_zero[x as usize] = color_idx == 0;
                 }
             }
         }
@@ -288,70 +333,56 @@ impl Ppu {
         // sprites
         if self.lcdc & 0x02 != 0 {
             let sprite_height: i16 = if self.lcdc & 0x04 != 0 { 16 } else { 8 };
-            let mut visible = Vec::new();
-            for i in 0..40 {
-                if visible.len() >= 10 {
-                    break;
-                }
-                let base = i * 4;
-                let y = self.oam[base] as i16 - 16;
-                if self.ly as i16 >= y && (self.ly as i16) < y + sprite_height {
-                    visible.push(i);
-                }
-            }
-
-            for &i in visible.iter().rev() {
-                let base = i * 4;
-                let mut tile = self.oam[base + 2];
+            let mut drawn = [false; 160];
+            for s in &self.line_sprites[..self.sprite_count] {
+                let mut tile = s.tile;
                 if sprite_height == 16 {
                     tile &= 0xFE;
                 }
-                let flags = self.oam[base + 3];
-                let x_pos = self.oam[base + 1] as i16 - 8;
-                let mut line_idx = self.ly as i16 - (self.oam[base] as i16 - 16);
-                if flags & 0x40 != 0 {
+                let mut line_idx = self.ly as i16 - s.y;
+                if s.flags & 0x40 != 0 {
                     line_idx = sprite_height - 1 - line_idx;
                 }
                 let bank = if self.cgb {
-                    ((flags >> 3) & 0x01) as usize
+                    ((s.flags >> 3) & 0x01) as usize
                 } else {
                     0
                 };
                 for px in 0..8 {
-                    let bit = if flags & 0x20 != 0 { px } else { 7 - px };
-                    let addr = tile as usize * 16 + (line_idx as usize % 8) * 2;
+                    let bit = if s.flags & 0x20 != 0 { px } else { 7 - px };
+                    let addr = (tile + ((line_idx as usize) >> 3) as u8) as usize * 16
+                        + (line_idx as usize & 7) * 2;
                     let lo = self.vram[bank][addr];
                     let hi = self.vram[bank][addr + 1];
                     let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
                     if color_id == 0 {
                         continue;
                     }
-                    let sx = x_pos + px as i16;
-                    if !(0i16..160i16).contains(&sx) {
+                    let sx = s.x + px as i16;
+                    if !(0i16..160i16).contains(&sx) || drawn[sx as usize] {
                         continue;
                     }
-                    let idx = self.ly as usize * 160 + sx as usize;
-                    let bg_prio = self.line_priority[sx as usize];
+                    if self.cgb && self.line_priority[sx as usize] {
+                        continue;
+                    }
                     let bg_zero = self.line_color_zero[sx as usize];
-                    let obj_prio = flags & 0x80 != 0;
-                    if obj_prio && !bg_zero {
-                        continue;
-                    }
-                    if bg_prio && !bg_zero {
+                    if s.flags & 0x80 != 0 && !bg_zero {
                         continue;
                     }
                     let color = if self.cgb {
-                        let palette = (flags & 0x07) as usize;
+                        let palette = (s.flags & 0x07) as usize;
                         let off = palette * 8 + color_id as usize * 2;
                         Self::decode_cgb_color(self.obpd[off], self.obpd[off + 1])
-                    } else if flags & 0x10 != 0 {
+                    } else if s.flags & 0x10 != 0 {
                         let idxc = (self.obp1 >> (color_id * 2)) & 0x03;
                         DMG_PALETTE[idxc as usize]
                     } else {
                         let idxc = (self.obp0 >> (color_id * 2)) & 0x03;
                         DMG_PALETTE[idxc as usize]
                     };
+                    let idx = self.ly as usize * 160 + sx as usize;
                     self.framebuffer[idx] = color;
+                    drawn[sx as usize] = true;
                 }
             }
         }
@@ -408,6 +439,7 @@ impl Ppu {
                 2 => {
                     if self.mode_clock >= 80 {
                         self.mode_clock -= 80;
+                        self.oam_scan();
                         self.mode = 3;
                     }
                 }
