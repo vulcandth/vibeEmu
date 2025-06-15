@@ -21,6 +21,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libx11-dev
 
+      - name: Cache rustup (optional)
+        uses: actions/cache@v3
+        with:
+          path: ~/.rustup
+          key: ${{ runner.os }}-rustup-${{ hashFiles('**/rust-toolchain') }}
+          restore-keys: ${{ runner.os }}-rustup-
+
+      - name: Cache cargo registry and git
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -28,15 +44,25 @@ jobs:
           profile: minimal
           override: true
 
-      - name: Cache cargo
+      - name: Install sccache
+        run: cargo install sccache
+
+      - name: Set RUSTC_WRAPPER
+        run: echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+
+      - name: Cache sccache
         uses: actions/cache@v3
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          path: ~/.cache/sccache
+          key: ${{ runner.os }}-sccache-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-sccache-
+
+      - name: Cache target (debug)
+        uses: actions/cache@v3
+        with:
+          path: target/debug
+          key: ${{ runner.os }}-target-debug-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-target-debug-
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -46,6 +72,13 @@ jobs:
 
       - name: Test debug
         run: cargo test --verbose
+
+      - name: Cache target (release)
+        uses: actions/cache@v3
+        with:
+          path: target/release
+          key: ${{ runner.os }}-target-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-target-release-
 
       - name: Test release
         run: cargo test --release --verbose
