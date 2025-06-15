@@ -89,6 +89,87 @@ fn render_sprite_scanline() {
 }
 
 #[test]
+fn sprite_8x16_tile_offset() {
+    let mut ppu = Ppu::new();
+    ppu.write_reg(0xFF40, 0x86); // LCD on, sprites 8x16
+    ppu.write_reg(0xFF48, 0xE4);
+    // top tile -> color 1
+    ppu.vram[0][0] = 0xFF;
+    ppu.vram[0][1] = 0x00;
+    // bottom tile -> color 2
+    ppu.vram[0][16] = 0x00;
+    ppu.vram[0][17] = 0xFF;
+    ppu.oam[0] = 16;
+    ppu.oam[1] = 8;
+    ppu.oam[2] = 1; // bit0 ignored
+    ppu.oam[3] = 0;
+    let mut if_reg = 0u8;
+    ppu.step(456, &mut if_reg);
+    assert_eq!(ppu.framebuffer[0], 0x008BAC0F);
+    for _ in 0..8 {
+        ppu.step(456, &mut if_reg);
+    }
+    assert_eq!(ppu.framebuffer[8 * 160], 0x00306230);
+}
+
+#[test]
+fn sprite_x_priority() {
+    let mut ppu = Ppu::new();
+    ppu.write_reg(0xFF40, 0x82); // LCD on, sprites enabled
+    ppu.write_reg(0xFF48, 0xE4);
+    // tile 0 -> color 2
+    ppu.vram[0][0] = 0x00;
+    ppu.vram[0][1] = 0xFF;
+    // tile 1 -> color 1
+    ppu.vram[0][16] = 0xFF;
+    ppu.vram[0][17] = 0x00;
+    // sprite 0 at x=9 (behind)
+    ppu.oam[0] = 16;
+    ppu.oam[1] = 9;
+    ppu.oam[2] = 0;
+    ppu.oam[3] = 0;
+    // sprite 1 at x=8 (front)
+    ppu.oam[4] = 16;
+    ppu.oam[5] = 8;
+    ppu.oam[6] = 1;
+    ppu.oam[7] = 0;
+    let mut if_reg = 0u8;
+    ppu.step(456, &mut if_reg);
+    assert_eq!(ppu.framebuffer[1], 0x008BAC0F);
+}
+
+#[test]
+fn cgb_bg_attr_priority() {
+    let mut ppu = Ppu::new_with_mode(true);
+    ppu.write_reg(0xFF40, 0x93); // BG and OBJ
+    // BG palette 0 color1 -> red
+    ppu.write_reg(0xFF68, 0x80);
+    ppu.write_reg(0xFF69, 0x00);
+    ppu.write_reg(0xFF69, 0x00);
+    ppu.write_reg(0xFF69, 0x1F);
+    ppu.write_reg(0xFF69, 0x00);
+    // sprite palette 0 color1 -> blue
+    ppu.write_reg(0xFF6A, 0x80);
+    ppu.write_reg(0xFF6B, 0x00);
+    ppu.write_reg(0xFF6B, 0x7C);
+    // BG tile
+    ppu.vram[0][0] = 0xFF;
+    ppu.vram[0][1] = 0x00;
+    ppu.vram[0][0x1800] = 0x00;
+    ppu.vram[1][0x1800] = 0x80; // priority
+    // sprite tile
+    ppu.vram[0][16] = 0xFF;
+    ppu.vram[0][17] = 0x00;
+    ppu.oam[0] = 16;
+    ppu.oam[1] = 8;
+    ppu.oam[2] = 1;
+    ppu.oam[3] = 0;
+    let mut if_reg = 0u8;
+    ppu.step(456, &mut if_reg);
+    assert_eq!(ppu.framebuffer[0], 0x00FF0000);
+}
+
+#[test]
 fn cgb_bg_palette() {
     let mut ppu = Ppu::new_with_mode(true);
     ppu.write_reg(0xFF40, 0x91);
