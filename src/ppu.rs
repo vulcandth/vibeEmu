@@ -144,6 +144,33 @@ impl Ppu {
         self.win_line_counter = 0;
     }
 
+    /// Load the default CGB palettes used when running a DMG cartridge in
+    /// compatibility mode. These values are based on the behavior of the
+    /// official boot ROM.
+    pub fn apply_dmg_compatibility_palettes(&mut self) {
+        const OBJ_PAL: [u16; 4] = [0x7FFF, 0x421F, 0x1CF2, 0x0000];
+        const BG_PAL: [u16; 4] = [0x7FFF, 0x1BEF, 0x6180, 0x0000];
+
+        let (obj0, rest) = self.obpd.split_at_mut(8);
+        let (obj1, _) = rest.split_at_mut(8);
+        Self::write_palette(obj0, OBJ_PAL);
+        Self::write_palette(obj1, OBJ_PAL);
+
+        let (bg0, _) = self.bgpd.split_at_mut(8);
+        Self::write_palette(bg0, BG_PAL);
+
+        self.bgp = 0xE4;
+        self.obp0 = 0xD0;
+        self.obp1 = 0xE0;
+    }
+
+    fn write_palette(slice: &mut [u8], pal: [u16; 4]) {
+        for (i, &c) in pal.iter().enumerate() {
+            slice[i * 2] = (c & 0xFF) as u8;
+            slice[i * 2 + 1] = (c >> 8) as u8;
+        }
+    }
+
     /// Returns true if a full frame has been rendered and is ready to display.
     pub fn frame_ready(&self) -> bool {
         self.frame_ready
