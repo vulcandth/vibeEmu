@@ -178,7 +178,7 @@ impl Mmu {
                 self.wram_bank = if bank == 0 { 1 } else { bank };
             }
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
-            0xFFFF => self.ie_reg = val,
+            0xFFFF => self.ie_reg = (val & 0x1F) | (self.ie_reg & 0xE0),
             _ => {}
         }
     }
