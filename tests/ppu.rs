@@ -274,3 +274,44 @@ fn bg_disable_yields_color0() {
     assert_eq!(ppu.framebuffer[0], 0x009BBC0F);
     assert_eq!(ppu.framebuffer[159], 0x009BBC0F);
 }
+
+#[test]
+fn window_internal_line_counter() {
+    let mut ppu = Ppu::new();
+    // LCD on and window enabled
+    ppu.write_reg(0xFF40, 0xB1);
+    ppu.write_reg(0xFF47, 0xE4);
+    ppu.write_reg(0xFF4A, 0); // WY=0
+    ppu.write_reg(0xFF4B, 7); // WX so window at x=0
+
+    // tile 0 -> color1, tile 1 -> color2
+    for i in 0..8 {
+        ppu.vram[0][i * 2] = 0xFF; // color1
+        ppu.vram[0][16 + i * 2] = 0x00; // color2
+        ppu.vram[0][16 + i * 2 + 1] = 0xFF;
+    }
+    for i in 0..8 {
+        ppu.vram[0][i * 2 + 1] = 0x00;
+    }
+    ppu.vram[0][0x1800] = 0x00; // first line
+    ppu.vram[0][0x1820] = 0x01; // second line
+
+    let mut if_reg = 0u8;
+    // first scanline -> uses tile 0
+    ppu.step(456, &mut if_reg);
+    assert_eq!(ppu.framebuffer[0], 0x008BAC0F);
+    let cnt1 = ppu.window_line_counter();
+    println!("counter1 {}", cnt1);
+
+    // hide window by moving off-screen
+    ppu.write_reg(0xFF4B, 167);
+    ppu.step(456, &mut if_reg);
+    ppu.step(456, &mut if_reg);
+
+    // bring window back
+    ppu.write_reg(0xFF4B, 7);
+    ppu.step(456, &mut if_reg);
+    let cnt2 = ppu.window_line_counter();
+    println!("counter2 {}", cnt2);
+    assert_eq!(cnt1 + 1, cnt2);
+}
