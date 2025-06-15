@@ -44,7 +44,20 @@ jobs:
           profile: minimal
           override: true
 
-      - name: Install sccache
+      - name: Install sccache (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/mozilla/sccache/releases/download/v0.10.0/sccache-v0.10.0-x86_64-pc-windows-msvc.zip"
+          $zipPath = "$env:RUNNER_TEMP\sccache.zip"
+          $outDir = "$env:RUNNER_TEMP\sccache"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $outDir
+          mkdir -p $env:USERPROFILE\.cargo\bin
+          Move-Item "$outDir\sccache.exe" "$env:USERPROFILE\.cargo\bin\sccache.exe"
+
+      - name: Install sccache (Linux)
+        if: runner.os == 'Linux'
         run: cargo install sccache
 
       - name: Set RUSTC_WRAPPER
