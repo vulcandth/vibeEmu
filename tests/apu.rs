@@ -78,3 +78,21 @@ fn dac_off_disables_channel() {
     apu.write_reg(0xFF12, 0x00); // turn DAC off
     assert_eq!(apu.read_reg(0xFF26) & 0x01, 0x00);
 }
+
+#[test]
+fn sweep_trigger_and_step() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80); // master enable
+    apu.write_reg(0xFF10, 0x11); // period=1, shift=1
+    apu.write_reg(0xFF12, 0xF0); // envelope (DAC on)
+    // set frequency 0x200
+    apu.write_reg(0xFF13, 0x00);
+    apu.write_reg(0xFF14, 0x82); // high bits=2, trigger
+    // immediately applied sweep -> freq should be 0x300
+    assert_eq!(apu.ch1_frequency(), 0x300);
+    // advance until the sequencer clocks sweep (step 2)
+    apu.step(8192); // advance to step 1
+    apu.step(8192); // advance to step 2
+    apu.step(8192); // advance to step 3 (sweep clocked on previous step)
+    assert_eq!(apu.ch1_frequency(), 0x480);
+}

@@ -41,6 +41,7 @@ impl Envelope {
 }
 
 #[derive(Default)]
+// Handles Channel 1 frequency sweep logic. See TODO.md #257.
 struct Sweep {
     period: u8,
     negate: bool,
@@ -51,30 +52,6 @@ struct Sweep {
 }
 
 impl Sweep {
-    fn clock(&mut self, ch: &mut SquareChannel) {
-        if !self.enabled {
-            return;
-        }
-        if self.timer == 0 {
-            self.timer = if self.period == 0 { 8 } else { self.period };
-            let mut new_freq = self.calculate();
-            if new_freq > 2047 {
-                ch.enabled = false;
-                self.enabled = false;
-            } else if self.shift != 0 {
-                self.shadow = new_freq;
-                ch.frequency = new_freq;
-                new_freq = self.calculate();
-                if new_freq > 2047 {
-                    ch.enabled = false;
-                    self.enabled = false;
-                }
-            }
-        } else {
-            self.timer -= 1;
-        }
-    }
-
     fn calculate(&self) -> u16 {
         let delta = self.shadow >> self.shift;
         if self.negate {
@@ -84,10 +61,13 @@ impl Sweep {
         }
     }
 
-    fn reload(&mut self, val: u8, freq: u16) {
+    fn set_params(&mut self, val: u8) {
         self.period = (val >> 4) & 0x07;
         self.negate = val & 0x08 != 0;
         self.shift = val & 0x07;
+    }
+
+    fn reload(&mut self, freq: u16) {
         self.shadow = freq;
         self.timer = if self.period == 0 { 8 } else { self.period };
         self.enabled = self.period != 0 || self.shift != 0;
@@ -165,6 +145,9 @@ impl SquareChannel {
             if !sweep.enabled {
                 return;
             }
+            if sweep.timer > 0 {
+                sweep.timer -= 1;
+            }
             if sweep.timer == 0 {
                 sweep.timer = if sweep.period == 0 { 8 } else { sweep.period };
                 let mut new_freq = sweep.calculate();
@@ -180,8 +163,6 @@ impl SquareChannel {
                         sweep.enabled = false;
                     }
                 }
-            } else {
-                sweep.timer -= 1;
             }
         }
     }
@@ -529,9 +510,7 @@ impl Apu {
         match addr {
             0xFF10 => {
                 if let Some(s) = self.ch1.sweep.as_mut() {
-                    s.period = (val >> 4) & 0x07;
-                    s.negate = val & 0x08 != 0;
-                    s.shift = val & 0x07;
+                    s.set_params(val);
                 }
             }
             0xFF11 => {
@@ -637,7 +616,17 @@ impl Apu {
         ch.envelope.volume = ch.envelope.initial;
         if idx == 1 {
             if let Some(s) = ch.sweep.as_mut() {
-                s.reload(0, ch.frequency);
+                s.reload(ch.frequency);
+                if s.shift != 0 {
+                    let new_freq = s.calculate();
+                    if new_freq > 2047 {
+                        ch.enabled = false;
+                        s.enabled = false;
+                    } else {
+                        s.shadow = new_freq;
+                        ch.frequency = new_freq;
+                    }
+                }
             }
         }
         if ch.length == 0 {
@@ -758,6 +747,10 @@ impl Apu {
         self.hp_prev_input_right = right_in;
         self.hp_prev_output_right = right_out;
         (left_out.round() as i16, right_out.round() as i16)
+    }
+
+    pub fn ch1_frequency(&self) -> u16 {
+        self.ch1.frequency
     }
 
     pub fn pop_sample(&mut self) -> Option<i16> {
