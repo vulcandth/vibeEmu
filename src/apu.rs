@@ -373,6 +373,7 @@ impl Apu {
         self.ch4 = NoiseChannel::default();
         self.nr50 = 0;
         self.nr51 = 0;
+        self.nr52 = 0x70;
         self.samples.clear();
     }
     pub fn new() -> Self {
@@ -413,11 +414,16 @@ impl Apu {
     }
 
     pub fn read_reg(&self, addr: u16) -> u8 {
+        if self.nr52 & 0x80 == 0 {
+            return match addr {
+                0xFF26 => self.nr52,
+                0xFF30..=0xFF3F => self.wave_ram[(addr - 0xFF30) as usize],
+                _ => 0x00,
+            };
+        }
+
         if addr == 0xFF26 {
-            let mut val = 0x70;
-            if self.nr52 & 0x80 != 0 {
-                val |= 0x80;
-            }
+            let mut val = 0x70 | (self.nr52 & 0x80);
             if self.ch1.enabled {
                 val |= 0x01;
             }
@@ -431,10 +437,6 @@ impl Apu {
                 val |= 0x08;
             }
             return val;
-        }
-
-        if self.nr52 & 0x80 == 0 && !(0xFF30..=0xFF3F).contains(&addr) {
-            return Apu::read_mask(addr);
         }
 
         let value = match addr {
@@ -568,10 +570,9 @@ impl Apu {
             0xFF25 => self.nr51 = val,
             0xFF26 => {
                 if val & 0x80 == 0 {
-                    self.nr52 &= 0x7F;
                     self.power_off();
                 } else {
-                    self.nr52 |= 0x80;
+                    self.nr52 = 0x80 | 0x70;
                 }
             }
             0xFF30..=0xFF3F => {

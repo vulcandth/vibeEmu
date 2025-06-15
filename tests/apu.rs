@@ -45,6 +45,27 @@ fn read_mask_unused_bits() {
 }
 
 #[test]
+fn power_off_clears_registers() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF12, 0xF0);
+    apu.write_reg(0xFF24, 0x77);
+    apu.write_reg(0xFF26, 0x00);
+    assert_eq!(apu.read_reg(0xFF12), 0x00);
+    assert_eq!(apu.read_reg(0xFF24), 0x00);
+    assert_eq!(apu.read_reg(0xFF26), 0x70);
+}
+
+#[test]
+fn sequencer_runs_when_disabled() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x00);
+    assert_eq!(apu.sequencer_step(), 0);
+    apu.step(8192);
+    assert_eq!(apu.sequencer_step(), 1);
+}
+
+#[test]
 fn wave_ram_access() {
     let mut apu = Apu::new();
     // write while channel 3 inactive
