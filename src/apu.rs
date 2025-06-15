@@ -60,12 +60,14 @@ impl Sweep {
             let mut new_freq = self.calculate();
             if new_freq > 2047 {
                 ch.enabled = false;
+                self.enabled = false;
             } else if self.shift != 0 {
                 self.shadow = new_freq;
                 ch.frequency = new_freq;
                 new_freq = self.calculate();
                 if new_freq > 2047 {
                     ch.enabled = false;
+                    self.enabled = false;
                 }
             }
         } else {
@@ -168,12 +170,14 @@ impl SquareChannel {
                 let mut new_freq = sweep.calculate();
                 if new_freq > 2047 {
                     self.enabled = false;
+                    sweep.enabled = false;
                 } else if sweep.shift != 0 {
                     sweep.shadow = new_freq;
                     self.frequency = new_freq;
                     new_freq = sweep.calculate();
                     if new_freq > 2047 {
                         self.enabled = false;
+                        sweep.enabled = false;
                     }
                 }
             } else {
@@ -191,6 +195,7 @@ struct WaveChannel {
     length_enable: bool,
     volume: u8,
     position: u8,
+    last_sample: u8,
     frequency: u16,
     timer: i32,
 }
@@ -200,7 +205,7 @@ impl WaveChannel {
         ((2048 - self.frequency) * 2) as i32
     }
 
-    fn step(&mut self, cycles: u32) {
+    fn step(&mut self, cycles: u32, wave_ram: &[u8; 0x10]) {
         if !self.enabled || !self.dac_enabled {
             return;
         }
@@ -209,6 +214,12 @@ impl WaveChannel {
             cycles -= self.timer;
             self.timer = self.period();
             self.position = (self.position + 1) & 0x1F;
+            let byte = wave_ram[(self.position / 2) as usize];
+            self.last_sample = if self.position & 1 == 0 {
+                byte >> 4
+            } else {
+                byte & 0x0F
+            };
         }
         self.timer -= cycles;
     }
@@ -222,21 +233,15 @@ impl WaveChannel {
         }
     }
 
-    fn output(&self, wave_ram: &[u8; 0x10]) -> u8 {
+    fn output(&self) -> u8 {
         if !self.enabled || !self.dac_enabled {
             return 0;
         }
-        let byte = wave_ram[(self.position / 2) as usize];
-        let sample = if self.position & 1 == 0 {
-            byte >> 4
-        } else {
-            byte & 0x0F
-        };
         match self.volume {
             0 => 0,
-            1 => sample,
-            2 => sample >> 1,
-            3 => sample >> 2,
+            1 => self.last_sample,
+            2 => self.last_sample >> 1,
+            3 => self.last_sample >> 2,
             _ => 0,
         }
     }
@@ -554,8 +559,12 @@ impl Apu {
             0xFF20 => self.ch4.length = val & 0x3F,
             0xFF21 => self.ch4.envelope.reset(val),
             0xFF22 => {
+                let new_width7 = val & 0x08 != 0;
+                if !self.ch4.width7 && new_width7 && (self.ch4.lfsr & 0x7F) == 0x7F {
+                    self.ch4.enabled = false;
+                }
                 self.ch4.clock_shift = val >> 4;
-                self.ch4.width7 = val & 0x08 != 0;
+                self.ch4.width7 = new_width7;
                 self.ch4.divisor = val & 0x07;
             }
             0xFF23 => {
@@ -649,7 +658,7 @@ impl Apu {
         }
         self.ch1.step(cycles);
         self.ch2.step(cycles);
-        self.ch3.step(cycles);
+        self.ch3.step(cycles, &self.wave_ram);
         self.ch4.step(cycles);
         self.sample_timer += cycles;
         let cps = CPU_CLOCK_HZ / self.sample_rate;
@@ -664,7 +673,7 @@ impl Apu {
     fn mix_output(&self) -> (i16, i16) {
         let ch1 = self.ch1.output() as u16;
         let ch2 = self.ch2.output() as u16;
-        let ch3 = self.ch3.output(&self.wave_ram) as u16;
+        let ch3 = self.ch3.output() as u16;
         let ch4 = self.ch4.output() as u16;
 
         let mut left = 0u16;
