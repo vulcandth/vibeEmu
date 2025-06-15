@@ -171,9 +171,11 @@ fn cgb_bg_attr_priority() {
     ppu.write_reg(0xFF69, 0x1F);
     ppu.write_reg(0xFF69, 0x00);
     // sprite palette 0 color1 -> blue
-    ppu.write_reg(0xFF6A, 0x80);
-    ppu.write_reg(0xFF6B, 0x00);
-    ppu.write_reg(0xFF6B, 0x7C);
+    ppu.write_reg(0xFF6A, 0x80); // start at index 0 with auto inc
+    ppu.write_reg(0xFF6B, 0x00); // color0 lo
+    ppu.write_reg(0xFF6B, 0x00); // color0 hi
+    ppu.write_reg(0xFF6B, 0x00); // color1 lo
+    ppu.write_reg(0xFF6B, 0x7C); // color1 hi (blue)
     // BG tile
     ppu.vram[0][0] = 0xFF;
     ppu.vram[0][1] = 0x00;
@@ -189,6 +191,41 @@ fn cgb_bg_attr_priority() {
     let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
     assert_eq!(ppu.framebuffer[0], 0x00FF0000);
+}
+
+#[test]
+fn cgb_master_priority() {
+    let mut ppu = Ppu::new_with_mode(true);
+    // LCD on, OBJ enabled, master priority cleared
+    ppu.write_reg(0xFF40, 0x92);
+    // BG palette 0 color1 -> red
+    ppu.write_reg(0xFF68, 0x80);
+    ppu.write_reg(0xFF69, 0x00);
+    ppu.write_reg(0xFF69, 0x00);
+    ppu.write_reg(0xFF69, 0x1F);
+    ppu.write_reg(0xFF69, 0x00);
+    // sprite palette 0 color1 -> blue
+    ppu.write_reg(0xFF6A, 0x80); // start index 0 with autoinc
+    ppu.write_reg(0xFF6B, 0x00); // color0 lo
+    ppu.write_reg(0xFF6B, 0x00); // color0 hi
+    ppu.write_reg(0xFF6B, 0x00); // color1 lo
+    ppu.write_reg(0xFF6B, 0x7C); // color1 hi
+    // BG tile with priority attribute
+    ppu.vram[0][0] = 0xFF;
+    ppu.vram[0][1] = 0x00;
+    ppu.vram[0][0x1800] = 0x00;
+    ppu.vram[1][0x1800] = 0x80; // priority bit set
+    // sprite tile
+    ppu.vram[0][16] = 0xFF;
+    ppu.vram[0][17] = 0x00;
+    ppu.oam[0] = 16;
+    ppu.oam[1] = 8;
+    ppu.oam[2] = 1;
+    ppu.oam[3] = 0;
+    let mut if_reg = 0u8;
+    ppu.step(456, &mut if_reg);
+    // sprite should appear on top despite BG priority
+    assert_eq!(ppu.framebuffer[0], 0x000000FF);
 }
 
 #[test]
