@@ -21,6 +21,20 @@ impl Timer {
         }
     }
 
+    /// Create a timer initialized to the register state normally
+    /// observed after the boot ROM has finished executing. This is
+    /// used when starting the emulator without running a boot ROM so
+    /// hardware defaults are respected.
+    pub fn post_boot_defaults() -> Self {
+        Self {
+            div: 0xAB00,
+            tima: 0,
+            tma: 0,
+            tac: 0,
+            last_signal: false,
+        }
+    }
+
     pub fn read(&self, addr: u16) -> u8 {
         match addr {
             0xFF04 => (self.div >> 8) as u8,

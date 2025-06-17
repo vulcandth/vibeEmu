@@ -26,8 +26,7 @@ pub struct Mmu {
 
 impl Mmu {
     pub fn new_with_mode(cgb: bool) -> Self {
-        let mut timer = Timer::new();
-        timer.div = 0xAB00;
+        let timer = Timer::post_boot_defaults();
 
         let mut ppu = Ppu::new_with_mode(cgb);
         ppu.apply_boot_state();
@@ -47,7 +46,7 @@ impl Mmu {
             timer,
             input: Input::new(),
             key1: if cgb { 0x7E } else { 0 },
-            rp: 0,
+            rp: if cgb { 0x3E } else { 0 },
             dma_cycles: 0,
             dma_source: 0,
             cgb_mode: cgb,
@@ -122,13 +121,30 @@ impl Mmu {
             }
             0xFF56 => {
                 if self.cgb_mode {
-                    self.rp | 0xC0
+                    self.rp
                 } else {
                     0xFF
                 }
             }
-            0xFF4F => self.ppu.vram_bank as u8,
-            0xFF70 => self.wram_bank as u8,
+            0xFF4F => {
+                if self.cgb_mode {
+                    0xFE | (self.ppu.vram_bank as u8 & 0x01)
+                } else {
+                    0xFF
+                }
+            }
+            0xFF70 => {
+                if self.cgb_mode {
+                    let bank_bits = if self.wram_bank == 1 {
+                        0
+                    } else {
+                        self.wram_bank as u8 & 0x07
+                    };
+                    0xF8 | bank_bits
+                } else {
+                    0xFF
+                }
+            }
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
             _ => 0xFF,

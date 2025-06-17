@@ -133,3 +133,22 @@ fn vram_oam_access_blocking() {
     mmu.write_byte(0xFE00, 0x56);
     assert_eq!(mmu.read_byte(0xFE00), 0x56);
 }
+#[test]
+fn hardware_register_defaults() {
+    let mut mmu_dmg = Mmu::new();
+    assert_eq!(mmu_dmg.read_byte(0xFF4F), 0xFF);
+    assert_eq!(mmu_dmg.read_byte(0xFF70), 0xFF);
+    assert_eq!(mmu_dmg.read_byte(0xFF04), 0xAB);
+    assert_eq!(mmu_dmg.read_byte(0xFF05), 0x00);
+    assert_eq!(mmu_dmg.read_byte(0xFF06), 0x00);
+    assert_eq!(mmu_dmg.read_byte(0xFF07), 0xF8);
+
+    let mut mmu_cgb = Mmu::new_with_mode(true);
+    assert_eq!(mmu_cgb.read_byte(0xFF4F), 0xFE);
+    assert_eq!(mmu_cgb.read_byte(0xFF70), 0xF8);
+    assert_eq!(mmu_cgb.read_byte(0xFF56), 0x3E);
+    assert_eq!(mmu_cgb.read_byte(0xFF04), 0xAB);
+    assert_eq!(mmu_cgb.read_byte(0xFF05), 0x00);
+    assert_eq!(mmu_cgb.read_byte(0xFF06), 0x00);
+    assert_eq!(mmu_cgb.read_byte(0xFF07), 0xF8);
+}
