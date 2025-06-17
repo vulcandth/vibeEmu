@@ -98,7 +98,11 @@ impl Cpu {
         let hw_cycles = if self.double_speed { 2 } else { 4 } * m_cycles as u16;
         self.cycles += hw_cycles as u64;
         mmu.timer.step(hw_cycles, &mut mmu.if_reg);
+        let prev_mode = mmu.ppu.mode;
         mmu.ppu.step(hw_cycles, &mut mmu.if_reg);
+        if prev_mode != 0 && mmu.ppu.mode == 0 {
+            mmu.on_hblank();
+        }
         mmu.apu.lock().unwrap().step(hw_cycles);
     }
 
@@ -328,6 +332,11 @@ impl Cpu {
     pub fn step(&mut self, mmu: &mut crate::mmu::Mmu) {
         if mmu.dma_active() {
             mmu.dma_step(4);
+            self.tick(mmu, 1);
+            return;
+        }
+        if mmu.cgb_dma_active() {
+            mmu.cgb_dma_step(4);
             self.tick(mmu, 1);
             return;
         }
