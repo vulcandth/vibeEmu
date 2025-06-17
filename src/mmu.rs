@@ -147,7 +147,7 @@ impl Mmu {
             0xFF55 => match self.dma_state {
                 DmaState::Idle => 0xFF,
                 DmaState::Gdma { blocks_left, .. } | DmaState::Hdma { blocks_left, .. } => {
-                    (blocks_left.wrapping_sub(1) & 0x7F)
+                    blocks_left.wrapping_sub(1) & 0x7F
                 }
             },
             0xFF4D => {
@@ -327,10 +327,8 @@ impl Mmu {
                 self.hdma5 = remaining.wrapping_sub(1);
                 *blocks_left = remaining;
             }
-        } else if self.dma_busy == 0 {
-            if matches!(self.dma_state, DmaState::Hdma { .. }) {
-                // HDMA block finished; nothing to update here
-            }
+        } else if self.dma_busy == 0 && matches!(self.dma_state, DmaState::Hdma { .. }) {
+            // HDMA block finished; nothing to update here
         }
     }
 
@@ -394,7 +392,7 @@ impl Mmu {
                 s = s.wrapping_add(1);
                 d = d.wrapping_add(1);
             }
-            let mut left = blocks_left - 1;
+            let left = blocks_left - 1;
             self.dma_busy = 32;
             if self.hdma_stop || left == 0 {
                 self.dma_state = DmaState::Idle;
