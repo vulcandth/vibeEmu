@@ -3,6 +3,8 @@
 mod apu;
 mod cartridge;
 mod cpu;
+mod debugger;
+mod egui_minifb;
 mod gameboy;
 mod input;
 mod mmu;
@@ -10,7 +12,9 @@ mod ppu;
 mod serial;
 mod timer;
 
+use crate::egui_minifb::EguiMiniFb;
 use clap::Parser;
+use debugger::{Debugger, RunState};
 use log::info;
 use minifb::{Key, Scale, Window, WindowOptions};
 use std::sync::Arc;
@@ -117,14 +121,25 @@ fn main() {
             160,
             144,
             WindowOptions {
-                scale: Scale::X2,
+                scale: Scale::X4,
                 ..WindowOptions::default()
             },
         )
         .expect("Failed to create window");
         window.limit_update_rate(Some(Duration::from_micros(16_700)));
+        let egui_ctx = egui::Context::default();
+        let mut egui_mb = EguiMiniFb::new(160, 144);
+        let mut dbg = Debugger::new();
+        let mut runstate = RunState::Running;
 
-        while window.is_open() && !window.is_key_down(Key::Escape) {
+        while window.is_open() {
+            // -------------------------------- egui ---------------------------------
+            let raw = egui_mb.raw_input(&window);
+            let full = egui_ctx.run(raw, |ctx| {
+                runstate = dbg.ui(&mut gb, ctx, runstate);
+            });
+            egui_mb.paint(&egui_ctx, full.shapes, &full.textures_delta);
+
             // Gather input
             let mut state = 0xFFu8;
             if window.is_key_down(Key::Right) {
@@ -153,12 +168,47 @@ fn main() {
             }
             gb.mmu.input.update_state(state, &mut gb.mmu.if_reg);
 
-            while !gb.mmu.ppu.frame_ready() {
-                gb.cpu.step(&mut gb.mmu);
+            // ========= 2. emulate =========
+            let want_step = dbg.consume_step();
+            if runstate == RunState::Running || want_step {
+                loop {
+                    gb.cpu.step(&mut gb.mmu);
+                    if want_step || dbg.breakpoint_hit(gb.cpu.pc) {
+                        runstate = RunState::Paused;
+                        break;
+                    }
+                    if gb.mmu.ppu.frame_ready() {
+                        break;
+                    }
+                }
             }
 
-            frame.copy_from_slice(gb.mmu.ppu.framebuffer());
-            gb.mmu.ppu.clear_frame_flag();
+            // ----------- mix Game Boy framebuffer with debugger UI ------------
+            if gb.mmu.ppu.frame_ready() {
+                frame.copy_from_slice(gb.mmu.ppu.framebuffer());
+                gb.mmu.ppu.clear_frame_flag();
+            }
+            let ui_fb = egui_mb.framebuffer();
+            for (dst, &src) in frame.iter_mut().zip(ui_fb) {
+                let sa = (src >> 24) & 0xFF;
+                if sa == 0 {
+                    continue;
+                }
+                let sr = (src >> 16) & 0xFF;
+                let sg = (src >> 8) & 0xFF;
+                let sb = src & 0xFF;
+
+                let da = 0xFF - sa;
+                let dr = (*dst >> 16) & 0xFF;
+                let dg = (*dst >> 8) & 0xFF;
+                let db = *dst & 0xFF;
+
+                let r = (sr * sa + dr * da) >> 8;
+                let g = (sg * sa + dg * da) >> 8;
+                let b = (sb * sa + db * da) >> 8;
+
+                *dst = (0xFF << 24) | (r << 16) | (g << 8) | b;
+            }
 
             window
                 .update_with_buffer(&frame, 160, 144)

@@ -4,6 +4,8 @@
 pub mod apu;
 pub mod cartridge;
 pub mod cpu;
+pub mod debugger;
+pub mod egui_minifb;
 pub mod gameboy;
 pub mod input;
 pub mod mmu;

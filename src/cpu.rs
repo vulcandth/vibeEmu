@@ -109,7 +109,7 @@ impl Cpu {
         }
     }
 
-    fn get_bc(&self) -> u16 {
+    pub fn get_bc(&self) -> u16 {
         ((self.b as u16) << 8) | self.c as u16
     }
 
@@ -118,7 +118,7 @@ impl Cpu {
         self.c = val as u8;
     }
 
-    fn get_de(&self) -> u16 {
+    pub fn get_de(&self) -> u16 {
         ((self.d as u16) << 8) | self.e as u16
     }
 
