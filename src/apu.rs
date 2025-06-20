@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 const CPU_CLOCK_HZ: u32 = 4_194_304;
+const FIXED_SHIFT: u32 = 24; // 8.24 fixed-point
 // 512 Hz frame sequencer tick (not doubled in CGB mode)
 const FRAME_SEQUENCER_PERIOD: u32 = 8192;
 const VOLUME_FACTOR: i16 = 64;
@@ -323,8 +324,9 @@ pub struct Apu {
     nr52: u8,
     sequencer: FrameSequencer,
     seq_counter: u32,
-    sample_timer: u32,
+    sample_timer_fp: u64,
     sample_rate: u32,
+    cps_fp: u64,
     samples: VecDeque<i16>,
     hp_prev_input_left: f32,
     hp_prev_output_left: f32,
@@ -392,9 +394,10 @@ impl Apu {
             nr52: 0xF1,
             sequencer: FrameSequencer::new(),
             seq_counter: 0,
-            sample_timer: 0,
+            sample_timer_fp: 0,
             sample_rate: 44100,
-            samples: VecDeque::with_capacity(4096),
+            cps_fp: 0,
+            samples: VecDeque::with_capacity(1024),
             hp_prev_input_left: 0.0,
             hp_prev_output_left: 0.0,
             hp_prev_input_right: 0.0,
@@ -420,6 +423,8 @@ impl Apu {
 
         apu.ch4.length = 0xFF;
         apu.ch4.dac_enabled = false;
+
+        apu.cps_fp = ((CPU_CLOCK_HZ as u64) << FIXED_SHIFT) / apu.sample_rate as u64;
 
         apu
     }
@@ -644,13 +649,16 @@ impl Apu {
         self.ch2.step(cycles);
         self.ch3.step(cycles, &self.wave_ram);
         self.ch4.step(cycles);
-        self.sample_timer += cycles;
-        let cps = CPU_CLOCK_HZ / self.sample_rate;
-        while self.sample_timer >= cps {
-            self.sample_timer -= cps;
+        self.sample_timer_fp += (cycles as u64) << FIXED_SHIFT;
+        while self.sample_timer_fp >= self.cps_fp {
+            self.sample_timer_fp -= self.cps_fp;
             let (left, right) = self.mix_output();
             self.samples.push_back(left);
             self.samples.push_back(right);
+            if self.samples.len() > 2048 {
+                self.samples.pop_front();
+                self.samples.pop_front();
+            }
         }
     }
 
@@ -738,37 +746,48 @@ impl Apu {
         {
             let mut a = apu.lock().unwrap();
             a.sample_rate = config.sample_rate.0;
+            a.cps_fp = ((CPU_CLOCK_HZ as u64) << FIXED_SHIFT) / a.sample_rate as u64;
         }
         let channels = config.channels as usize;
         let err_fn = |err| eprintln!("cpal stream error: {err}");
 
         let stream = match sample_format {
-            cpal::SampleFormat::I16 => device
-                .build_output_stream(
-                    &config,
-                    move |data: &mut [i16], _| {
-                        let mut apu = apu.lock().unwrap();
-                        for frame in data.chunks_mut(channels) {
-                            let left = apu.pop_sample().unwrap_or(0);
-                            let right = apu.pop_sample().unwrap_or(0);
-                            frame[0] = left;
-                            if channels > 1 {
-                                frame[1] = right;
+            cpal::SampleFormat::I16 => {
+                let mut last_l = 0i16;
+                let mut last_r = 0i16;
+                device
+                    .build_output_stream(
+                        &config,
+                        move |data: &mut [i16], _| {
+                            let mut apu = apu.lock().unwrap();
+                            for frame in data.chunks_mut(channels) {
+                                let left = apu.pop_sample().unwrap_or(last_l);
+                                let right = apu.pop_sample().unwrap_or(last_r);
+                                last_l = left;
+                                last_r = right;
+                                frame[0] = left;
+                                if channels > 1 {
+                                    frame[1] = right;
+                                }
                             }
-                        }
-                    },
-                    err_fn,
-                    None,
-                )
-                .unwrap(),
+                        },
+                        err_fn,
+                        None,
+                    )
+                    .unwrap()
+            }
             cpal::SampleFormat::U16 => device
                 .build_output_stream(
                     &config,
                     move |data: &mut [u16], _| {
                         let mut apu = apu.lock().unwrap();
+                        let mut last_l = 0i16;
+                        let mut last_r = 0i16;
                         for frame in data.chunks_mut(channels) {
-                            let left = apu.pop_sample().unwrap_or(0);
-                            let right = apu.pop_sample().unwrap_or(0);
+                            let left = apu.pop_sample().unwrap_or(last_l);
+                            let right = apu.pop_sample().unwrap_or(last_r);
+                            last_l = left;
+                            last_r = right;
                             frame[0] = (left as i32 + 32768) as u16;
                             if channels > 1 {
                                 frame[1] = (right as i32 + 32768) as u16;
@@ -784,9 +803,15 @@ impl Apu {
                     &config,
                     move |data: &mut [f32], _| {
                         let mut apu = apu.lock().unwrap();
+                        let mut last_l = 0i16;
+                        let mut last_r = 0i16;
                         for frame in data.chunks_mut(channels) {
-                            let left = apu.pop_sample().unwrap_or(0) as f32 / 32768.0;
-                            let right = apu.pop_sample().unwrap_or(0) as f32 / 32768.0;
+                            let left_i = apu.pop_sample().unwrap_or(last_l);
+                            let right_i = apu.pop_sample().unwrap_or(last_r);
+                            last_l = left_i;
+                            last_r = right_i;
+                            let left = left_i as f32 / 32768.0;
+                            let right = right_i as f32 / 32768.0;
                             frame[0] = left;
                             if channels > 1 {
                                 frame[1] = right;

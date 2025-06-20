@@ -17,8 +17,8 @@ use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use log::info;
 use pixels::{Pixels, SurfaceTexture};
 use rfd::FileDialog;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use winit::dpi::PhysicalPosition;
 use winit::{
     event::MouseButton,
@@ -28,6 +28,9 @@ use winit::{
 };
 
 const SCALE: u32 = 3;
+const FRAME_CYCLES: u64 = 70224;
+const FRAME_TIME: Duration = Duration::from_nanos(16_744_000);
+static LAST_FRAME: Mutex<Option<Instant>> = Mutex::new(None);
 
 #[derive(Default)]
 struct UiState {
@@ -307,7 +310,7 @@ fn main() {
         let mut cursor_pos = PhysicalPosition::new(0.0, 0.0);
 
         event_loop.run(move |event, _, control_flow| {
-            *control_flow = ControlFlow::Poll;
+            *control_flow = ControlFlow::Wait;
             platform.handle_event(imgui.io_mut(), &window, &event);
             match event {
                 Event::WindowEvent { event, .. } => match event {
@@ -375,6 +378,18 @@ fn main() {
                     _ => {}
                 },
                 Event::MainEventsCleared => {
+                    {
+                        let mut last = LAST_FRAME.lock().unwrap();
+                        if let Some(prev) = *last {
+                            let now = Instant::now();
+                            let since = now - prev;
+                            if since < FRAME_TIME {
+                                std::thread::sleep(FRAME_TIME - since);
+                            }
+                        }
+                        *last = Some(Instant::now());
+                    }
+
                     if !ui_state.paused {
                         while !gb.mmu.ppu.frame_ready() {
                             gb.cpu.step(&mut gb.mmu);
