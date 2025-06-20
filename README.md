@@ -10,10 +10,10 @@ Ensure you have a recent Rust toolchain installed. To build the project run:
 cargo build
 ```
 
-The frontend uses the `minifb` crate for window creation. On Linux you may need
-X11 development packages installed (e.g. `libx11-dev`). Audio output relies on
-`cpal`, which requires ALSA headers. Install `libasound2-dev` as well if you
-build on Linux.
+The frontend uses `winit` and `wgpu` for windowing and GPU rendering. On Linux
+you will need a working X11 or Wayland environment. Audio output relies on
+`cpal`, which requires ALSA headers. Install `libasound2-dev` if you build on
+Linux.
 
 ## Running
 

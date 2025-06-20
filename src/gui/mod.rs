@@ -1,8 +1,9 @@
 use winit::{
-    event::{ElementState, Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    application::ApplicationHandler,
+    event::{ElementState, WindowEvent},
+    event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::WindowAttributes,
+    window::Window,
 };
 
 use crate::gameboy::GameBoy;
@@ -10,46 +11,81 @@ use crate::gameboy::GameBoy;
 const SCREEN_WIDTH: u32 = 160;
 const SCREEN_HEIGHT: u32 = 144;
 
-pub fn run(mut gb: GameBoy) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(gb: GameBoy) -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::new()?;
-    #[allow(deprecated)]
-    let window = event_loop.create_window(
-        WindowAttributes::default()
-            .with_title("VibeEmu")
-            .with_inner_size(winit::dpi::PhysicalSize::new(SCREEN_WIDTH, SCREEN_HEIGHT)),
-    )?;
-    let window = Box::leak(Box::new(window));
-    let window: &'static winit::window::Window = window;
+    let mut app = GuiApp {
+        gb,
+        state: None,
+        input_state: 0xFF,
+        window: None,
+    };
+    event_loop.run_app(&mut app)?;
+    Ok(())
+}
 
-    let (mut state, mut input_state) = pollster::block_on(init(window))?;
+struct GuiApp {
+    gb: GameBoy,
+    state: Option<WgpuState>,
+    input_state: u8,
+    window: Option<&'static Window>,
+}
 
-    #[allow(deprecated)]
-    event_loop.run(move |event, elwt| {
-        elwt.set_control_flow(ControlFlow::Poll);
+impl ApplicationHandler for GuiApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_none() {
+            let window = event_loop
+                .create_window(
+                    Window::default_attributes()
+                        .with_title("VibeEmu")
+                        .with_inner_size(winit::dpi::PhysicalSize::new(
+                            SCREEN_WIDTH,
+                            SCREEN_HEIGHT,
+                        )),
+                )
+                .expect("create window");
+            let window = Box::leak(Box::new(window));
+            let (state, input_state) = pollster::block_on(init(window)).expect("init wgpu");
+            self.state = Some(state);
+            self.input_state = input_state;
+            self.window = Some(window);
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(w) = self.window {
+            w.request_redraw();
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        if Some(window_id) != self.window.map(|w| w.id()) {
+            return;
+        }
+
         match event {
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => elwt.exit(),
-                WindowEvent::KeyboardInput { event, .. } => {
-                    handle_input(&mut input_state, event, &mut gb);
+            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::KeyboardInput { event, .. } => {
+                handle_input(&mut self.input_state, event, &mut self.gb);
+            }
+            WindowEvent::RedrawRequested => {
+                while !self.gb.mmu.ppu.frame_ready() {
+                    self.gb.cpu.step(&mut self.gb.mmu);
                 }
-                WindowEvent::RedrawRequested => {
-                    while !gb.mmu.ppu.frame_ready() {
-                        gb.cpu.step(&mut gb.mmu);
-                    }
-                    let frame = gb.mmu.ppu.framebuffer();
+                let frame = self.gb.mmu.ppu.framebuffer();
+                if let Some(state) = self.state.as_mut() {
                     state.upload_frame(frame);
                     state.render();
-                    gb.mmu.ppu.clear_frame_flag();
                 }
-                _ => {}
-            },
-            Event::AboutToWait => {
-                window.request_redraw();
+                self.gb.mmu.ppu.clear_frame_flag();
             }
             _ => {}
         }
-    })?;
-    Ok(())
+    }
 }
 
 struct WgpuState {
