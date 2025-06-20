@@ -5,10 +5,14 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-winit = "0.29"
-pixels = "0.13"
+winit = "0.30"
+wgpu = "0.20"
+pollster = "0.3"
+egui = "0.27"
+egui-winit = "0.27"
+egui-wgpu = "0.27"
+bytemuck = { version = "1", features = ["derive"] }
 cpal = "0.15"
-minifb = "0.25"
 log = "0.4"
 env_logger = "0.10"
 

@@ -4,6 +4,7 @@ mod apu;
 mod cartridge;
 mod cpu;
 mod gameboy;
+mod gui;
 mod input;
 mod mmu;
 mod ppu;
@@ -12,7 +13,6 @@ mod timer;
 
 use clap::Parser;
 use log::info;
-use minifb::{Key, Scale, Window, WindowOptions};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -108,82 +108,12 @@ fn main() {
         Some(apu::Apu::start_stream(Arc::clone(&gb.mmu.apu)))
     };
 
-    let mut frame = vec![0u32; 160 * 144];
-    let mut frame_count = 0u64;
-
     if !args.headless {
-        let mut window = Window::new(
-            "vibeEmu",
-            160,
-            144,
-            WindowOptions {
-                scale: Scale::X2,
-                ..WindowOptions::default()
-            },
-        )
-        .expect("Failed to create window");
-        window.limit_update_rate(Some(Duration::from_micros(16_700)));
-
-        while window.is_open() && !window.is_key_down(Key::Escape) {
-            // Gather input
-            let mut state = 0xFFu8;
-            if window.is_key_down(Key::Right) {
-                state &= !0x01;
-            }
-            if window.is_key_down(Key::Left) {
-                state &= !0x02;
-            }
-            if window.is_key_down(Key::Up) {
-                state &= !0x04;
-            }
-            if window.is_key_down(Key::Down) {
-                state &= !0x08;
-            }
-            if window.is_key_down(Key::S) {
-                state &= !0x10;
-            }
-            if window.is_key_down(Key::A) {
-                state &= !0x20;
-            }
-            if window.is_key_down(Key::LeftShift) || window.is_key_down(Key::RightShift) {
-                state &= !0x40;
-            }
-            if window.is_key_down(Key::Enter) {
-                state &= !0x80;
-            }
-            gb.mmu.input.update_state(state, &mut gb.mmu.if_reg);
-
-            while !gb.mmu.ppu.frame_ready() {
-                gb.cpu.step(&mut gb.mmu);
-            }
-
-            frame.copy_from_slice(gb.mmu.ppu.framebuffer());
-            gb.mmu.ppu.clear_frame_flag();
-
-            window
-                .update_with_buffer(&frame, 160, 144)
-                .expect("Failed to update window");
-
-            if args.debug && frame_count % 60 == 0 {
-                let serial = gb.mmu.take_serial();
-                if !serial.is_empty() {
-                    print!("[SERIAL] ");
-                    for b in &serial {
-                        if b.is_ascii_graphic() || *b == b' ' {
-                            print!("{}", *b as char);
-                        } else {
-                            print!("\\x{:02X}", b);
-                        }
-                    }
-                    println!();
-                }
-
-                println!("{}", gb.cpu.debug_state());
-            }
-
-            frame_count += 1;
-        }
+        gui::run(gb).unwrap();
+        return;
     } else {
+        let mut frame = vec![0u32; 160 * 144];
+        let mut frame_count = 0u64;
         let frame_limit = args.frames;
         let cycle_limit = args.cycles;
         let second_limit = args.seconds.map(Duration::from_secs);
@@ -237,7 +167,6 @@ fn main() {
                 }
             }
         }
+        gb.mmu.save_cart_ram();
     }
-
-    gb.mmu.save_cart_ram();
 }
