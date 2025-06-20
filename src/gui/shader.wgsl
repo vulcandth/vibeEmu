@@ -26,5 +26,6 @@ fn vs_main(@builtin(vertex_index) i: u32) -> VSOut {
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-    return textureSample(my_tex, my_sampler, in.uv);
+    let uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
+    return textureSample(my_tex, my_sampler, uv);
 }

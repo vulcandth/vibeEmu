@@ -95,6 +95,7 @@ struct WgpuState {
     config: wgpu::SurfaceConfiguration,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    buffer: Vec<u8>,
     sampler: wgpu::Sampler,
     bind_group: wgpu::BindGroup,
     pipeline: wgpu::RenderPipeline,
@@ -238,13 +239,20 @@ async fn init(
             sampler,
             bind_group,
             pipeline,
+            buffer: vec![0; (SCREEN_WIDTH * SCREEN_HEIGHT * 4) as usize],
         },
         0xFF,
     ))
 }
 
 impl WgpuState {
-    fn upload_frame(&self, frame: &[u32]) {
+    fn upload_frame(&mut self, frame: &[u32]) {
+        for (chunk, &pix) in self.buffer.chunks_exact_mut(4).zip(frame) {
+            chunk[0] = ((pix >> 16) & 0xFF) as u8; // R
+            chunk[1] = ((pix >> 8) & 0xFF) as u8; // G
+            chunk[2] = (pix & 0xFF) as u8; // B
+            chunk[3] = 0xFF; // A
+        }
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &self.texture,
@@ -252,7 +260,7 @@ impl WgpuState {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            bytemuck::cast_slice(frame),
+            &self.buffer,
             wgpu::ImageDataLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * SCREEN_WIDTH),
