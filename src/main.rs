@@ -110,7 +110,6 @@ fn main() {
 
     if !args.headless {
         gui::run(gb).unwrap();
-        return;
     } else {
         let mut frame = vec![0u32; 160 * 144];
         let mut frame_count = 0u64;

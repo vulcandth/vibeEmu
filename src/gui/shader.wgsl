@@ -1,7 +1,7 @@
 struct VSOut {
-    @builtin(position) pos: vec4<f32>;
-    @location(0) uv: vec2<f32>;
-};
+    @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> VSOut {

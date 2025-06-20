@@ -5,8 +5,6 @@ use winit::{
     window::WindowAttributes,
 };
 
-use bytemuck;
-
 use crate::gameboy::GameBoy;
 
 const SCREEN_WIDTH: u32 = 160;
@@ -14,6 +12,7 @@ const SCREEN_HEIGHT: u32 = 144;
 
 pub fn run(mut gb: GameBoy) -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::new()?;
+    #[allow(deprecated)]
     let window = event_loop.create_window(
         WindowAttributes::default()
             .with_title("VibeEmu")
@@ -22,8 +21,9 @@ pub fn run(mut gb: GameBoy) -> Result<(), Box<dyn std::error::Error>> {
     let window = Box::leak(Box::new(window));
     let window: &'static winit::window::Window = window;
 
-    let (mut state, mut input_state) = pollster::block_on(init(&window))?;
+    let (mut state, mut input_state) = pollster::block_on(init(window))?;
 
+    #[allow(deprecated)]
     event_loop.run(move |event, elwt| {
         elwt.set_control_flow(ControlFlow::Poll);
         match event {
@@ -72,7 +72,7 @@ async fn init(
         backends,
         ..Default::default()
     });
-    let surface = unsafe { instance.create_surface(window) }?;
+    let surface = instance.create_surface(window)?;
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
