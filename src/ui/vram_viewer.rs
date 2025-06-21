@@ -31,6 +31,11 @@ pub struct VramViewerWindow {
     last_frame: u64,
     oam_last_frame: u64,
     palettes_last_frame: u64,
+    // Cached screen rectangles for BG-map overlay
+    bg_overlay: Vec<([f32; 2], [f32; 2])>,
+    last_scx: u8,
+    last_scy: u8,
+    last_scale: f32,
 }
 
 impl VramViewerWindow {
@@ -61,6 +66,10 @@ impl VramViewerWindow {
             last_frame: 0,
             oam_last_frame: 0,
             palettes_last_frame: 0,
+            bg_overlay: Vec::new(),
+            last_scx: 0,
+            last_scy: 0,
+            last_scale: 0.0,
         }
     }
 
@@ -163,42 +172,49 @@ impl VramViewerWindow {
 
         let scx = ppu.read_reg(0xFF43);
         let scy = ppu.read_reg(0xFF42);
-        let mut sx = scx as f32;
-        if sx > 160.0 {
-            sx -= 256.0;
-        }
-        sx = sx.clamp(-96.0, 160.0);
-        let mut sy = scy as f32;
-        if sy > 144.0 {
-            sy -= 256.0;
-        }
-        sy = sy.clamp(-112.0, 144.0);
-        let tl = [cursor[0] + sx * scale, cursor[1] + sy * scale];
-        let br = [tl[0] + 160.0 * scale, tl[1] + 144.0 * scale];
 
-        let draw_list = ui.get_window_draw_list();
-        draw_list
-            .add_rect(tl, br, imgui::ImColor32::from_rgb(255, 0, 0))
-            .thickness(1.0)
-            .build();
+        if self.bg_overlay.is_empty()
+            || scx != self.last_scx
+            || scy != self.last_scy
+            || (scale - self.last_scale).abs() > f32::EPSILON
+        {
+            self.bg_overlay.clear();
+            self.last_scx = scx;
+            self.last_scy = scy;
+            self.last_scale = scale;
 
-        if scx > 96 {
-            draw_list
-                .add_rect(
+            let mut sx = scx as f32;
+            if sx > 160.0 {
+                sx -= 256.0;
+            }
+            sx = sx.clamp(-96.0, 160.0);
+            let mut sy = scy as f32;
+            if sy > 144.0 {
+                sy -= 256.0;
+            }
+            sy = sy.clamp(-112.0, 144.0);
+            let tl = [cursor[0] + sx * scale, cursor[1] + sy * scale];
+            let br = [tl[0] + 160.0 * scale, tl[1] + 144.0 * scale];
+            self.bg_overlay.push((tl, br));
+
+            if scx > 96 {
+                self.bg_overlay.push((
                     [cursor[0] + (sx - 256.0) * scale, tl[1]],
                     [cursor[0] + (sx - 96.0) * scale, br[1]],
-                    imgui::ImColor32::from_rgb(255, 0, 0),
-                )
-                .thickness(1.0)
-                .build();
-        }
-        if scy > 112 {
-            draw_list
-                .add_rect(
+                ));
+            }
+            if scy > 112 {
+                self.bg_overlay.push((
                     [tl[0], cursor[1] + (sy - 256.0) * scale],
                     [br[0], cursor[1] + (sy - 112.0) * scale],
-                    imgui::ImColor32::from_rgb(255, 0, 0),
-                )
+                ));
+            }
+        }
+
+        let draw_list = ui.get_window_draw_list();
+        for &(tl, br) in &self.bg_overlay {
+            draw_list
+                .add_rect(tl, br, imgui::ImColor32::from_rgb(255, 0, 0))
                 .thickness(1.0)
                 .build();
         }
@@ -258,14 +274,16 @@ impl VramViewerWindow {
                     continue;
                 }
                 for row in 0..TILE {
-                    let lo = ppu.vram[bank][tile_addr + row * 2];
-                    let hi = ppu.vram[bank][tile_addr + row * 2 + 1];
+                    let src_y = if attr & 0x40 != 0 { 7 - row } else { row };
+                    let lo = ppu.vram[bank][tile_addr + src_y * 2];
+                    let hi = ppu.vram[bank][tile_addr + src_y * 2 + 1];
                     for col in 0..TILE {
-                        let bit = 7 - col;
+                        let src_x = if attr & 0x20 != 0 { col } else { 7 - col };
+                        let bit = 7 - src_x;
                         let idx = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
                         let color = if cgb {
-                            let pal = (attr & 0x07) as usize;
-                            ppu.bg_palette_color(pal, idx as usize)
+                            let pal_idx = (attr & 0x07) as usize;
+                            ppu.bg_palette_color(pal_idx, idx as usize)
                         } else {
                             let shade = (bgp >> (idx * 2)) & 0x03;
                             DMG_PALETTE[shade as usize]
@@ -276,7 +294,7 @@ impl VramViewerWindow {
                         rgba[off] = ((color >> 16) & 0xFF) as u8;
                         rgba[off + 1] = ((color >> 8) & 0xFF) as u8;
                         rgba[off + 2] = (color & 0xFF) as u8;
-                        rgba[off + 3] = 0xFF;
+                        rgba[off + 3] = if attr & 0x80 != 0 { 0x80 } else { 0xFF };
                     }
                 }
             }
