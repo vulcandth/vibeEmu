@@ -219,6 +219,7 @@ impl Mmu {
             0x8000..=0x9FFF => {
                 if self.ppu.mode != 3 {
                     self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize] = val;
+                    self.ppu.mark_vram_dirty(addr);
                 }
             }
             0x0000..=0x7FFF | 0xA000..=0xBFFF => {
@@ -233,6 +234,7 @@ impl Mmu {
             0xFE00..=0xFE9F => {
                 if self.ppu.mode != 2 && self.ppu.mode != 3 {
                     self.ppu.oam[(addr - 0xFE00) as usize] = val;
+                    self.ppu.mark_vram_dirty(addr);
                 }
             }
             0xFEA0..=0xFEFF => {}
@@ -241,7 +243,10 @@ impl Mmu {
             0xFF04..=0xFF07 => self.timer.write(addr, val, &mut self.if_reg),
             0xFF0F => self.if_reg = (val & 0x1F) | (self.if_reg & 0xE0),
             0xFF10..=0xFF3F => self.apu.lock().unwrap().write_reg(addr, val),
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => {
+                self.ppu.write_reg(addr, val);
+                self.ppu.mark_vram_dirty(addr);
+            }
             0xFF51 => {
                 if !self.hdma.active {
                     self.hdma.src = (val as u16) << 8 | (self.hdma.src & 0x00FF);
@@ -312,6 +317,7 @@ impl Mmu {
     /// Write to VRAM bypassing mode checks (used by DMA transfers)
     fn vram_dma_write(&mut self, addr: u16, val: u8) {
         self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize] = val;
+        self.ppu.mark_vram_dirty(addr);
     }
 
     pub fn take_serial(&mut self) -> Vec<u8> {
@@ -341,6 +347,7 @@ impl Mmu {
                 let idx: u16 = elapsed / 4;
                 let byte = self.dma_read_byte(self.dma_source.wrapping_add(idx));
                 self.ppu.oam[idx as usize] = byte;
+                self.ppu.mark_vram_dirty(0xFE00 + idx);
             }
 
             self.dma_cycles -= 1;

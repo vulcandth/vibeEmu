@@ -27,13 +27,26 @@ pub struct VramViewerWindow {
     /* Palettes */
     palettes_tex: Option<TextureId>,
     palettes_buf: Vec<u8>,
-
-    last_frame: u64,
-    oam_last_frame: u64,
-    palettes_last_frame: u64,
 }
 
 impl VramViewerWindow {
+    fn decode_tile(bank: &[u8], idx: usize, out_rgba: &mut [u8], palette: impl Fn(u8) -> u32) {
+        for row in 0..8 {
+            let lo = bank[idx + row * 2];
+            let hi = bank[idx + row * 2 + 1];
+            for col in 0..8 {
+                let bit = 7 - col;
+                let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                let rgb = palette(color_id);
+                let off = (row * 8 + col) * 4;
+                out_rgba[off] = ((rgb >> 16) & 0xFF) as u8;
+                out_rgba[off + 1] = ((rgb >> 8) & 0xFF) as u8;
+                out_rgba[off + 2] = (rgb & 0xFF) as u8;
+                out_rgba[off + 3] = if color_id == 0 { 0 } else { 0xFF };
+            }
+        }
+    }
+
     pub fn new() -> Self {
         // Maximum canvas is 256×192 (CGB shows both banks side-by-side)
         const MAX_TILES_W: usize = 256;
@@ -57,10 +70,6 @@ impl VramViewerWindow {
             /* Palettes — 32 × 128 px, 4 RGBA bytes each */
             palettes_tex: None,
             palettes_buf: vec![0; 32 * 128 * 4],
-
-            last_frame: 0,
-            oam_last_frame: 0,
-            palettes_last_frame: 0,
         }
     }
 
@@ -146,12 +155,10 @@ impl VramViewerWindow {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
-        let frame = ppu.frames();
-        if self.bg_map_tex.is_none() || frame != self.last_frame {
+        if self.bg_map_tex.is_none() || ppu.ui_dirty_bg_map {
             self.bg_map_tex = Some(self.build_bg_map_texture(ppu, renderer, device, queue));
-            self.last_frame = frame;
+            ppu.ui_dirty_bg_map = false;
         }
-
         let tex_id = self.bg_map_tex.unwrap();
         let size = [256.0, 256.0];
         let avail = ui.content_region_avail();
@@ -257,27 +264,20 @@ impl VramViewerWindow {
                 if tile_addr + 16 > ppu.vram[bank].len() {
                     continue;
                 }
-                for row in 0..TILE {
-                    let lo = ppu.vram[bank][tile_addr + row * 2];
-                    let hi = ppu.vram[bank][tile_addr + row * 2 + 1];
-                    for col in 0..TILE {
-                        let bit = 7 - col;
-                        let idx = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                        let color = if cgb {
-                            let pal = (attr & 0x07) as usize;
-                            ppu.bg_palette_color(pal, idx as usize)
-                        } else {
-                            let shade = (bgp >> (idx * 2)) & 0x03;
-                            DMG_PALETTE[shade as usize]
-                        };
-                        let x = tile_x * TILE + col;
-                        let y = tile_y * TILE + row;
-                        let off = (y * IMG_W + x) * 4;
-                        rgba[off] = ((color >> 16) & 0xFF) as u8;
-                        rgba[off + 1] = ((color >> 8) & 0xFF) as u8;
-                        rgba[off + 2] = (color & 0xFF) as u8;
-                        rgba[off + 3] = 0xFF;
+                let mut tile = [0u8; TILE * TILE * 4];
+                Self::decode_tile(&ppu.vram[bank], tile_addr, &mut tile, |idx| {
+                    if cgb {
+                        let pal = (attr & 0x07) as usize;
+                        ppu.bg_palette_color(pal, idx as usize)
+                    } else {
+                        let shade = (bgp >> (idx * 2)) & 0x03;
+                        DMG_PALETTE[shade as usize]
                     }
+                });
+                for row in 0..TILE {
+                    let src = &tile[row * TILE * 4..(row + 1) * TILE * 4];
+                    let off = ((tile_y * TILE + row) * IMG_W + tile_x * TILE) * 4;
+                    rgba[off..off + TILE * 4].copy_from_slice(src);
                 }
             }
         }
@@ -305,11 +305,11 @@ impl VramViewerWindow {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
-        let frame = ppu.frames();
-        if self.tiles_tex.is_none() || frame != self.last_frame {
+        if self.tiles_tex.is_none() || ppu.ui_dirty_tiles {
             self.tiles_tex = Some(self.build_tiles_texture(ppu, renderer, device, queue));
-            self.last_frame = frame;
+            ppu.ui_dirty_tiles = false;
         }
+        let tex_id = self.tiles_tex.unwrap();
 
         let banks = if ppu.is_cgb() { 2 } else { 1 };
         let size = [128.0 * banks as f32, 192.0];
@@ -317,9 +317,7 @@ impl VramViewerWindow {
         let scale = (avail[0] / size[0]).min(3.0);
         let draw_size = [size[0] * scale, size[1] * scale];
 
-        if let Some(tex) = self.tiles_tex {
-            imgui::Image::new(tex, draw_size).build(ui);
-        }
+        imgui::Image::new(tex_id, draw_size).build(ui);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -351,31 +349,21 @@ impl VramViewerWindow {
                 let row = tile_idx / TILES_PER_ROW;
 
                 let tile_addr = tile_idx * 16; // 16 bytes per tile
-                for y in 0..TILE_H {
-                    let lo = ppu.vram[bank][tile_addr + y * 2];
-                    let hi = ppu.vram[bank][tile_addr + y * 2 + 1];
-
-                    for x in 0..TILE_W {
-                        let bit = 7 - x;
-                        let idx = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-
-                        // Palette choose: CGB → BG palette 0, DMG → BGP shades
-                        let rgb = if ppu.is_cgb() {
-                            ppu.bg_palette_color(0, idx as usize)
-                        } else {
-                            let shade = (bgp >> (idx * 2)) & 0x03;
-                            DMG_COLORS[shade as usize]
-                        };
-
-                        let px = (bank * 128) + (col * TILE_W) + x; // bank 1 sits to the right
-                        let py = row * TILE_H + y;
-                        let off = (py * img_w + px) * 4;
-
-                        buf[off] = ((rgb >> 16) & 0xFF) as u8; // R
-                        buf[off + 1] = ((rgb >> 8) & 0xFF) as u8; // G
-                        buf[off + 2] = (rgb & 0xFF) as u8; // B
-                        buf[off + 3] = 0xFF; // A
+                let mut tile = [0u8; TILE_W * TILE_H * 4];
+                Self::decode_tile(&ppu.vram[bank], tile_addr, &mut tile, |idx| {
+                    if ppu.is_cgb() {
+                        ppu.bg_palette_color(0, idx as usize)
+                    } else {
+                        let shade = (bgp >> (idx * 2)) & 0x03;
+                        DMG_COLORS[shade as usize]
                     }
+                });
+                for y in 0..TILE_H {
+                    let src = &tile[y * TILE_W * 4..(y + 1) * TILE_W * 4];
+                    let px = bank * 128 + col * TILE_W;
+                    let py = row * TILE_H + y;
+                    let off = (py * img_w + px) * 4;
+                    buf[off..off + TILE_W * 4].copy_from_slice(src);
                 }
             }
         }
@@ -445,46 +433,50 @@ impl VramViewerWindow {
             let tile_x = i % COLS;
             let tile_y = i / COLS;
 
-            for row in 0..sprite_h {
-                // Handle Y-flip and second tile for 8×16 mode
-                let mut src_row = if y_flip { sprite_h - 1 - row } else { row };
-                let tile_offset = if sprite_h == 16 && src_row >= 8 {
-                    tile_num as usize + 1
+            let mut tile0 = [0u8; 8 * 8 * 4];
+            Self::decode_tile(&ppu.vram[bank], tile_num as usize * 16, &mut tile0, |idx| {
+                if cgb {
+                    ppu.ob_palette_color(pal_idx_cgb, idx as usize)
                 } else {
-                    tile_num as usize
-                };
-                if sprite_h == 16 && src_row >= 8 {
-                    src_row -= 8;
+                    let shade = (dmg_pal >> (idx * 2)) & 0x03;
+                    DMG_PALETTE[shade as usize]
                 }
-                let tile_addr = tile_offset * 16 + src_row * 2;
+            });
+            let mut tile1 = [0u8; 8 * 8 * 4];
+            if sprite_h == 16 {
+                Self::decode_tile(
+                    &ppu.vram[bank],
+                    tile_num as usize * 16 + 16,
+                    &mut tile1,
+                    |idx| {
+                        if cgb {
+                            ppu.ob_palette_color(pal_idx_cgb, idx as usize)
+                        } else {
+                            let shade = (dmg_pal >> (idx * 2)) & 0x03;
+                            DMG_PALETTE[shade as usize]
+                        }
+                    },
+                );
+            }
 
-                let lo = ppu.vram[bank][tile_addr];
-                let hi = ppu.vram[bank][tile_addr + 1];
-
+            for row in 0..sprite_h {
+                let mut src_row = if y_flip { sprite_h - 1 - row } else { row };
+                let tile_buf = if sprite_h == 16 && src_row >= 8 {
+                    src_row -= 8;
+                    &tile1
+                } else {
+                    &tile0
+                };
                 for col in 0..TILE_W {
                     let src_col = if x_flip { col } else { 7 - col };
-                    let bit = 7 - src_col;
-                    let color_id = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
-
-                    // Transparent?
-                    if color_id == 0 {
+                    let off = (src_row * TILE_W + src_col) * 4;
+                    if tile_buf[off + 3] == 0 {
                         continue;
                     }
-
-                    let color = if cgb {
-                        ppu.ob_palette_color(pal_idx_cgb, color_id as usize)
-                    } else {
-                        let shade = (dmg_pal >> (color_id * 2)) & 0x03;
-                        DMG_PALETTE[shade as usize]
-                    };
-
                     let x = tile_x * TILE_W + col;
                     let y = tile_y * sprite_h + row;
-                    let off = (y * img_w + x) * 4;
-                    rgba[off] = ((color >> 16) & 0xFF) as u8;
-                    rgba[off + 1] = ((color >> 8) & 0xFF) as u8;
-                    rgba[off + 2] = (color & 0xFF) as u8;
-                    rgba[off + 3] = 0xFF;
+                    let dst = (y * img_w + x) * 4;
+                    rgba[dst..dst + 4].copy_from_slice(&tile_buf[off..off + 4]);
                 }
             }
         }
@@ -512,12 +504,10 @@ impl VramViewerWindow {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
-        let frame = ppu.frames();
-        if self.oam_tex.is_none() || frame != self.oam_last_frame {
+        if self.oam_tex.is_none() || ppu.ui_dirty_oam {
             self.oam_tex = Some(self.build_oam_texture(ppu, renderer, device, queue));
-            self.oam_last_frame = frame;
+            ppu.ui_dirty_oam = false;
         }
-
         let tex_id = self.oam_tex.unwrap();
         // Logical size of the generated bitmap – recompute every call
         let sprite_h = if ppu.read_reg(0xFF40) & 0x04 != 0 {
@@ -541,12 +531,10 @@ impl VramViewerWindow {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
-        let frame = ppu.frames();
-        if self.palettes_tex.is_none() || frame != self.palettes_last_frame {
+        if self.palettes_tex.is_none() || ppu.ui_dirty_palettes {
             self.palettes_tex = Some(self.build_palettes_texture(ppu, renderer, device, queue));
-            self.palettes_last_frame = frame;
+            ppu.ui_dirty_palettes = false;
         }
-
         let tex_id = self.palettes_tex.unwrap();
         let size = [32.0, 128.0];
         let avail = ui.content_region_avail();

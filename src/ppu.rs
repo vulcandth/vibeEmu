@@ -78,6 +78,11 @@ pub struct Ppu {
     frame_ready: bool,
     prev_stat_irq: u8,
     frame_counter: u64,
+    // Dirty flags for the UI VRAM viewer
+    pub(crate) ui_dirty_bg_map: bool,
+    pub(crate) ui_dirty_tiles: bool,
+    pub(crate) ui_dirty_oam: bool,
+    pub(crate) ui_dirty_palettes: bool,
 }
 
 /// Default DMG palette colors in 0x00RRGGBB order for the `pixels` crate.
@@ -127,6 +132,10 @@ impl Ppu {
             frame_ready: false,
             prev_stat_irq: 0,
             frame_counter: 0,
+            ui_dirty_bg_map: false,
+            ui_dirty_tiles: false,
+            ui_dirty_oam: false,
+            ui_dirty_palettes: false,
         }
     }
 
@@ -170,6 +179,24 @@ impl Ppu {
         let g = (((raw >> 5) & 0x1F) as u8) << 3 | (((raw >> 5) & 0x1F) as u8 >> 2);
         let b = (((raw >> 10) & 0x1F) as u8) << 3 | (((raw >> 10) & 0x1F) as u8 >> 2);
         ((r as u32) << 16) | ((g as u32) << 8) | b as u32
+    }
+
+    /// Call *after* mutating VRAM so tools can mark themselves dirty.
+    pub(crate) fn mark_vram_dirty(&mut self, addr: u16) {
+        let a = addr as usize & 0x1fff; // 0-1_fff mirrored
+        if a < 0x1800 {
+            self.ui_dirty_bg_map = true;
+        } else {
+            self.ui_dirty_tiles = true;
+        }
+
+        if (0xfe00..=0xfe9f).contains(&addr) {
+            self.ui_dirty_oam = true;
+        }
+
+        if matches!(addr, 0xff68 | 0xff69 | 0xff6a | 0xff6b | 0xff47) {
+            self.ui_dirty_palettes = true;
+        }
     }
 
     /// Initialize registers to the state expected after the boot ROM
