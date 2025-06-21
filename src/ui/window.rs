@@ -17,7 +17,6 @@ pub struct UiWindow {
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum WindowKind {
     Debugger,
-    VramViewer,
     Main,
 }
 

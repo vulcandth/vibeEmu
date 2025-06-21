@@ -20,6 +20,8 @@ use rfd::FileDialog;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(feature = "debug-ui")]
+use ui::vram_viewer::VramViewer;
 use winit::dpi::PhysicalPosition;
 use winit::{
     event::MouseButton,
@@ -30,13 +32,26 @@ use winit::{
 
 const SCALE: u32 = 3;
 
-#[derive(Default)]
 struct UiState {
     paused: bool,
     show_context: bool,
     ctx_pos: [f32; 2],
     spawn_debugger: bool,
-    spawn_vram: bool,
+    #[cfg(feature = "debug-ui")]
+    vram_viewer: VramViewer,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            paused: false,
+            show_context: false,
+            ctx_pos: [0.0, 0.0],
+            spawn_debugger: false,
+            #[cfg(feature = "debug-ui")]
+            vram_viewer: VramViewer::new(),
+        }
+    }
 }
 
 use ui::window::resize_pixels;
@@ -117,30 +132,6 @@ fn spawn_debugger_window(
     windows.insert(ui_win.win.id(), ui_win);
 }
 
-fn spawn_vram_window(
-    event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
-    platform: &mut WinitPlatform,
-    imgui: &mut ImguiContext,
-    windows: &mut HashMap<winit::window::WindowId, UiWindow>,
-) {
-    use winit::dpi::LogicalSize;
-
-    let w = winit::window::WindowBuilder::new()
-        .with_title("vibeEmu \u{2013} VRAM")
-        .with_inner_size(LogicalSize::new((160 * SCALE) as f64, (144 * SCALE) as f64))
-        .build(event_loop)
-        .unwrap();
-
-    let size = w.inner_size();
-    let surface = pixels::SurfaceTexture::new(size.width, size.height, &w);
-    let pixels = pixels::Pixels::new(1, 1, surface).expect("Pixels error");
-
-    platform.attach_window(imgui.io_mut(), &w, HiDpiMode::Rounded);
-
-    let ui_win = UiWindow::new(WindowKind::VramViewer, w, pixels, imgui);
-    windows.insert(ui_win.win.id(), ui_win);
-}
-
 fn draw_debugger(pixels: &mut Pixels, gb: &mut gameboy::GameBoy, ui: &imgui::Ui) {
     let _ = pixels.frame_mut();
     if let Some(_table) = ui.begin_table("regs", 2) {
@@ -207,11 +198,6 @@ fn draw_debugger(pixels: &mut Pixels, gb: &mut gameboy::GameBoy, ui: &imgui::Ui)
     }
 }
 
-fn draw_vram(pixels: &mut Pixels, _gb: &mut gameboy::GameBoy, ui: &imgui::Ui) {
-    let _ = pixels.frame_mut();
-    ui.text("VRAM viewer not implemented");
-}
-
 fn draw_game_screen(pixels: &mut Pixels, frame: &[u32]) {
     let pixel_frame: &mut [u32] = bytemuck::cast_slice_mut(pixels.frame_mut());
     for (dst, src) in pixel_frame.iter_mut().zip(frame) {
@@ -264,8 +250,9 @@ fn build_ui(
                     state.spawn_debugger = true;
                     close_menu = true;
                 }
+                #[cfg(feature = "debug-ui")]
                 if ui.button("VRAM Viewer") {
-                    state.spawn_vram = true;
+                    state.vram_viewer.open = true;
                     close_menu = true;
                 }
             });
@@ -473,9 +460,17 @@ fn main() {
                             WindowKind::Main => {
                                 build_ui(&mut ui_state, ui, &mut gb, target, &mut platform);
                                 draw_game_screen(&mut win.pixels, &frame);
+                                #[cfg(feature = "debug-ui")]
+                                ui_state.vram_viewer.ui(
+                                    ui,
+                                    &gb.mmu.ppu,
+                                    &gb.mmu,
+                                    win.pixels.device(),
+                                    win.pixels.queue(),
+                                    &mut win.renderer,
+                                );
                             }
                             WindowKind::Debugger => draw_debugger(&mut win.pixels, &mut gb, ui),
-                            WindowKind::VramViewer => draw_vram(&mut win.pixels, &mut gb, ui),
                         }
 
                         platform.prepare_render(ui, &win.win);
@@ -534,15 +529,6 @@ fn main() {
                         spawn_debugger_window(target, &mut platform, &mut imgui, &mut windows);
                         ui_state.paused = true;
                         ui_state.spawn_debugger = false;
-                    }
-                    if ui_state.spawn_vram
-                        && !windows
-                            .values()
-                            .any(|w| matches!(w.kind, WindowKind::VramViewer))
-                    {
-                        spawn_vram_window(target, &mut platform, &mut imgui, &mut windows);
-                        ui_state.paused = true;
-                        ui_state.spawn_vram = false;
                     }
                 }
                 Event::MainEventsCleared => {

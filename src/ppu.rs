@@ -77,6 +77,8 @@ pub struct Ppu {
     /// Indicates a completed frame is available in `framebuffer`
     frame_ready: bool,
     prev_stat_irq: u8,
+    /// Monotonically increasing counter for VRAM changes
+    vram_revision: u64,
 }
 
 /// Default DMG palette colors in 0x00RRGGBB order for the `pixels` crate.
@@ -125,6 +127,7 @@ impl Ppu {
             sprite_count: 0,
             frame_ready: false,
             prev_stat_irq: 0,
+            vram_revision: 0,
         }
     }
 
@@ -156,6 +159,92 @@ impl Ppu {
             // DMG-style priority: sort by X position then OAM index
             self.line_sprites[..self.sprite_count].sort_by_key(|s| (s.x, s.oam_index));
         }
+    }
+
+    /// Increment the VRAM revision counter.
+    pub(crate) fn mark_vram_change(&mut self) {
+        self.vram_revision = self.vram_revision.wrapping_add(1);
+    }
+
+    /// Return the current VRAM revision number.
+    pub fn vram_revision(&self) -> u64 {
+        self.vram_revision
+    }
+
+    /// Return the base address of the current BG map.
+    pub fn bg_map_base(&self) -> u16 {
+        if self.lcdc & 0x08 != 0 {
+            0x9C00
+        } else {
+            0x9800
+        }
+    }
+
+    /// Return the base address of the BG tileset.
+    pub fn bg_tiles_base(&self) -> u16 {
+        if self.lcdc & 0x10 != 0 {
+            0x8000
+        } else {
+            0x8800
+        }
+    }
+
+    /// Decode a background tile into an RGBA buffer.
+    pub fn decode_bg_tile_rgba(
+        &self,
+        tile_no: u8,
+        attr: u8,
+        _mmu: &crate::mmu::Mmu,
+    ) -> [u8; 8 * 8 * 4] {
+        let mut out = [0u8; 8 * 8 * 4];
+        let base = if self.lcdc & 0x10 != 0 {
+            TILE_DATA_0_BASE
+        } else {
+            TILE_DATA_1_BASE
+        };
+        let tile_index = if self.lcdc & 0x10 != 0 {
+            tile_no as i16
+        } else {
+            tile_no as i8 as i16 + 128
+        } as usize;
+        let addr = base + tile_index * 16;
+        let mut bank = 0usize;
+        let mut palette = 0usize;
+        let mut flip_x = false;
+        let mut flip_y = false;
+        if self.cgb {
+            palette = (attr & 0x07) as usize;
+            bank = if attr & 0x08 != 0 { 1 } else { 0 };
+            flip_x = attr & 0x20 != 0;
+            flip_y = attr & 0x40 != 0;
+        }
+
+        for y in 0..8 {
+            let py = if flip_y { 7 - y } else { y };
+            let lo = self.vram[bank][addr + py * 2];
+            let hi = self.vram[bank][addr + py * 2 + 1];
+            for x in 0..8 {
+                let bit = if flip_x { x } else { 7 - x };
+                let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                let color = if self.cgb {
+                    let off = palette * 8 + color_id as usize * 2;
+                    Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+                } else {
+                    let idx = Self::dmg_shade(self.bgp, color_id);
+                    DMG_PALETTE[idx as usize]
+                };
+                let r = ((color >> 16) & 0xFF) as u8;
+                let g = ((color >> 8) & 0xFF) as u8;
+                let b = (color & 0xFF) as u8;
+                let off = (y * 8 + x) * 4;
+                out[off] = r;
+                out[off + 1] = g;
+                out[off + 2] = b;
+                out[off + 3] = 0xFF;
+            }
+        }
+
+        out
     }
 
     pub fn new() -> Self {
@@ -275,9 +364,18 @@ impl Ppu {
             0xFF44 => {}
             0xFF45 => self.lyc = val,
             0xFF46 => self.dma = val,
-            0xFF47 => self.bgp = val,
-            0xFF48 => self.obp0 = val,
-            0xFF49 => self.obp1 = val,
+            0xFF47 => {
+                self.bgp = val;
+                self.mark_vram_change();
+            }
+            0xFF48 => {
+                self.obp0 = val;
+                self.mark_vram_change();
+            }
+            0xFF49 => {
+                self.obp1 = val;
+                self.mark_vram_change();
+            }
             0xFF4A => self.wy = val,
             0xFF4B => self.wx = val,
             0xFF68 => self.bgpi = val,
@@ -287,6 +385,7 @@ impl Ppu {
                 if self.bgpi & 0x80 != 0 {
                     self.bgpi = (self.bgpi & 0x80) | ((idx as u8 + 1) & 0x3F);
                 }
+                self.mark_vram_change();
             }
             0xFF6A => self.obpi = val,
             0xFF6B => {
@@ -295,6 +394,7 @@ impl Ppu {
                 if self.obpi & 0x80 != 0 {
                     self.obpi = (self.obpi & 0x80) | ((idx as u8 + 1) & 0x3F);
                 }
+                self.mark_vram_change();
             }
             0xFF6C => self.opri = val & 0x01,
             _ => {}

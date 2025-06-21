@@ -96,6 +96,18 @@ impl Mmu {
         Self::new_with_mode(false)
     }
 
+    /// Return true if running in CGB mode.
+    pub fn is_cgb(&self) -> bool {
+        self.cgb_mode
+    }
+
+    /// Directly read from VRAM ignoring mode timing.
+    pub fn vram_read(&self, addr: u16) -> u8 {
+        let off = (addr - 0x8000) as usize;
+        let bank = off / 0x2000;
+        self.ppu.vram[bank][off % 0x2000]
+    }
+
     pub fn load_cart(&mut self, cart: Cartridge) {
         let is_dmg = !cart.cgb;
         self.cart = Some(cart);
@@ -219,6 +231,7 @@ impl Mmu {
             0x8000..=0x9FFF => {
                 if self.ppu.mode != 3 {
                     self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize] = val;
+                    self.ppu.mark_vram_change();
                 }
             }
             0x0000..=0x7FFF | 0xA000..=0xBFFF => {
@@ -290,7 +303,10 @@ impl Mmu {
                     self.rp = val & 0xC1;
                 }
             }
-            0xFF4F => self.ppu.vram_bank = (val & 0x01) as usize,
+            0xFF4F => {
+                self.ppu.vram_bank = (val & 0x01) as usize;
+                self.ppu.mark_vram_change();
+            }
             0xFF46 => {
                 self.ppu.dma = val;
                 let src = (val as u16) << 8;
@@ -312,6 +328,7 @@ impl Mmu {
     /// Write to VRAM bypassing mode checks (used by DMA transfers)
     fn vram_dma_write(&mut self, addr: u16, val: u8) {
         self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize] = val;
+        self.ppu.mark_vram_change();
     }
 
     pub fn take_serial(&mut self) -> Vec<u8> {
