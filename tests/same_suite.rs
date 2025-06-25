@@ -14,7 +14,12 @@ fn run_same_suite<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> bo
         }
     }
     let out = gb.mmu.serial.take_output();
-    out.len() >= 6 && out[0..6] == FIB_SEQ
+    let passed = out.len() >= 6 && out[0..6] == FIB_SEQ;
+    if !passed {
+        let dump = &gb.mmu.wram[0][0..48];
+        println!("WRAM dump: {:02X?}", dump);
+    }
+    passed
 }
 
 #[test]
@@ -36,7 +41,6 @@ fn same_suite__apu__channel_1__channel_1_align_cpu_gb() {
 }
 
 #[test]
-#[ignore]
 fn same_suite__apu__channel_1__channel_1_delay_gb() {
     let passed = run_same_suite(
         common::rom_path("same-suite/apu/channel_1/channel_1_delay.gb"),
