@@ -5,9 +5,9 @@ const CPU_CLOCK_HZ: u32 = 4_194_304;
 const FRAME_SEQUENCER_PERIOD: u32 = 8192;
 const VOLUME_FACTOR: i16 = 64;
 pub const AUDIO_LATENCY_MS: u32 = 40;
-/// Hardware waits exactly **one machine-cycle (4 CPU cycles)** between a
-/// channel trigger and the first tick of its frequency timer.
-const TRIGGER_DELAY_CYCLES: i32 = 4; // cycles
+// On real hardware the first frequency-timer decrement occurs one CPU tick
+// after a trigger. We model this delay with a flag instead of adjusting the
+// timer value.
 
 const POWER_ON_REGS: [u8; 0x30] = [
     0x80, 0xBF, 0xF3, 0xFF, 0xBF, 0xFF, 0x3F, 0x00, 0xFF, 0xBF, 0x7F, 0xFF, 0x9F, 0xFF, 0xBF, 0xFF,
@@ -91,6 +91,8 @@ struct SquareChannel {
     duty: u8,
     duty_pos: u8,
     pending_reset: bool,
+    /// Skip one decrement cycle immediately after a trigger.
+    skip_decrement: bool,
     frequency: u16,
     timer: i32,
     envelope: Envelope,
@@ -120,15 +122,22 @@ impl SquareChannel {
             return;
         }
         let mut cycles = cycles as i32;
+
+        if self.skip_decrement {
+            self.skip_decrement = false;
+            if cycles == 0 {
+                return;
+            }
+            cycles -= 1;
+            self.pending_reset = false;
+            self.duty_pos = 0;
+            self.timer -= 1;
+        }
+
         while self.timer <= cycles {
             cycles -= self.timer;
             self.timer = self.period();
-            if self.pending_reset {
-                self.pending_reset = false;
-                self.duty_pos = 0;
-            } else {
-                self.duty_pos = (self.duty_pos + 1) & 7;
-            }
+            self.duty_pos = (self.duty_pos + 1) & 7;
         }
         self.timer -= cycles;
     }
@@ -701,10 +710,11 @@ impl Apu {
             &mut self.ch2
         };
         ch.enabled = true;
-        // ➊  Reload the 11-bit frequency immediately
-        // ➋  Wait one M-cycle (4 CPU cycles) before the first decrement
+        // Reload the timer and mark that the next decrement should be skipped
+        // for one CPU tick, matching DMG/CGB behaviour.
         let period = ch.period();
-        ch.timer = period + TRIGGER_DELAY_CYCLES;
+        ch.timer = period;
+        ch.skip_decrement = true;
         ch.pending_reset = true;
         ch.envelope.volume = ch.envelope.initial;
         if idx == 1 {
