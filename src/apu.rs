@@ -5,8 +5,9 @@ const CPU_CLOCK_HZ: u32 = 4_194_304;
 const FRAME_SEQUENCER_PERIOD: u32 = 8192;
 const VOLUME_FACTOR: i16 = 64;
 pub const AUDIO_LATENCY_MS: u32 = 40;
-const TRIGGER_PIPELINE_LATENCY: i32 = 2; // cycles
-const ALIGN_TO_NEXT_DIV_EDGE: i32 = 16; // cycles when div_phase == 0
+/// Hardware waits exactly **one machine-cycle (4 CPU cycles)** between a
+/// channel trigger and the first tick of its frequency timer.
+const TRIGGER_DELAY_CYCLES: i32 = 4; // cycles
 
 const POWER_ON_REGS: [u8; 0x30] = [
     0x80, 0xBF, 0xF3, 0xFF, 0xBF, 0xFF, 0x3F, 0x00, 0xFF, 0xBF, 0x7F, 0xFF, 0x9F, 0xFF, 0xBF, 0xFF,
@@ -702,10 +703,10 @@ impl Apu {
             &mut self.ch2
         };
         ch.enabled = true;
-        let div_phase = (self.cpu_cycles & 0x3) as i32;
+        // ➊  Reload the 11-bit frequency immediately
+        // ➋  Wait one M-cycle (4 CPU cycles) before the first decrement
         let period = ch.period();
-        let delay = TRIGGER_PIPELINE_LATENCY + ALIGN_TO_NEXT_DIV_EDGE - div_phase;
-        ch.timer = ((period + delay) & !0x3) | div_phase;
+        ch.timer = period + TRIGGER_DELAY_CYCLES;
         ch.pending_reset = true;
         ch.first_sample = true;
         ch.envelope.volume = ch.envelope.initial;
@@ -787,10 +788,11 @@ impl Apu {
     pub fn tick(&mut self, div_prev: u16, div_now: u16, double_speed: bool) {
         self.ch1.tick_1mhz();
         self.ch2.tick_1mhz();
-        // DIV bit 5 clocks the sequencer at 512 Hz (bit 6 when double-speed)
-        let bit = if double_speed { 6 } else { 5 };
-        let toggled = ((div_prev >> bit) & 1) != ((div_now >> bit) & 1);
-        if toggled {
+        // A 512 Hz tick occurs **on the falling edge** of DIV bit 4
+        // (bit 5 in double-speed mode).
+        let bit = if double_speed { 5 } else { 4 };
+        let falling_edge = ((div_prev >> bit) & 1) == 1 && ((div_now >> bit) & 1) == 0;
+        if falling_edge {
             let step = self.sequencer.advance();
             self.clock_frame_sequencer(step);
         }
