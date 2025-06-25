@@ -95,7 +95,6 @@ struct SquareChannel {
     timer: i32,
     envelope: Envelope,
     sweep: Option<Sweep>,
-    first_sample: bool,
     out_latched: u8,
     out_stage1: u8,
 }
@@ -138,8 +137,7 @@ impl SquareChannel {
         if !self.enabled || !self.dac_enabled {
             return 0;
         }
-        if self.first_sample {
-            self.first_sample = false;
+        if self.pending_reset {
             return 0;
         }
         const DUTY_TABLE: [[u8; 8]; 4] = [
@@ -167,7 +165,7 @@ impl SquareChannel {
     }
 
     fn peek_sample(&self) -> u8 {
-        if !self.enabled || !self.dac_enabled || self.pending_reset || self.first_sample {
+        if !self.enabled || !self.dac_enabled || self.pending_reset {
             return 0;
         }
         const DUTY_TABLE: [[u8; 8]; 4] = [
@@ -708,7 +706,6 @@ impl Apu {
         let period = ch.period();
         ch.timer = period + TRIGGER_DELAY_CYCLES;
         ch.pending_reset = true;
-        ch.first_sample = true;
         ch.envelope.volume = ch.envelope.initial;
         if idx == 1 {
             if let Some(s) = ch.sweep.as_mut() {
