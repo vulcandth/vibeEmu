@@ -197,3 +197,94 @@ fn pcm_mmu_mapping() {
     let mut dmg = Mmu::new();
     assert_eq!(dmg.read_byte(0xFF76), 0xFF);
 }
+
+fn build_channel_1_align_rom() -> Vec<u8> {
+    fn subtest(after: u8, before: u8, store: u16, rom: &mut Vec<u8>) {
+        rom.extend([
+            0xAF, // XOR A
+            0xE0, 0x26, // LDH [NR52],A
+            0x2F, // CPL
+            0xE0, 0x26, // LDH [NR52],A
+            0x21, 0x76, 0xFF, // LD HL,rPCM12
+            0xE0, 0x13, // LDH [NR13],A
+            0x3E, 0x80, // LD A,$80
+            0xE0, 0x11, // LDH [NR11],A
+            0xE0, 0x12, // LDH [NR12],A
+            0x3E, 0x87, // LD A,$87
+        ]);
+        for _ in 0..before {
+            rom.push(0x00); // NOP
+        }
+        rom.extend([0xE0, 0x14]); // LDH [NR14],A
+        for _ in 0..after {
+            rom.push(0x00); // NOP
+        }
+        rom.extend([
+            0x7E, // LD A,(HL)
+            0xCD,
+            (store & 0xFF) as u8,
+            (store >> 8) as u8, // CALL StoreResult
+        ]);
+    }
+
+    let mut rom = vec![
+        0x3E, 0x01, // LD A,1
+        0xE0, 0x4D, // LDH [KEY1],A
+        0x10, 0x00, // STOP
+        0x11, 0x00, 0xC0, // LD DE,$C000
+    ];
+
+    // Generate subtests to determine store address
+    let mut tmp = Vec::new();
+    for &before in &[0u8, 1, 3] {
+        for after in 0u8..=15 {
+            subtest(after, before, 0, &mut tmp);
+        }
+    }
+    let store = (rom.len() + tmp.len()) as u16;
+
+    for &before in &[0u8, 1, 3] {
+        for after in 0u8..=15 {
+            subtest(after, before, store, &mut rom);
+        }
+    }
+
+    // StoreResult:
+    rom.extend([0x12, 0x13, 0xC9]); // LD (DE),A ; INC DE ; RET
+    rom
+}
+
+#[test]
+fn channel_1_align_internal() {
+    const EXPECTED: [u8; 48] = [
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08,
+        0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08,
+        0x08, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08,
+        0x08, 0x08, 0x08,
+    ];
+
+    let rom = build_channel_1_align_rom();
+    let cart = vibeEmu::cartridge::Cartridge::load(rom);
+    let mut gb = vibeEmu::gameboy::GameBoy::new_with_mode(cart.cgb);
+    gb.mmu.load_cart(cart);
+
+    while gb.cpu.cycles < 20_000 {
+        gb.cpu.step(&mut gb.mmu);
+    }
+
+    let mut results = [0u8; 48];
+    for (i, b) in results.iter_mut().enumerate() {
+        *b = gb.mmu.read_byte(0xC000 + i as u16);
+    }
+
+    if results != EXPECTED {
+        eprintln!("Expected: {:02X?}", EXPECTED);
+        eprintln!("  Actual: {:02X?}", results);
+        for (i, (&got, &exp)) in results.iter().zip(EXPECTED.iter()).enumerate() {
+            if got != exp {
+                eprintln!("    idx {i:02}: expected {exp:02X}, got {got:02X}");
+            }
+        }
+        panic!("PCM output mismatch");
+    }
+}
