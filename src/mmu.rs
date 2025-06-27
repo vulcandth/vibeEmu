@@ -189,7 +189,7 @@ impl Mmu {
             }
             0xFF4F => self.ppu.vram_bank as u8,
             0xFF70 => self.wram_bank as u8,
-            0xFF76 | 0xFF77 => 0xFF,
+            0xFF76 | 0xFF77 => self.apu.lock().unwrap().read(addr),
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
             _ => 0xFF,

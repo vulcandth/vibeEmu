@@ -658,8 +658,26 @@ impl Apu {
         self.write(addr, val);
     }
 
-    pub fn read_pcm(&self, _addr: u16) -> u8 {
-        0xFF
+    pub fn read_pcm(&self, addr: u16) -> u8 {
+        fn nibble(s: i16) -> u8 {
+            let v = (s.abs() / 8) as i16;        // 0‑120 → 0‑15
+            (v.min(15)) as u8
+        }
+
+        match addr {
+            0xFF76 => {                          // PCM12 – ch 2 in hi‑nibble,
+                                                  //           ch 1 in lo‑nibble
+                let ch1 = nibble(self.ch1.output());
+                let ch2 = nibble(self.ch2.output());
+                (ch2 << 4) | ch1
+            }
+            0xFF77 => {                          // PCM34 – ch 4 hi, ch 3 lo
+                let ch3 = nibble(self.wave.output());
+                let ch4 = nibble(self.noise.output());
+                (ch4 << 4) | ch3
+            }
+            _ => 0xFF,
+        }
     }
 
     pub fn sequencer_step(&self) -> u8 {
@@ -725,6 +743,8 @@ impl Apu {
             0xFF23 => (0x40 * (self.noise.length_enable as u8)) | 0x80,
             0xFF24..=0xFF26 => self.read_nr52_family(addr),
             0xFF30..=0xFF3F => self.wave.read_wave(addr),
+            0xFF76 => self.read_pcm(0xFF76), // PCM12
+            0xFF77 => self.read_pcm(0xFF77), // PCM34
             _ => 0xFF,
         }
     }
