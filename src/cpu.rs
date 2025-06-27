@@ -138,24 +138,42 @@ impl Cpu {
 
     #[inline]
     fn tick(&mut self, mmu: &mut crate::mmu::Mmu, m_cycles: u8) {
-        let hw_cycles = if self.double_speed {
+        // Process each machine cycle individually to align APU and timer precisely
+        let cycles_per_m = if self.double_speed {
             CYCLES_PER_M_CYCLE_DOUBLE
         } else {
             CYCLES_PER_M_CYCLE
-        } * m_cycles as u16;
-        self.cycles += hw_cycles as u64;
-        let prev_div = (mmu.timer.div >> 8) as u8;
-        mmu.timer.step(hw_cycles, &mut mmu.if_reg);
-        let curr_div = (mmu.timer.div >> 8) as u8;
-        {
-            let mut apu = mmu.apu.lock().unwrap();
-            apu.tick(prev_div, curr_div, self.double_speed);
-            apu.step(hw_cycles.into());
+        };
+
+        for _ in 0..m_cycles {
+            let hw_cycles = cycles_per_m;
+            let apu_cycles = if self.double_speed {
+                hw_cycles / 2
+            } else {
+                hw_cycles
+            };
+
+            // Advance global cycle count
+            self.cycles += hw_cycles as u64;
+
+            // Timer DIV stepping
+            let prev_div = (mmu.timer.div >> 8) as u8;
+            mmu.timer.step(hw_cycles, &mut mmu.if_reg);
+            let curr_div = (mmu.timer.div >> 8) as u8;
+
+            // APU sequencing and waveform stepping per machine cycle
+            {
+                let mut apu = mmu.apu.lock().unwrap();
+                apu.step(apu_cycles.into());
+                apu.tick(prev_div, curr_div, self.double_speed);
+            }
+
+            // PPU and DMA operations per machine cycle
+            if mmu.ppu.step(hw_cycles, &mut mmu.if_reg) {
+                mmu.hdma_hblank_transfer();
+            }
+            mmu.dma_step(hw_cycles);
         }
-        if mmu.ppu.step(hw_cycles, &mut mmu.if_reg) {
-            mmu.hdma_hblank_transfer();
-        }
-        mmu.dma_step(hw_cycles);
     }
 
     #[inline(always)]

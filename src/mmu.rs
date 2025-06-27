@@ -189,7 +189,7 @@ impl Mmu {
             }
             0xFF4F => self.ppu.vram_bank as u8,
             0xFF70 => self.wram_bank as u8,
-            0xFF76 | 0xFF77 => self.apu.lock().unwrap().read(addr),
+            0xFF76 | 0xFF77 => self.apu.lock().unwrap().read_pcm(addr),
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
             _ => 0xFF,
@@ -413,13 +413,18 @@ impl Mmu {
         } else {
             4 * m_cycles as u16
         };
+        let apu_cycles = if self.key1 & 0x80 != 0 {
+            hw_cycles * 2
+        } else {
+            hw_cycles
+        };
         let prev_div = (self.timer.div >> 8) as u8;
         self.timer.step(hw_cycles, &mut self.if_reg);
         let curr_div = (self.timer.div >> 8) as u8;
         {
             let mut apu = self.apu.lock().unwrap();
             apu.tick(prev_div, curr_div, self.key1 & 0x80 != 0);
-            apu.step(hw_cycles.into());
+            apu.step(apu_cycles.into());
         }
         let _ = self.ppu.step(hw_cycles, &mut self.if_reg);
     }

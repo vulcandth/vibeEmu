@@ -130,6 +130,7 @@ struct SquareChannel {
     timer: u16,
     trigger_delay: u8, // 0‑2 cycles left before restart
     first_sample_zero: bool,
+    skip_first_cycle: bool,
     // envelope
     env: VolumeEnvelope,
 }
@@ -147,6 +148,7 @@ impl SquareChannel {
             timer: 0,
             trigger_delay: 0,
             first_sample_zero: true,
+            skip_first_cycle: false,
             env: VolumeEnvelope::default(),
         }
     }
@@ -184,6 +186,12 @@ impl SquareChannel {
             return;
         }
         let mut c = cycles as i32;
+        if self.skip_first_cycle {
+            if c > 0 {
+                c -= 1;
+            }
+            self.skip_first_cycle = false;
+        }
         while c > 0 {
             if self.trigger_delay > 0 {
                 // still in 2‑cycle latency
@@ -1001,8 +1009,10 @@ impl Apu {
 }
 
 fn common_square_trigger(ch: &mut SquareChannel, frame_step: u8) {
-    ch.trigger_delay = 2;
+    ch.trigger_delay = 8;
     ch.first_sample_zero = true;
+    ch.skip_first_cycle = true;
+    ch.duty_step = 0;
     // reload timer while keeping low 2 bits
     let phase = ch.timer & 0x3;
     ch.timer = ch.period() | phase;
