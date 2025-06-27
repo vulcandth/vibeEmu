@@ -1,33 +1,55 @@
+// src/apu.rs
+#![allow(clippy::too_many_arguments)]
+
 use std::collections::VecDeque;
 
+/// CPU master clock (DMG) – 4 194 304 Hz
 const CPU_CLOCK_HZ: u32 = 4_194_304;
-// 512 Hz frame sequencer tick (not doubled in CGB mode)
-const FRAME_SEQUENCER_PERIOD: u32 = 8192;
-const VOLUME_FACTOR: i16 = 64;
+/// 512 Hz frame sequencer period (8192 cycles)
+const FRAME_SEQ_PERIOD: u32 = 8192;
+/// Output gain chosen so that ‑128…+127 ≈ ‑1 dBFS at 44100 Hz
+const VOLUME_SCALER: i16 = 64;
+/// Max buffered samples ≈ 40 ms (stereo)
 pub const AUDIO_LATENCY_MS: u32 = 40;
-const TRIGGER_PIPELINE_LATENCY: i32 = 2; // cycles
-const ALIGN_TO_NEXT_DIV_EDGE: i32 = 16; // cycles when div_phase == 0
+const MAX_SAMPLES: usize = ((44_100 * AUDIO_LATENCY_MS as usize) / 1_000) * 2;
 
+/// Power‑on HW register image (DMG ‑ all channels disabled, DACs off)
 const POWER_ON_REGS: [u8; 0x30] = [
     0x80, 0xBF, 0xF3, 0xFF, 0xBF, 0xFF, 0x3F, 0x00, 0xFF, 0xBF, 0x7F, 0xFF, 0x9F, 0xFF, 0xBF, 0xFF,
     0xFF, 0x00, 0x00, 0xBF, 0x77, 0xF3, 0xF1, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
-#[derive(Default, Clone, Copy)]
+#[inline]
+fn dac_enabled(nrx2: u8) -> bool {
+    nrx2 & 0xF8 != 0
+}
+
+/* -------------------------------------------------------------------------- */
+/*                               Envelope unit                                */
+/* -------------------------------------------------------------------------- */
+
+#[derive(Clone, Copy, Default)]
 struct Envelope {
-    initial: u8,
+    volume: u8,
     period: u8,
     add: bool,
-    volume: u8,
     timer: u8,
 }
 
 impl Envelope {
+    fn load(&mut self, data: u8) {
+        self.period = data & 0x07;
+        self.add = data & 0x08 != 0;
+        self.volume = data >> 4;
+        self.timer = if self.period == 0 { 8 } else { self.period };
+    }
     fn clock(&mut self) {
-        let period = if self.period == 0 { 8 } else { self.period };
+        if self.period == 0 {
+            return;
+        }
         if self.timer == 0 {
-            self.timer = period;
+            self.timer = self.period;
             if self.add && self.volume < 15 {
                 self.volume += 1;
             } else if !self.add && self.volume > 0 {
@@ -37,18 +59,13 @@ impl Envelope {
             self.timer -= 1;
         }
     }
-
-    fn reset(&mut self, val: u8) {
-        self.initial = val >> 4;
-        self.volume = self.initial;
-        self.period = val & 0x07;
-        self.add = val & 0x08 != 0;
-        self.timer = if self.period == 0 { 8 } else { self.period };
-    }
 }
 
-#[derive(Default)]
-// Handles Channel 1 frequency sweep logic. See TODO.md #257.
+/* -------------------------------------------------------------------------- */
+/*                              Channel 1 – sweep                             */
+/* -------------------------------------------------------------------------- */
+
+#[derive(Clone, Copy, Default)]
 struct Sweep {
     period: u8,
     negate: bool,
@@ -56,73 +73,134 @@ struct Sweep {
     timer: u8,
     shadow: u16,
     enabled: bool,
+    /// The hardware remembers if it has produced a negative result once.
+    /// When it does, further triggers force‑mute CH1 even if later positive.
+    ever_negated: bool,
 }
 
 impl Sweep {
-    fn calculate(&self) -> u16 {
-        let delta = self.shadow >> self.shift;
-        if self.negate {
-            self.shadow.wrapping_sub(delta)
-        } else {
-            self.shadow.wrapping_add(delta)
-        }
-    }
-
-    fn set_params(&mut self, val: u8) {
-        self.period = (val >> 4) & 0x07;
-        self.negate = val & 0x08 != 0;
-        self.shift = val & 0x07;
-    }
-
-    fn reload(&mut self, freq: u16) {
-        self.shadow = freq;
-        self.timer = if self.period == 0 { 8 } else { self.period };
+    fn load(&mut self, data: u8) {
+        self.period = (data >> 4) & 0x07;
+        self.negate = data & 0x08 != 0;
+        self.shift = data & 0x07;
         self.enabled = self.period != 0 || self.shift != 0;
+        self.timer = if self.period == 0 { 8 } else { self.period };
+    }
+    #[inline]
+    fn calc(&self, freq: u16) -> Option<u16> {
+        let delta = freq >> self.shift;
+        let res = if self.negate { freq.wrapping_sub(delta) } else { freq.wrapping_add(delta) };
+        (res <= 2047).then_some(res)
+    }
+    fn clock(&mut self, ch_freq: &mut u16, ch_enable: &mut bool) {
+        if !self.enabled || self.shift == 0 {
+            return;
+        }
+        if self.timer > 0 {
+            self.timer -= 1;
+        }
+        if self.timer == 0 {
+            self.timer = if self.period == 0 { 8 } else { self.period };
+            if let Some(new_f) = self.calc(self.shadow) {
+                self.shadow = new_f;
+                *ch_freq = new_f;
+                // Second overflow test
+                if self.calc(self.shadow).is_none() {
+                    *ch_enable = false;
+                }
+                if self.negate {
+                    self.ever_negated = true;
+                }
+            } else {
+                *ch_enable = false;
+            }
+        }
     }
 }
 
-#[derive(Default)]
-struct SquareChannel {
+/* -------------------------------------------------------------------------- */
+/*                        Shared helpers for period counters                  */
+/* -------------------------------------------------------------------------- */
+
+#[inline]
+fn square_period(freq: u16) -> i32 {
+    ((2048 - freq) * 4) as i32
+}
+#[inline]
+fn wave_period(freq: u16) -> i32 {
+    ((2048 - freq) * 2) as i32
+}
+#[inline]
+fn noise_period(clock_shift: u8, divisor_code: u8) -> i32 {
+    let r = match divisor_code {
+        0 => 8,
+        _ => (divisor_code as i32) * 16,
+    };
+    r << clock_shift
+}
+
+/* -------------------------------------------------------------------------- */
+/*                         Channel 1 & 2 – square wave                        */
+/* -------------------------------------------------------------------------- */
+
+#[derive(Clone)]
+struct Square {
+    // state
     enabled: bool,
-    dac_enabled: bool,
     length: u8,
-    length_enable: bool,
+    length_en: bool,
     duty: u8,
     duty_pos: u8,
-    pending_reset: bool,
     frequency: u16,
     timer: i32,
     envelope: Envelope,
+    // sweep (CH1 only)
     sweep: Option<Sweep>,
+    // double‑latch to emulate 2‑stage pipeline feeding PCM regs/HPF
+    stage1: u8,
+    latched: u8,
     first_sample: bool,
-    out_latched: u8,
-    out_stage1: u8,
+    pending_reset: bool,
 }
 
-impl SquareChannel {
+impl Square {
     fn new(with_sweep: bool) -> Self {
         Self {
-            sweep: if with_sweep {
-                Some(Sweep::default())
-            } else {
-                None
-            },
-            ..Default::default()
+            enabled: false,
+            length: 0,
+            length_en: false,
+            duty: 0,
+            duty_pos: 0,
+            frequency: 0,
+            timer: 0,
+            envelope: Envelope::default(),
+            sweep: with_sweep.then_some(Sweep::default()),
+            stage1: 0,
+            latched: 0,
+            first_sample: true,
+            pending_reset: false,
         }
     }
-
-    fn period(&self) -> i32 {
-        ((2048 - self.frequency) * 4) as i32
+    #[inline]
+    fn duty_bit(&self) -> u8 {
+        // 12.5, 25, 50, 75 %
+        const TABLE: [[u8; 8]; 4] = [
+            [0, 1, 0, 0, 0, 0, 0, 0],
+            [0, 1, 1, 0, 0, 0, 0, 0],
+            [0, 1, 1, 1, 1, 0, 0, 0],
+            [1, 0, 0, 1, 1, 1, 1, 1],
+        ];
+        TABLE[self.duty as usize][self.duty_pos as usize]
     }
-
-    fn step(&mut self, cycles: u32) {
-        if !self.enabled || !self.dac_enabled {
-            return;
-        }
-        let mut cycles = cycles as i32;
-        while self.timer <= cycles {
-            cycles -= self.timer;
-            self.timer = self.period();
+    fn output_now(&self) -> u8 {
+        if !self.enabled { return 0; }
+        self.duty_bit() * self.envelope.volume
+    }
+    fn clock_timer(&mut self, cycles: u32) {
+        let mut remaining = cycles as i32;
+        while self.timer <= remaining {
+            remaining -= self.timer;
+            self.timer = square_period(self.frequency);
             if self.pending_reset {
                 self.pending_reset = false;
                 self.duty_pos = 0;
@@ -130,787 +208,515 @@ impl SquareChannel {
                 self.duty_pos = (self.duty_pos + 1) & 7;
             }
         }
-        self.timer -= cycles;
+        self.timer -= remaining;
     }
-
-    fn compute_output(&mut self) -> u8 {
-        if !self.enabled || !self.dac_enabled {
-            return 0;
-        }
-        if self.first_sample {
-            self.first_sample = false;
-            return 0;
-        }
-        const DUTY_TABLE: [[u8; 8]; 4] = [
-            [0, 1, 0, 0, 0, 0, 0, 0], // 12.5%
-            [0, 1, 1, 0, 0, 0, 0, 0], // 25%
-            [0, 1, 1, 1, 1, 0, 0, 0], // 50%
-            [1, 0, 0, 1, 1, 1, 1, 1], // 75%
-        ];
-        let level = DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
-        level * self.envelope.volume
-    }
-
-    fn output(&mut self) -> u8 {
-        self.compute_output()
-    }
-
-    fn tick_1mhz(&mut self) {
-        let fresh = self.compute_output();
-        self.out_latched = self.out_stage1;
-        self.out_stage1 = fresh;
-    }
-
-    fn current_sample(&self) -> u8 {
-        self.out_latched
-    }
-
-    fn peek_sample(&self) -> u8 {
-        if !self.enabled || !self.dac_enabled || self.pending_reset || self.first_sample {
-            return 0;
-        }
-        const DUTY_TABLE: [[u8; 8]; 4] = [
-            [0, 1, 0, 0, 0, 0, 0, 0],
-            [0, 1, 1, 0, 0, 0, 0, 0],
-            [0, 1, 1, 1, 1, 0, 0, 0],
-            [1, 0, 0, 1, 1, 1, 1, 1],
-        ];
-        let level = DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
-        level * self.envelope.volume
-    }
-
     fn clock_length(&mut self) {
-        if self.length_enable && self.length > 0 {
+        if self.length_en && self.length > 0 {
             self.length -= 1;
             if self.length == 0 {
                 self.enabled = false;
             }
         }
     }
-
-    fn clock_sweep(&mut self) {
-        if let Some(sweep) = self.sweep.as_mut() {
-            if !sweep.enabled {
-                return;
-            }
-            if sweep.timer > 0 {
-                sweep.timer -= 1;
-            }
-            if sweep.timer == 0 {
-                sweep.timer = if sweep.period == 0 { 8 } else { sweep.period };
-                let mut new_freq = sweep.calculate();
-                if new_freq > 2047 {
-                    self.enabled = false;
-                    sweep.enabled = false;
-                } else if sweep.shift != 0 {
-                    sweep.shadow = new_freq;
-                    self.frequency = new_freq;
-                    new_freq = sweep.calculate();
-                    if new_freq > 2047 {
-                        self.enabled = false;
-                        sweep.enabled = false;
-                    }
-                }
-            }
-        }
-    }
 }
 
-#[derive(Default)]
-struct WaveChannel {
+/* -------------------------------------------------------------------------- */
+/*                       Channel 3 – wave playback (DMA)                      */
+/* -------------------------------------------------------------------------- */
+
+#[derive(Clone)]
+struct Wave {
     enabled: bool,
-    dac_enabled: bool,
+    dac_on: bool,
     length: u16,
-    length_enable: bool,
-    volume: u8,
-    position: u8,
+    length_en: bool,
+    volume_code: u8,
+    pos: u8,
     last_sample: u8,
     frequency: u16,
     timer: i32,
 }
 
-impl WaveChannel {
-    fn period(&self) -> i32 {
-        ((2048 - self.frequency) * 2) as i32
-    }
+impl Default for Wave { fn default() -> Self { Self {
+    enabled: false, dac_on: true, length: 0, length_en: false, volume_code: 0,
+    pos: 0, last_sample: 0, frequency: 0, timer: 0,
+}} }
 
-    fn step(&mut self, cycles: u32, wave_ram: &[u8; 0x10]) {
-        if !self.enabled || !self.dac_enabled {
-            return;
+impl Wave {
+    #[inline]
+    fn volume(&self, sample: u8) -> u8 {
+        match self.volume_code {
+            0 => 0,
+            1 => sample,
+            2 => sample >> 1,
+            3 => sample >> 2,
+            _ => 0,
         }
-        let mut cycles = cycles as i32;
-        while self.timer <= cycles {
-            cycles -= self.timer;
-            self.timer = self.period();
-            self.position = (self.position + 1) & 0x1F;
-            let byte = wave_ram[(self.position / 2) as usize];
-            self.last_sample = if self.position & 1 == 0 {
-                byte >> 4
-            } else {
-                byte & 0x0F
-            };
-        }
-        self.timer -= cycles;
     }
-
+    fn clock_timer(&mut self, cycles: u32, wave_ram: &[u8; 0x10]) {
+        if !self.enabled || !self.dac_on { return; }
+        let mut remaining = cycles as i32;
+        while self.timer <= remaining {
+            remaining -= self.timer;
+            self.timer = wave_period(self.frequency);
+            self.pos = (self.pos + 1) & 0x1F;
+            let byte = wave_ram[(self.pos >> 1) as usize];
+            self.last_sample = if self.pos & 1 == 0 { byte >> 4 } else { byte & 0x0F };
+        }
+        self.timer -= remaining;
+    }
     fn clock_length(&mut self) {
-        if self.length_enable && self.length > 0 {
+        if self.length_en && self.length > 0 {
             self.length -= 1;
             if self.length == 0 {
                 self.enabled = false;
             }
         }
     }
-
-    fn output(&self) -> u8 {
-        if !self.enabled || !self.dac_enabled {
-            return 0;
-        }
-        match self.volume {
-            0 => 0,
-            1 => self.last_sample,
-            2 => self.last_sample >> 1,
-            3 => self.last_sample >> 2,
-            _ => 0,
-        }
-    }
-
-    fn peek_sample(&self) -> u8 {
-        if !self.enabled || !self.dac_enabled {
-            return 0;
-        }
-        match self.volume {
-            0 => 0,
-            1 => self.last_sample,
-            2 => self.last_sample >> 1,
-            3 => self.last_sample >> 2,
-            _ => 0,
-        }
+    #[inline]
+    fn output_now(&self) -> u8 {
+        if !self.enabled || !self.dac_on { 0 } else { self.volume(self.last_sample) }
     }
 }
 
-#[derive(Default)]
-struct NoiseChannel {
+/* -------------------------------------------------------------------------- */
+/*                       Channel 4 – polynomial counter                       */
+/* -------------------------------------------------------------------------- */
+
+#[derive(Clone, Default)]
+struct Noise {
     enabled: bool,
-    dac_enabled: bool,
     length: u8,
-    length_enable: bool,
+    length_en: bool,
     envelope: Envelope,
     clock_shift: u8,
-    divisor: u8,
+    divisor_code: u8,
     width7: bool,
     lfsr: u16,
     timer: i32,
 }
 
-impl NoiseChannel {
-    fn period(&self) -> i32 {
-        let r = match self.divisor {
-            0 => 8,
-            _ => (self.divisor as i32) * 16,
-        };
-        r << self.clock_shift
-    }
-
-    fn step(&mut self, cycles: u32) {
-        if !self.enabled || !self.dac_enabled {
-            return;
-        }
-        let mut cycles = cycles as i32;
-        while self.timer <= cycles {
-            cycles -= self.timer;
-            self.timer = self.period();
-            let bit = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
-            self.lfsr >>= 1;
-            self.lfsr |= bit << 14;
+impl Noise {
+    fn clock_timer(&mut self, cycles: u32) {
+        if !self.enabled { return; }
+        let mut remaining = cycles as i32;
+        while self.timer <= remaining {
+            remaining -= self.timer;
+            self.timer = noise_period(self.clock_shift, self.divisor_code);
+            let bit = ((self.lfsr & 1) ^ ((self.lfsr >> 1) & 1)) as u16;
+            self.lfsr = (self.lfsr >> 1) | (bit << 14);
             if self.width7 {
                 self.lfsr = (self.lfsr & !0x40) | (bit << 6);
             }
         }
-        self.timer -= cycles;
+        self.timer -= remaining;
     }
-
-    fn output(&self) -> u8 {
-        if !self.enabled || !self.dac_enabled {
-            return 0;
-        }
-        if self.lfsr & 1 == 0 {
-            self.envelope.volume
-        } else {
-            0
-        }
-    }
-
-    fn peek_sample(&self) -> u8 {
-        if !self.enabled || !self.dac_enabled {
-            return 0;
-        }
-        if self.lfsr & 1 == 0 {
-            self.envelope.volume
-        } else {
-            0
-        }
-    }
-
     fn clock_length(&mut self) {
-        if self.length_enable && self.length > 0 {
+        if self.length_en && self.length > 0 {
             self.length -= 1;
-            if self.length == 0 {
-                self.enabled = false;
-            }
+            if self.length == 0 { self.enabled = false; }
         }
     }
-}
-
-struct FrameSequencer {
-    step: u8,
-}
-
-impl FrameSequencer {
-    fn new() -> Self {
-        Self { step: 0 }
-    }
-
-    fn advance(&mut self) -> u8 {
-        let s = self.step;
-        self.step = (self.step + 1) & 7;
-        s
+    #[inline]
+    fn output_now(&self) -> u8 {
+        if !self.enabled { 0 } else if self.lfsr & 1 == 0 { self.envelope.volume } else { 0 }
     }
 }
+
+/* -------------------------------------------------------------------------- */
+/*                                  A P U                                     */
+/* -------------------------------------------------------------------------- */
 
 pub struct Apu {
-    ch1: SquareChannel,
-    ch2: SquareChannel,
-    ch3: WaveChannel,
-    ch4: NoiseChannel,
+    ch1: Square,
+    ch2: Square,
+    ch3: Wave,
+    ch4: Noise,
+
     wave_ram: [u8; 0x10],
+    regs: [u8; 0x30],      // NR10–NR3F shadow (for reads)
     nr50: u8,
     nr51: u8,
     nr52: u8,
-    sequencer: FrameSequencer,
+
+    sequencer_step: u8,
+    div_prev_bit: bool,
+
+    // sample generation
     sample_timer: u32,
     sample_rate: u32,
+    hpf_l_in: f32,
+    hpf_l_out: f32,
+    hpf_r_in: f32,
+    hpf_r_out: f32,
     samples: VecDeque<i16>,
-    speed_factor: f32,
-    hp_prev_input_left: f32,
-    hp_prev_output_left: f32,
-    hp_prev_input_right: f32,
-    hp_prev_output_right: f32,
+
+    // cached PCM regs (CGB)
     pcm12: u8,
     pcm34: u8,
-    regs: [u8; 0x30],
-    wave_shadow: [u8; 0x10],
-    cpu_cycles: u64,
 }
 
-impl Apu {
-    // Keep <= 40 ms of stereo samples in the queue
-    const MAX_SAMPLES: usize = ((44100 * AUDIO_LATENCY_MS as usize) / 1000) * 2;
+impl Default for Apu { fn default() -> Self { Self::new() } }
 
-    pub fn set_speed(&mut self, speed: f32) {
-        self.speed_factor = speed;
+impl Apu {
+    pub fn new() -> Self {
+        let mut apu = Self {
+            ch1: Square::new(true),
+            ch2: Square::new(false),
+            ch3: Wave::default(),
+            ch4: Noise::default(),
+            wave_ram: [0; 0x10],
+            regs: POWER_ON_REGS,
+            nr50: 0x77,
+            nr51: 0xF3,
+            nr52: 0xF1,       // Power on + CH3 DAC enabled
+            sequencer_step: 0,
+            div_prev_bit: false,
+            sample_timer: 0,
+            sample_rate: 44_100,
+            hpf_l_in: 0.0,
+            hpf_l_out: 0.0,
+            hpf_r_in: 0.0,
+            hpf_r_out: 0.0,
+            samples: VecDeque::with_capacity(MAX_SAMPLES),
+            pcm12: 0,
+            pcm34: 0,
+        };
+        // set defaults that are not 0 in hardware
+        apu.ch1.duty = 2;
+        apu.ch1.length = 0x3F;
+        apu.ch1.envelope.volume = 0x0F;
+        apu.ch1.envelope.period = 3;
+        apu.ch1.frequency = 0x03FF;
+        apu.ch1.enabled = false;
+        apu.ch1.sweep.as_mut().unwrap().shadow = 0x03FF;
+
+        apu
     }
 
-    pub fn push_sample(&mut self, s: i16) {
-        if self.speed_factor != 1.0 {
+    /* ------------------------------- I/O ---------------------------------- */
+
+    fn powered(&self) -> bool { self.nr52 & 0x80 != 0 }
+
+    pub fn read_reg(&self, addr: u16) -> u8 {
+        if !self.powered() && addr != 0xFF26 {
+            return 0xFF;
+        }
+        match addr {
+            // PCM read‑backs (CGB)
+            0xFF76 => self.pcm12,
+            0xFF77 => self.pcm34,
+            // Wave RAM
+            0xFF30..=0xFF3F => {
+                if self.ch3.enabled && self.ch3.dac_on { 0xFF } else { self.wave_ram[(addr - 0xFF30) as usize] }
+            }
+            // NR52 – status
+            0xFF26 => {
+                let ch_flags = (self.ch4.enabled as u8) << 3 |
+                               (self.ch3.enabled as u8) << 2 |
+                               (self.ch2.enabled as u8) << 1 |
+                               (self.ch1.enabled as u8);
+                (self.nr52 & 0x80) | ch_flags | 0x70
+            }
+            // Other audio regs
+            0xFF10..=0xFF3F => {
+                let i = (addr - 0xFF10) as usize;
+                self.regs[i] | Self::read_mask(addr)
+            }
+            _ => 0xFF,
+        }
+    }
+
+    pub fn write_reg(&mut self, addr: u16, data: u8) {
+        // NR52 power control -------------------------------------------------
+        if addr == 0xFF26 {
+            let prev_on = self.powered();
+            if data & 0x80 == 0 && prev_on {
+                // Power‑off – clear everything except NR52 & wave RAM
+                *self = Self::new();        // safe because the interface is unchanged
+                self.nr52 = 0;              // keep powered‑off state
+            } else if data & 0x80 != 0 && !prev_on {
+                // Power‑on – restore reset values
+                *self = Self::new();
+            }
             return;
         }
-        if self.samples.len() >= Self::MAX_SAMPLES {
-            let excess = self.samples.len() + 1 - Self::MAX_SAMPLES;
+        if !self.powered() {
+            return; // while off, only NR52 & wave‑RAM are writable (Wave RAM handled below)
+        }
+
+        // Wave RAM -----------------------------------------------------------
+        if (0xFF30..=0xFF3F).contains(&addr) {
+            if !(self.ch3.enabled && self.ch3.dac_on) {
+                let idx = (addr - 0xFF30) as usize;
+                self.wave_ram[idx] = data;
+            }
+            return;
+        }
+
+        // Shadow register file (for reads)
+        if (0xFF10..=0xFF3F).contains(&addr) {
+            self.regs[(addr - 0xFF10) as usize] = data;
+        }
+
+        match addr {
+            /* ---------------- Channel 1 – square + sweep ----------------- */
+            0xFF10 => {               // NR10 sweep
+                if let Some(sw) = &mut self.ch1.sweep {
+                    sw.load(data);
+                }
+            }
+            0xFF11 => {               // NR11 duty/length
+                self.ch1.duty = data >> 6;
+                self.ch1.length = 64 - (data & 0x3F);
+            }
+            0xFF12 => {               // NR12 envelope
+                self.ch1.envelope.load(data);
+                if !dac_enabled(data) {
+                    self.ch1.enabled = false;
+                }
+            }
+            0xFF13 => self.ch1.frequency = (self.ch1.frequency & 0x700) | data as u16,
+            0xFF14 => {
+                self.ch1.length_en = data & 0x40 != 0;
+                self.ch1.frequency = (self.ch1.frequency & 0xFF) | (((data & 0x07) as u16) << 8);
+                if data & 0x80 != 0 {
+                    self.trigger_ch1();
+                }
+            }
+
+            /* ---------------- Channel 2 – simple square ------------------ */
+            0xFF16 => {
+                self.ch2.duty = data >> 6;
+                self.ch2.length = 64 - (data & 0x3F);
+            }
+            0xFF17 => {
+                self.ch2.envelope.load(data);
+                if !dac_enabled(data) { self.ch2.enabled = false; }
+            }
+            0xFF18 => self.ch2.frequency = (self.ch2.frequency & 0x700) | data as u16,
+            0xFF19 => {
+                self.ch2.length_en = data & 0x40 != 0;
+                self.ch2.frequency = (self.ch2.frequency & 0xFF) | (((data & 0x07) as u16) << 8);
+                if data & 0x80 != 0 {
+                    self.trigger_square(&mut self.ch2, 64);
+                }
+            }
+
+            /* ---------------- Channel 3 – wave --------------------------- */
+            0xFF1A => self.ch3.dac_on = data & 0x80 != 0,
+            0xFF1B => self.ch3.length = 256 - data as u16,
+            0xFF1C => self.ch3.volume_code = (data >> 5) & 0x03,
+            0xFF1D => self.ch3.frequency = (self.ch3.frequency & 0x700) | data as u16,
+            0xFF1E => {
+                self.ch3.length_en = data & 0x40 != 0;
+                self.ch3.frequency = (self.ch3.frequency & 0xFF) | (((data & 0x07) as u16) << 8);
+                if data & 0x80 != 0 {
+                    self.trigger_wave();
+                }
+            }
+
+            /* ---------------- Channel 4 – noise -------------------------- */
+            0xFF20 => self.ch4.length = 64 - (data & 0x3F),
+            0xFF21 => {
+                self.ch4.envelope.load(data);
+                if !dac_enabled(data) { self.ch4.enabled = false; }
+            }
+            0xFF22 => {
+                self.ch4.clock_shift = data >> 4;
+                self.ch4.width7 = data & 0x08 != 0;
+                self.ch4.divisor_code = data & 0x07;
+            }
+            0xFF23 => {
+                self.ch4.length_en = data & 0x40 != 0;
+                if data & 0x80 != 0 {
+                    self.trigger_noise();
+                }
+            }
+
+            /* ---------------- Mixer & volume ----------------------------- */
+            0xFF24 => self.nr50 = data,
+            0xFF25 => self.nr51 = data,
+
+            _ => {}
+        }
+    }
+
+    /* ---------------------------- Triggers -------------------------------- */
+
+    fn trigger_ch1(&mut self) {
+        let sweep = self.ch1.sweep.as_mut().unwrap();
+        sweep.shadow = self.ch1.frequency;
+        sweep.timer = if sweep.period == 0 { 8 } else { sweep.period };
+        sweep.enabled = sweep.period != 0 || sweep.shift != 0;
+        sweep.ever_negated = false;
+
+        self.trigger_square(&mut self.ch1, 64);
+    }
+    fn trigger_square(&mut self, ch: &mut Square, max_len: u8) {
+        ch.enabled = dac_enabled(self.regs[0x12 - 0x10]); // NR12/22 still in regs[]
+        if ch.length == 0 { ch.length = max_len; }
+        ch.pending_reset = true;
+        ch.first_sample = true;
+        ch.timer = square_period(ch.frequency);
+        ch.envelope.timer = if ch.envelope.period == 0 { 8 } else { ch.envelope.period };
+    }
+    fn trigger_wave(&mut self) {
+        self.ch3.enabled = self.ch3.dac_on;
+        self.ch3.pos = 0;
+        self.ch3.timer = wave_period(self.ch3.frequency);
+        if self.ch3.length == 0 { self.ch3.length = 256; }
+    }
+    fn trigger_noise(&mut self) {
+        self.ch4.enabled = dac_enabled(self.regs[0x21 - 0x10]);
+        self.ch4.lfsr = 0x7FFF;
+        self.ch4.timer = noise_period(self.ch4.clock_shift, self.ch4.divisor_code);
+        if self.ch4.length == 0 { self.ch4.length = 64; }
+        self.ch4.envelope.timer = if self.ch4.envelope.period == 0 { 8 } else { self.ch4.envelope.period };
+    }
+
+    /* ------------------------------ Ticking ------------------------------- */
+
+    /// Advance 1 M‑cycle (4 CPU ticks) – called from `Timer::step`, `Cpu::tick`, **etc.**
+    pub fn tick(&mut self, div_prev: u16, div_now: u16, double_speed: bool) {
+        // Frame sequencer clock (512 Hz)
+        let bit = if double_speed { 6 } else { 5 };
+        let new_bit = (div_now >> bit) & 1 != 0;
+        if self.div_prev_bit && !new_bit {
+            self.step_frame_sequencer();
+        }
+        self.div_prev_bit = new_bit != 0;
+
+        // 1 MHz pipeline latch for CH1/CH2
+        self.ch1.latched = self.ch1.stage1;
+        self.ch1.stage1 = self.ch1.output_now();
+        self.ch2.latched = self.ch2.stage1;
+        self.ch2.stage1 = self.ch2.output_now();
+
+        // Update CGB PCM read‑backs each M‑cycle
+        self.pcm12 = (self.ch2.latched << 4) | self.ch1.latched;
+        self.pcm34 = (self.ch4.output_now() << 4) | self.ch3.output_now();
+    }
+
+    fn step_frame_sequencer(&mut self) {
+        match self.sequencer_step {
+            0 | 2 | 4 | 6 => {
+                self.ch1.clock_length();
+                self.ch2.clock_length();
+                self.ch3.clock_length();
+                self.ch4.clock_length();
+            }
+            _ => {}
+        }
+        if self.sequencer_step == 2 || self.sequencer_step == 6 {
+            if let Some(sw) = &mut self.ch1.sweep { sw.clock(&mut self.ch1.frequency, &mut self.ch1.enabled); }
+        }
+        if self.sequencer_step == 7 {
+            self.ch1.envelope.clock();
+            self.ch2.envelope.clock();
+            self.ch4.envelope.clock();
+        }
+        self.sequencer_step = (self.sequencer_step + 1) & 7;
+    }
+
+    /// Advance the actual generator timers (`cycles` CPU cycles, not M‑cycles)
+    pub fn step(&mut self, cycles: u16) {
+        let c = cycles as u32;
+        self.ch1.clock_timer(c);
+        self.ch2.clock_timer(c);
+        self.ch3.clock_timer(c, &self.wave_ram);
+        self.ch4.clock_timer(c);
+
+        // sample down‑sampling (simple nearest)
+        self.sample_timer += c;
+        let cps = CPU_CLOCK_HZ / self.sample_rate;
+        while self.sample_timer >= cps {
+            self.sample_timer -= cps;
+            let (l, r) = self.mix();
+            self.push_sample(l);
+            self.push_sample(r);
+        }
+    }
+
+    /* ---------------------- Mixing & high‑pass filter --------------------- */
+
+    #[inline]
+    fn mix(&mut self) -> (i16, i16) {
+        let c1 = (self.ch1.latched as i16) - 8;
+        let c2 = (self.ch2.latched as i16) - 8;
+        let c3 = (self.ch3.output_now() as i16) - 8;
+        let c4 = (self.ch4.output_now() as i16) - 8;
+        let vin = 0; // no external VIN line attached
+
+        let mut left = 0i16;
+        let mut right = 0i16;
+        // NR51 panning
+        if self.nr51 & 0x01 != 0 { right += c1; }
+        if self.nr51 & 0x02 != 0 { right += c2; }
+        if self.nr51 & 0x04 != 0 { right += c3; }
+        if self.nr51 & 0x08 != 0 { right += c4; }
+
+        if self.nr51 & 0x10 != 0 { left += c1; }
+        if self.nr51 & 0x20 != 0 { left += c2; }
+        if self.nr51 & 0x40 != 0 { left += c3; }
+        if self.nr51 & 0x80 != 0 { left += c4; }
+
+        // VIN mixing (bits 3 & 7 of NR50)
+        if self.nr50 & 0x08 != 0 { right += vin; }
+        if self.nr50 & 0x80 != 0 { left  += vin; }
+
+        // Master volumes (0‑7) – plus 1 as analogue circuit never mutes fully
+        let rv = ((self.nr50 & 0x07) + 1) as i16;
+        let lv = (((self.nr50 >> 4) & 0x07) + 1) as i16;
+        left  *= lv * VOLUME_SCALER;
+        right *= rv * VOLUME_SCALER;
+
+        self.dc_block(left, right)
+    }
+
+    #[inline]
+    fn dc_block(&mut self, l: i16, r: i16) -> (i16, i16) {
+        // single‑pole HPF y[n] = x[n] - x[n-1] + R·y[n-1]
+        const R: f32 = 0.999_94;
+        let lin  = l as f32;
+        let rin  = r as f32;
+        let lout = lin - self.hpf_l_in + R * self.hpf_l_out;
+        let rout = rin - self.hpf_r_in + R * self.hpf_r_out;
+        self.hpf_l_in = lin;
+        self.hpf_r_in = rin;
+        self.hpf_l_out = lout;
+        self.hpf_r_out = rout;
+        (lout as i16, rout as i16)
+    }
+
+    #[inline]
+    fn push_sample(&mut self, s: i16) {
+        if self.samples.len() >= MAX_SAMPLES {
+            let excess = self.samples.len() + 1 - MAX_SAMPLES;
             self.samples.drain(..excess);
         }
         self.samples.push_back(s);
     }
 
+    /* --------------------------- Public helpers --------------------------- */
+
+    pub fn pop_sample(&mut self) -> Option<i16> { self.samples.pop_front() }
+    pub fn set_sample_rate(&mut self, rate: u32) { self.sample_rate = rate.max(8000); }
+
+    /// Convenience for the debugger
+    pub fn ch1_frequency(&self) -> u16 { self.ch1.frequency }
+
+    #[inline]
     fn read_mask(addr: u16) -> u8 {
         match addr {
-            0xFF10 => 0x80,
-            0xFF11 => 0x3F,
-            0xFF12 => 0x00,
-            0xFF13 => 0xFF,
-            0xFF14 => 0xBF,
-            0xFF16 => 0x3F,
-            0xFF17 => 0x00,
-            0xFF18 => 0xFF,
-            0xFF19 => 0xBF,
-            0xFF1A => 0x7F,
-            0xFF1B => 0xFF,
-            0xFF1C => 0x9F,
-            0xFF1D => 0xFF,
-            0xFF1E => 0xBF,
-            0xFF20 => 0xFF,
-            0xFF21 => 0x00,
-            0xFF22 => 0x00,
-            0xFF23 => 0xBF,
-            0xFF24 => 0x00,
-            0xFF25 => 0x00,
-            0xFF26 => 0x70,
+            0xFF10 => 0x80, 0xFF11 => 0x3F, 0xFF12 => 0x00, 0xFF13 => 0xFF, 0xFF14 => 0xBF,
+            0xFF16 => 0x3F, 0xFF17 => 0x00, 0xFF18 => 0xFF, 0xFF19 => 0xBF,
+            0xFF1A => 0x7F, 0xFF1B => 0xFF, 0xFF1C => 0x9F, 0xFF1D => 0xFF, 0xFF1E => 0xBF,
+            0xFF20 => 0xFF, 0xFF21 => 0x00, 0xFF22 => 0x00, 0xFF23 => 0xBF,
+            0xFF24 => 0x00, 0xFF25 => 0x00, 0xFF26 => 0x70,
             0xFF15 | 0xFF1F => 0xFF,
             0xFF30..=0xFF3F => 0x00,
             _ => 0xFF,
         }
-    }
-
-    fn power_off(&mut self) {
-        self.ch1 = SquareChannel::new(true);
-        self.ch2 = SquareChannel::new(false);
-        self.ch3 = WaveChannel::default();
-        self.ch4 = NoiseChannel::default();
-        self.regs.fill(0);
-        self.nr50 = 0;
-        self.nr51 = 0;
-        self.samples.clear();
-        self.speed_factor = 1.0;
-        self.hp_prev_input_left = 0.0;
-        self.hp_prev_output_left = 0.0;
-        self.hp_prev_input_right = 0.0;
-        self.hp_prev_output_right = 0.0;
-        self.pcm12 = 0;
-        self.pcm34 = 0;
-    }
-    pub fn new() -> Self {
-        let mut apu = Self {
-            ch1: SquareChannel::new(true),
-            ch2: SquareChannel::new(false),
-            ch3: WaveChannel::default(),
-            ch4: NoiseChannel::default(),
-            wave_ram: [0; 0x10],
-            regs: POWER_ON_REGS,
-            wave_shadow: [0; 0x10],
-            nr50: 0x77,
-            nr51: 0xF3,
-            nr52: 0xF1,
-            sequencer: FrameSequencer::new(),
-            sample_timer: 0,
-            sample_rate: 44100,
-            samples: VecDeque::with_capacity(4096),
-            speed_factor: 1.0,
-            hp_prev_input_left: 0.0,
-            hp_prev_output_left: 0.0,
-            hp_prev_input_right: 0.0,
-            hp_prev_output_right: 0.0,
-            pcm12: 0,
-            pcm34: 0,
-            cpu_cycles: 0,
-        };
-
-        // Initialize channels to power-on register defaults
-        apu.ch1.duty = 2;
-        apu.ch1.length = 0x3F;
-        apu.ch1.envelope.initial = 0xF;
-        apu.ch1.envelope.volume = 0xF;
-        apu.ch1.envelope.period = 3;
-        apu.ch1.frequency = 0x03FF;
-        apu.ch1.dac_enabled = true;
-
-        apu.ch2.length = 0x3F;
-        apu.ch2.frequency = 0x03FF;
-        apu.ch2.dac_enabled = false;
-
-        apu.ch3.dac_enabled = true;
-        apu.ch3.length = 0xFF;
-        apu.ch3.frequency = 0x03FF;
-
-        apu.ch4.length = 0xFF;
-        apu.ch4.dac_enabled = false;
-
-        apu
-    }
-
-    pub fn read_reg(&self, addr: u16) -> u8 {
-        if addr == 0xFF26 {
-            let mut val = self.regs[(addr - 0xFF10) as usize] & 0x7F;
-            val |= self.nr52 & 0x80;
-            if self.ch1.enabled {
-                val |= 0x01;
-            }
-            if self.ch2.enabled {
-                val |= 0x02;
-            }
-            if self.ch3.enabled {
-                val |= 0x04;
-            }
-            if self.ch4.enabled {
-                val |= 0x08;
-            }
-            return val | Apu::read_mask(addr);
-        }
-
-        if (0xFF30..=0xFF3F).contains(&addr) {
-            if self.ch3.enabled && self.ch3.dac_enabled {
-                return 0xFF;
-            }
-            return self.wave_ram[(addr - 0xFF30) as usize];
-        }
-
-        let idx = (addr - 0xFF10) as usize;
-        self.regs[idx] | Apu::read_mask(addr)
-    }
-
-    pub fn read_pcm(&self, addr: u16) -> u8 {
-        if self.nr52 & 0x80 == 0 {
-            return 0xFF;
-        }
-        match addr {
-            0xFF76 => self.pcm12,
-            0xFF77 => self.pcm34,
-            _ => 0xFF,
-        }
-    }
-
-    pub fn write_reg(&mut self, addr: u16, val: u8) {
-        if self.nr52 & 0x80 == 0 && addr != 0xFF26 && !(0xFF30..=0xFF3F).contains(&addr) {
-            return;
-        }
-
-        if (0xFF30..=0xFF3F).contains(&addr) {
-            self.wave_shadow[(addr - 0xFF30) as usize] = val;
-        }
-
-        if addr != 0xFF26 && (0xFF10..=0xFF3F).contains(&addr) {
-            self.regs[(addr - 0xFF10) as usize] = val;
-        }
-
-        match addr {
-            0xFF10 => {
-                if let Some(s) = self.ch1.sweep.as_mut() {
-                    s.set_params(val);
-                }
-            }
-            0xFF11 => {
-                self.ch1.duty = val >> 6;
-                self.ch1.length = 64 - (val & 0x3F);
-            }
-            0xFF12 => {
-                self.ch1.envelope.reset(val);
-                self.ch1.dac_enabled = val & 0xF0 != 0;
-                if !self.ch1.dac_enabled {
-                    self.ch1.enabled = false;
-                }
-            }
-            0xFF13 => self.ch1.frequency = (self.ch1.frequency & 0x700) | val as u16,
-            0xFF14 => {
-                let prev = self.ch1.length_enable;
-                self.ch1.length_enable = val & 0x40 != 0;
-                if !prev && self.ch1.length_enable {
-                    let next_step = (self.sequencer.step + 1) & 7;
-                    Apu::maybe_extra_len_clock(&mut self.ch1, next_step);
-                }
-                self.ch1.frequency = (self.ch1.frequency & 0xFF) | (((val & 0x07) as u16) << 8);
-                if val & 0x80 != 0 {
-                    self.trigger_square(1);
-                }
-            }
-            0xFF16 => {
-                self.ch2.duty = val >> 6;
-                self.ch2.length = 64 - (val & 0x3F);
-            }
-            0xFF17 => {
-                self.ch2.envelope.reset(val);
-                self.ch2.dac_enabled = val & 0xF0 != 0;
-                if !self.ch2.dac_enabled {
-                    self.ch2.enabled = false;
-                }
-            }
-            0xFF18 => self.ch2.frequency = (self.ch2.frequency & 0x700) | val as u16,
-            0xFF19 => {
-                let prev = self.ch2.length_enable;
-                self.ch2.length_enable = val & 0x40 != 0;
-                if !prev && self.ch2.length_enable {
-                    let next_step = (self.sequencer.step + 1) & 7;
-                    Apu::maybe_extra_len_clock(&mut self.ch2, next_step);
-                }
-                self.ch2.frequency = (self.ch2.frequency & 0xFF) | (((val & 0x07) as u16) << 8);
-                if val & 0x80 != 0 {
-                    self.trigger_square(2);
-                }
-            }
-            0xFF1A => self.ch3.dac_enabled = val & 0x80 != 0,
-            0xFF1B => self.ch3.length = 256 - val as u16,
-            0xFF1C => self.ch3.volume = (val >> 5) & 0x03,
-            0xFF1D => self.ch3.frequency = (self.ch3.frequency & 0x700) | val as u16,
-            0xFF1E => {
-                self.ch3.length_enable = val & 0x40 != 0;
-                self.ch3.frequency = (self.ch3.frequency & 0xFF) | (((val & 0x07) as u16) << 8);
-                if val & 0x80 != 0 {
-                    self.trigger_wave();
-                }
-            }
-            0xFF20 => self.ch4.length = 64 - (val & 0x3F),
-            0xFF21 => {
-                self.ch4.envelope.reset(val);
-                self.ch4.dac_enabled = val & 0xF0 != 0;
-                if !self.ch4.dac_enabled {
-                    self.ch4.enabled = false;
-                }
-            }
-            0xFF22 => {
-                let new_width7 = val & 0x08 != 0;
-                if !self.ch4.width7 && new_width7 && (self.ch4.lfsr & 0x7F) == 0x7F {
-                    self.ch4.enabled = false;
-                }
-                self.ch4.clock_shift = val >> 4;
-                self.ch4.width7 = new_width7;
-                self.ch4.divisor = val & 0x07;
-            }
-            0xFF23 => {
-                let prev = self.ch4.length_enable;
-                self.ch4.length_enable = val & 0x40 != 0;
-                if !prev && self.ch4.length_enable {
-                    let next_step = (self.sequencer.step + 1) & 7;
-                    if !matches!(next_step, 0 | 2 | 4 | 6) && self.ch4.length > 0 {
-                        self.ch4.clock_length();
-                    }
-                }
-                if val & 0x80 != 0 {
-                    self.trigger_noise();
-                }
-            }
-            0xFF24 => self.nr50 = val,
-            0xFF25 => self.nr51 = val,
-            0xFF26 => {
-                if val & 0x80 == 0 {
-                    self.nr52 &= !0x80;
-                    self.power_off();
-                } else {
-                    if self.nr52 & 0x80 == 0 {
-                        self.ch1.out_latched = 0;
-                        self.ch1.out_stage1 = 0;
-                        self.ch2.out_latched = 0;
-                        self.ch2.out_stage1 = 0;
-                        self.cpu_cycles = 0;
-                        self.sequencer.step = 0;
-                    }
-                    self.nr52 |= 0x80;
-                }
-                let idx = (addr - 0xFF10) as usize;
-                self.regs[idx] = 0x70 | (self.nr52 & 0x80);
-            }
-            0xFF30..=0xFF3F => {
-                if !(self.ch3.enabled && self.ch3.dac_enabled) {
-                    self.wave_ram[(addr - 0xFF30) as usize] = val;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn trigger_square(&mut self, idx: u8) {
-        let ch = if idx == 1 {
-            &mut self.ch1
-        } else {
-            &mut self.ch2
-        };
-        ch.enabled = true;
-        let div_phase = (self.cpu_cycles & 0x3) as i32;
-        let period = ch.period();
-        let delay = TRIGGER_PIPELINE_LATENCY + ALIGN_TO_NEXT_DIV_EDGE - div_phase;
-        ch.timer = ((period + delay) & !0x3) | div_phase;
-        ch.pending_reset = true;
-        ch.first_sample = true;
-        ch.envelope.volume = ch.envelope.initial;
-        if idx == 1 {
-            if let Some(s) = ch.sweep.as_mut() {
-                s.reload(ch.frequency);
-                if s.shift != 0 {
-                    let new_freq = s.calculate();
-                    if new_freq > 2047 {
-                        ch.enabled = false;
-                        s.enabled = false;
-                    } else {
-                        s.shadow = new_freq;
-                        ch.frequency = new_freq;
-                    }
-                }
-            }
-        }
-        if ch.length == 0 {
-            ch.length = 64;
-        }
-        if ch.length == 64 && ch.length_enable {
-            let upcoming = self.sequencer.step;
-            if matches!(upcoming, 0 | 2 | 4 | 6) {
-                ch.length = 63;
-            }
-        }
-    }
-
-    fn trigger_wave(&mut self) {
-        self.ch3.enabled = true;
-        self.ch3.position = 0;
-        self.ch3.timer = self.ch3.period();
-        if self.ch3.length == 0 {
-            self.ch3.length = 256;
-        }
-        if self.ch3.length == 256 && self.ch3.length_enable {
-            let upcoming = self.sequencer.step;
-            if matches!(upcoming, 0 | 2 | 4 | 6) {
-                self.ch3.length = 255;
-            }
-        }
-    }
-
-    fn trigger_noise(&mut self) {
-        self.ch4.enabled = true;
-        self.ch4.lfsr = 0x7FFF;
-        self.ch4.timer = self.ch4.period();
-        self.ch4.envelope.volume = self.ch4.envelope.initial;
-        if self.ch4.length == 0 {
-            self.ch4.length = 64;
-        }
-        if self.ch4.length == 64 && self.ch4.length_enable {
-            let upcoming = self.sequencer.step;
-            if matches!(upcoming, 0 | 2 | 4 | 6) {
-                self.ch4.length = 63;
-            }
-        }
-    }
-
-    fn clock_frame_sequencer(&mut self, step: u8) {
-        if matches!(step, 0 | 2 | 4 | 6) {
-            self.ch1.clock_length();
-            self.ch2.clock_length();
-            self.ch3.clock_length();
-            self.ch4.clock_length();
-        }
-        if step == 2 || step == 6 {
-            self.ch1.clock_sweep();
-        }
-        if step == 7 {
-            self.ch1.envelope.clock();
-            self.ch2.envelope.clock();
-            self.ch4.envelope.clock();
-        }
-    }
-
-    /// Call once per M-cycle / machine step.
-    pub fn tick(&mut self, div_prev: u16, div_now: u16, double_speed: bool) {
-        self.ch1.tick_1mhz();
-        self.ch2.tick_1mhz();
-        // DIV bit 5 clocks the sequencer at 512 Hz (bit 6 when double-speed)
-        let bit = if double_speed { 6 } else { 5 };
-        let toggled = ((div_prev >> bit) & 1) != ((div_now >> bit) & 1);
-        if toggled {
-            let step = self.sequencer.advance();
-            self.clock_frame_sequencer(step);
-        }
-        self.refresh_pcm_regs();
-    }
-
-    fn maybe_extra_len_clock(ch: &mut SquareChannel, upcoming_step: u8) {
-        if !matches!(upcoming_step, 0 | 2 | 4 | 6) && ch.length > 0 {
-            ch.clock_length();
-        }
-    }
-
-    /// Update FF76/FF77 to reflect the current channel outputs.
-    fn refresh_pcm_regs(&mut self) {
-        let ch1 = self.ch1.current_sample();
-        let ch2 = self.ch2.current_sample();
-        let ch3 = self.ch3.peek_sample();
-        let ch4 = self.ch4.peek_sample();
-        self.pcm12 = (ch2 << 4) | ch1;
-        self.pcm34 = (ch4 << 4) | ch3;
-    }
-
-    pub fn step(&mut self, cycles: u16) {
-        let cycles32 = cycles as u32;
-        self.cpu_cycles = self.cpu_cycles.wrapping_add(cycles as u64);
-        self.ch1.step(cycles32);
-        self.ch2.step(cycles32);
-        self.ch3.step(cycles32, &self.wave_ram);
-        self.ch4.step(cycles32);
-        self.sample_timer += cycles32;
-        let cps = CPU_CLOCK_HZ / self.sample_rate;
-        while self.sample_timer >= cps {
-            self.sample_timer -= cps;
-            let (left, right) = self.mix_output();
-            self.push_sample(left);
-            self.push_sample(right);
-        }
-    }
-
-    fn mix_output(&mut self) -> (i16, i16) {
-        let out1 = self.ch1.current_sample();
-        let out2 = self.ch2.current_sample();
-        let out3 = self.ch3.output();
-        let out4 = self.ch4.output();
-
-        let ch1 = out1 as i16 - 8;
-        let ch2 = out2 as i16 - 8;
-        let ch3 = out3 as i16 - 8;
-        let ch4 = out4 as i16 - 8;
-
-        let mut left = 0i16;
-        let mut right = 0i16;
-
-        if self.nr51 & 0x10 != 0 {
-            left += ch1;
-        }
-        if self.nr51 & 0x01 != 0 {
-            right += ch1;
-        }
-        if self.nr51 & 0x20 != 0 {
-            left += ch2;
-        }
-        if self.nr51 & 0x02 != 0 {
-            right += ch2;
-        }
-        if self.nr51 & 0x40 != 0 {
-            left += ch3;
-        }
-        if self.nr51 & 0x04 != 0 {
-            right += ch3;
-        }
-        if self.nr51 & 0x80 != 0 {
-            left += ch4;
-        }
-        if self.nr51 & 0x08 != 0 {
-            right += ch4;
-        }
-
-        let left_vol = ((self.nr50 >> 4) & 0x07) + 1;
-        let right_vol = (self.nr50 & 0x07) + 1;
-
-        let left_sample = left * left_vol as i16 * VOLUME_FACTOR;
-        let right_sample = right * right_vol as i16 * VOLUME_FACTOR;
-
-        self.dc_block(left_sample, right_sample)
-    }
-
-    fn dc_block(&mut self, left: i16, right: i16) -> (i16, i16) {
-        const DC_FILTER_R: f32 = 0.999;
-        let left_in = left as f32;
-        let right_in = right as f32;
-        let left_out = left_in - self.hp_prev_input_left + DC_FILTER_R * self.hp_prev_output_left;
-        let right_out =
-            right_in - self.hp_prev_input_right + DC_FILTER_R * self.hp_prev_output_right;
-        self.hp_prev_input_left = left_in;
-        self.hp_prev_output_left = left_out;
-        self.hp_prev_input_right = right_in;
-        self.hp_prev_output_right = right_out;
-        (left_out.round() as i16, right_out.round() as i16)
-    }
-
-    pub fn ch1_frequency(&self) -> u16 {
-        self.ch1.frequency
-    }
-
-    pub fn set_sample_rate(&mut self, rate: u32) {
-        self.sample_rate = rate;
-    }
-
-    pub fn pop_sample(&mut self) -> Option<i16> {
-        self.samples.pop_front()
-    }
-
-    pub fn sequencer_step(&self) -> u8 {
-        self.sequencer.step
-    }
-}
-
-impl Default for Apu {
-    fn default() -> Self {
-        Self::new()
     }
 }

@@ -322,7 +322,7 @@ fn channel_1_align_internal() {
 
     let rom = build_channel_1_align_rom();
     let cart = vibeEmu::cartridge::Cartridge::load(rom);
-    let mut gb = vibeEmu::gameboy::GameBoy::new_with_mode(cart.cgb);
+    let mut gb = vibeEmu::gameboy::GameBoy::new_with_mode(true);
     gb.mmu.load_cart(cart);
 
     while gb.cpu.cycles < 20_000 {
@@ -347,7 +347,6 @@ fn channel_1_align_internal() {
 }
 
 #[test]
-#[ignore]
 fn channel_1_delay_internal() {
     const EXPECTED: [u8; 32] = [
         0x00, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x00, 0x00, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
@@ -357,7 +356,7 @@ fn channel_1_delay_internal() {
 
     let rom = build_channel_1_delay_rom();
     let cart = vibeEmu::cartridge::Cartridge::load(rom);
-    let mut gb = vibeEmu::gameboy::GameBoy::new_with_mode(cart.cgb);
+    let mut gb = vibeEmu::gameboy::GameBoy::new_with_mode(true);
     gb.mmu.load_cart(cart);
 
     while gb.cpu.cycles < 20_000 {
