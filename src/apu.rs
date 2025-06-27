@@ -660,18 +660,20 @@ impl Apu {
 
     pub fn read_pcm(&self, addr: u16) -> u8 {
         fn nibble(s: i16) -> u8 {
-            let v = (s.abs() / 8) as i16;        // 0‑120 → 0‑15
+            let v = (s.abs() / 8) as i16; // 0‑120 → 0‑15
             (v.min(15)) as u8
         }
 
         match addr {
-            0xFF76 => {                          // PCM12 – ch 2 in hi‑nibble,
-                                                  //           ch 1 in lo‑nibble
+            0xFF76 => {
+                // PCM12 – ch 2 in hi‑nibble,
+                //           ch 1 in lo‑nibble
                 let ch1 = nibble(self.ch1.output());
                 let ch2 = nibble(self.ch2.output());
                 (ch2 << 4) | ch1
             }
-            0xFF77 => {                          // PCM34 – ch 4 hi, ch 3 lo
+            0xFF77 => {
+                // PCM34 – ch 4 hi, ch 3 lo
                 let ch3 = nibble(self.wave.output());
                 let ch4 = nibble(self.noise.output());
                 (ch4 << 4) | ch3
