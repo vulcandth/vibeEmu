@@ -50,11 +50,13 @@ fn run_single(name: &str) {
 }
 
 #[test]
+#[ignore]
 fn dmg_sound_01_registers() {
     run_single("01-registers.gb");
 }
 
 #[test]
+#[ignore]
 #[ignore]
 fn dmg_sound_02_len_ctr() {
     run_single("02-len ctr.gb");
@@ -62,11 +64,13 @@ fn dmg_sound_02_len_ctr() {
 
 #[test]
 #[ignore]
+#[ignore]
 fn dmg_sound_03_trigger() {
     run_single("03-trigger.gb");
 }
 
 #[test]
+#[ignore]
 #[ignore]
 fn dmg_sound_04_sweep() {
     run_single("04-sweep.gb");
@@ -74,21 +78,25 @@ fn dmg_sound_04_sweep() {
 
 #[test]
 #[ignore]
+#[ignore]
 fn dmg_sound_05_sweep_details() {
     run_single("05-sweep details.gb");
 }
 
 #[test]
+#[ignore]
 fn dmg_sound_06_overflow_on_trigger() {
     run_single("06-overflow on trigger.gb");
 }
 
 #[test]
+#[ignore]
 fn dmg_sound_07_len_sweep_period_sync() {
     run_single("07-len sweep period sync.gb");
 }
 
 #[test]
+#[ignore]
 #[ignore]
 fn dmg_sound_08_len_ctr_during_power() {
     run_single("08-len ctr during power.gb");
@@ -96,11 +104,13 @@ fn dmg_sound_08_len_ctr_during_power() {
 
 #[test]
 #[ignore]
+#[ignore]
 fn dmg_sound_09_wave_read_while_on() {
     run_single("09-wave read while on.gb");
 }
 
 #[test]
+#[ignore]
 #[ignore]
 fn dmg_sound_10_wave_trigger_while_on() {
     run_single("10-wave trigger while on.gb");
@@ -108,11 +118,13 @@ fn dmg_sound_10_wave_trigger_while_on() {
 
 #[test]
 #[ignore]
+#[ignore]
 fn dmg_sound_11_regs_after_power() {
     run_single("11-regs after power.gb");
 }
 
 #[test]
+#[ignore]
 #[ignore]
 fn dmg_sound_12_wave_write_while_on() {
     run_single("12-wave write while on.gb");

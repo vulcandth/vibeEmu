@@ -144,13 +144,13 @@ impl Cpu {
             CYCLES_PER_M_CYCLE
         } * m_cycles as u16;
         self.cycles += hw_cycles as u64;
-        let prev_div = mmu.timer.div >> 8;
+        let prev_div = (mmu.timer.div >> 8) as u8;
         mmu.timer.step(hw_cycles, &mut mmu.if_reg);
-        let curr_div = mmu.timer.div >> 8;
+        let curr_div = (mmu.timer.div >> 8) as u8;
         {
             let mut apu = mmu.apu.lock().unwrap();
             apu.tick(prev_div, curr_div, self.double_speed);
-            apu.step(hw_cycles);
+            apu.step(hw_cycles.into());
         }
         if mmu.ppu.step(hw_cycles, &mut mmu.if_reg) {
             mmu.hdma_hblank_transfer();

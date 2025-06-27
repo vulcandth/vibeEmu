@@ -71,7 +71,7 @@ impl Mmu {
             ie_reg: 0,
             serial: Serial::new(cgb),
             ppu,
-            apu: Arc::new(Mutex::new(Apu::new())),
+            apu: Arc::new(Mutex::new(Apu::new(crate::apu::DMG_SAMPLE_RATE))),
             timer,
             input: Input::new(),
             hdma: HdmaState {
@@ -159,7 +159,7 @@ impl Mmu {
             0xFF01 | 0xFF02 => self.serial.read(addr),
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg,
-            0xFF10..=0xFF3F => self.apu.lock().unwrap().read_reg(addr),
+            0xFF10..=0xFF3F => self.apu.lock().unwrap().read(addr),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.read_reg(addr),
             0xFF46 => self.ppu.dma,
             0xFF51 => (self.hdma.src >> 8) as u8,
@@ -189,13 +189,7 @@ impl Mmu {
             }
             0xFF4F => self.ppu.vram_bank as u8,
             0xFF70 => self.wram_bank as u8,
-            0xFF76 | 0xFF77 => {
-                if self.cgb_mode {
-                    self.apu.lock().unwrap().read_pcm(addr)
-                } else {
-                    0xFF
-                }
-            }
+            0xFF76 | 0xFF77 => 0xFF,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
             _ => 0xFF,
@@ -247,7 +241,7 @@ impl Mmu {
             0xFF01 | 0xFF02 => self.serial.write(addr, val, &mut self.if_reg),
             0xFF04..=0xFF07 => self.timer.write(addr, val, &mut self.if_reg),
             0xFF0F => self.if_reg = (val & 0x1F) | (self.if_reg & 0xE0),
-            0xFF10..=0xFF3F => self.apu.lock().unwrap().write_reg(addr, val),
+            0xFF10..=0xFF3F => self.apu.lock().unwrap().write(addr, val),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
             0xFF51 => {
                 if !self.hdma.active {
@@ -419,13 +413,13 @@ impl Mmu {
         } else {
             4 * m_cycles as u16
         };
-        let prev_div = self.timer.div >> 8;
+        let prev_div = (self.timer.div >> 8) as u8;
         self.timer.step(hw_cycles, &mut self.if_reg);
-        let curr_div = self.timer.div >> 8;
+        let curr_div = (self.timer.div >> 8) as u8;
         {
             let mut apu = self.apu.lock().unwrap();
             apu.tick(prev_div, curr_div, self.key1 & 0x80 != 0);
-            apu.step(hw_cycles);
+            apu.step(hw_cycles.into());
         }
         let _ = self.ppu.step(hw_cycles, &mut self.if_reg);
     }
