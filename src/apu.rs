@@ -25,6 +25,22 @@ fn dac_enabled(nrx2: u8) -> bool {
     nrx2 & 0xF8 != 0
 }
 
+#[inline]
+fn trigger_square_internal(ch: &mut Square, dac_reg: u8, max_len: u8) {
+    ch.enabled = dac_enabled(dac_reg);
+    if ch.length == 0 {
+        ch.length = max_len;
+    }
+    ch.pending_reset = true;
+    ch.first_sample = true;
+    ch.timer = square_period(ch.frequency);
+    ch.envelope.timer = if ch.envelope.period == 0 {
+        8
+    } else {
+        ch.envelope.period
+    };
+}
+
 /* -------------------------------------------------------------------------- */
 /*                               Envelope unit                                */
 /* -------------------------------------------------------------------------- */
@@ -89,7 +105,11 @@ impl Sweep {
     #[inline]
     fn calc(&self, freq: u16) -> Option<u16> {
         let delta = freq >> self.shift;
-        let res = if self.negate { freq.wrapping_sub(delta) } else { freq.wrapping_add(delta) };
+        let res = if self.negate {
+            freq.wrapping_sub(delta)
+        } else {
+            freq.wrapping_add(delta)
+        };
         (res <= 2047).then_some(res)
     }
     fn clock(&mut self, ch_freq: &mut u16, ch_enable: &mut bool) {
@@ -193,7 +213,9 @@ impl Square {
         TABLE[self.duty as usize][self.duty_pos as usize]
     }
     fn output_now(&self) -> u8 {
-        if !self.enabled { return 0; }
+        if !self.enabled {
+            return 0;
+        }
         self.duty_bit() * self.envelope.volume
     }
     fn clock_timer(&mut self, cycles: u32) {
@@ -237,10 +259,21 @@ struct Wave {
     timer: i32,
 }
 
-impl Default for Wave { fn default() -> Self { Self {
-    enabled: false, dac_on: true, length: 0, length_en: false, volume_code: 0,
-    pos: 0, last_sample: 0, frequency: 0, timer: 0,
-}} }
+impl Default for Wave {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dac_on: true,
+            length: 0,
+            length_en: false,
+            volume_code: 0,
+            pos: 0,
+            last_sample: 0,
+            frequency: 0,
+            timer: 0,
+        }
+    }
+}
 
 impl Wave {
     #[inline]
@@ -254,14 +287,20 @@ impl Wave {
         }
     }
     fn clock_timer(&mut self, cycles: u32, wave_ram: &[u8; 0x10]) {
-        if !self.enabled || !self.dac_on { return; }
+        if !self.enabled || !self.dac_on {
+            return;
+        }
         let mut remaining = cycles as i32;
         while self.timer <= remaining {
             remaining -= self.timer;
             self.timer = wave_period(self.frequency);
             self.pos = (self.pos + 1) & 0x1F;
             let byte = wave_ram[(self.pos >> 1) as usize];
-            self.last_sample = if self.pos & 1 == 0 { byte >> 4 } else { byte & 0x0F };
+            self.last_sample = if self.pos & 1 == 0 {
+                byte >> 4
+            } else {
+                byte & 0x0F
+            };
         }
         self.timer -= remaining;
     }
@@ -275,7 +314,11 @@ impl Wave {
     }
     #[inline]
     fn output_now(&self) -> u8 {
-        if !self.enabled || !self.dac_on { 0 } else { self.volume(self.last_sample) }
+        if !self.enabled || !self.dac_on {
+            0
+        } else {
+            self.volume(self.last_sample)
+        }
     }
 }
 
@@ -298,12 +341,14 @@ struct Noise {
 
 impl Noise {
     fn clock_timer(&mut self, cycles: u32) {
-        if !self.enabled { return; }
+        if !self.enabled {
+            return;
+        }
         let mut remaining = cycles as i32;
         while self.timer <= remaining {
             remaining -= self.timer;
             self.timer = noise_period(self.clock_shift, self.divisor_code);
-            let bit = ((self.lfsr & 1) ^ ((self.lfsr >> 1) & 1)) as u16;
+            let bit = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
             self.lfsr = (self.lfsr >> 1) | (bit << 14);
             if self.width7 {
                 self.lfsr = (self.lfsr & !0x40) | (bit << 6);
@@ -314,12 +359,20 @@ impl Noise {
     fn clock_length(&mut self) {
         if self.length_en && self.length > 0 {
             self.length -= 1;
-            if self.length == 0 { self.enabled = false; }
+            if self.length == 0 {
+                self.enabled = false;
+            }
         }
     }
     #[inline]
     fn output_now(&self) -> u8 {
-        if !self.enabled { 0 } else if self.lfsr & 1 == 0 { self.envelope.volume } else { 0 }
+        if !self.enabled {
+            0
+        } else if self.lfsr & 1 == 0 {
+            self.envelope.volume
+        } else {
+            0
+        }
     }
 }
 
@@ -334,7 +387,7 @@ pub struct Apu {
     ch4: Noise,
 
     wave_ram: [u8; 0x10],
-    regs: [u8; 0x30],      // NR10–NR3F shadow (for reads)
+    regs: [u8; 0x30], // NR10–NR3F shadow (for reads)
     nr50: u8,
     nr51: u8,
     nr52: u8,
@@ -356,7 +409,11 @@ pub struct Apu {
     pcm34: u8,
 }
 
-impl Default for Apu { fn default() -> Self { Self::new() } }
+impl Default for Apu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Apu {
     pub fn new() -> Self {
@@ -369,7 +426,7 @@ impl Apu {
             regs: POWER_ON_REGS,
             nr50: 0x77,
             nr51: 0xF3,
-            nr52: 0xF1,       // Power on + CH3 DAC enabled
+            nr52: 0xF1, // Power on + CH3 DAC enabled
             sequencer_step: 0,
             div_prev_bit: false,
             sample_timer: 0,
@@ -396,7 +453,9 @@ impl Apu {
 
     /* ------------------------------- I/O ---------------------------------- */
 
-    fn powered(&self) -> bool { self.nr52 & 0x80 != 0 }
+    fn powered(&self) -> bool {
+        self.nr52 & 0x80 != 0
+    }
 
     pub fn read_reg(&self, addr: u16) -> u8 {
         if !self.powered() && addr != 0xFF26 {
@@ -408,14 +467,18 @@ impl Apu {
             0xFF77 => self.pcm34,
             // Wave RAM
             0xFF30..=0xFF3F => {
-                if self.ch3.enabled && self.ch3.dac_on { 0xFF } else { self.wave_ram[(addr - 0xFF30) as usize] }
+                if self.ch3.enabled && self.ch3.dac_on {
+                    0xFF
+                } else {
+                    self.wave_ram[(addr - 0xFF30) as usize]
+                }
             }
             // NR52 – status
             0xFF26 => {
-                let ch_flags = (self.ch4.enabled as u8) << 3 |
-                               (self.ch3.enabled as u8) << 2 |
-                               (self.ch2.enabled as u8) << 1 |
-                               (self.ch1.enabled as u8);
+                let ch_flags = (self.ch4.enabled as u8) << 3
+                    | (self.ch3.enabled as u8) << 2
+                    | (self.ch2.enabled as u8) << 1
+                    | (self.ch1.enabled as u8);
                 (self.nr52 & 0x80) | ch_flags | 0x70
             }
             // Other audio regs
@@ -427,14 +490,22 @@ impl Apu {
         }
     }
 
+    pub fn read_pcm(&self, addr: u16) -> u8 {
+        match addr {
+            0xFF76 => self.pcm12,
+            0xFF77 => self.pcm34,
+            _ => 0xFF,
+        }
+    }
+
     pub fn write_reg(&mut self, addr: u16, data: u8) {
         // NR52 power control -------------------------------------------------
         if addr == 0xFF26 {
             let prev_on = self.powered();
             if data & 0x80 == 0 && prev_on {
                 // Power‑off – clear everything except NR52 & wave RAM
-                *self = Self::new();        // safe because the interface is unchanged
-                self.nr52 = 0;              // keep powered‑off state
+                *self = Self::new(); // safe because the interface is unchanged
+                self.nr52 = 0; // keep powered‑off state
             } else if data & 0x80 != 0 && !prev_on {
                 // Power‑on – restore reset values
                 *self = Self::new();
@@ -461,16 +532,19 @@ impl Apu {
 
         match addr {
             /* ---------------- Channel 1 – square + sweep ----------------- */
-            0xFF10 => {               // NR10 sweep
+            0xFF10 => {
+                // NR10 sweep
                 if let Some(sw) = &mut self.ch1.sweep {
                     sw.load(data);
                 }
             }
-            0xFF11 => {               // NR11 duty/length
+            0xFF11 => {
+                // NR11 duty/length
                 self.ch1.duty = data >> 6;
                 self.ch1.length = 64 - (data & 0x3F);
             }
-            0xFF12 => {               // NR12 envelope
+            0xFF12 => {
+                // NR12 envelope
                 self.ch1.envelope.load(data);
                 if !dac_enabled(data) {
                     self.ch1.enabled = false;
@@ -492,14 +566,16 @@ impl Apu {
             }
             0xFF17 => {
                 self.ch2.envelope.load(data);
-                if !dac_enabled(data) { self.ch2.enabled = false; }
+                if !dac_enabled(data) {
+                    self.ch2.enabled = false;
+                }
             }
             0xFF18 => self.ch2.frequency = (self.ch2.frequency & 0x700) | data as u16,
             0xFF19 => {
                 self.ch2.length_en = data & 0x40 != 0;
                 self.ch2.frequency = (self.ch2.frequency & 0xFF) | (((data & 0x07) as u16) << 8);
                 if data & 0x80 != 0 {
-                    self.trigger_square(&mut self.ch2, 64);
+                    trigger_square_internal(&mut self.ch2, self.regs[0x17 - 0x10], 64);
                 }
             }
 
@@ -520,7 +596,9 @@ impl Apu {
             0xFF20 => self.ch4.length = 64 - (data & 0x3F),
             0xFF21 => {
                 self.ch4.envelope.load(data);
-                if !dac_enabled(data) { self.ch4.enabled = false; }
+                if !dac_enabled(data) {
+                    self.ch4.enabled = false;
+                }
             }
             0xFF22 => {
                 self.ch4.clock_shift = data >> 4;
@@ -551,41 +629,41 @@ impl Apu {
         sweep.enabled = sweep.period != 0 || sweep.shift != 0;
         sweep.ever_negated = false;
 
-        self.trigger_square(&mut self.ch1, 64);
-    }
-    fn trigger_square(&mut self, ch: &mut Square, max_len: u8) {
-        ch.enabled = dac_enabled(self.regs[0x12 - 0x10]); // NR12/22 still in regs[]
-        if ch.length == 0 { ch.length = max_len; }
-        ch.pending_reset = true;
-        ch.first_sample = true;
-        ch.timer = square_period(ch.frequency);
-        ch.envelope.timer = if ch.envelope.period == 0 { 8 } else { ch.envelope.period };
+        trigger_square_internal(&mut self.ch1, self.regs[0x12 - 0x10], 64);
     }
     fn trigger_wave(&mut self) {
         self.ch3.enabled = self.ch3.dac_on;
         self.ch3.pos = 0;
         self.ch3.timer = wave_period(self.ch3.frequency);
-        if self.ch3.length == 0 { self.ch3.length = 256; }
+        if self.ch3.length == 0 {
+            self.ch3.length = 256;
+        }
     }
     fn trigger_noise(&mut self) {
         self.ch4.enabled = dac_enabled(self.regs[0x21 - 0x10]);
         self.ch4.lfsr = 0x7FFF;
         self.ch4.timer = noise_period(self.ch4.clock_shift, self.ch4.divisor_code);
-        if self.ch4.length == 0 { self.ch4.length = 64; }
-        self.ch4.envelope.timer = if self.ch4.envelope.period == 0 { 8 } else { self.ch4.envelope.period };
+        if self.ch4.length == 0 {
+            self.ch4.length = 64;
+        }
+        self.ch4.envelope.timer = if self.ch4.envelope.period == 0 {
+            8
+        } else {
+            self.ch4.envelope.period
+        };
     }
 
     /* ------------------------------ Ticking ------------------------------- */
 
     /// Advance 1 M‑cycle (4 CPU ticks) – called from `Timer::step`, `Cpu::tick`, **etc.**
-    pub fn tick(&mut self, div_prev: u16, div_now: u16, double_speed: bool) {
+    pub fn tick(&mut self, _div_prev: u16, div_now: u16, double_speed: bool) {
         // Frame sequencer clock (512 Hz)
         let bit = if double_speed { 6 } else { 5 };
         let new_bit = (div_now >> bit) & 1 != 0;
         if self.div_prev_bit && !new_bit {
             self.step_frame_sequencer();
         }
-        self.div_prev_bit = new_bit != 0;
+        self.div_prev_bit = new_bit;
 
         // 1 MHz pipeline latch for CH1/CH2
         self.ch1.latched = self.ch1.stage1;
@@ -609,7 +687,9 @@ impl Apu {
             _ => {}
         }
         if self.sequencer_step == 2 || self.sequencer_step == 6 {
-            if let Some(sw) = &mut self.ch1.sweep { sw.clock(&mut self.ch1.frequency, &mut self.ch1.enabled); }
+            if let Some(sw) = &mut self.ch1.sweep {
+                sw.clock(&mut self.ch1.frequency, &mut self.ch1.enabled);
+            }
         }
         if self.sequencer_step == 7 {
             self.ch1.envelope.clock();
@@ -651,24 +731,44 @@ impl Apu {
         let mut left = 0i16;
         let mut right = 0i16;
         // NR51 panning
-        if self.nr51 & 0x01 != 0 { right += c1; }
-        if self.nr51 & 0x02 != 0 { right += c2; }
-        if self.nr51 & 0x04 != 0 { right += c3; }
-        if self.nr51 & 0x08 != 0 { right += c4; }
+        if self.nr51 & 0x01 != 0 {
+            right += c1;
+        }
+        if self.nr51 & 0x02 != 0 {
+            right += c2;
+        }
+        if self.nr51 & 0x04 != 0 {
+            right += c3;
+        }
+        if self.nr51 & 0x08 != 0 {
+            right += c4;
+        }
 
-        if self.nr51 & 0x10 != 0 { left += c1; }
-        if self.nr51 & 0x20 != 0 { left += c2; }
-        if self.nr51 & 0x40 != 0 { left += c3; }
-        if self.nr51 & 0x80 != 0 { left += c4; }
+        if self.nr51 & 0x10 != 0 {
+            left += c1;
+        }
+        if self.nr51 & 0x20 != 0 {
+            left += c2;
+        }
+        if self.nr51 & 0x40 != 0 {
+            left += c3;
+        }
+        if self.nr51 & 0x80 != 0 {
+            left += c4;
+        }
 
         // VIN mixing (bits 3 & 7 of NR50)
-        if self.nr50 & 0x08 != 0 { right += vin; }
-        if self.nr50 & 0x80 != 0 { left  += vin; }
+        if self.nr50 & 0x08 != 0 {
+            right += vin;
+        }
+        if self.nr50 & 0x80 != 0 {
+            left += vin;
+        }
 
         // Master volumes (0‑7) – plus 1 as analogue circuit never mutes fully
         let rv = ((self.nr50 & 0x07) + 1) as i16;
         let lv = (((self.nr50 >> 4) & 0x07) + 1) as i16;
-        left  *= lv * VOLUME_SCALER;
+        left *= lv * VOLUME_SCALER;
         right *= rv * VOLUME_SCALER;
 
         self.dc_block(left, right)
@@ -678,8 +778,8 @@ impl Apu {
     fn dc_block(&mut self, l: i16, r: i16) -> (i16, i16) {
         // single‑pole HPF y[n] = x[n] - x[n-1] + R·y[n-1]
         const R: f32 = 0.999_94;
-        let lin  = l as f32;
-        let rin  = r as f32;
+        let lin = l as f32;
+        let rin = r as f32;
         let lout = lin - self.hpf_l_in + R * self.hpf_l_out;
         let rout = rin - self.hpf_r_in + R * self.hpf_r_out;
         self.hpf_l_in = lin;
@@ -700,20 +800,50 @@ impl Apu {
 
     /* --------------------------- Public helpers --------------------------- */
 
-    pub fn pop_sample(&mut self) -> Option<i16> { self.samples.pop_front() }
-    pub fn set_sample_rate(&mut self, rate: u32) { self.sample_rate = rate.max(8000); }
+    pub fn pop_sample(&mut self) -> Option<i16> {
+        self.samples.pop_front()
+    }
+    pub fn set_sample_rate(&mut self, rate: u32) {
+        self.sample_rate = rate.max(8000);
+    }
+
+    pub fn set_speed(&mut self, _factor: f32) {
+        // TODO: implement audio rate scaling with emulator speed
+    }
+
+    pub fn sequencer_step(&self) -> u8 {
+        self.sequencer_step
+    }
 
     /// Convenience for the debugger
-    pub fn ch1_frequency(&self) -> u16 { self.ch1.frequency }
+    pub fn ch1_frequency(&self) -> u16 {
+        self.ch1.frequency
+    }
 
     #[inline]
     fn read_mask(addr: u16) -> u8 {
         match addr {
-            0xFF10 => 0x80, 0xFF11 => 0x3F, 0xFF12 => 0x00, 0xFF13 => 0xFF, 0xFF14 => 0xBF,
-            0xFF16 => 0x3F, 0xFF17 => 0x00, 0xFF18 => 0xFF, 0xFF19 => 0xBF,
-            0xFF1A => 0x7F, 0xFF1B => 0xFF, 0xFF1C => 0x9F, 0xFF1D => 0xFF, 0xFF1E => 0xBF,
-            0xFF20 => 0xFF, 0xFF21 => 0x00, 0xFF22 => 0x00, 0xFF23 => 0xBF,
-            0xFF24 => 0x00, 0xFF25 => 0x00, 0xFF26 => 0x70,
+            0xFF10 => 0x80,
+            0xFF11 => 0x3F,
+            0xFF12 => 0x00,
+            0xFF13 => 0xFF,
+            0xFF14 => 0xBF,
+            0xFF16 => 0x3F,
+            0xFF17 => 0x00,
+            0xFF18 => 0xFF,
+            0xFF19 => 0xBF,
+            0xFF1A => 0x7F,
+            0xFF1B => 0xFF,
+            0xFF1C => 0x9F,
+            0xFF1D => 0xFF,
+            0xFF1E => 0xBF,
+            0xFF20 => 0xFF,
+            0xFF21 => 0x00,
+            0xFF22 => 0x00,
+            0xFF23 => 0xBF,
+            0xFF24 => 0x00,
+            0xFF25 => 0x00,
+            0xFF26 => 0x70,
             0xFF15 | 0xFF1F => 0xFF,
             0xFF30..=0xFF3F => 0x00,
             _ => 0xFF,
