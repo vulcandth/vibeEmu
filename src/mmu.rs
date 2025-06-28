@@ -419,13 +419,13 @@ impl Mmu {
         } else {
             4 * m_cycles as u16
         };
-        let prev_div = self.timer.div >> 8;
+        let prev_div = self.timer.div;
         self.timer.step(hw_cycles, &mut self.if_reg);
-        let curr_div = self.timer.div >> 8;
+        let curr_div = self.timer.div;
         {
             let mut apu = self.apu.lock().unwrap();
             apu.tick(prev_div, curr_div, self.key1 & 0x80 != 0);
-            apu.step(hw_cycles);
+            apu.step(hw_cycles.into());
         }
         let _ = self.ppu.step(hw_cycles, &mut self.if_reg);
     }
