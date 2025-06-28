@@ -548,7 +548,7 @@ impl Apu {
     }
 
     pub fn new_with_rate(sample_rate: u32) -> Self {
-        let mut apu = Self {
+        Self {
             powered: true,
             frame_divider: FRAME_SEQ_PERIOD,
             frame_step: 0,
@@ -560,9 +560,7 @@ impl Apu {
             wave: WaveChannel::new(),
             noise: NoiseChannel::new(),
             samples: VecDeque::new(),
-        };
-        apu.reset();
-        apu
+        }
     }
 
     pub fn set_sample_rate(&mut self, rate: u32) {
@@ -605,11 +603,6 @@ impl Apu {
     }
 
     pub fn reset(&mut self) {
-        // POST‑boot defaults (per Pan Docs)
-        self.powered = true;
-        self.frame_divider = FRAME_SEQ_PERIOD;
-        self.frame_step = 0;
-        // clear channels
         *self = Self::new_with_rate(self.sample_rate);
     }
 
