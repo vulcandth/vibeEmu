@@ -10,6 +10,17 @@ fn div_increment() {
 }
 
 #[test]
+fn div_resets_on_write() {
+    let mut t = Timer::new();
+    let mut if_reg = 0u8;
+    t.div = 0xABCD;
+    t.write(0xFF04, 0x12, &mut if_reg);
+    assert_eq!(t.read(0xFF04), 0);
+    assert_eq!(t.div, 0);
+    assert_eq!(if_reg, 0);
+}
+
+#[test]
 fn div_reset_edge_tick() {
     let mut t = Timer::new();
     let mut if_reg = 0u8;

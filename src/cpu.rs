@@ -55,6 +55,7 @@ pub struct Cpu {
     pub cycles: u64,
     pub ime: bool,
     pub halted: bool,
+    pub stopped: bool,
     pub double_speed: bool,
     halt_bug: bool,
     ime_delay: bool,
@@ -83,6 +84,7 @@ impl Cpu {
                 cycles: 0,
                 ime: false,
                 halted: false,
+                stopped: false,
                 double_speed: false,
                 halt_bug: false,
                 ime_delay: false,
@@ -102,6 +104,7 @@ impl Cpu {
                 cycles: 0,
                 ime: false,
                 halted: false,
+                stopped: false,
                 double_speed: false,
                 halt_bug: false,
                 ime_delay: false,
@@ -390,6 +393,9 @@ impl Cpu {
     }
 
     pub fn step(&mut self, mmu: &mut crate::mmu::Mmu) {
+        if self.stopped {
+            return;
+        }
         if mmu.gdma_active() {
             mmu.gdma_step(GDMA_STEP_CYCLES.into());
             self.tick(mmu, 1);
@@ -515,10 +521,13 @@ impl Cpu {
             0x10 => {
                 // STOP
                 let _ = self.fetch8(mmu);
+                mmu.timer.reset_div(&mut mmu.if_reg);
                 if mmu.key1 & 0x01 != 0 {
                     mmu.key1 &= !0x01;
                     mmu.key1 ^= 0x80;
                     self.double_speed = mmu.key1 & 0x80 != 0;
+                } else {
+                    self.stopped = true;
                 }
             }
             0x11 => {

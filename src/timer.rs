@@ -34,13 +34,7 @@ impl Timer {
     pub fn write(&mut self, addr: u16, val: u8, if_reg: &mut u8) {
         match addr {
             0xFF04 => {
-                let prev = Self::signal_with(self.div, self.tac);
-                self.div = 0;
-                let new = Self::signal_with(self.div, self.tac);
-                if prev && !new {
-                    self.increment(if_reg);
-                }
-                self.last_signal = new;
+                self.reset_div(if_reg);
             }
             0xFF05 => self.tima = val,
             0xFF06 => self.tma = val,
@@ -69,6 +63,17 @@ impl Timer {
             }
             self.last_signal = new;
         }
+    }
+
+    /// Reset the internal divider counter, applying TIMA edge logic.
+    pub fn reset_div(&mut self, if_reg: &mut u8) {
+        let prev = Self::signal_with(self.div, self.tac);
+        self.div = 0;
+        let new = Self::signal_with(self.div, self.tac);
+        if prev && !new {
+            self.increment(if_reg);
+        }
+        self.last_signal = new;
     }
 
     fn increment(&mut self, if_reg: &mut u8) {

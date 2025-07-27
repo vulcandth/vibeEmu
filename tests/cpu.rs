@@ -242,3 +242,70 @@ fn double_speed_timer_scaling() {
     // In double speed, hardware advances half the cycles (2) for a NOP
     assert_eq!(mmu.timer.div.wrapping_sub(div_before), 2);
 }
+
+#[test]
+fn stop_resets_div_and_pauses() {
+    // STOP; NOP
+    let program = vec![0x10, 0x00, 0x00];
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    let mut mmu = Mmu::new();
+    mmu.load_cart(Cartridge::load(program));
+    mmu.timer.div = 0x1234;
+
+    cpu.step(&mut mmu); // STOP
+    assert!(cpu.stopped);
+    assert_eq!(mmu.timer.div, 0);
+    let div_after = mmu.timer.div;
+
+    // Stepping while stopped should not advance divider
+    cpu.step(&mut mmu);
+    assert_eq!(mmu.timer.div, div_after);
+
+    // Resume and execute NOP
+    cpu.stopped = false;
+    cpu.step(&mut mmu);
+    assert_eq!(mmu.timer.div, div_after.wrapping_add(4));
+}
+
+#[test]
+fn stop_speed_switch_resets_div() {
+    // STOP 0x00; NOP, with speed switch
+    let program = vec![0x10, 0x00, 0x00];
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    let mut mmu = Mmu::new_with_mode(true);
+    mmu.load_cart(Cartridge::load(program));
+    mmu.key1 = 0x01;
+    mmu.timer.div = 0x5555;
+
+    cpu.step(&mut mmu); // STOP (switch speed)
+    assert!(cpu.double_speed);
+    assert_eq!(mmu.timer.div, 0);
+    let start = mmu.timer.div;
+    cpu.step(&mut mmu); // NOP
+    assert_eq!(mmu.timer.div.wrapping_sub(start), 2);
+}
+
+#[test]
+fn div_rate_double_speed() {
+    // STOP for speed switch then 128 NOPs
+    let mut program = vec![0x10, 0x00];
+    program.extend(std::iter::repeat(0x00).take(128));
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    let mut mmu = Mmu::new_with_mode(true);
+    mmu.load_cart(Cartridge::load(program));
+    mmu.key1 = 0x01;
+    mmu.timer.div = 0;
+
+    cpu.step(&mut mmu); // STOP -> enable double speed
+    let start = mmu.timer.div;
+    for _ in 0..128 {
+        cpu.step(&mut mmu); // NOPs
+    }
+
+    assert!(cpu.double_speed);
+    assert_eq!(mmu.timer.div.wrapping_sub(start), 256);
+    assert_eq!(mmu.timer.read(0xFF04), 1);
+}
