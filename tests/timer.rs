@@ -81,3 +81,36 @@ fn tma_write_same_cycle_overflow() {
     assert_eq!(t.tima, 0xAA); // old value should be loaded
     assert_eq!(if_reg & 0x04, 0x04);
 }
+
+#[test]
+fn tac_clock_select_262khz() {
+    let mut t = Timer::new();
+    let mut if_reg = 0u8;
+    // enable timer, freq 01 (262144 Hz -> bit 3)
+    t.write(0xFF07, 0x05, &mut if_reg);
+    t.step(16, &mut if_reg);
+    assert_eq!(t.tima, 1);
+    assert_eq!(if_reg, 0);
+}
+
+#[test]
+fn tac_clock_select_65khz() {
+    let mut t = Timer::new();
+    let mut if_reg = 0u8;
+    // enable timer, freq 10 (65536 Hz -> bit 5)
+    t.write(0xFF07, 0x06, &mut if_reg);
+    t.step(64, &mut if_reg);
+    assert_eq!(t.tima, 1);
+    assert_eq!(if_reg, 0);
+}
+
+#[test]
+fn tac_clock_select_16khz() {
+    let mut t = Timer::new();
+    let mut if_reg = 0u8;
+    // enable timer, freq 11 (16384 Hz -> bit 7)
+    t.write(0xFF07, 0x07, &mut if_reg);
+    t.step(256, &mut if_reg);
+    assert_eq!(t.tima, 1);
+    assert_eq!(if_reg, 0);
+}

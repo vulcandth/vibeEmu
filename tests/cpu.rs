@@ -291,7 +291,7 @@ fn stop_speed_switch_resets_div() {
 fn div_rate_double_speed() {
     // STOP for speed switch then 128 NOPs
     let mut program = vec![0x10, 0x00];
-    program.extend(std::iter::repeat(0x00).take(128));
+    program.extend(std::iter::repeat_n(0x00, 128));
     let mut cpu = Cpu::new();
     cpu.pc = 0;
     let mut mmu = Mmu::new_with_mode(true);
