@@ -22,7 +22,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libx11-dev build-essential pkg-config libfontconfig1-dev
+          sudo apt-get install -y libasound2-dev libx11-dev libgtk-3-dev build-essential pkg-config libfontconfig1-dev
 
       - name: Cache rustup (optional)
         uses: actions/cache@v3
