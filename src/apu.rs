@@ -447,6 +447,7 @@ pub struct Apu {
     sample_rate: u32,
     samples: VecDeque<i16>,
     speed_factor: f32,
+    hp_coef: f32,
     hp_prev_input_left: f32,
     hp_prev_output_left: f32,
     hp_prev_input_right: f32,
@@ -466,6 +467,10 @@ pub struct Apu {
 impl Apu {
     // Keep <= 40 ms of stereo samples in the queue
     const MAX_SAMPLES: usize = ((44100 * AUDIO_LATENCY_MS as usize) / 1000) * 2;
+
+    fn calc_hp_coef(rate: u32) -> f32 {
+        0.999_958_f32.powf(4_194_304.0 / rate as f32)
+    }
 
     pub fn set_speed(&mut self, speed: f32) {
         self.speed_factor = speed;
@@ -521,6 +526,7 @@ impl Apu {
         self.nr51 = 0;
         self.samples.clear();
         self.speed_factor = 1.0;
+        self.hp_coef = Apu::calc_hp_coef(self.sample_rate);
         self.hp_prev_input_left = 0.0;
         self.hp_prev_output_left = 0.0;
         self.hp_prev_input_right = 0.0;
@@ -545,6 +551,7 @@ impl Apu {
             sample_rate: 44100,
             samples: VecDeque::with_capacity(4096),
             speed_factor: 1.0,
+            hp_coef: Apu::calc_hp_coef(44100),
             hp_prev_input_left: 0.0,
             hp_prev_output_left: 0.0,
             hp_prev_input_right: 0.0,
@@ -1019,6 +1026,11 @@ impl Apu {
     }
 
     fn mix_output(&mut self) -> (i16, i16) {
+        let dacs_on = self.ch1.dac_enabled
+            || self.ch2.dac_enabled
+            || self.ch3.dac_enabled
+            || self.ch4.dac_enabled;
+
         let out1 = self.ch1.current_sample();
         let out2 = self.ch2.current_sample();
         let out3 = self.ch3.output();
@@ -1063,16 +1075,23 @@ impl Apu {
         let left_sample = left * left_vol as i16 * VOLUME_FACTOR;
         let right_sample = right * right_vol as i16 * VOLUME_FACTOR;
 
-        self.dc_block(left_sample, right_sample)
+        if !dacs_on {
+            self.hp_prev_input_left = 0.0;
+            self.hp_prev_output_left = 0.0;
+            self.hp_prev_input_right = 0.0;
+            self.hp_prev_output_right = 0.0;
+            (0, 0)
+        } else {
+            self.dc_block(left_sample, right_sample)
+        }
     }
 
     fn dc_block(&mut self, left: i16, right: i16) -> (i16, i16) {
-        const DC_FILTER_R: f32 = 0.999;
+        let r = self.hp_coef;
         let left_in = left as f32;
         let right_in = right as f32;
-        let left_out = left_in - self.hp_prev_input_left + DC_FILTER_R * self.hp_prev_output_left;
-        let right_out =
-            right_in - self.hp_prev_input_right + DC_FILTER_R * self.hp_prev_output_right;
+        let left_out = left_in - self.hp_prev_input_left + r * self.hp_prev_output_left;
+        let right_out = right_in - self.hp_prev_input_right + r * self.hp_prev_output_right;
         self.hp_prev_input_left = left_in;
         self.hp_prev_output_left = left_out;
         self.hp_prev_input_right = right_in;
@@ -1111,6 +1130,7 @@ impl Apu {
 
     pub fn set_sample_rate(&mut self, rate: u32) {
         self.sample_rate = rate;
+        self.hp_coef = Apu::calc_hp_coef(rate);
     }
 
     pub fn pop_sample(&mut self) -> Option<i16> {
@@ -1336,5 +1356,38 @@ mod tests {
         }
         assert!(last_left > 0);
         assert_eq!(last_right, 0);
+    }
+
+    #[test]
+    fn dc_filter_reset_when_all_dacs_off() {
+        let mut apu = Apu::new();
+        apu.nr50 = 0x00;
+        apu.nr51 = 0x11;
+        apu.ch1.enabled = true;
+        apu.ch1.dac_enabled = true;
+        apu.ch1.out_latched = 15;
+        let _ = apu.mix_output();
+
+        apu.ch1.dac_enabled = false;
+        apu.ch2.dac_enabled = false;
+        apu.ch3.dac_enabled = false;
+        apu.ch4.dac_enabled = false;
+        let (l, r) = apu.mix_output();
+        assert_eq!(l, 0);
+        assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn dc_filter_active_when_dac_on() {
+        let mut apu = Apu::new();
+        apu.nr50 = 0x00;
+        apu.nr51 = 0x11;
+        apu.ch1.enabled = true;
+        apu.ch1.dac_enabled = true;
+        apu.ch1.out_latched = 15;
+        let (first, _) = apu.mix_output();
+        apu.ch1.out_latched = 15;
+        let (second, _) = apu.mix_output();
+        assert!(second.abs() < first.abs());
     }
 }
