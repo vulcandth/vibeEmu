@@ -58,3 +58,26 @@ fn tima_increment_and_overflow() {
     assert_eq!(t.tima, 0xAB);
     assert_eq!(if_reg & 0x04, 0x04);
 }
+
+#[test]
+fn tma_write_same_cycle_overflow() {
+    let mut t = Timer::new();
+    let mut if_reg = 0u8;
+
+    // Prepare for falling edge on bit 9
+    t.div = 0x03FF; // bit9 high
+    t.write(0xFF07, 0x04, &mut if_reg); // enable timer (freq 4096Hz)
+
+    t.tima = 0xFF;
+    t.tma = 0xAA; // old value
+
+    // Write new TMA in same cycle as overflow
+    t.write(0xFF06, 0xBB, &mut if_reg);
+
+    // Next cycle triggers falling edge and overflow
+    t.step(1, &mut if_reg);
+
+    assert_eq!(t.tma, 0xBB);
+    assert_eq!(t.tima, 0xAA); // old value should be loaded
+    assert_eq!(if_reg & 0x04, 0x04);
+}

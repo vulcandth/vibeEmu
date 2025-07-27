@@ -8,6 +8,8 @@ pub struct Timer {
     /// Timer control
     pub tac: u8,
     last_signal: bool,
+    /// Previous value of TMA when a write occurred this cycle
+    tma_latch: Option<u8>,
 }
 
 impl Timer {
@@ -18,6 +20,7 @@ impl Timer {
             tma: 0,
             tac: 0,
             last_signal: false,
+            tma_latch: None,
         }
     }
 
@@ -37,13 +40,19 @@ impl Timer {
                 self.reset_div(if_reg);
             }
             0xFF05 => self.tima = val,
-            0xFF06 => self.tma = val,
+            0xFF06 => {
+                // Store the old value so that if a reload occurs in the same
+                // cycle, the old value will be used.
+                self.tma_latch = Some(self.tma);
+                self.tma = val;
+            }
             0xFF07 => {
                 let prev = Self::signal_with(self.div, self.tac);
                 self.tac = val & 0x07;
                 let new = Self::signal_with(self.div, self.tac);
                 if prev && !new {
-                    self.increment(if_reg);
+                    let tma_old = self.tma_latch.take();
+                    self.increment(if_reg, tma_old);
                 }
                 self.last_signal = new;
             }
@@ -56,10 +65,12 @@ impl Timer {
     pub fn step(&mut self, cycles: u16, if_reg: &mut u8) {
         for _ in 0..cycles {
             let prev = self.last_signal;
+            // Take any pending TMA write for this cycle
+            let tma_old = self.tma_latch.take();
             self.div = self.div.wrapping_add(1);
             let new = self.signal();
             if prev && !new {
-                self.increment(if_reg);
+                self.increment(if_reg, tma_old);
             }
             self.last_signal = new;
         }
@@ -71,14 +82,15 @@ impl Timer {
         self.div = 0;
         let new = Self::signal_with(self.div, self.tac);
         if prev && !new {
-            self.increment(if_reg);
+            let tma_old = self.tma_latch.take();
+            self.increment(if_reg, tma_old);
         }
         self.last_signal = new;
     }
 
-    fn increment(&mut self, if_reg: &mut u8) {
+    fn increment(&mut self, if_reg: &mut u8, tma_old: Option<u8>) {
         if self.tima == 0xFF {
-            self.tima = self.tma;
+            self.tima = tma_old.unwrap_or(self.tma);
             *if_reg |= 0x04;
         } else {
             self.tima = self.tima.wrapping_add(1);
