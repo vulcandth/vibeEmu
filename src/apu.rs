@@ -138,7 +138,6 @@ impl SquareChannel {
             self.timer = self.period();
             if self.pending_reset {
                 self.pending_reset = false;
-                self.duty_pos = 0;
             } else {
                 self.duty_pos = (self.duty_pos + 1) & 7;
             }
@@ -1014,6 +1013,11 @@ impl Apu {
         self.ch1.duty
     }
 
+    /// Current duty step position for channel 1.
+    pub fn ch1_duty_pos(&self) -> u8 {
+        self.ch1.duty_pos
+    }
+
     /// Current length counter value for channel 1.
     pub fn ch1_length(&self) -> u8 {
         self.ch1.length
@@ -1062,6 +1066,11 @@ impl Apu {
     /// Current duty setting for channel 2.
     pub fn ch2_duty(&self) -> u8 {
         self.ch2.duty
+    }
+
+    /// Current duty step position for channel 2.
+    pub fn ch2_duty_pos(&self) -> u8 {
+        self.ch2.duty_pos
     }
 
     /// Current length counter value for channel 2.

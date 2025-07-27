@@ -1404,3 +1404,80 @@ fn div_apu_sweep_clock() {
     }
     assert_eq!(apu.ch1_frequency(), 0x6C0);
 }
+
+#[test]
+fn duty_step_advances_each_period() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF12, 0xF0); // DAC on
+    apu.write_reg(0xFF13, 0xFF); // freq low
+    apu.write_reg(0xFF14, 0x87); // high bits=7, trigger
+
+    let mut div = 0u16;
+    let first_timer = apu.ch1_timer();
+    for _ in 0..first_timer {
+        tick_machine(&mut apu, &mut div, 1);
+    }
+    assert_eq!(apu.ch1_duty_pos(), 0);
+
+    let period = (2048 - apu.ch1_frequency()) * 4;
+    for _ in 0..period {
+        tick_machine(&mut apu, &mut div, 1);
+    }
+    assert_eq!(apu.ch1_duty_pos(), 1);
+}
+
+#[test]
+fn duty_step_not_reset_on_retrigger() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF12, 0xF0);
+    apu.write_reg(0xFF13, 0xFF);
+    apu.write_reg(0xFF14, 0x87);
+
+    let mut div = 0u16;
+    let first_timer = apu.ch1_timer();
+    for _ in 0..first_timer {
+        tick_machine(&mut apu, &mut div, 1);
+    }
+    let period = (2048 - apu.ch1_frequency()) * 4;
+    for _ in 0..period {
+        tick_machine(&mut apu, &mut div, 1);
+    }
+    assert_eq!(apu.ch1_duty_pos(), 1);
+
+    apu.write_reg(0xFF14, 0x80); // retrigger
+    assert_eq!(apu.ch1_duty_pos(), 1);
+    assert!(apu.ch1_timer() > period as i32);
+}
+
+#[test]
+fn duty_step_reset_when_apu_powered_off() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF12, 0xF0);
+    apu.write_reg(0xFF14, 0x80);
+
+    let mut div = 0u16;
+    let first_timer = apu.ch1_timer();
+    for _ in 0..first_timer {
+        tick_machine(&mut apu, &mut div, 1);
+    }
+    assert_eq!(apu.ch1_duty_pos(), 0);
+
+    apu.write_reg(0xFF26, 0x00); // power off
+    apu.write_reg(0xFF26, 0x80); // power on
+    assert_eq!(apu.ch1_duty_pos(), 0);
+}
+
+#[test]
+fn first_sample_after_trigger_is_zero() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF12, 0xF0);
+    apu.write_reg(0xFF14, 0x80);
+
+    let mut div = 0u16;
+    tick_machine(&mut apu, &mut div, 1);
+    assert_eq!(apu.read_pcm(0xFF76) & 0x0F, 0);
+}
