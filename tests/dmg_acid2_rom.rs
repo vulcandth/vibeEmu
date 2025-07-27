@@ -1,5 +1,5 @@
 mod common;
-use image::io::Reader as ImageReader;
+use image::ImageReader;
 use vibeEmu::{cartridge::Cartridge, gameboy::GameBoy};
 
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];

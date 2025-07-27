@@ -1,5 +1,5 @@
 mod common;
-use image::io::Reader as ImageReader;
+use image::ImageReader;
 use vibeEmu::{cartridge::Cartridge, gameboy::GameBoy};
 
 #[test]

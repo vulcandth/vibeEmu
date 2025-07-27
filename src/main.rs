@@ -22,12 +22,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::dpi::PhysicalPosition;
-use winit::{
-    event::MouseButton,
-    event::{ElementState, Event, VirtualKeyCode, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    window::{Icon, WindowBuilder},
-};
+use winit::event::{ElementState, Event, MouseButton, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::{Icon, Window};
 
 fn load_window_icon() -> Option<Icon> {
     let icon_data = include_bytes!("../gfx/vibeEmu_512px.png");
@@ -117,19 +115,17 @@ fn cursor_in_screen(window: &winit::window::Window, pos: PhysicalPosition<f64>) 
 }
 
 fn spawn_debugger_window(
-    event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
+    event_loop: &ActiveEventLoop,
     platform: &mut WinitPlatform,
     imgui: &mut ImguiContext,
     windows: &mut HashMap<winit::window::WindowId, UiWindow>,
 ) {
     use winit::dpi::LogicalSize;
-
-    let w = winit::window::WindowBuilder::new()
+    let attrs = Window::default_attributes()
         .with_title("vibeEmu \u{2013} Debugger")
         .with_window_icon(load_window_icon())
-        .with_inner_size(LogicalSize::new((160 * SCALE) as f64, (144 * SCALE) as f64))
-        .build(event_loop)
-        .unwrap();
+        .with_inner_size(LogicalSize::new((160 * SCALE) as f64, (144 * SCALE) as f64));
+    let w = event_loop.create_window(attrs).unwrap();
 
     let size = w.inner_size();
     let surface = pixels::SurfaceTexture::new(size.width, size.height, &w);
@@ -142,19 +138,17 @@ fn spawn_debugger_window(
 }
 
 fn spawn_vram_window(
-    event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
+    event_loop: &ActiveEventLoop,
     platform: &mut WinitPlatform,
     imgui: &mut ImguiContext,
     windows: &mut HashMap<winit::window::WindowId, UiWindow>,
 ) {
     use winit::dpi::LogicalSize;
-
-    let w = winit::window::WindowBuilder::new()
+    let attrs = Window::default_attributes()
         .with_title("vibeEmu \u{2013} VRAM")
         .with_window_icon(load_window_icon())
-        .with_inner_size(LogicalSize::new((160 * SCALE) as f64, (144 * SCALE) as f64))
-        .build(event_loop)
-        .unwrap();
+        .with_inner_size(LogicalSize::new((160 * SCALE) as f64, (144 * SCALE) as f64));
+    let w = event_loop.create_window(attrs).unwrap();
 
     let size = w.inner_size();
     let surface = pixels::SurfaceTexture::new(size.width, size.height, &w);
@@ -167,7 +161,7 @@ fn spawn_vram_window(
 }
 
 #[allow(static_mut_refs)]
-fn emulate_until(gb: &mut gameboy::GameBoy, speed: Speed, control_flow: &mut ControlFlow) {
+fn emulate_until(gb: &mut gameboy::GameBoy, speed: Speed, event_loop: &ActiveEventLoop) {
     let target = unsafe { NEXT_FRAME.get_or_insert_with(|| Instant::now() + FRAME_TIME) };
 
     if let Ok(mut apu) = gb.mmu.apu.lock() {
@@ -179,13 +173,13 @@ fn emulate_until(gb: &mut gameboy::GameBoy, speed: Speed, control_flow: &mut Con
     }
 
     if !speed.fast {
-        *control_flow = ControlFlow::WaitUntil(*target);
+        event_loop.set_control_flow(ControlFlow::WaitUntil(*target));
         while Instant::now() < *target {
             std::hint::spin_loop();
         }
         *target += FRAME_TIME;
     } else {
-        *control_flow = ControlFlow::Poll;
+        event_loop.set_control_flow(ControlFlow::Poll);
         *target = Instant::now();
     }
 }
@@ -286,7 +280,7 @@ fn build_ui(
     state: &mut UiState,
     ui: &imgui::Ui,
     gb: &mut gameboy::GameBoy,
-    _event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
+    _event_loop: &ActiveEventLoop,
     _platform: &mut WinitPlatform,
 ) {
     if state.show_context {
@@ -391,16 +385,16 @@ fn main() {
     };
 
     if !args.headless {
-        let event_loop = EventLoop::new();
-        let window = WindowBuilder::new()
+        let event_loop = EventLoop::builder().build().unwrap();
+        let attrs = Window::default_attributes()
             .with_title("vibeEmu")
             .with_window_icon(load_window_icon())
             .with_inner_size(winit::dpi::LogicalSize::new(
                 (160 * SCALE) as f64,
                 (144 * SCALE) as f64,
-            ))
-            .build(&event_loop)
-            .expect("Failed to create window");
+            ));
+        #[allow(deprecated)]
+        let window = event_loop.create_window(attrs).unwrap();
 
         let size = window.inner_size();
         let surface = SurfaceTexture::new(size.width, size.height, &window);
@@ -408,7 +402,7 @@ fn main() {
 
         let mut imgui = ImguiContext::create();
         imgui.io_mut().config_flags |= ConfigFlags::DOCKING_ENABLE;
-        let mut platform = WinitPlatform::init(&mut imgui);
+        let mut platform = WinitPlatform::new(&mut imgui);
         platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Rounded);
 
         let mut windows = HashMap::new();
@@ -418,8 +412,9 @@ fn main() {
         let mut state = 0xFFu8;
         let mut cursor_pos = PhysicalPosition::new(0.0, 0.0);
 
-        event_loop.run(move |event, target, control_flow| {
-            *control_flow = ControlFlow::Poll;
+        #[allow(deprecated)]
+        let _ = event_loop.run(move |event, target| {
+            target.set_control_flow(ControlFlow::Poll);
             match &event {
                 Event::WindowEvent {
                     window_id,
@@ -441,7 +436,7 @@ fn main() {
                                     gb.mmu.save_cart_ram();
 
                                     // Tell winit to end the loop and let `event_loop.run` return.
-                                    *control_flow = ControlFlow::Exit;
+                                    target.exit();
 
                                     // Nothing else to process.
                                     #[allow(clippy::needless_return)]
@@ -454,8 +449,10 @@ fn main() {
                             WindowEvent::Resized(size) => {
                                 resize_pixels(&mut win.pixels, *size);
                             }
-                            WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                                resize_pixels(&mut win.pixels, **new_inner_size);
+                            WindowEvent::ScaleFactorChanged { .. } => {
+                                let size = win.win.inner_size();
+                                let _ = win.win.request_inner_size(size);
+                                resize_pixels(&mut win.pixels, size);
                             }
                             WindowEvent::CursorMoved { position, .. }
                                 if matches!(win.kind, WindowKind::Main) =>
@@ -488,13 +485,13 @@ fn main() {
                                     ui_state.show_context = false;
                                 }
                             }
-                            WindowEvent::KeyboardInput { input, .. }
+                            WindowEvent::KeyboardInput { event, .. }
                                 if matches!(win.kind, WindowKind::Main) =>
                             {
                                 if !(ui_state.paused || imgui.io().want_text_input) {
-                                    if let Some(key) = input.virtual_keycode {
-                                        let pressed = input.state == ElementState::Pressed;
-                                        let mask = if key == VirtualKeyCode::Space {
+                                    if let PhysicalKey::Code(code) = event.physical_key {
+                                        let pressed = event.state == ElementState::Pressed;
+                                        let mask = if code == KeyCode::Space {
                                             speed.fast = pressed;
                                             speed.factor = if speed.fast { FF_MULT } else { 1.0 };
                                             if let Ok(mut apu) = gb.mmu.apu.lock() {
@@ -502,20 +499,20 @@ fn main() {
                                             }
                                             None
                                         } else {
-                                            match key {
-                                                VirtualKeyCode::Right => Some(0x01),
-                                                VirtualKeyCode::Left => Some(0x02),
-                                                VirtualKeyCode::Up => Some(0x04),
-                                                VirtualKeyCode::Down => Some(0x08),
-                                                VirtualKeyCode::S => Some(0x10),
-                                                VirtualKeyCode::A => Some(0x20),
-                                                VirtualKeyCode::LShift | VirtualKeyCode::RShift => {
+                                            match code {
+                                                KeyCode::ArrowRight => Some(0x01),
+                                                KeyCode::ArrowLeft => Some(0x02),
+                                                KeyCode::ArrowUp => Some(0x04),
+                                                KeyCode::ArrowDown => Some(0x08),
+                                                KeyCode::KeyS => Some(0x10),
+                                                KeyCode::KeyA => Some(0x20),
+                                                KeyCode::ShiftLeft | KeyCode::ShiftRight => {
                                                     Some(0x40)
                                                 }
-                                                VirtualKeyCode::Return => Some(0x80),
-                                                VirtualKeyCode::Escape => {
+                                                KeyCode::Enter => Some(0x80),
+                                                KeyCode::Escape => {
                                                     if pressed {
-                                                        *control_flow = ControlFlow::Exit;
+                                                        target.exit();
                                                     }
                                                     None
                                                 }
@@ -533,94 +530,105 @@ fn main() {
                                     }
                                 }
                             }
+                            WindowEvent::RedrawRequested => {
+                                platform.prepare_frame(imgui.io_mut(), &win.win).unwrap();
+                                let ui = imgui.frame();
+
+                                match win.kind {
+                                    WindowKind::Main => {
+                                        build_ui(&mut ui_state, ui, &mut gb, target, &mut platform);
+                                        draw_game_screen(&mut win.pixels, &frame);
+                                    }
+                                    WindowKind::Debugger => {
+                                        draw_debugger(&mut win.pixels, &mut gb, ui)
+                                    }
+                                    WindowKind::VramViewer => draw_vram(win, &mut gb, ui),
+                                }
+
+                                platform.prepare_render(ui, &win.win);
+                                let draw_data = imgui.render();
+
+                                let render_result =
+                                    win.pixels.render_with(|encoder, render_target, context| {
+                                        context.scaling_renderer.render(encoder, render_target);
+
+                                        if draw_data.total_vtx_count > 0 {
+                                            let mut rpass = encoder.begin_render_pass(
+                                                &wgpu::RenderPassDescriptor {
+                                                    label: Some("imgui_pass"),
+                                                    color_attachments: &[Some(
+                                                        wgpu::RenderPassColorAttachment {
+                                                            view: render_target,
+                                                            resolve_target: None,
+                                                            ops: wgpu::Operations {
+                                                                load: wgpu::LoadOp::Load,
+                                                                store: true,
+                                                            },
+                                                        },
+                                                    )],
+                                                    depth_stencil_attachment: None,
+                                                },
+                                            );
+
+                                            let surface_size = win.win.inner_size();
+                                            rpass.set_scissor_rect(
+                                                0,
+                                                0,
+                                                surface_size.width,
+                                                surface_size.height,
+                                            );
+
+                                            win.renderer
+                                                .render(
+                                                    draw_data,
+                                                    win.pixels.queue(),
+                                                    win.pixels.device(),
+                                                    &mut rpass,
+                                                )
+                                                .expect("imgui render failed");
+                                        }
+                                        Ok(())
+                                    });
+                                if render_result.is_err() {
+                                    target.exit();
+                                }
+
+                                if ui_state.spawn_debugger
+                                    && !windows
+                                        .values()
+                                        .any(|w| matches!(w.kind, WindowKind::Debugger))
+                                {
+                                    spawn_debugger_window(
+                                        target,
+                                        &mut platform,
+                                        &mut imgui,
+                                        &mut windows,
+                                    );
+                                    ui_state.paused = true;
+                                    ui_state.spawn_debugger = false;
+                                }
+                                if ui_state.spawn_vram
+                                    && !windows
+                                        .values()
+                                        .any(|w| matches!(w.kind, WindowKind::VramViewer))
+                                {
+                                    spawn_vram_window(
+                                        target,
+                                        &mut platform,
+                                        &mut imgui,
+                                        &mut windows,
+                                    );
+                                    ui_state.paused = true;
+                                    ui_state.spawn_vram = false;
+                                }
+                            }
                             _ => {}
                         }
                     }
                 }
-                Event::RedrawRequested(window_id) => {
-                    if let Some(win) = windows.get_mut(window_id) {
-                        platform.prepare_frame(imgui.io_mut(), &win.win).unwrap();
-                        let ui = imgui.frame();
-
-                        match win.kind {
-                            WindowKind::Main => {
-                                build_ui(&mut ui_state, ui, &mut gb, target, &mut platform);
-                                draw_game_screen(&mut win.pixels, &frame);
-                            }
-                            WindowKind::Debugger => draw_debugger(&mut win.pixels, &mut gb, ui),
-                            WindowKind::VramViewer => draw_vram(win, &mut gb, ui),
-                        }
-
-                        platform.prepare_render(ui, &win.win);
-                        let draw_data = imgui.render();
-
-                        let render_result =
-                            win.pixels.render_with(|encoder, render_target, context| {
-                                context.scaling_renderer.render(encoder, render_target);
-
-                                if draw_data.total_vtx_count > 0 {
-                                    let mut rpass =
-                                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                            label: Some("imgui_pass"),
-                                            color_attachments: &[Some(
-                                                wgpu::RenderPassColorAttachment {
-                                                    view: render_target,
-                                                    resolve_target: None,
-                                                    ops: wgpu::Operations {
-                                                        load: wgpu::LoadOp::Load,
-                                                        store: true,
-                                                    },
-                                                },
-                                            )],
-                                            depth_stencil_attachment: None,
-                                        });
-
-                                    let surface_size = win.win.inner_size();
-                                    rpass.set_scissor_rect(
-                                        0,
-                                        0,
-                                        surface_size.width,
-                                        surface_size.height,
-                                    );
-
-                                    win.renderer
-                                        .render(
-                                            draw_data,
-                                            win.pixels.queue(),
-                                            win.pixels.device(),
-                                            &mut rpass,
-                                        )
-                                        .expect("imgui render failed");
-                                }
-                                Ok(())
-                            });
-                        if render_result.is_err() {
-                            *control_flow = ControlFlow::Exit;
-                        }
-                    }
-
-                    if ui_state.spawn_debugger
-                        && !windows
-                            .values()
-                            .any(|w| matches!(w.kind, WindowKind::Debugger))
-                    {
-                        spawn_debugger_window(target, &mut platform, &mut imgui, &mut windows);
-                        ui_state.paused = true;
-                        ui_state.spawn_debugger = false;
-                    }
-                    if ui_state.spawn_vram
-                        && !windows
-                            .values()
-                            .any(|w| matches!(w.kind, WindowKind::VramViewer))
-                    {
-                        spawn_vram_window(target, &mut platform, &mut imgui, &mut windows);
-                        ui_state.paused = true;
-                        ui_state.spawn_vram = false;
-                    }
-                }
-                Event::MainEventsCleared => {
+                Event::AboutToWait => {
                     if !ui_state.paused {
-                        emulate_until(&mut gb, speed, control_flow);
+                        emulate_until(&mut gb, speed, target);
                     }
 
                     if gb.mmu.ppu.frame_ready() {
@@ -651,7 +659,7 @@ fn main() {
 
                     frame_count += 1;
                 }
-                Event::LoopDestroyed => {
+                Event::LoopExiting => {
                     // Extra safety: if we ever reach here without having saved yet.
                     gb.mmu.save_cart_ram();
                 }
