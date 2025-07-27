@@ -332,7 +332,12 @@ impl NoiseChannel {
         while self.timer <= cycles {
             cycles -= self.timer;
             self.timer = self.period();
-            let bit = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
+            let bit0 = self.lfsr & 1;
+            let bit1 = (self.lfsr >> 1) & 1;
+            // The Game Boy noise channel uses an LFSR where the feedback bit is
+            // the XNOR of bit 0 and bit 1. A value of 1 is produced when the
+            // bits are identical, otherwise 0.
+            let bit = (!(bit0 ^ bit1)) & 1;
             self.lfsr >>= 1;
             self.lfsr |= bit << 14;
             if self.width7 {
@@ -827,7 +832,9 @@ impl Apu {
 
     fn trigger_noise(&mut self) {
         self.ch4.enabled = self.ch4.dac_enabled;
-        self.ch4.lfsr = 0x7FFF;
+        // When the noise channel is triggered the LFSR is cleared to 0 as
+        // described in Pan Docs.
+        self.ch4.lfsr = 0;
         self.ch4.timer = self.ch4.period();
         self.ch4.envelope.volume = self.ch4.envelope.initial;
         self.ch4.envelope.timer = if self.ch4.envelope.period == 0 {

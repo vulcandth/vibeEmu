@@ -313,7 +313,7 @@ fn pcm34_noise_output() {
         tick_machine(&mut apu, &mut div, 4);
     }
 
-    assert_eq!(apu.read_pcm(0xFF77), 0xF0);
+    assert_eq!(apu.read_pcm(0xFF77), 0x00);
 }
 #[test]
 fn nr52_power_toggle() {
@@ -1312,6 +1312,20 @@ fn nr43_period_calculation() {
 }
 
 #[test]
+fn nr43_lfsr_first_step() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF21, 0xF0);
+    apu.write_reg(0xFF22, 0x00);
+    apu.write_reg(0xFF23, 0x80); // trigger
+    let mut div = 0u16;
+    for _ in 0..8 {
+        tick_machine(&mut apu, &mut div, 1);
+    }
+    assert_eq!(apu.ch4_lfsr(), 0x4000);
+}
+
+#[test]
 fn nr43_width7_mode() {
     let mut apu = Apu::new();
     apu.write_reg(0xFF26, 0x80);
@@ -1323,7 +1337,7 @@ fn nr43_width7_mode() {
         tick_machine(&mut apu, &mut div, 1);
     }
     let lfsr15 = apu.ch4_lfsr();
-    assert_eq!(lfsr15, 0x3FFF);
+    assert_eq!(lfsr15, 0x4000);
     apu.write_reg(0xFF22, 0x08);
     apu.write_reg(0xFF23, 0x80);
     div = 0;
@@ -1331,7 +1345,22 @@ fn nr43_width7_mode() {
         tick_machine(&mut apu, &mut div, 1);
     }
     let lfsr7 = apu.ch4_lfsr();
-    assert_eq!(lfsr7, 0x3FBF);
+    assert_eq!(lfsr7, 0x4040);
+}
+
+#[test]
+fn nr43_bit15_copies_to_bit7_in_short_mode() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF21, 0xF0);
+    apu.write_reg(0xFF22, 0x08); // short mode
+    apu.write_reg(0xFF23, 0x80); // trigger
+    let mut div = 0u16;
+    for _ in 0..8 {
+        tick_machine(&mut apu, &mut div, 1);
+    }
+    let lfsr = apu.ch4_lfsr();
+    assert_eq!((lfsr >> 14) & 1, (lfsr >> 6) & 1);
 }
 
 #[test]
@@ -1375,18 +1404,18 @@ fn nr44_trigger_resets_lfsr_and_envelope_timer() {
     apu.write_reg(0xFF22, 0x00);
     apu.write_reg(0xFF23, 0x80); // trigger
     assert_eq!(apu.read_reg(0xFF26) & 0x08, 0x08);
-    assert_eq!(apu.ch4_lfsr(), 0x7FFF);
+    assert_eq!(apu.ch4_lfsr(), 0x0000);
     assert_eq!(apu.ch4_envelope_timer(), 8);
 
     let mut div = 0u16;
     for _ in 0..(16 * 8192 / 4) {
         tick_machine(&mut apu, &mut div, 4);
     }
-    assert_ne!(apu.ch4_lfsr(), 0x7FFF);
+    assert_ne!(apu.ch4_lfsr(), 0x0000);
     assert!(apu.ch4_envelope_timer() < 8);
 
     apu.write_reg(0xFF23, 0x80); // retrigger
-    assert_eq!(apu.ch4_lfsr(), 0x7FFF);
+    assert_eq!(apu.ch4_lfsr(), 0x0000);
     assert_eq!(apu.ch4_envelope_timer(), 8);
     assert_eq!(apu.ch4_volume(), 0xF);
 }
@@ -1409,7 +1438,7 @@ fn nr43_lfsr_lockup_and_retrigger() {
     apu.write_reg(0xFF22, 0x00); // 15-bit mode
     apu.write_reg(0xFF23, 0x80); // trigger
     let mut div = 0u16;
-    for _ in 0..64 {
+    for _ in 0..512 {
         tick_machine(&mut apu, &mut div, 1);
     }
     assert_eq!(apu.ch4_lfsr() & 0x7F, 0x7F);
@@ -1432,13 +1461,13 @@ fn nr43_output_depends_on_lfsr() {
     }
     let lfsr1 = apu.ch4_lfsr();
     let sample1 = if lfsr1 & 1 == 0 { apu.ch4_volume() } else { 0 };
-    assert_eq!(sample1, 0);
+    assert_eq!(sample1, 0xF);
     for _ in 0..112 {
         tick_machine(&mut apu, &mut div, 1);
     }
     let lfsr2 = apu.ch4_lfsr();
     let sample2 = if lfsr2 & 1 == 0 { apu.ch4_volume() } else { 0 };
-    assert_eq!(sample2, 0xF);
+    assert_eq!(sample2, 0);
 }
 
 #[test]
