@@ -67,6 +67,15 @@ The default controls are:
 
 Use the **right mouse button** to pause/resume and bring up the context menu.
 
+### Manual volume control
+
+The Game Boy's "zombie" mode allows adjusting the envelope while a channel is
+playing. Different models behave inconsistently, but using increase mode with a
+period of zero works reliably. Write `$V8` to `NRx2` to set the initial volume
+before triggering the channel, then repeatedly write `$08` to increment the
+volume by one. Performing this fifteen times effectively decreases the volume by
+one.
+
 ## Testing
 
 Unit tests can be executed with:

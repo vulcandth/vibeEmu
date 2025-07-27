@@ -45,6 +45,28 @@ impl Envelope {
         self.add = val & 0x08 != 0;
         self.timer = if self.period == 0 { 8 } else { self.period };
     }
+
+    fn zombie_update(&mut self, old_val: u8, new_val: u8) {
+        let old_period = old_val & 0x07;
+        let old_add = old_val & 0x08 != 0;
+        let new_add = new_val & 0x08 != 0;
+        let mut vol = self.volume;
+        if old_period == 0 {
+            let automatic = if old_add { vol < 15 } else { vol > 0 };
+            if automatic {
+                vol = vol.wrapping_add(1);
+            } else if !old_add {
+                vol = vol.wrapping_add(2);
+            }
+        }
+        if old_add != new_add {
+            vol = 16 - vol;
+        }
+        self.volume = vol & 0x0F;
+        self.initial = new_val >> 4;
+        self.period = new_val & 0x07;
+        self.add = new_add;
+    }
 }
 
 #[derive(Default)]
@@ -56,6 +78,9 @@ struct Sweep {
     timer: u8,
     shadow: u16,
     enabled: bool,
+    /// True if a subtraction sweep calculation has occurred since the last
+    /// trigger.
+    neg_used: bool,
 }
 
 impl Sweep {
@@ -68,8 +93,9 @@ impl Sweep {
         }
     }
 
-    fn set_params(&mut self, val: u8) {
+    fn set_params(&mut self, val: u8) -> bool {
         let new_period = (val >> 4) & 0x07;
+        let old_negate = self.negate;
         self.negate = val & 0x08 != 0;
         self.shift = val & 0x07;
 
@@ -85,12 +111,18 @@ impl Sweep {
         }
 
         self.period = new_period;
+        if old_negate && !self.negate && self.neg_used {
+            self.enabled = false;
+            return true;
+        }
+        false
     }
 
     fn reload(&mut self, freq: u16) {
         self.shadow = freq;
         self.timer = if self.period == 0 { 8 } else { self.period };
         self.enabled = self.period != 0 || self.shift != 0;
+        self.neg_used = false;
     }
 }
 
@@ -215,6 +247,9 @@ impl SquareChannel {
                     self.enabled = false;
                     sweep.enabled = false;
                 } else if sweep.shift != 0 {
+                    if sweep.negate {
+                        sweep.neg_used = true;
+                    }
                     sweep.shadow = new_freq;
                     self.frequency = new_freq;
                     new_freq = sweep.calculate();
@@ -326,6 +361,9 @@ impl NoiseChannel {
 
     fn step(&mut self, cycles: u32) {
         if !self.enabled || !self.dac_enabled {
+            return;
+        }
+        if self.clock_shift >= 14 {
             return;
         }
         let mut cycles = cycles as i32;
@@ -591,14 +629,24 @@ impl Apu {
             self.wave_shadow[(addr - 0xFF30) as usize] = val;
         }
 
+        let idx = (addr - 0xFF10) as usize;
+        let old_val = if (0xFF10..=0xFF3F).contains(&addr) {
+            self.regs[idx]
+        } else {
+            0
+        };
+
         if addr != 0xFF26 && (0xFF10..=0xFF3F).contains(&addr) {
-            self.regs[(addr - 0xFF10) as usize] = val;
+            self.regs[idx] = val;
         }
 
         match addr {
             0xFF10 => {
                 if let Some(s) = self.ch1.sweep.as_mut() {
-                    s.set_params(val);
+                    let disable = s.set_params(val);
+                    if disable {
+                        self.ch1.enabled = false;
+                    }
                 }
             }
             0xFF11 => {
@@ -607,12 +655,7 @@ impl Apu {
             }
             0xFF12 => {
                 if self.ch1.enabled {
-                    // When the channel is active, a write only updates the
-                    // stored parameters. The current envelope state is kept
-                    // until the next trigger.
-                    self.ch1.envelope.initial = val >> 4;
-                    self.ch1.envelope.period = val & 0x07;
-                    self.ch1.envelope.add = val & 0x08 != 0;
+                    self.ch1.envelope.zombie_update(old_val, val);
                 } else {
                     self.ch1.envelope.reset(val);
                 }
@@ -640,9 +683,7 @@ impl Apu {
             }
             0xFF17 => {
                 if self.ch2.enabled {
-                    self.ch2.envelope.initial = val >> 4;
-                    self.ch2.envelope.period = val & 0x07;
-                    self.ch2.envelope.add = val & 0x08 != 0;
+                    self.ch2.envelope.zombie_update(old_val, val);
                 } else {
                     self.ch2.envelope.reset(val);
                 }
@@ -690,9 +731,7 @@ impl Apu {
             0xFF20 => self.ch4.length = 64 - (val & 0x3F),
             0xFF21 => {
                 if self.ch4.enabled {
-                    self.ch4.envelope.initial = val >> 4;
-                    self.ch4.envelope.period = val & 0x07;
-                    self.ch4.envelope.add = val & 0x08 != 0;
+                    self.ch4.envelope.zombie_update(old_val, val);
                 } else {
                     self.ch4.envelope.reset(val);
                 }
@@ -784,11 +823,15 @@ impl Apu {
         ch.first_sample = true;
         ch.enabled = ch.dac_enabled;
         ch.envelope.volume = ch.envelope.initial;
-        ch.envelope.timer = if ch.envelope.period == 0 {
+        let mut env_timer = if ch.envelope.period == 0 {
             8
         } else {
             ch.envelope.period
         };
+        if (self.sequencer.step + 1) & 7 == 7 {
+            env_timer = env_timer.wrapping_add(1);
+        }
+        ch.envelope.timer = env_timer;
         let mut freq_updated = false;
         if idx == 1 {
             if let Some(s) = ch.sweep.as_mut() {
@@ -799,6 +842,9 @@ impl Apu {
                         ch.enabled = false;
                         s.enabled = false;
                     } else {
+                        if s.negate {
+                            s.neg_used = true;
+                        }
                         s.shadow = new_freq;
                         ch.frequency = new_freq;
                         freq_updated = true;
@@ -821,6 +867,20 @@ impl Apu {
     }
 
     fn trigger_wave(&mut self) {
+        if self.ch3.enabled {
+            let byte_index = (self.ch3.position / 2) as usize;
+            if byte_index < 4 {
+                let val = self.wave_ram[byte_index];
+                self.wave_ram[0] = val;
+            } else {
+                let base = byte_index & !0x03;
+                let mut i = 0;
+                while i < 4 {
+                    self.wave_ram[i] = self.wave_ram[base + i];
+                    i += 1;
+                }
+            }
+        }
         self.ch3.enabled = self.ch3.dac_enabled;
         self.ch3.position = 0;
         self.ch3.timer = self.ch3.period();
@@ -842,11 +902,15 @@ impl Apu {
         self.ch4.lfsr = 0;
         self.ch4.timer = self.ch4.period();
         self.ch4.envelope.volume = self.ch4.envelope.initial;
-        self.ch4.envelope.timer = if self.ch4.envelope.period == 0 {
+        let mut env_timer = if self.ch4.envelope.period == 0 {
             8
         } else {
             self.ch4.envelope.period
         };
+        if (self.sequencer.step + 1) & 7 == 7 {
+            env_timer = env_timer.wrapping_add(1);
+        }
+        self.ch4.envelope.timer = env_timer;
         if self.ch4.length == 0 {
             self.ch4.length = 64;
         }

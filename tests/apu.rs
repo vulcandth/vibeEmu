@@ -537,8 +537,8 @@ fn nr12_write_requires_retrigger() {
     assert_eq!(apu.ch1_volume(), 0xF);
     // write new envelope while channel active
     apu.write_reg(0xFF12, 0x50); // initial volume 5
-    // volume should remain unchanged until retrigger
-    assert_eq!(apu.ch1_volume(), 0xF);
+    // zombie mode should update volume immediately
+    assert_eq!(apu.ch1_volume(), 0x0);
     apu.write_reg(0xFF14, 0x80); // retrigger
     assert_eq!(apu.ch1_volume(), 0x5);
 }
@@ -736,7 +736,7 @@ fn nr22_write_requires_retrigger() {
     apu.write_reg(0xFF19, 0x80); // trigger
     assert_eq!(apu.ch2_volume(), 0xF);
     apu.write_reg(0xFF17, 0x50); // new envelope while active
-    assert_eq!(apu.ch2_volume(), 0xF);
+    assert_eq!(apu.ch2_volume(), 0x0);
     apu.write_reg(0xFF19, 0x80); // retrigger
     assert_eq!(apu.ch2_volume(), 0x5);
 }
@@ -1302,7 +1302,7 @@ fn nr42_write_requires_retrigger() {
     apu.write_reg(0xFF23, 0x80);
     assert_eq!(apu.ch4_volume(), 0xF);
     apu.write_reg(0xFF21, 0x50);
-    assert_eq!(apu.ch4_volume(), 0xF);
+    assert_eq!(apu.ch4_volume(), 0x0);
     apu.write_reg(0xFF23, 0x80);
     assert_eq!(apu.ch4_volume(), 0x5);
 }
