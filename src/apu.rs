@@ -778,12 +778,17 @@ impl Apu {
             delay_cycles = min_delay;
         }
         let new_timer = sample_length * 2 + delay_cycles;
-        let low_phase = (self.lf_div_counter & 0x3) as i32;
-        ch.timer = ((new_timer & !0x3) | low_phase) + 1;
+        let low_bits = ch.timer & 0x3;
+        ch.timer = ((new_timer & !0x3) | ((low_bits.wrapping_sub(1)) & 0x3)) + 1;
         ch.pending_reset = true;
         ch.first_sample = true;
         ch.enabled = ch.dac_enabled;
         ch.envelope.volume = ch.envelope.initial;
+        ch.envelope.timer = if ch.envelope.period == 0 {
+            8
+        } else {
+            ch.envelope.period
+        };
         let mut freq_updated = false;
         if idx == 1 {
             if let Some(s) = ch.sweep.as_mut() {
@@ -1035,6 +1040,11 @@ impl Apu {
         self.ch1.envelope.volume
     }
 
+    /// Current envelope timer value for channel 1.
+    pub fn ch1_envelope_timer(&self) -> u8 {
+        self.ch1.envelope.timer
+    }
+
     pub fn set_sample_rate(&mut self, rate: u32) {
         self.sample_rate = rate;
     }
@@ -1088,6 +1098,11 @@ impl Apu {
     /// Current envelope volume for channel 2.
     pub fn ch2_volume(&self) -> u8 {
         self.ch2.envelope.volume
+    }
+
+    /// Current envelope timer value for channel 2.
+    pub fn ch2_envelope_timer(&self) -> u8 {
+        self.ch2.envelope.timer
     }
 
     pub fn ch2_timer(&self) -> i32 {

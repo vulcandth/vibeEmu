@@ -614,6 +614,22 @@ fn nr13_period_change_delayed_until_sample_end() {
 }
 
 #[test]
+fn retrigger_preserves_timer_low_bits_ch1() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF12, 0xF0);
+    apu.write_reg(0xFF13, 0x00);
+    apu.write_reg(0xFF14, 0x80); // trigger
+    let mut div = 0u16;
+    for _ in 0..10 {
+        tick_machine(&mut apu, &mut div, 1);
+    }
+    let low = apu.ch1_timer() & 3;
+    apu.write_reg(0xFF14, 0x80); // retrigger
+    assert_eq!(apu.ch1_timer() & 3, low);
+}
+
+#[test]
 fn nr14_write_sets_frequency_high_bits_and_is_write_only() {
     let mut apu = Apu::new();
     apu.write_reg(0xFF26, 0x80); // enable APU
@@ -841,6 +857,29 @@ fn wave_channel_outputs_wave_ram_data() {
         *sample = apu.read_pcm(0xFF77) & 0x0F;
     }
     assert_eq!(samples, [0, 1, 2, 3, 4, 5, 6, 7]);
+}
+
+#[test]
+fn wave_channel_first_sample_uses_old_buffer() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF30, 0xAB);
+    for addr in 0xFF31..=0xFF3F {
+        apu.write_reg(addr, 0x00);
+    }
+    apu.write_reg(0xFF1A, 0x80); // DAC on
+    apu.write_reg(0xFF1C, 0x20); // full volume
+    apu.write_reg(0xFF1D, 0xFF);
+    apu.write_reg(0xFF1E, 0x87); // trigger
+
+    let mut div = 0u16;
+    tick_machine(&mut apu, &mut div, 1);
+    let first = apu.read_pcm(0xFF77) & 0x0F;
+    tick_machine(&mut apu, &mut div, 2);
+    tick_machine(&mut apu, &mut div, 0);
+    let second = apu.read_pcm(0xFF77) & 0x0F;
+    assert_eq!(first, 0);
+    assert_eq!(second, 0xB);
 }
 
 #[test]
@@ -1419,6 +1458,24 @@ fn nr44_trigger_resets_lfsr_and_envelope_timer() {
     assert_eq!(apu.ch4_envelope_timer(), 8);
     assert_eq!(apu.ch4_volume(), 0xF);
 }
+
+#[test]
+fn nr12_period_zero_sets_timer_to_8() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF12, 0xF0); // period 0
+    apu.write_reg(0xFF14, 0x80); // trigger
+    assert_eq!(apu.ch1_envelope_timer(), 8);
+}
+
+#[test]
+fn nr22_period_zero_sets_timer_to_8() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF17, 0xF0); // period 0
+    apu.write_reg(0xFF19, 0x80); // trigger
+    assert_eq!(apu.ch2_envelope_timer(), 8);
+}
 #[test]
 fn nr43_register_fields() {
     let mut apu = Apu::new();
@@ -1595,4 +1652,16 @@ fn first_sample_after_trigger_is_zero() {
     let mut div = 0u16;
     tick_machine(&mut apu, &mut div, 1);
     assert_eq!(apu.read_pcm(0xFF76) & 0x0F, 0);
+}
+
+#[test]
+fn ch2_first_sample_after_trigger_is_zero() {
+    let mut apu = Apu::new();
+    apu.write_reg(0xFF26, 0x80);
+    apu.write_reg(0xFF17, 0xF0);
+    apu.write_reg(0xFF19, 0x80);
+
+    let mut div = 0u16;
+    tick_machine(&mut apu, &mut div, 1);
+    assert_eq!(apu.read_pcm(0xFF76) >> 4, 0);
 }

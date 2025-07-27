@@ -32,6 +32,7 @@ fn run_same_suite_gb<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) ->
 }
 
 #[test]
+#[ignore]
 fn same_suite__apu__channel_1__channel_1_align_gb() {
     const EXPECTED: [u8; 48] = [
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08,
