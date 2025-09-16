@@ -135,6 +135,7 @@ struct SquareChannel {
     duty: u8,
     duty_pos: u8,
     pending_reset: bool,
+    pcm_gate: i32,
     frequency: u16,
     timer: i32,
     envelope: Envelope,
@@ -200,7 +201,13 @@ impl SquareChannel {
     }
 
     fn tick_1mhz(&mut self) {
-        let fresh = self.compute_output();
+        let sample = self.compute_output();
+        let fresh = if self.pcm_gate > 0 {
+            self.pcm_gate -= 1;
+            0
+        } else {
+            sample
+        };
         self.out_latched = self.out_stage1;
         self.out_stage1 = fresh;
     }
@@ -822,23 +829,21 @@ impl Apu {
         let lf_div = (self.lf_div_counter & 0x3) as i32;
         // Base delay depends on whether the channel was previously enabled and
         // on the current CPU speed.
-        let base = if self.double_speed {
-            if ch.enabled { 19 } else { 21 }
-        } else if ch.enabled {
-            40
-        } else {
-            42
-        };
         let since_env = self.cpu_cycles.wrapping_sub(self.ch1_last_env_write_cycle);
         let since_enable = self.lf_div_counter.wrapping_sub(self.apu_enable_tick);
         let mut delay_cycles = if self.double_speed && since_env <= 256 {
-            let mut base_delay = base + 1;
+            let mut base_delay = if ch.enabled { 19 } else { 21 };
             if since_enable >= 40 {
                 base_delay -= 2;
             }
             base_delay
-        } else {
+        } else if ch.enabled {
+            let base = if self.double_speed { 19 } else { 40 };
             base - lf_div
+        } else {
+            let mut base_delay = 22 * sample_length + 4;
+            base_delay -= lf_div;
+            base_delay
         };
         let min_delay = sample_length * 2;
         if delay_cycles < min_delay {
@@ -855,6 +860,9 @@ impl Apu {
         ch.timer = new_timer;
         ch.pending_reset = true;
         ch.first_sample = true;
+        ch.pcm_gate = sample_length * 4 + 4;
+        ch.out_stage1 = 0;
+        ch.out_latched = 0;
         ch.enabled = ch.dac_enabled;
         ch.envelope.volume = ch.envelope.initial;
         let mut env_timer = if ch.envelope.period == 0 {
