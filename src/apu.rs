@@ -462,6 +462,8 @@ pub struct Apu {
     lf_div_counter: u64,
     /// True when the CPU is in double-speed mode (KEY1 bit 0 set and prepared).
     double_speed: bool,
+    ch1_last_env_write_cycle: u64,
+    apu_enable_tick: u64,
 }
 
 impl Apu {
@@ -533,6 +535,8 @@ impl Apu {
         self.hp_prev_output_right = 0.0;
         self.pcm12 = 0;
         self.pcm34 = 0;
+        self.ch1_last_env_write_cycle = 0;
+        self.apu_enable_tick = 0;
     }
     pub fn new() -> Self {
         let mut apu = Self {
@@ -561,6 +565,8 @@ impl Apu {
             cpu_cycles: 0,
             lf_div_counter: 0,
             double_speed: false,
+            ch1_last_env_write_cycle: 0,
+            apu_enable_tick: 0,
         };
 
         // Initialize channels to power-on register defaults
@@ -670,6 +676,7 @@ impl Apu {
                 if !self.ch1.dac_enabled {
                     self.ch1.enabled = false;
                 }
+                self.ch1_last_env_write_cycle = self.cpu_cycles;
             }
             0xFF13 => self.ch1.frequency = (self.ch1.frequency & 0x700) | val as u16,
             0xFF14 => {
@@ -783,8 +790,12 @@ impl Apu {
                         self.ch2.out_stage1 = 0;
                         self.cpu_cycles = 0;
                         self.sequencer.step = 0;
+                        self.apu_enable_tick = 0;
                     }
                     self.nr52 |= 0x80;
+                    if self.apu_enable_tick == 0 {
+                        self.apu_enable_tick = self.lf_div_counter;
+                    }
                 }
                 let idx = (addr - 0xFF10) as usize;
                 self.regs[idx] = 0x70 | (self.nr52 & 0x80);
@@ -818,14 +829,30 @@ impl Apu {
         } else {
             42
         };
-        let mut delay_cycles = base - lf_div;
+        let since_env = self.cpu_cycles.wrapping_sub(self.ch1_last_env_write_cycle);
+        let since_enable = self.lf_div_counter.wrapping_sub(self.apu_enable_tick);
+        let mut delay_cycles = if self.double_speed && since_env <= 256 {
+            let mut base_delay = base + 1;
+            if since_enable >= 40 {
+                base_delay -= 2;
+            }
+            base_delay
+        } else {
+            base - lf_div
+        };
         let min_delay = sample_length * 2;
         if delay_cycles < min_delay {
             delay_cycles = min_delay;
         }
-        let new_timer = sample_length * 2 + delay_cycles;
-        let low_bits = ch.timer & 0x3;
-        ch.timer = ((new_timer & !0x3) | ((low_bits.wrapping_sub(1)) & 0x3)) + 1;
+        let mut new_timer = sample_length * 2 + delay_cycles;
+        if ch.enabled {
+            let low_bits = ch.timer & 0x3;
+            new_timer = (new_timer & !0x3) | low_bits;
+        }
+        if new_timer <= 0 {
+            new_timer = 1;
+        }
+        ch.timer = new_timer;
         ch.pending_reset = true;
         ch.first_sample = true;
         ch.enabled = ch.dac_enabled;
