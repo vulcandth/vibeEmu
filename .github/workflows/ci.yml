@@ -14,6 +14,8 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
+    env:
+      SCCACHE_VERSION: 0.10.0
 
     steps:
       - uses: actions/checkout@v3
@@ -41,23 +43,22 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Set up Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          profile: minimal
-          override: true
+          components: rustfmt, clippy
 
       - name: Install sccache (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $url = "https://github.com/mozilla/sccache/releases/download/v0.10.0/sccache-v0.10.0-x86_64-pc-windows-msvc.zip"
+          $version = "$env:SCCACHE_VERSION"
+          $url = "https://github.com/mozilla/sccache/releases/download/v$version/sccache-v$version-x86_64-pc-windows-msvc.zip"
           $zipPath = "$env:RUNNER_TEMP\sccache.zip"
           $outDir = "$env:RUNNER_TEMP\sccache"
           Invoke-WebRequest -Uri $url -OutFile $zipPath
           Expand-Archive -Path $zipPath -DestinationPath $outDir
 
-          $exePath = Join-Path $outDir "sccache-v0.10.0-x86_64-pc-windows-msvc\sccache.exe"
+          $exePath = Join-Path $outDir "sccache-v$version-x86_64-pc-windows-msvc\sccache.exe"
 
           if (-Not (Test-Path "$env:USERPROFILE\.cargo\bin")) {
             New-Item -ItemType Directory -Path "$env:USERPROFILE\.cargo\bin" | Out-Null
@@ -68,7 +69,13 @@ jobs:
 
       - name: Install sccache (Linux)
         if: runner.os == 'Linux'
-        run: cargo install sccache
+        run: |
+          tmpdir="$(mktemp -d)"
+          curl -sSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.xz" -o "$tmpdir/sccache.tar.xz"
+          tar -xf "$tmpdir/sccache.tar.xz" -C "$tmpdir"
+          mkdir -p "$HOME/.cargo/bin"
+          cp "$tmpdir/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" "$HOME/.cargo/bin/"
+          chmod +x "$HOME/.cargo/bin/sccache"
 
       - name: Set RUSTC_WRAPPER
         run: echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
