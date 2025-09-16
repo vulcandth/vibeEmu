@@ -43,7 +43,6 @@ fn run_same_suite_gb<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) ->
 }
 
 #[test]
-#[ignore]
 fn same_suite__apu__channel_1__channel_1_align_gb() {
     const EXPECTED: [u8; 48] = [
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08,
@@ -314,7 +313,6 @@ fn same_suite__apu__channel_1__channel_1_volume_div_gb() {
 }
 
 #[test]
-#[ignore]
 fn same_suite__apu__channel_2__channel_2_align_gb() {
     let passed = run_same_suite(
         common::rom_path("same-suite/apu/channel_2/channel_2_align.gb"),
