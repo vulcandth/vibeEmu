@@ -187,10 +187,10 @@ impl SquareChannel {
             return 0;
         }
         const DUTY_TABLE: [[u8; 8]; 4] = [
-            [0, 1, 0, 0, 0, 0, 0, 0], // 12.5%
-            [0, 1, 1, 0, 0, 0, 0, 0], // 25%
+            [0, 0, 0, 1, 0, 0, 0, 0], // 12.5%
+            [0, 0, 0, 1, 1, 0, 0, 0], // 25%
             [0, 1, 1, 1, 1, 0, 0, 0], // 50%
-            [1, 0, 0, 1, 1, 1, 1, 1], // 75%
+            [1, 1, 1, 0, 0, 1, 1, 1], // 75%
         ];
         let level = DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
         level * self.envelope.volume
@@ -221,10 +221,10 @@ impl SquareChannel {
             return 0;
         }
         const DUTY_TABLE: [[u8; 8]; 4] = [
-            [0, 1, 0, 0, 0, 0, 0, 0],
-            [0, 1, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 0, 0, 0, 0],
+            [0, 0, 0, 1, 1, 0, 0, 0],
             [0, 1, 1, 1, 1, 0, 0, 0],
-            [1, 0, 0, 1, 1, 1, 1, 1],
+            [1, 1, 1, 0, 0, 1, 1, 1],
         ];
         let level = DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
         level * self.envelope.volume
@@ -860,7 +860,7 @@ impl Apu {
         ch.timer = new_timer;
         ch.pending_reset = true;
         ch.first_sample = true;
-        ch.pcm_gate = sample_length * 4 + 4;
+        ch.pcm_gate = sample_length * 4 + 6;
         ch.out_stage1 = 0;
         ch.out_latched = 0;
         ch.enabled = ch.dac_enabled;
