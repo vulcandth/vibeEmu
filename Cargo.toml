@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 winit = { version = "0.30.12", features = ["rwh_05"] }
-wgpu = "0.17"
+wgpu = "23.0"
 pixels = "0.14"
 imgui = { version = "0.12", features = ["docking", "tables-api"] }
 imgui-winit-support = "0.13"
