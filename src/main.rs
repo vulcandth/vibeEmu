@@ -299,12 +299,11 @@ fn build_ui(
                     if let Some(path) = FileDialog::new()
                         .add_filter("Game Boy ROM", &["gb", "gbc"])
                         .pick_file()
+                        && let Ok(cart) = cartridge::Cartridge::from_file(&path)
                     {
-                        if let Ok(cart) = cartridge::Cartridge::from_file(&path) {
-                            gb.reset();
-                            gb.mmu.load_cart(cart);
-                            state.paused = false;
-                        }
+                        gb.reset();
+                        gb.mmu.load_cart(cart);
+                        state.paused = false;
                     }
                     close_menu = true;
                 }
@@ -488,45 +487,43 @@ fn main() {
                             WindowEvent::KeyboardInput { event, .. }
                                 if matches!(win.kind, WindowKind::Main) =>
                             {
-                                if !(ui_state.paused || imgui.io().want_text_input) {
-                                    if let PhysicalKey::Code(code) = event.physical_key {
-                                        let pressed = event.state == ElementState::Pressed;
-                                        let mask = if code == KeyCode::Space {
-                                            speed.fast = pressed;
-                                            speed.factor = if speed.fast { FF_MULT } else { 1.0 };
-                                            if let Ok(mut apu) = gb.mmu.apu.lock() {
-                                                apu.set_speed(speed.factor);
-                                            }
-                                            None
-                                        } else {
-                                            match code {
-                                                KeyCode::ArrowRight => Some(0x01),
-                                                KeyCode::ArrowLeft => Some(0x02),
-                                                KeyCode::ArrowUp => Some(0x04),
-                                                KeyCode::ArrowDown => Some(0x08),
-                                                KeyCode::KeyS => Some(0x10),
-                                                KeyCode::KeyA => Some(0x20),
-                                                KeyCode::ShiftLeft | KeyCode::ShiftRight => {
-                                                    Some(0x40)
-                                                }
-                                                KeyCode::Enter => Some(0x80),
-                                                KeyCode::Escape => {
-                                                    if pressed {
-                                                        target.exit();
-                                                    }
-                                                    None
-                                                }
-                                                _ => None,
-                                            }
-                                        };
-                                        if let Some(mask) = mask {
-                                            if pressed {
-                                                state &= !mask;
-                                            } else {
-                                                state |= mask;
-                                            }
-                                            gb.mmu.input.update_state(state, &mut gb.mmu.if_reg);
+                                if !(ui_state.paused || imgui.io().want_text_input)
+                                    && let PhysicalKey::Code(code) = event.physical_key
+                                {
+                                    let pressed = event.state == ElementState::Pressed;
+                                    let mask = if code == KeyCode::Space {
+                                        speed.fast = pressed;
+                                        speed.factor = if speed.fast { FF_MULT } else { 1.0 };
+                                        if let Ok(mut apu) = gb.mmu.apu.lock() {
+                                            apu.set_speed(speed.factor);
                                         }
+                                        None
+                                    } else {
+                                        match code {
+                                            KeyCode::ArrowRight => Some(0x01),
+                                            KeyCode::ArrowLeft => Some(0x02),
+                                            KeyCode::ArrowUp => Some(0x04),
+                                            KeyCode::ArrowDown => Some(0x08),
+                                            KeyCode::KeyS => Some(0x10),
+                                            KeyCode::KeyA => Some(0x20),
+                                            KeyCode::ShiftLeft | KeyCode::ShiftRight => Some(0x40),
+                                            KeyCode::Enter => Some(0x80),
+                                            KeyCode::Escape => {
+                                                if pressed {
+                                                    target.exit();
+                                                }
+                                                None
+                                            }
+                                            _ => None,
+                                        }
+                                    };
+                                    if let Some(mask) = mask {
+                                        if pressed {
+                                            state &= !mask;
+                                        } else {
+                                            state |= mask;
+                                        }
+                                        gb.mmu.input.update_state(state, &mut gb.mmu.if_reg);
                                     }
                                 }
                             }
@@ -675,15 +672,15 @@ fn main() {
         'headless: loop {
             while !gb.mmu.ppu.frame_ready() {
                 gb.cpu.step(&mut gb.mmu);
-                if let Some(max) = cycle_limit {
-                    if gb.cpu.cycles >= max {
-                        break 'headless;
-                    }
+                if let Some(max) = cycle_limit
+                    && gb.cpu.cycles >= max
+                {
+                    break 'headless;
                 }
-                if let Some(limit) = second_limit {
-                    if start.elapsed() >= limit {
-                        break 'headless;
-                    }
+                if let Some(limit) = second_limit
+                    && start.elapsed() >= limit
+                {
+                    break 'headless;
                 }
             }
 
@@ -709,15 +706,15 @@ fn main() {
 
             frame_count += 1;
 
-            if let Some(max) = frame_limit {
-                if frame_count >= max as u64 {
-                    break;
-                }
+            if let Some(max) = frame_limit
+                && frame_count >= max as u64
+            {
+                break;
             }
-            if let Some(limit) = second_limit {
-                if start.elapsed() >= limit {
-                    break;
-                }
+            if let Some(limit) = second_limit
+                && start.elapsed() >= limit
+            {
+                break;
             }
         }
     }

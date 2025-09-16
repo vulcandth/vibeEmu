@@ -867,22 +867,22 @@ impl Apu {
         }
         ch.envelope.timer = env_timer;
         let mut freq_updated = false;
-        if idx == 1 {
-            if let Some(s) = ch.sweep.as_mut() {
-                s.reload(ch.frequency);
-                if s.shift != 0 {
-                    let new_freq = s.calculate();
-                    if new_freq > 2047 {
-                        ch.enabled = false;
-                        s.enabled = false;
-                    } else {
-                        if s.negate {
-                            s.neg_used = true;
-                        }
-                        s.shadow = new_freq;
-                        ch.frequency = new_freq;
-                        freq_updated = true;
+        if idx == 1
+            && let Some(s) = ch.sweep.as_mut()
+        {
+            s.reload(ch.frequency);
+            if s.shift != 0 {
+                let new_freq = s.calculate();
+                if new_freq > 2047 {
+                    ch.enabled = false;
+                    s.enabled = false;
+                } else {
+                    if s.negate {
+                        s.neg_used = true;
                     }
+                    s.shadow = new_freq;
+                    ch.frequency = new_freq;
+                    freq_updated = true;
                 }
             }
         }

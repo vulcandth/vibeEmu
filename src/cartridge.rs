@@ -358,10 +358,10 @@ impl Cartridge {
     }
 
     pub fn save_ram(&self) -> io::Result<()> {
-        if let (true, Some(path)) = (self.has_battery(), &self.save_path) {
-            if !self.ram.is_empty() {
-                fs::write(path, &self.ram)?;
-            }
+        if let (true, Some(path)) = (self.has_battery(), &self.save_path)
+            && !self.ram.is_empty()
+        {
+            fs::write(path, &self.ram)?;
         }
         Ok(())
     }

@@ -105,10 +105,10 @@ impl Mmu {
     }
 
     pub fn save_cart_ram(&self) {
-        if let Some(cart) = &self.cart {
-            if let Err(e) = cart.save_ram() {
-                eprintln!("Failed to save RAM: {e}");
-            }
+        if let Some(cart) = &self.cart
+            && let Err(e) = cart.save_ram()
+        {
+            eprintln!("Failed to save RAM: {e}");
         }
     }
 
@@ -330,12 +330,12 @@ impl Mmu {
         for _ in 0..cycles {
             if self.pending_delay > 0 {
                 self.pending_delay -= 1;
-                if self.pending_delay == 0 {
-                    if let Some(src) = self.pending_dma.take() {
-                        self.dma_source = src;
-                        // 160 bytes * 4 cycles each
-                        self.dma_cycles = 640;
-                    }
+                if self.pending_delay == 0
+                    && let Some(src) = self.pending_dma.take()
+                {
+                    self.dma_source = src;
+                    // 160 bytes * 4 cycles each
+                    self.dma_cycles = 640;
                 }
             }
 
