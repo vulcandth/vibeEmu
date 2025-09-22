@@ -19,6 +19,9 @@ const TOTAL_SPRITES: usize = 40;
 const VRAM_BANK_SIZE: usize = 0x2000;
 const OAM_SIZE: usize = 0xA0;
 const PAL_RAM_SIZE: usize = 0x40;
+const PAL_INDEX_MASK: u8 = 0x3F;
+const PAL_UNUSED_BIT: u8 = 0x40;
+const PAL_AUTO_INCREMENT_BIT: u8 = 0x80;
 
 // Window X position is clipped if greater than this value
 const WINDOW_X_MAX: u8 = 166;
@@ -112,9 +115,9 @@ impl Ppu {
             wy: 0,
             wx: 0,
             win_line_counter: 0,
-            bgpi: 0,
+            bgpi: PAL_UNUSED_BIT,
             bgpd: [0; PAL_RAM_SIZE],
-            obpi: 0,
+            obpi: PAL_UNUSED_BIT,
             obpd: [0; PAL_RAM_SIZE],
             opri: 0,
             mode_clock: 0,
@@ -259,6 +262,26 @@ impl Ppu {
         Self::decode_cgb_color(self.obpd[off], self.obpd[off + 1])
     }
 
+    fn sanitize_palette_index(value: u8) -> u8 {
+        (value & (PAL_AUTO_INCREMENT_BIT | PAL_INDEX_MASK)) | PAL_UNUSED_BIT
+    }
+
+    fn palette_ram_index(index: u8) -> usize {
+        (index & PAL_INDEX_MASK) as usize
+    }
+
+    fn step_palette_index(index: &mut u8) {
+        let current = *index;
+        let idx = current & PAL_INDEX_MASK;
+        let next_idx = if current & PAL_AUTO_INCREMENT_BIT != 0 {
+            idx.wrapping_add(1) & PAL_INDEX_MASK
+        } else {
+            idx
+        };
+        let auto = current & PAL_AUTO_INCREMENT_BIT;
+        *index = auto | PAL_UNUSED_BIT | next_idx;
+    }
+
     pub fn read_reg(&mut self, addr: u16) -> u8 {
         match addr {
             0xFF40 => self.lcdc,
@@ -277,18 +300,14 @@ impl Ppu {
             0xFF4B => self.wx,
             0xFF68 => self.bgpi,
             0xFF69 => {
-                let val = self.bgpd[(self.bgpi & 0x3F) as usize];
-                if self.bgpi & 0x80 != 0 {
-                    self.bgpi = (self.bgpi & 0x80) | ((self.bgpi.wrapping_add(1)) & 0x3F);
-                }
+                let val = self.bgpd[Self::palette_ram_index(self.bgpi)];
+                Self::step_palette_index(&mut self.bgpi);
                 val
             }
             0xFF6A => self.obpi,
             0xFF6B => {
-                let val = self.obpd[(self.obpi & 0x3F) as usize];
-                if self.obpi & 0x80 != 0 {
-                    self.obpi = (self.obpi & 0x80) | ((self.obpi.wrapping_add(1)) & 0x3F);
-                }
+                let val = self.obpd[Self::palette_ram_index(self.obpi)];
+                Self::step_palette_index(&mut self.obpi);
                 val
             }
             0xFF6C => self.opri | 0xFE,
@@ -310,21 +329,17 @@ impl Ppu {
             0xFF49 => self.obp1 = val,
             0xFF4A => self.wy = val,
             0xFF4B => self.wx = val,
-            0xFF68 => self.bgpi = val,
+            0xFF68 => self.bgpi = Self::sanitize_palette_index(val),
             0xFF69 => {
-                let idx = (self.bgpi & 0x3F) as usize;
+                let idx = Self::palette_ram_index(self.bgpi);
                 self.bgpd[idx] = val;
-                if self.bgpi & 0x80 != 0 {
-                    self.bgpi = (self.bgpi & 0x80) | ((idx as u8 + 1) & 0x3F);
-                }
+                Self::step_palette_index(&mut self.bgpi);
             }
-            0xFF6A => self.obpi = val,
+            0xFF6A => self.obpi = Self::sanitize_palette_index(val),
             0xFF6B => {
-                let idx = (self.obpi & 0x3F) as usize;
+                let idx = Self::palette_ram_index(self.obpi);
                 self.obpd[idx] = val;
-                if self.obpi & 0x80 != 0 {
-                    self.obpi = (self.obpi & 0x80) | ((idx as u8 + 1) & 0x3F);
-                }
+                Self::step_palette_index(&mut self.obpi);
             }
             0xFF6C => self.opri = val & 0x01,
             _ => {}

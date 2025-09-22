@@ -850,7 +850,6 @@ fn same_suite__interrupt__ei_delay_halt_gb() {
 }
 
 #[test]
-#[ignore]
 fn same_suite__ppu__blocking_bgpi_increase_gb() {
     let passed = run_same_suite(
         common::rom_path("same-suite/ppu/blocking_bgpi_increase.gb"),
