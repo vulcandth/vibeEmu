@@ -708,7 +708,6 @@ fn timer__tima_reload_gb() {
 }
 
 #[test]
-#[ignore]
 fn timer__tima_write_reloading_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/timer/tima_write_reloading.gb"),
@@ -718,7 +717,6 @@ fn timer__tima_write_reloading_gb() {
 }
 
 #[test]
-#[ignore]
 fn timer__tma_write_reloading_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/timer/tma_write_reloading.gb"),

@@ -72,7 +72,12 @@ fn tima_increment_and_overflow() {
     assert_eq!(t.tima, 0);
     assert_eq!(if_reg, 0);
 
-    t.step(2, &mut if_reg);
+    // remain at zero until the delayed reload
+    t.step(3, &mut if_reg);
+    assert_eq!(t.tima, 0);
+    assert_eq!(if_reg, 0);
+
+    t.step(1, &mut if_reg);
     assert_eq!(t.tima, 0xAB);
     assert_eq!(if_reg & 0x04, 0x04);
 }
@@ -96,8 +101,12 @@ fn tma_write_same_cycle_overflow() {
     t.step(1, &mut if_reg);
     assert_eq!(t.tima, 0); // in overflow state
 
-    // Reload occurs two cycles later with old value
-    t.step(1, &mut if_reg);
+    // Reload occurs after the delayed window with the old value
+    for _ in 0..3 {
+        t.step(1, &mut if_reg);
+        assert_eq!(t.tima, 0);
+    }
+
     t.step(1, &mut if_reg);
 
     assert_eq!(t.tma, 0xBB);
@@ -152,10 +161,12 @@ fn tima_overflow_delay_and_reload() {
     assert_eq!(t.tima, 0);
     assert_eq!(if_reg, 0);
 
-    // one cycle after overflow TIMA still zero
-    t.step(1, &mut if_reg);
-    assert_eq!(t.tima, 0);
-    assert_eq!(if_reg, 0);
+    // stay at zero for the remaining delay cycles
+    for _ in 0..3 {
+        t.step(1, &mut if_reg);
+        assert_eq!(t.tima, 0);
+        assert_eq!(if_reg, 0);
+    }
 
     // then TMA is loaded and IF set
     t.step(1, &mut if_reg);
@@ -179,8 +190,8 @@ fn tima_write_during_overflow_cancels_reload() {
     // write during cycle A
     t.write(0xFF05, 0x55, &mut if_reg);
 
-    // next cycles should not reload or set IF
-    t.step(2, &mut if_reg);
+    // subsequent cycles should not reload or set IF
+    t.step(4, &mut if_reg);
     assert_eq!(t.tima, 0x55);
     assert_eq!(if_reg, 0);
 }
@@ -196,13 +207,15 @@ fn tima_write_during_reload_ignored() {
 
     // overflow
     t.step(1, &mut if_reg);
-    // advance to cycle B
-    t.step(1, &mut if_reg);
+    // advance to the final cycle before reload (reload_delay == 0)
+    for _ in 0..3 {
+        t.step(1, &mut if_reg);
+    }
 
-    // write TIMA during cycle B
+    // write TIMA during the reload window
     t.write(0xFF05, 0x55, &mut if_reg);
 
-    // reload should overwrite our write
+    // reload should overwrite our write on the next cycle
     t.step(1, &mut if_reg);
     assert_eq!(t.tima, 0xAA);
     assert_eq!(if_reg & 0x04, 0x04);

@@ -33,10 +33,10 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 114 | 71 | 0 | 0 | 185 | 61.6% |
+| ROM Test Suites | 116 | 69 | 0 | 0 | 185 | 62.7% |
 | Integration Tests | 156 | 18 | 0 | 0 | 174 | 89.7% |
 | Unit Tests | 5 | 0 | 0 | 0 | 5 | 100.0% |
-| **Overall** | 275 | 89 | 0 | 0 | 364 | 75.5% |
+| **Overall** | 277 | 87 | 0 | 0 | 364 | 76.1% |
 
 ## Failing Tests
 
@@ -84,8 +84,6 @@ Combined exit code: 101
 - `ppu__stat_lyc_onoff_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `ppu__vblank_stat_intr_GS_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `serial__boot_sclk_align_dmgABCmgb_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
-- `timer__tima_write_reloading_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
-- `timer__tma_write_reloading_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `same_suite__apu__channel_1__channel_1_extra_length_clocking_cgb0B_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__apu__channel_1__channel_1_freq_change_timing_cgb0BC_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__apu__channel_1__channel_1_freq_change_timing_cgbDE_gb` _(Category: ROM Test Suites; Module: same_suite)_
@@ -206,7 +204,7 @@ Combined exit code: 101
 | `mem_timing_read` | ✅ Pass |
 | `mem_timing_write` | ✅ Pass |
 
-#### mooneye_acceptance (56/75 passing, 74.7%)
+#### mooneye_acceptance (58/75 passing, 77.3%)
 
 | Test | Result |
 | --- | --- |
@@ -266,6 +264,8 @@ Combined exit code: 101
 | `timer__tim11_div_trigger_gb` | ✅ Pass |
 | `timer__tim11_gb` | ✅ Pass |
 | `timer__tima_reload_gb` | ✅ Pass |
+| `timer__tima_write_reloading_gb` | ✅ Pass |
+| `timer__tma_write_reloading_gb` | ✅ Pass |
 | `bits__unused_hwio_GS_gb` | ❌ Fail |
 | `boot_div2_S_gb` | ❌ Fail |
 | `boot_div_S_gb` | ❌ Fail |
@@ -283,8 +283,6 @@ Combined exit code: 101
 | `ppu__stat_lyc_onoff_gb` | ❌ Fail |
 | `ppu__vblank_stat_intr_GS_gb` | ❌ Fail |
 | `serial__boot_sclk_align_dmgABCmgb_gb` | ❌ Fail |
-| `timer__tima_write_reloading_gb` | ❌ Fail |
-| `timer__tma_write_reloading_gb` | ❌ Fail |
 
 #### same_suite (35/78 passing, 44.9%)
 

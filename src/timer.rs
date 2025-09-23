@@ -14,6 +14,8 @@ pub struct Timer {
     pending_reload: Option<u8>,
     /// Delay before the pending reload is applied
     reload_delay: u8,
+    /// Whether the reload is being applied this cycle
+    reloading: bool,
 }
 
 impl Timer {
@@ -27,6 +29,7 @@ impl Timer {
             tma_latch: None,
             pending_reload: None,
             reload_delay: 0,
+            reloading: false,
         }
     }
 
@@ -46,6 +49,9 @@ impl Timer {
                 self.reset_div(if_reg);
             }
             0xFF05 => {
+                if self.reloading || (self.pending_reload.is_some() && self.reload_delay == 0) {
+                    return;
+                }
                 self.tima = val;
                 if self.pending_reload.is_some() && self.reload_delay > 0 {
                     // writing during cycle A cancels the pending reload
@@ -59,9 +65,13 @@ impl Timer {
                 // cycle, the old value will be used.
                 self.tma_latch = Some(self.tma);
                 self.tma = val;
-                if self.pending_reload.is_some() && self.reload_delay == 0 {
-                    // update reload value when writing during cycle B
+                if self.pending_reload.is_some() {
+                    // update the pending reload regardless of timing so
+                    // mid-delay writes affect the current reload value
                     self.pending_reload = Some(val);
+                }
+                if self.reloading {
+                    self.tima = val;
                 }
             }
             0xFF07 => {
@@ -82,11 +92,13 @@ impl Timer {
     /// overflows.
     pub fn step(&mut self, cycles: u16, if_reg: &mut u8) {
         for _ in 0..cycles {
+            self.reloading = false;
             if let Some(val) = self.pending_reload {
                 if self.reload_delay == 0 {
                     self.tima = val;
                     *if_reg |= 0x04;
                     self.pending_reload = None;
+                    self.reloading = true;
                 } else {
                     self.reload_delay -= 1;
                 }
@@ -105,11 +117,13 @@ impl Timer {
 
     /// Reset the internal divider counter, applying TIMA edge logic.
     pub fn reset_div(&mut self, if_reg: &mut u8) {
+        self.reloading = false;
         if let Some(val) = self.pending_reload {
             if self.reload_delay == 0 {
                 self.tima = val;
                 *if_reg |= 0x04;
                 self.pending_reload = None;
+                self.reloading = true;
             } else {
                 self.reload_delay -= 1;
             }
@@ -128,7 +142,7 @@ impl Timer {
         if self.tima == 0xFF {
             self.tima = 0;
             self.pending_reload = Some(tma_old.unwrap_or(self.tma));
-            self.reload_delay = 1;
+            self.reload_delay = 3;
         } else {
             self.tima = self.tima.wrapping_add(1);
         }
