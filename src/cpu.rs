@@ -59,6 +59,8 @@ pub struct Cpu {
     pub double_speed: bool,
     halt_bug: bool,
     ime_delay: bool,
+    halt_pc: Option<u16>,
+    halt_pending: u8,
 }
 
 impl Cpu {
@@ -88,6 +90,8 @@ impl Cpu {
                 double_speed: false,
                 halt_bug: false,
                 ime_delay: false,
+                halt_pc: None,
+                halt_pending: 0,
             }
         } else {
             Self {
@@ -108,6 +112,8 @@ impl Cpu {
                 double_speed: false,
                 halt_bug: false,
                 ime_delay: false,
+                halt_pc: None,
+                halt_pending: 0,
             }
         }
     }
@@ -137,6 +143,32 @@ impl Cpu {
     fn set_hl(&mut self, val: u16) {
         self.h = (val >> 8) as u8;
         self.l = val as u8;
+    }
+
+    fn enter_halt(&mut self, next_pc: u16, buffered: u8) {
+        self.halted = true;
+        self.halt_pc = Some(next_pc);
+        self.halt_pending = buffered;
+    }
+
+    fn exit_halt(&mut self) {
+        self.halted = false;
+        self.halt_pc = None;
+        self.halt_pending = 0;
+    }
+
+    fn next_interrupt(pending: u8) -> (u8, u16) {
+        if pending & 0x01 != 0 {
+            (0x01, INTERRUPT_VBLANK)
+        } else if pending & 0x02 != 0 {
+            (0x02, INTERRUPT_STAT)
+        } else if pending & 0x04 != 0 {
+            (0x04, INTERRUPT_TIMER)
+        } else if pending & 0x08 != 0 {
+            (0x08, INTERRUPT_SERIAL)
+        } else {
+            (0x10, INTERRUPT_JOYPAD)
+        }
     }
 
     #[inline]
@@ -366,32 +398,32 @@ impl Cpu {
         }
 
         if self.ime {
-            self.halted = false;
+            let (bit, vector) = Self::next_interrupt(pending);
+            mmu.if_reg &= !bit;
 
-            let vector = if pending & 0x01 != 0 {
-                mmu.if_reg &= !0x01;
-                INTERRUPT_VBLANK
-            } else if pending & 0x02 != 0 {
-                mmu.if_reg &= !0x02;
-                INTERRUPT_STAT
-            } else if pending & 0x04 != 0 {
-                mmu.if_reg &= !0x04;
-                INTERRUPT_TIMER
-            } else if pending & 0x08 != 0 {
-                mmu.if_reg &= !0x08;
-                INTERRUPT_SERIAL
+            let was_buffered = (self.halt_pending & bit) != 0;
+            let mut return_pc = self.pc;
+
+            if let Some(halt_pc) = self.halt_pc {
+                if was_buffered {
+                    return_pc = halt_pc.wrapping_sub(1);
+                } else if self.halted {
+                    return_pc = halt_pc;
+                }
+            }
+
+            if was_buffered {
+                self.halt_pending &= !bit;
             } else {
-                mmu.if_reg &= !0x10;
-                INTERRUPT_JOYPAD
-            };
+                self.exit_halt();
+            }
 
-            let pc = self.pc;
-            self.push_stack(mmu, pc);
+            self.push_stack(mmu, return_pc);
             self.pc = vector;
             self.ime = false;
             self.tick(mmu, 3);
         } else if self.halted {
-            self.halted = false;
+            self.exit_halt();
         }
     }
 
@@ -893,9 +925,12 @@ impl Cpu {
             0x76 => {
                 let pending = mmu.if_reg & mmu.ie_reg;
                 if self.ime || pending == 0 {
-                    self.halted = true;
+                    self.enter_halt(self.pc, 0);
+                } else if self.ime_delay {
+                    self.enter_halt(self.pc, pending);
                 } else {
                     self.halt_bug = true;
+                    self.exit_halt();
                 }
             }
             0x77 => {

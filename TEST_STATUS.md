@@ -33,10 +33,10 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 107 | 78 | 0 | 0 | 185 | 57.8% |
+| ROM Test Suites | 108 | 77 | 0 | 0 | 185 | 58.4% |
 | Integration Tests | 156 | 18 | 0 | 0 | 174 | 89.7% |
 | Unit Tests | 5 | 0 | 0 | 0 | 5 | 100.0% |
-| **Overall** | 268 | 96 | 0 | 0 | 364 | 73.6% |
+| **Overall** | 269 | 95 | 0 | 0 | 364 | 73.9% |
 
 ## Failing Tests
 
@@ -133,7 +133,6 @@ Combined exit code: 101
 - `same_suite__apu__div_write_trigger_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__apu__div_write_trigger_volume_10_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__apu__div_write_trigger_volume_gb` _(Category: ROM Test Suites; Module: same_suite)_
-- `same_suite__interrupt__ei_delay_halt_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__sgb__command_mlt_req_1_incrementing_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__sgb__command_mlt_req_gb` _(Category: ROM Test Suites; Module: same_suite)_
 
@@ -293,7 +292,7 @@ Combined exit code: 101
 | `timer__tima_write_reloading_gb` | ❌ Fail |
 | `timer__tma_write_reloading_gb` | ❌ Fail |
 
-#### same_suite (34/78 passing, 43.6%)
+#### same_suite (35/78 passing, 44.9%)
 
 | Test | Result |
 | --- | --- |
@@ -330,6 +329,7 @@ Combined exit code: 101
 | `same_suite__dma__gdma_addr_mask_gb` | ✅ Pass |
 | `same_suite__dma__hdma_lcd_off_gb` | ✅ Pass |
 | `same_suite__dma__hdma_mode0_gb` | ✅ Pass |
+| `same_suite__interrupt__ei_delay_halt_gb` | ✅ Pass |
 | `same_suite__ppu__blocking_bgpi_increase_gb` | ✅ Pass |
 | `same_suite__apu__channel_1__channel_1_extra_length_clocking_cgb0B_gb` | ❌ Fail |
 | `same_suite__apu__channel_1__channel_1_freq_change_timing_cgb0BC_gb` | ❌ Fail |
@@ -372,7 +372,6 @@ Combined exit code: 101
 | `same_suite__apu__div_write_trigger_gb` | ❌ Fail |
 | `same_suite__apu__div_write_trigger_volume_10_gb` | ❌ Fail |
 | `same_suite__apu__div_write_trigger_volume_gb` | ❌ Fail |
-| `same_suite__interrupt__ei_delay_halt_gb` | ❌ Fail |
 | `same_suite__sgb__command_mlt_req_1_incrementing_gb` | ❌ Fail |
 | `same_suite__sgb__command_mlt_req_gb` | ❌ Fail |
 

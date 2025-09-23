@@ -837,7 +837,6 @@ fn same_suite__dma__hdma_mode0_gb() {
 }
 
 #[test]
-#[ignore]
 fn same_suite__interrupt__ei_delay_halt_gb() {
     let passed = run_same_suite(
         common::rom_path("same-suite/interrupt/ei_delay_halt.gb"),
