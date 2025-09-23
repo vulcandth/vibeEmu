@@ -33,10 +33,10 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 116 | 69 | 0 | 0 | 185 | 62.7% |
+| ROM Test Suites | 117 | 68 | 0 | 0 | 185 | 63.2% |
 | Integration Tests | 156 | 18 | 0 | 0 | 174 | 89.7% |
 | Unit Tests | 5 | 0 | 0 | 0 | 5 | 100.0% |
-| **Overall** | 277 | 87 | 0 | 0 | 364 | 76.1% |
+| **Overall** | 278 | 86 | 0 | 0 | 364 | 76.4% |
 
 ## Failing Tests
 
@@ -83,7 +83,6 @@ Combined exit code: 101
 - `ppu__stat_irq_blocking_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `ppu__stat_lyc_onoff_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `ppu__vblank_stat_intr_GS_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
-- `serial__boot_sclk_align_dmgABCmgb_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `same_suite__apu__channel_1__channel_1_extra_length_clocking_cgb0B_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__apu__channel_1__channel_1_freq_change_timing_cgb0BC_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__apu__channel_1__channel_1_freq_change_timing_cgbDE_gb` _(Category: ROM Test Suites; Module: same_suite)_
@@ -204,7 +203,7 @@ Combined exit code: 101
 | `mem_timing_read` | ✅ Pass |
 | `mem_timing_write` | ✅ Pass |
 
-#### mooneye_acceptance (58/75 passing, 77.3%)
+#### mooneye_acceptance (59/75 passing, 78.7%)
 
 | Test | Result |
 | --- | --- |
@@ -253,6 +252,7 @@ Combined exit code: 101
 | `reti_intr_timing_gb` | ✅ Pass |
 | `reti_timing_gb` | ✅ Pass |
 | `rst_timing_gb` | ✅ Pass |
+| `serial__boot_sclk_align_dmgABCmgb_gb` | ✅ Pass |
 | `timer__div_write_gb` | ✅ Pass |
 | `timer__rapid_toggle_gb` | ✅ Pass |
 | `timer__tim00_div_trigger_gb` | ✅ Pass |
@@ -282,7 +282,6 @@ Combined exit code: 101
 | `ppu__stat_irq_blocking_gb` | ❌ Fail |
 | `ppu__stat_lyc_onoff_gb` | ❌ Fail |
 | `ppu__vblank_stat_intr_GS_gb` | ❌ Fail |
-| `serial__boot_sclk_align_dmgABCmgb_gb` | ❌ Fail |
 
 #### same_suite (35/78 passing, 44.9%)
 

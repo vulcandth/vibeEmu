@@ -94,7 +94,7 @@ impl Mmu {
             boot_mapped: false,
             if_reg: 0xE1,
             ie_reg: 0,
-            serial: Serial::new(cgb),
+            serial: Serial::new(cgb, dmg_revision),
             ppu,
             apu: Arc::new(Mutex::new(Apu::new_with_config(cgb, cgb_revision))),
             timer,
@@ -320,7 +320,7 @@ impl Mmu {
             }
             0xFEA0..=0xFEFF => {}
             0xFF00 => self.input.write(val),
-            0xFF01 | 0xFF02 => self.serial.write(addr, val, &mut self.if_reg),
+            0xFF01 | 0xFF02 => self.serial.write(addr, val),
             0xFF04..=0xFF07 => self.timer.write(addr, val, &mut self.if_reg),
             0xFF0F => self.if_reg = (val & 0x1F) | (self.if_reg & 0xE0),
             0xFF10..=0xFF3F => self.apu.lock().unwrap().write_reg(addr, val),

@@ -21,12 +21,17 @@ fn run_mooneye_acceptance_with_dmg_revision<P: AsRef<std::path::Path>>(
     gb.mmu.load_cart(cart);
     while gb.cpu.cycles < max_cycles {
         gb.cpu.step(&mut gb.mmu);
-        if gb.mmu.serial.peek_output().len() >= 6 {
+        if gb.mmu.serial.peek_output().ends_with(&FIB_SEQ) {
             break;
         }
     }
     let out = gb.mmu.serial.take_output();
-    out.len() >= 6 && out[0..6] == FIB_SEQ
+    let success = out.windows(FIB_SEQ.len()).any(|window| window == FIB_SEQ);
+    if !success {
+        println!("serial output: {:?}", out);
+        println!("hram: {:?}", &gb.mmu.hram[..16]);
+    }
+    success
 }
 
 #[test]
@@ -599,7 +604,6 @@ fn rst_timing_gb() {
 }
 
 #[test]
-#[ignore]
 fn serial__boot_sclk_align_dmgABCmgb_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/serial/boot_sclk_align-dmgABCmgb.gb"),

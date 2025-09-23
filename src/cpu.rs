@@ -229,6 +229,8 @@ impl Cpu {
             apu.step(hw_cycles);
             apu.tick(prev_div, curr_div, self.double_speed);
         }
+        mmu.serial
+            .step(prev_div, curr_div, self.double_speed, &mut mmu.if_reg);
         if mmu.ppu.step(hw_cycles, &mut mmu.if_reg) {
             mmu.hdma_hblank_transfer();
         }
