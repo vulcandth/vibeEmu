@@ -1,11 +1,23 @@
 #![allow(non_snake_case)]
 mod common;
-use vibeEmu::{cartridge::Cartridge, gameboy::GameBoy};
+use vibeEmu::{
+    cartridge::Cartridge,
+    gameboy::GameBoy,
+    hardware::{CgbRevision, DmgRevision},
+};
 const FIB_SEQ: [u8; 6] = [3, 5, 8, 13, 21, 34];
 fn run_mooneye_acceptance<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> bool {
+    run_mooneye_acceptance_with_dmg_revision(rom_path, max_cycles, DmgRevision::default())
+}
+
+fn run_mooneye_acceptance_with_dmg_revision<P: AsRef<std::path::Path>>(
+    rom_path: P,
+    max_cycles: u64,
+    dmg_revision: DmgRevision,
+) -> bool {
     let rom = std::fs::read(&rom_path).expect("rom not found");
     let cart = Cartridge::load(rom);
-    let mut gb = GameBoy::new_with_mode(cart.cgb);
+    let mut gb = GameBoy::new_with_revisions(cart.cgb, dmg_revision, CgbRevision::default());
     gb.mmu.load_cart(cart);
     while gb.cpu.cycles < max_cycles {
         gb.cpu.step(&mut gb.mmu);
@@ -127,9 +139,10 @@ fn boot_hwio_dmgABCmgb_gb() {
 #[test]
 #[ignore]
 fn boot_regs_dmg0_gb() {
-    let passed = run_mooneye_acceptance(
+    let passed = run_mooneye_acceptance_with_dmg_revision(
         common::rom_path("mooneye-test-suite/acceptance/boot_regs-dmg0.gb"),
         20_000_000,
+        DmgRevision::Rev0,
     );
     assert!(passed, "test failed");
 }

@@ -1,4 +1,13 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum DmgRevision {
+    Rev0,
+    RevA,
+    RevB,
+    #[default]
+    RevC,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CgbRevision {
     Rev0,
     RevA,

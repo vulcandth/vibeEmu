@@ -1,3 +1,5 @@
+use crate::hardware::DmgRevision;
+
 // CPU flag bits as documented in gbdev.io/pandocs/The_CPU_Flags.html
 const FLAG_Z: u8 = 0x80; // Zero
 const FLAG_N: u8 = 0x40; // Subtract
@@ -15,14 +17,23 @@ const INTERRUPT_JOYPAD: u16 = 0x60;
 const BOOT_PC: u16 = 0x0100;
 const BOOT_SP: u16 = 0xFFFE;
 
-const DMG_BOOT_A: u8 = 0x01;
-const DMG_BOOT_F: u8 = 0xB0;
-const DMG_BOOT_B: u8 = 0x00;
-const DMG_BOOT_C: u8 = 0x13;
-const DMG_BOOT_D: u8 = 0x00;
-const DMG_BOOT_E: u8 = 0xD8;
-const DMG_BOOT_H: u8 = 0x01;
-const DMG_BOOT_L: u8 = 0x4D;
+const DMG0_BOOT_A: u8 = 0x01;
+const DMG0_BOOT_F: u8 = 0x00;
+const DMG0_BOOT_B: u8 = 0xFF;
+const DMG0_BOOT_C: u8 = 0x13;
+const DMG0_BOOT_D: u8 = 0x00;
+const DMG0_BOOT_E: u8 = 0xC1;
+const DMG0_BOOT_H: u8 = 0x84;
+const DMG0_BOOT_L: u8 = 0x03;
+
+const DMG_ABC_BOOT_A: u8 = 0x01;
+const DMG_ABC_BOOT_F: u8 = 0xB0;
+const DMG_ABC_BOOT_B: u8 = 0x00;
+const DMG_ABC_BOOT_C: u8 = 0x13;
+const DMG_ABC_BOOT_D: u8 = 0x00;
+const DMG_ABC_BOOT_E: u8 = 0xD8;
+const DMG_ABC_BOOT_H: u8 = 0x01;
+const DMG_ABC_BOOT_L: u8 = 0x4D;
 
 const CGB_BOOT_A: u8 = 0x11;
 const CGB_BOOT_F: u8 = 0x80;
@@ -65,12 +76,18 @@ pub struct Cpu {
 
 impl Cpu {
     pub fn new() -> Self {
-        Self::new_with_mode(false)
+        Self::new_with_mode_and_revision(false, DmgRevision::default())
     }
 
     /// Create a CPU initialized to the post-boot register state for the
     /// selected hardware mode.
     pub fn new_with_mode(cgb: bool) -> Self {
+        Self::new_with_mode_and_revision(cgb, DmgRevision::default())
+    }
+
+    /// Create a CPU initialized to the post-boot register state for the
+    /// selected hardware mode and DMG hardware revision.
+    pub fn new_with_mode_and_revision(cgb: bool, dmg_revision: DmgRevision) -> Self {
         if cgb {
             Self {
                 a: CGB_BOOT_A,
@@ -94,15 +111,37 @@ impl Cpu {
                 halt_pending: 0,
             }
         } else {
+            let (a, f, b, c, d, e, h, l) = match dmg_revision {
+                DmgRevision::Rev0 => (
+                    DMG0_BOOT_A,
+                    DMG0_BOOT_F,
+                    DMG0_BOOT_B,
+                    DMG0_BOOT_C,
+                    DMG0_BOOT_D,
+                    DMG0_BOOT_E,
+                    DMG0_BOOT_H,
+                    DMG0_BOOT_L,
+                ),
+                DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => (
+                    DMG_ABC_BOOT_A,
+                    DMG_ABC_BOOT_F,
+                    DMG_ABC_BOOT_B,
+                    DMG_ABC_BOOT_C,
+                    DMG_ABC_BOOT_D,
+                    DMG_ABC_BOOT_E,
+                    DMG_ABC_BOOT_H,
+                    DMG_ABC_BOOT_L,
+                ),
+            };
             Self {
-                a: DMG_BOOT_A,
-                f: DMG_BOOT_F,
-                b: DMG_BOOT_B,
-                c: DMG_BOOT_C,
-                d: DMG_BOOT_D,
-                e: DMG_BOOT_E,
-                h: DMG_BOOT_H,
-                l: DMG_BOOT_L,
+                a,
+                f,
+                b,
+                c,
+                d,
+                e,
+                h,
+                l,
                 pc: BOOT_PC,
                 sp: BOOT_SP,
                 cycles: 0,
