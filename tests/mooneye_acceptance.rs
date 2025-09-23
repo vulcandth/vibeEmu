@@ -81,21 +81,21 @@ fn boot_div_S_gb() {
 }
 
 #[test]
-#[ignore]
 fn boot_div_dmg0_gb() {
-    let passed = run_mooneye_acceptance(
+    let passed = run_mooneye_acceptance_with_dmg_revision(
         common::rom_path("mooneye-test-suite/acceptance/boot_div-dmg0.gb"),
         20_000_000,
+        DmgRevision::Rev0,
     );
     assert!(passed, "test failed");
 }
 
 #[test]
-#[ignore]
 fn boot_div_dmgABCmgb_gb() {
-    let passed = run_mooneye_acceptance(
+    let passed = run_mooneye_acceptance_with_dmg_revision(
         common::rom_path("mooneye-test-suite/acceptance/boot_div-dmgABCmgb.gb"),
         20_000_000,
+        DmgRevision::RevC,
     );
     assert!(passed, "test failed");
 }

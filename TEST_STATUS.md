@@ -33,10 +33,10 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 118 | 67 | 0 | 0 | 185 | 63.8% |
+| ROM Test Suites | 120 | 65 | 0 | 0 | 185 | 64.9% |
 | Integration Tests | 156 | 18 | 0 | 0 | 174 | 89.7% |
 | Unit Tests | 5 | 0 | 0 | 0 | 5 | 100.0% |
-| **Overall** | 279 | 85 | 0 | 0 | 364 | 76.6% |
+| **Overall** | 281 | 83 | 0 | 0 | 364 | 77.2% |
 
 ## Failing Tests
 
@@ -69,8 +69,6 @@ Combined exit code: 101
 - `dmg_sound_12_wave_write_while_on` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
 - `boot_div2_S_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `boot_div_S_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
-- `boot_div_dmg0_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
-- `boot_div_dmgABCmgb_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `boot_hwio_S_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `boot_regs_mgb_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `boot_regs_sgb2_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
@@ -202,7 +200,7 @@ Combined exit code: 101
 | `mem_timing_read` | ✅ Pass |
 | `mem_timing_write` | ✅ Pass |
 
-#### mooneye_acceptance (60/75 passing, 80.0%)
+#### mooneye_acceptance (62/75 passing, 82.7%)
 
 | Test | Result |
 | --- | --- |
@@ -210,6 +208,8 @@ Combined exit code: 101
 | `bits__mem_oam_gb` | ✅ Pass |
 | `bits__reg_f_gb` | ✅ Pass |
 | `bits__unused_hwio_GS_gb` | ✅ Pass |
+| `boot_div_dmg0_gb` | ✅ Pass |
+| `boot_div_dmgABCmgb_gb` | ✅ Pass |
 | `boot_hwio_dmg0_gb` | ✅ Pass |
 | `boot_hwio_dmgABCmgb_gb` | ✅ Pass |
 | `boot_regs_dmg0_gb` | ✅ Pass |
@@ -268,8 +268,6 @@ Combined exit code: 101
 | `timer__tma_write_reloading_gb` | ✅ Pass |
 | `boot_div2_S_gb` | ❌ Fail |
 | `boot_div_S_gb` | ❌ Fail |
-| `boot_div_dmg0_gb` | ❌ Fail |
-| `boot_div_dmgABCmgb_gb` | ❌ Fail |
 | `boot_hwio_S_gb` | ❌ Fail |
 | `boot_regs_mgb_gb` | ❌ Fail |
 | `boot_regs_sgb2_gb` | ❌ Fail |

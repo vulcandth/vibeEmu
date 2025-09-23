@@ -77,9 +77,12 @@ impl Mmu {
         cgb_revision: CgbRevision,
     ) -> Self {
         let mut timer = Timer::new();
+        // Power-on DIV phase differs between DMG revisions. These values match
+        // the phases measured by mooneye's boot_div acceptance tests so the
+        // first post-boot instruction sequence observes the expected timing.
         timer.div = match dmg_revision {
-            DmgRevision::Rev0 => 0x1800,
-            DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => 0xAC00,
+            DmgRevision::Rev0 => 0x1830,
+            DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => 0xABCC,
         };
 
         let mut ppu = Ppu::new_with_mode(cgb);

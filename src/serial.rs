@@ -192,7 +192,7 @@ impl Serial {
         }
 
         match self.dmg_revision {
-            DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => 0x34,
+            DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => 0,
             DmgRevision::Rev0 => 0,
         }
     }
