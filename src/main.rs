@@ -639,7 +639,7 @@ fn main() {
                         win.win.request_redraw();
                     }
 
-                    if args.debug && frame_count % 60 == 0 {
+                    if args.debug && frame_count.is_multiple_of(60) {
                         let serial = gb.mmu.take_serial();
                         if !serial.is_empty() {
                             print!("[SERIAL] ");
@@ -689,7 +689,7 @@ fn main() {
             frame.copy_from_slice(gb.mmu.ppu.framebuffer());
             gb.mmu.ppu.clear_frame_flag();
 
-            if args.debug && frame_count % 60 == 0 {
+            if args.debug && frame_count.is_multiple_of(60) {
                 let serial = gb.mmu.take_serial();
                 if !serial.is_empty() {
                     print!("[SERIAL] ");

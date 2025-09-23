@@ -353,10 +353,12 @@ impl Mmu {
             }
 
             let elapsed = 640 - self.dma_cycles;
-            if elapsed % 4 == 0 && elapsed / 4 < 0xA0 {
+            if elapsed.is_multiple_of(4) {
                 let idx: u16 = elapsed / 4;
-                let byte = self.dma_read_byte(self.dma_source.wrapping_add(idx));
-                self.ppu.oam[idx as usize] = byte;
+                if idx < 0xA0 {
+                    let byte = self.dma_read_byte(self.dma_source.wrapping_add(idx));
+                    self.ppu.oam[idx as usize] = byte;
+                }
             }
 
             self.dma_cycles -= 1;
