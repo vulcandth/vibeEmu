@@ -1,3 +1,5 @@
+use crate::hardware::DmgRevision;
+
 // Screen resolution used by the Game Boy PPU
 const SCREEN_WIDTH: usize = 160;
 const SCREEN_HEIGHT: usize = 144;
@@ -38,6 +40,9 @@ const MODE_VBLANK: u8 = 1;
 const MODE_OAM: u8 = 2;
 const MODE_TRANSFER: u8 = 3;
 
+const BOOT_HOLD_CYCLES_DMG0: u16 = 8192;
+const BOOT_HOLD_CYCLES_DMGA: u16 = 8192;
+
 pub struct Ppu {
     pub vram: [[u8; VRAM_BANK_SIZE]; 2],
     pub vram_bank: usize,
@@ -70,6 +75,7 @@ pub struct Ppu {
 
     mode_clock: u16,
     pub mode: u8,
+    boot_hold_cycles: u16,
 
     pub framebuffer: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
     line_priority: [bool; SCREEN_WIDTH],
@@ -122,6 +128,7 @@ impl Ppu {
             opri: 0,
             mode_clock: 0,
             mode: MODE_OAM,
+            boot_hold_cycles: 0,
             framebuffer: [0; SCREEN_WIDTH * SCREEN_HEIGHT],
             line_priority: [false; SCREEN_WIDTH],
             line_color_zero: [false; SCREEN_WIDTH],
@@ -181,13 +188,32 @@ impl Ppu {
 
     /// Initialize registers to the state expected after the boot ROM
     /// has finished executing.
-    pub fn apply_boot_state(&mut self) {
+    pub fn apply_boot_state(&mut self, dmg_revision: Option<DmgRevision>) {
         self.lcdc = 0x91;
-        self.stat = 0x85;
         self.dma = 0xFF;
         self.bgp = 0xFC;
-        self.mode = MODE_VBLANK;
         self.win_line_counter = 0;
+
+        if self.cgb {
+            self.stat = 0x85;
+            self.mode = MODE_VBLANK;
+            self.ly = 0;
+            self.boot_hold_cycles = 0;
+        } else {
+            self.stat = 0x00;
+            match dmg_revision.unwrap_or_default() {
+                DmgRevision::Rev0 => {
+                    self.mode = MODE_TRANSFER;
+                    self.ly = 0x01;
+                    self.boot_hold_cycles = BOOT_HOLD_CYCLES_DMG0;
+                }
+                DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => {
+                    self.mode = MODE_HBLANK;
+                    self.ly = 0x0A;
+                    self.boot_hold_cycles = BOOT_HOLD_CYCLES_DMGA;
+                }
+            }
+        }
     }
 
     /// Load the default CGB palettes used when running a DMG cartridge in
@@ -290,7 +316,10 @@ impl Ppu {
         match addr {
             0xFF40 => self.lcdc,
             0xFF41 => {
-                (self.stat & 0x78) | (self.mode & 0x03) | if self.ly == self.lyc { 0x04 } else { 0 }
+                (self.stat & 0x78)
+                    | 0x80
+                    | (self.mode & 0x03)
+                    | if self.ly == self.lyc { 0x04 } else { 0 }
             }
             0xFF42 => self.scy,
             0xFF43 => self.scx,
@@ -302,19 +331,45 @@ impl Ppu {
             0xFF49 => self.obp1,
             0xFF4A => self.wy,
             0xFF4B => self.wx,
-            0xFF68 => self.bgpi,
+            0xFF68 => {
+                if self.cgb {
+                    self.bgpi
+                } else {
+                    0xFF
+                }
+            }
             0xFF69 => {
-                let val = self.bgpd[Self::palette_ram_index(self.bgpi)];
-                Self::step_palette_index(&mut self.bgpi);
-                val
+                if self.cgb {
+                    let val = self.bgpd[Self::palette_ram_index(self.bgpi)];
+                    Self::step_palette_index(&mut self.bgpi);
+                    val
+                } else {
+                    0xFF
+                }
             }
-            0xFF6A => self.obpi,
+            0xFF6A => {
+                if self.cgb {
+                    self.obpi
+                } else {
+                    0xFF
+                }
+            }
             0xFF6B => {
-                let val = self.obpd[Self::palette_ram_index(self.obpi)];
-                Self::step_palette_index(&mut self.obpi);
-                val
+                if self.cgb {
+                    let val = self.obpd[Self::palette_ram_index(self.obpi)];
+                    Self::step_palette_index(&mut self.obpi);
+                    val
+                } else {
+                    0xFF
+                }
             }
-            0xFF6C => self.opri | 0xFE,
+            0xFF6C => {
+                if self.cgb {
+                    self.opri | 0xFE
+                } else {
+                    0xFF
+                }
+            }
             _ => 0xFF,
         }
     }
@@ -333,19 +388,35 @@ impl Ppu {
             0xFF49 => self.obp1 = val,
             0xFF4A => self.wy = val,
             0xFF4B => self.wx = val,
-            0xFF68 => self.bgpi = Self::sanitize_palette_index(val),
+            0xFF68 => {
+                if self.cgb {
+                    self.bgpi = Self::sanitize_palette_index(val);
+                }
+            }
             0xFF69 => {
-                let idx = Self::palette_ram_index(self.bgpi);
-                self.bgpd[idx] = val;
-                Self::step_palette_index(&mut self.bgpi);
+                if self.cgb {
+                    let idx = Self::palette_ram_index(self.bgpi);
+                    self.bgpd[idx] = val;
+                    Self::step_palette_index(&mut self.bgpi);
+                }
             }
-            0xFF6A => self.obpi = Self::sanitize_palette_index(val),
+            0xFF6A => {
+                if self.cgb {
+                    self.obpi = Self::sanitize_palette_index(val);
+                }
+            }
             0xFF6B => {
-                let idx = Self::palette_ram_index(self.obpi);
-                self.obpd[idx] = val;
-                Self::step_palette_index(&mut self.obpi);
+                if self.cgb {
+                    let idx = Self::palette_ram_index(self.obpi);
+                    self.obpd[idx] = val;
+                    Self::step_palette_index(&mut self.obpi);
+                }
             }
-            0xFF6C => self.opri = val & 0x01,
+            0xFF6C => {
+                if self.cgb {
+                    self.opri = val & 0x01;
+                }
+            }
             _ => {}
         }
     }
@@ -582,6 +653,14 @@ impl Ppu {
 
     pub fn step(&mut self, cycles: u16, if_reg: &mut u8) -> bool {
         let mut remaining = cycles;
+        if self.boot_hold_cycles > 0 {
+            let consume = remaining.min(self.boot_hold_cycles);
+            self.boot_hold_cycles -= consume;
+            remaining -= consume;
+            if remaining == 0 {
+                return false;
+            }
+        }
         let mut hblank_triggered = false;
         while remaining > 0 {
             let increment = remaining.min(4);

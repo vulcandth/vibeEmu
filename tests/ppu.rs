@@ -2,7 +2,7 @@ use vibeEmu::ppu::Ppu;
 
 #[test]
 fn register_access() {
-    let mut ppu = Ppu::new();
+    let mut ppu = Ppu::new_with_mode(true);
     ppu.write_reg(0xFF40, 0x91);
     ppu.write_reg(0xFF47, 0xFC);
     ppu.write_reg(0xFF4A, 0x01);

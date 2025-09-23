@@ -117,21 +117,21 @@ fn boot_hwio_S_gb() {
 }
 
 #[test]
-#[ignore]
 fn boot_hwio_dmg0_gb() {
-    let passed = run_mooneye_acceptance(
+    let passed = run_mooneye_acceptance_with_dmg_revision(
         common::rom_path("mooneye-test-suite/acceptance/boot_hwio-dmg0.gb"),
         20_000_000,
+        DmgRevision::Rev0,
     );
     assert!(passed, "test failed");
 }
 
 #[test]
-#[ignore]
 fn boot_hwio_dmgABCmgb_gb() {
-    let passed = run_mooneye_acceptance(
+    let passed = run_mooneye_acceptance_with_dmg_revision(
         common::rom_path("mooneye-test-suite/acceptance/boot_hwio-dmgABCmgb.gb"),
         20_000_000,
+        DmgRevision::RevC,
     );
     assert!(passed, "test failed");
 }

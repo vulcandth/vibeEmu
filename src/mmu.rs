@@ -1,5 +1,10 @@
 use crate::{
-    apu::Apu, cartridge::Cartridge, hardware::CgbRevision, input::Input, ppu::Ppu, serial::Serial,
+    apu::Apu,
+    cartridge::Cartridge,
+    hardware::{CgbRevision, DmgRevision},
+    input::Input,
+    ppu::Ppu,
+    serial::Serial,
     timer::Timer,
 };
 use std::sync::{Arc, Mutex};
@@ -54,19 +59,31 @@ pub struct Mmu {
     gdma_cycles: u32,
     cgb_mode: bool,
     cgb_revision: CgbRevision,
+    dmg_revision: DmgRevision,
 }
 
 impl Mmu {
     pub fn new_with_mode(cgb: bool) -> Self {
-        Self::new_with_config(cgb, CgbRevision::default())
+        Self::new_with_revisions(cgb, DmgRevision::default(), CgbRevision::default())
     }
 
     pub fn new_with_config(cgb: bool, revision: CgbRevision) -> Self {
+        Self::new_with_revisions(cgb, DmgRevision::default(), revision)
+    }
+
+    pub fn new_with_revisions(
+        cgb: bool,
+        dmg_revision: DmgRevision,
+        cgb_revision: CgbRevision,
+    ) -> Self {
         let mut timer = Timer::new();
-        timer.div = 0xAB00;
+        timer.div = match dmg_revision {
+            DmgRevision::Rev0 => 0x1800,
+            DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => 0xAC00,
+        };
 
         let mut ppu = Ppu::new_with_mode(cgb);
-        ppu.apply_boot_state();
+        ppu.apply_boot_state(if cgb { None } else { Some(dmg_revision) });
 
         Self {
             wram: [[0; WRAM_BANK_SIZE]; 8],
@@ -79,7 +96,7 @@ impl Mmu {
             ie_reg: 0,
             serial: Serial::new(cgb),
             ppu,
-            apu: Arc::new(Mutex::new(Apu::new_with_config(cgb, revision))),
+            apu: Arc::new(Mutex::new(Apu::new_with_config(cgb, cgb_revision))),
             timer,
             input: Input::new(),
             hdma: HdmaState {
@@ -97,7 +114,8 @@ impl Mmu {
             pending_delay: 0,
             gdma_cycles: 0,
             cgb_mode: cgb,
-            cgb_revision: revision,
+            cgb_revision,
+            dmg_revision,
         }
     }
 
@@ -171,18 +189,46 @@ impl Mmu {
             0xFF10..=0xFF3F => self.apu.lock().unwrap().read_reg(addr),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.read_reg(addr),
             0xFF46 => self.ppu.dma,
-            0xFF51 => (self.hdma.src >> 8) as u8,
-            0xFF52 => (self.hdma.src & 0x00F0) as u8,
-            0xFF53 => ((self.hdma.dst & 0x1F00) >> 8) as u8,
-            0xFF54 => (self.hdma.dst & 0x00F0) as u8,
-            0xFF55 => {
-                let remaining = self.hdma.blocks.saturating_sub(1) & 0x7F;
-                if self.hdma.active {
-                    remaining
-                } else if self.hdma.mode == DmaMode::Hdma {
-                    remaining | 0x80
+            0xFF51 => {
+                if self.cgb_mode {
+                    (self.hdma.src >> 8) as u8
                 } else {
                     0xFF
+                }
+            }
+            0xFF52 => {
+                if self.cgb_mode {
+                    (self.hdma.src & 0x00F0) as u8
+                } else {
+                    0xFF
+                }
+            }
+            0xFF53 => {
+                if self.cgb_mode {
+                    ((self.hdma.dst & 0x1F00) >> 8) as u8
+                } else {
+                    0xFF
+                }
+            }
+            0xFF54 => {
+                if self.cgb_mode {
+                    (self.hdma.dst & 0x00F0) as u8
+                } else {
+                    0xFF
+                }
+            }
+            0xFF55 => {
+                if !self.cgb_mode {
+                    0xFF
+                } else {
+                    let remaining = self.hdma.blocks.saturating_sub(1) & 0x7F;
+                    if self.hdma.active {
+                        remaining
+                    } else if self.hdma.mode == DmaMode::Hdma {
+                        remaining | 0x80
+                    } else {
+                        0xFF
+                    }
                 }
             }
             0xFF4D => {
@@ -199,8 +245,20 @@ impl Mmu {
                     0xFF
                 }
             }
-            0xFF4F => self.ppu.vram_bank as u8,
-            0xFF70 => self.wram_bank as u8,
+            0xFF4F => {
+                if self.cgb_mode {
+                    self.ppu.vram_bank as u8
+                } else {
+                    0xFF
+                }
+            }
+            0xFF70 => {
+                if self.cgb_mode {
+                    self.wram_bank as u8
+                } else {
+                    0xFF
+                }
+            }
             0xFF76 | 0xFF77 => {
                 if self.cgb_mode {
                     self.apu.lock().unwrap().read_pcm(addr)
@@ -262,23 +320,23 @@ impl Mmu {
             0xFF10..=0xFF3F => self.apu.lock().unwrap().write_reg(addr, val),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
             0xFF51 => {
-                if !self.hdma.active {
+                if self.cgb_mode && !self.hdma.active {
                     self.hdma.src = (val as u16) << 8 | (self.hdma.src & 0x00FF);
                 }
             }
             0xFF52 => {
-                if !self.hdma.active {
+                if self.cgb_mode && !self.hdma.active {
                     self.hdma.src = (self.hdma.src & 0xFF00) | (val & 0xF0) as u16;
                 }
             }
             0xFF53 => {
-                if !self.hdma.active {
+                if self.cgb_mode && !self.hdma.active {
                     let vram_hi = (val & 0x1F) as u16;
                     self.hdma.dst = 0x8000 | (vram_hi << 8) | (self.hdma.dst & 0x00FF);
                 }
             }
             0xFF54 => {
-                if !self.hdma.active {
+                if self.cgb_mode && !self.hdma.active {
                     self.hdma.dst = (self.hdma.dst & 0xFF00) | (val & 0xF0) as u16;
                 }
             }
@@ -312,7 +370,11 @@ impl Mmu {
                     self.rp = val & 0xC1;
                 }
             }
-            0xFF4F => self.ppu.vram_bank = (val & 0x01) as usize,
+            0xFF4F => {
+                if self.cgb_mode {
+                    self.ppu.vram_bank = (val & 0x01) as usize;
+                }
+            }
             0xFF46 => {
                 self.ppu.dma = val;
                 let src = (val as u16) << 8;
@@ -322,8 +384,10 @@ impl Mmu {
             }
             0xFF50 => self.boot_mapped = false,
             0xFF70 => {
-                let bank = (val & 0x07) as usize;
-                self.wram_bank = if bank == 0 { 1 } else { bank };
+                if self.cgb_mode {
+                    let bank = (val & 0x07) as usize;
+                    self.wram_bank = if bank == 0 { 1 } else { bank };
+                }
             }
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = (val & 0x1F) | (self.ie_reg & 0xE0),

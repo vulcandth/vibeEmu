@@ -2,7 +2,7 @@ use vibeEmu::{cartridge::Cartridge, mmu::Mmu};
 
 #[test]
 fn wram_echo_and_bank_switch() {
-    let mut mmu = Mmu::new();
+    let mut mmu = Mmu::new_with_mode(true);
     mmu.write_byte(0xC000, 0xAA);
     assert_eq!(mmu.read_byte(0xC000), 0xAA);
     mmu.write_byte(0xE000, 0xBB);
@@ -23,7 +23,7 @@ fn wram_echo_and_bank_switch() {
 
 #[test]
 fn vram_bank_switch() {
-    let mut mmu = Mmu::new();
+    let mut mmu = Mmu::new_with_mode(true);
     mmu.write_byte(0x8000, 0x11);
     assert_eq!(mmu.read_byte(0x8000), 0x11);
 

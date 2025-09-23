@@ -32,7 +32,7 @@ impl GameBoy {
     ) -> Self {
         Self {
             cpu: Cpu::new_with_mode_and_revision(cgb, dmg_revision),
-            mmu: Mmu::new_with_config(cgb, cgb_revision),
+            mmu: Mmu::new_with_revisions(cgb, dmg_revision, cgb_revision),
             cgb,
             dmg_revision,
             cgb_revision,
@@ -45,7 +45,7 @@ impl GameBoy {
         let cart = self.mmu.cart.take();
         let boot = self.mmu.boot_rom.take();
         self.cpu = Cpu::new_with_mode_and_revision(self.cgb, self.dmg_revision);
-        self.mmu = Mmu::new_with_config(self.cgb, self.cgb_revision);
+        self.mmu = Mmu::new_with_revisions(self.cgb, self.dmg_revision, self.cgb_revision);
         if let Some(c) = cart {
             self.mmu.load_cart(c);
         }
