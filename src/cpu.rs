@@ -69,7 +69,7 @@ pub struct Cpu {
     pub stopped: bool,
     pub double_speed: bool,
     halt_bug: bool,
-    ime_delay: bool,
+    ime_enable_delay: u8,
     halt_pc: Option<u16>,
     halt_pending: u8,
 }
@@ -106,7 +106,7 @@ impl Cpu {
                 stopped: false,
                 double_speed: false,
                 halt_bug: false,
-                ime_delay: false,
+                ime_enable_delay: 0,
                 halt_pc: None,
                 halt_pending: 0,
             }
@@ -150,7 +150,7 @@ impl Cpu {
                 stopped: false,
                 double_speed: false,
                 halt_bug: false,
-                ime_delay: false,
+                ime_enable_delay: 0,
                 halt_pc: None,
                 halt_pending: 0,
             }
@@ -482,7 +482,7 @@ impl Cpu {
             return;
         }
 
-        let enable_after = self.ime_delay;
+        let enable_after = self.ime_enable_delay == 1;
         let opcode = if self.halt_bug {
             self.halt_bug = false;
             self.read8(mmu, self.pc)
@@ -965,7 +965,7 @@ impl Cpu {
                 let pending = mmu.if_reg & mmu.ie_reg;
                 if self.ime || pending == 0 {
                     self.enter_halt(self.pc, 0);
-                } else if self.ime_delay {
+                } else if self.ime_enable_delay > 0 {
                     self.enter_halt(self.pc, pending);
                 } else {
                     self.halt_bug = true;
@@ -1426,6 +1426,7 @@ impl Cpu {
             }
             0xF3 => {
                 self.ime = false;
+                self.ime_enable_delay = 0;
             }
             0xF5 => {
                 let val = ((self.a as u16) << 8) | (self.f as u16 & 0xF0);
@@ -1462,7 +1463,7 @@ impl Cpu {
                 self.a = self.read8(mmu, addr);
             }
             0xFB => {
-                self.ime_delay = true;
+                self.ime_enable_delay = 2;
             }
             0xFE => {
                 let val = self.fetch8(mmu);
@@ -1479,9 +1480,11 @@ impl Cpu {
             _ => panic!("unhandled opcode {opcode:02X}"),
         }
 
-        if enable_after {
+        if enable_after && self.ime_enable_delay > 0 {
             self.ime = true;
-            self.ime_delay = false;
+        }
+        if self.ime_enable_delay > 0 {
+            self.ime_enable_delay -= 1;
         }
         self.handle_interrupts(mmu);
     }

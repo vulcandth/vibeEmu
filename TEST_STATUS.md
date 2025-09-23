@@ -33,10 +33,10 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 111 | 74 | 0 | 0 | 185 | 60.0% |
+| ROM Test Suites | 112 | 73 | 0 | 0 | 185 | 60.5% |
 | Integration Tests | 156 | 18 | 0 | 0 | 174 | 89.7% |
 | Unit Tests | 5 | 0 | 0 | 0 | 5 | 100.0% |
-| **Overall** | 272 | 92 | 0 | 0 | 364 | 74.7% |
+| **Overall** | 273 | 91 | 0 | 0 | 364 | 75.0% |
 
 ## Failing Tests
 
@@ -85,7 +85,6 @@ Combined exit code: 101
 - `ppu__stat_irq_blocking_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `ppu__stat_lyc_onoff_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `ppu__vblank_stat_intr_GS_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
-- `rapid_di_ei_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `serial__boot_sclk_align_dmgABCmgb_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `timer__tima_write_reloading_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `timer__tma_write_reloading_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
@@ -209,7 +208,7 @@ Combined exit code: 101
 | `mem_timing_read` | ✅ Pass |
 | `mem_timing_write` | ✅ Pass |
 
-#### mooneye_acceptance (53/75 passing, 70.7%)
+#### mooneye_acceptance (54/75 passing, 72.0%)
 
 | Test | Result |
 | --- | --- |
@@ -250,6 +249,7 @@ Combined exit code: 101
 | `ppu__intr_2_mode3_timing_gb` | ✅ Pass |
 | `ppu__intr_2_oam_ok_timing_gb` | ✅ Pass |
 | `push_timing_gb` | ✅ Pass |
+| `rapid_di_ei_gb` | ✅ Pass |
 | `ret_cc_timing_gb` | ✅ Pass |
 | `ret_timing_gb` | ✅ Pass |
 | `reti_intr_timing_gb` | ✅ Pass |
@@ -284,7 +284,6 @@ Combined exit code: 101
 | `ppu__stat_irq_blocking_gb` | ❌ Fail |
 | `ppu__stat_lyc_onoff_gb` | ❌ Fail |
 | `ppu__vblank_stat_intr_GS_gb` | ❌ Fail |
-| `rapid_di_ei_gb` | ❌ Fail |
 | `serial__boot_sclk_align_dmgABCmgb_gb` | ❌ Fail |
 | `timer__tima_write_reloading_gb` | ❌ Fail |
 | `timer__tma_write_reloading_gb` | ❌ Fail |

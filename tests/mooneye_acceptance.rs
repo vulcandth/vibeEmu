@@ -547,7 +547,6 @@ fn push_timing_gb() {
 }
 
 #[test]
-#[ignore]
 fn rapid_di_ei_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/rapid_di_ei.gb"),
