@@ -813,7 +813,6 @@ fn same_suite__dma__gbc_dma_cont_gb() {
 }
 
 #[test]
-#[ignore]
 fn same_suite__dma__gdma_addr_mask_gb() {
     let passed = run_same_suite(
         common::rom_path("same-suite/dma/gdma_addr_mask.gb"),

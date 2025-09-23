@@ -294,6 +294,9 @@ impl Mmu {
                     self.hdma.mode = DmaMode::Hdma;
                     self.hdma.blocks = requested_blocks;
                     self.hdma.active = true;
+                    if self.ppu.in_hblank() {
+                        self.hdma_hblank_transfer();
+                    }
                 }
             }
             0xFF4D => {

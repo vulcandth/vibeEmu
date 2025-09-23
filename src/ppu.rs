@@ -167,6 +167,10 @@ impl Ppu {
         Self::new_with_mode(false)
     }
 
+    pub fn in_hblank(&self) -> bool {
+        self.mode == MODE_HBLANK
+    }
+
     fn decode_cgb_color(lo: u8, hi: u8) -> u32 {
         let raw = ((hi as u16) << 8) | lo as u16;
         let r = ((raw & 0x1F) as u8) << 3 | ((raw & 0x1F) as u8 >> 2);

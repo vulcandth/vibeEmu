@@ -33,10 +33,10 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 104 | 81 | 0 | 0 | 185 | 56.2% |
+| ROM Test Suites | 105 | 80 | 0 | 0 | 185 | 56.8% |
 | Integration Tests | 156 | 18 | 0 | 0 | 174 | 89.7% |
 | Unit Tests | 5 | 0 | 0 | 0 | 5 | 100.0% |
-| **Overall** | 265 | 99 | 0 | 0 | 364 | 72.8% |
+| **Overall** | 266 | 98 | 0 | 0 | 364 | 73.1% |
 
 ## Failing Tests
 
@@ -133,7 +133,6 @@ Combined exit code: 101
 - `same_suite__apu__div_write_trigger_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__apu__div_write_trigger_volume_10_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__apu__div_write_trigger_volume_gb` _(Category: ROM Test Suites; Module: same_suite)_
-- `same_suite__dma__gdma_addr_mask_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__dma__hdma_lcd_off_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__dma__hdma_mode0_gb` _(Category: ROM Test Suites; Module: same_suite)_
 - `same_suite__interrupt__ei_delay_halt_gb` _(Category: ROM Test Suites; Module: same_suite)_
@@ -296,7 +295,7 @@ Combined exit code: 101
 | `timer__tima_write_reloading_gb` | ❌ Fail |
 | `timer__tma_write_reloading_gb` | ❌ Fail |
 
-#### same_suite (31/78 passing, 39.7%)
+#### same_suite (32/78 passing, 41.0%)
 
 | Test | Result |
 | --- | --- |
@@ -330,6 +329,7 @@ Combined exit code: 101
 | `same_suite__apu__channel_3__channel_3_stop_delay_gb` | ✅ Pass |
 | `same_suite__apu__channel_3__channel_3_wave_ram_dac_on_rw_gb` | ✅ Pass |
 | `same_suite__dma__gbc_dma_cont_gb` | ✅ Pass |
+| `same_suite__dma__gdma_addr_mask_gb` | ✅ Pass |
 | `same_suite__ppu__blocking_bgpi_increase_gb` | ✅ Pass |
 | `same_suite__apu__channel_1__channel_1_extra_length_clocking_cgb0B_gb` | ❌ Fail |
 | `same_suite__apu__channel_1__channel_1_freq_change_timing_cgb0BC_gb` | ❌ Fail |
@@ -372,7 +372,6 @@ Combined exit code: 101
 | `same_suite__apu__div_write_trigger_gb` | ❌ Fail |
 | `same_suite__apu__div_write_trigger_volume_10_gb` | ❌ Fail |
 | `same_suite__apu__div_write_trigger_volume_gb` | ❌ Fail |
-| `same_suite__dma__gdma_addr_mask_gb` | ❌ Fail |
 | `same_suite__dma__hdma_lcd_off_gb` | ❌ Fail |
 | `same_suite__dma__hdma_mode0_gb` | ❌ Fail |
 | `same_suite__interrupt__ei_delay_halt_gb` | ❌ Fail |
