@@ -176,8 +176,11 @@ impl Mmu {
             0xFF53 => ((self.hdma.dst & 0x1F00) >> 8) as u8,
             0xFF54 => (self.hdma.dst & 0x00F0) as u8,
             0xFF55 => {
+                let remaining = self.hdma.blocks.saturating_sub(1) & 0x7F;
                 if self.hdma.active {
-                    (self.hdma.blocks.saturating_sub(1)) | 0x80
+                    remaining
+                } else if self.hdma.mode == DmaMode::Hdma {
+                    remaining | 0x80
                 } else {
                     0xFF
                 }

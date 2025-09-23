@@ -822,7 +822,6 @@ fn same_suite__dma__gdma_addr_mask_gb() {
 }
 
 #[test]
-#[ignore]
 fn same_suite__dma__hdma_lcd_off_gb() {
     let passed = run_same_suite(
         common::rom_path("same-suite/dma/hdma_lcd_off.gb"),
@@ -832,7 +831,6 @@ fn same_suite__dma__hdma_lcd_off_gb() {
 }
 
 #[test]
-#[ignore]
 fn same_suite__dma__hdma_mode0_gb() {
     let passed = run_same_suite(common::rom_path("same-suite/dma/hdma_mode0.gb"), 20_000_000);
     assert!(passed, "test failed");
