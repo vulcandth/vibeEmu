@@ -69,46 +69,39 @@ impl Cpu {
     /// Create a CPU initialized to the post-boot register state for the
     /// selected hardware mode.
     pub fn new_with_mode(cgb: bool) -> Self {
+        let (a, f, b, c, d, e, h, l) = Self::boot_registers(cgb);
+        Self {
+            a,
+            f,
+            b,
+            c,
+            d,
+            e,
+            h,
+            l,
+            pc: BOOT_PC,
+            sp: BOOT_SP,
+            cycles: 0,
+            ime: false,
+            halted: false,
+            stopped: false,
+            double_speed: false,
+            halt_bug: false,
+            ime_delay: false,
+        }
+    }
+
+    fn boot_registers(cgb: bool) -> (u8, u8, u8, u8, u8, u8, u8, u8) {
         if cgb {
-            Self {
-                a: CGB_BOOT_A,
-                f: CGB_BOOT_F,
-                b: CGB_BOOT_B,
-                c: CGB_BOOT_C,
-                d: CGB_BOOT_D,
-                e: CGB_BOOT_E,
-                h: CGB_BOOT_H,
-                l: CGB_BOOT_L,
-                pc: BOOT_PC,
-                sp: BOOT_SP,
-                cycles: 0,
-                ime: false,
-                halted: false,
-                stopped: false,
-                double_speed: false,
-                halt_bug: false,
-                ime_delay: false,
-            }
+            (
+                CGB_BOOT_A, CGB_BOOT_F, CGB_BOOT_B, CGB_BOOT_C, CGB_BOOT_D, CGB_BOOT_E, CGB_BOOT_H,
+                CGB_BOOT_L,
+            )
         } else {
-            Self {
-                a: DMG_BOOT_A,
-                f: DMG_BOOT_F,
-                b: DMG_BOOT_B,
-                c: DMG_BOOT_C,
-                d: DMG_BOOT_D,
-                e: DMG_BOOT_E,
-                h: DMG_BOOT_H,
-                l: DMG_BOOT_L,
-                pc: BOOT_PC,
-                sp: BOOT_SP,
-                cycles: 0,
-                ime: false,
-                halted: false,
-                stopped: false,
-                double_speed: false,
-                halt_bug: false,
-                ime_delay: false,
-            }
+            (
+                DMG_BOOT_A, DMG_BOOT_F, DMG_BOOT_B, DMG_BOOT_C, DMG_BOOT_D, DMG_BOOT_E, DMG_BOOT_H,
+                DMG_BOOT_L,
+            )
         }
     }
 
@@ -141,11 +134,7 @@ impl Cpu {
 
     #[inline]
     fn tick(&mut self, mmu: &mut crate::mmu::Mmu, m_cycles: u8) {
-        let hw_cycles = if self.double_speed {
-            CYCLES_PER_M_CYCLE_DOUBLE
-        } else {
-            CYCLES_PER_M_CYCLE
-        } * m_cycles as u16;
+        let hw_cycles = self.cycles_per_m_cycle() * m_cycles as u16;
         self.cycles += hw_cycles as u64;
         let prev_div = mmu.timer.div;
         mmu.timer.step(hw_cycles, &mut mmu.if_reg);
@@ -162,6 +151,15 @@ impl Cpu {
             mmu.hdma_hblank_transfer();
         }
         mmu.dma_step(hw_cycles);
+    }
+
+    #[inline]
+    fn cycles_per_m_cycle(&self) -> u16 {
+        if self.double_speed {
+            CYCLES_PER_M_CYCLE_DOUBLE
+        } else {
+            CYCLES_PER_M_CYCLE
+        }
     }
 
     #[inline(always)]
@@ -203,6 +201,25 @@ impl Cpu {
     fn write16(&mut self, mmu: &mut crate::mmu::Mmu, addr: u16, val: u16) {
         self.write8(mmu, addr, val as u8);
         self.write8(mmu, addr.wrapping_add(1), (val >> 8) as u8);
+    }
+
+    #[inline(always)]
+    fn alu_inc(&mut self, val: u8) -> u8 {
+        let res = val.wrapping_add(1);
+        self.f = (self.f & FLAG_C)
+            | if res == 0 { FLAG_Z } else { 0 }
+            | if (val & 0x0F) + 1 > 0x0F { FLAG_H } else { 0 };
+        res
+    }
+
+    #[inline(always)]
+    fn alu_dec(&mut self, val: u8) -> u8 {
+        let res = val.wrapping_sub(1);
+        self.f = (self.f & FLAG_C)
+            | FLAG_N
+            | if res == 0 { FLAG_Z } else { 0 }
+            | if val & 0x0F == 0 { FLAG_H } else { 0 };
+        res
     }
 
     /// Return a formatted string of the current CPU state for debugging.
@@ -434,23 +451,10 @@ impl Cpu {
                 self.tick(mmu, 1);
             }
             0x04 => {
-                let res = self.b.wrapping_add(1);
-                self.f = (self.f & FLAG_C)
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if (self.b & 0x0F) + 1 > 0x0F {
-                        FLAG_H
-                    } else {
-                        0
-                    };
-                self.b = res;
+                self.b = self.alu_inc(self.b);
             }
             0x05 => {
-                let res = self.b.wrapping_sub(1);
-                self.f = (self.f & FLAG_C)
-                    | FLAG_N
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if self.b & 0x0F == 0 { FLAG_H } else { 0 };
-                self.b = res;
+                self.b = self.alu_dec(self.b);
             }
             0x06 => {
                 let val = self.fetch8(mmu);
@@ -494,23 +498,10 @@ impl Cpu {
                 self.tick(mmu, 1);
             }
             0x0C => {
-                let res = self.c.wrapping_add(1);
-                self.f = (self.f & FLAG_C)
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if (self.c & 0x0F) + 1 > 0x0F {
-                        FLAG_H
-                    } else {
-                        0
-                    };
-                self.c = res;
+                self.c = self.alu_inc(self.c);
             }
             0x0D => {
-                let res = self.c.wrapping_sub(1);
-                self.f = (self.f & FLAG_C)
-                    | FLAG_N
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if self.c & 0x0F == 0 { FLAG_H } else { 0 };
-                self.c = res;
+                self.c = self.alu_dec(self.c);
             }
             0x0E => {
                 let val = self.fetch8(mmu);
@@ -547,23 +538,10 @@ impl Cpu {
                 self.tick(mmu, 1);
             }
             0x14 => {
-                let res = self.d.wrapping_add(1);
-                self.f = (self.f & FLAG_C)
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if (self.d & 0x0F) + 1 > 0x0F {
-                        FLAG_H
-                    } else {
-                        0
-                    };
-                self.d = res;
+                self.d = self.alu_inc(self.d);
             }
             0x15 => {
-                let res = self.d.wrapping_sub(1);
-                self.f = (self.f & FLAG_C)
-                    | FLAG_N
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if self.d & 0x0F == 0 { FLAG_H } else { 0 };
-                self.d = res;
+                self.d = self.alu_dec(self.d);
             }
             0x16 => {
                 let val = self.fetch8(mmu);
@@ -607,23 +585,10 @@ impl Cpu {
                 self.tick(mmu, 1);
             }
             0x1C => {
-                let res = self.e.wrapping_add(1);
-                self.f = (self.f & FLAG_C)
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if (self.e & 0x0F) + 1 > 0x0F {
-                        FLAG_H
-                    } else {
-                        0
-                    };
-                self.e = res;
+                self.e = self.alu_inc(self.e);
             }
             0x1D => {
-                let res = self.e.wrapping_sub(1);
-                self.f = (self.f & FLAG_C)
-                    | FLAG_N
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if self.e & 0x0F == 0 { FLAG_H } else { 0 };
-                self.e = res;
+                self.e = self.alu_dec(self.e);
             }
             0x1E => {
                 let val = self.fetch8(mmu);
@@ -656,23 +621,10 @@ impl Cpu {
                 self.tick(mmu, 1);
             }
             0x24 => {
-                let res = self.h.wrapping_add(1);
-                self.f = (self.f & FLAG_C)
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if (self.h & 0x0F) + 1 > 0x0F {
-                        FLAG_H
-                    } else {
-                        0
-                    };
-                self.h = res;
+                self.h = self.alu_inc(self.h);
             }
             0x25 => {
-                let res = self.h.wrapping_sub(1);
-                self.f = (self.f & FLAG_C)
-                    | FLAG_N
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if self.h & 0x0F == 0 { FLAG_H } else { 0 };
-                self.h = res;
+                self.h = self.alu_dec(self.h);
             }
             0x26 => {
                 let val = self.fetch8(mmu);
@@ -728,23 +680,10 @@ impl Cpu {
                 self.tick(mmu, 1);
             }
             0x2C => {
-                let res = self.l.wrapping_add(1);
-                self.f = (self.f & FLAG_C)
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if (self.l & 0x0F) + 1 > 0x0F {
-                        FLAG_H
-                    } else {
-                        0
-                    };
-                self.l = res;
+                self.l = self.alu_inc(self.l);
             }
             0x2D => {
-                let res = self.l.wrapping_sub(1);
-                self.f = (self.f & FLAG_C)
-                    | FLAG_N
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if self.l & 0x0F == 0 { FLAG_H } else { 0 };
-                self.l = res;
+                self.l = self.alu_dec(self.l);
             }
             0x2E => {
                 let val = self.fetch8(mmu);
@@ -777,21 +716,14 @@ impl Cpu {
             0x34 => {
                 let addr = self.get_hl();
                 let old = self.read8(mmu, addr);
-                let val = old.wrapping_add(1);
+                let val = self.alu_inc(old);
                 self.write8(mmu, addr, val);
-                self.f = (self.f & FLAG_C)
-                    | if val == 0 { FLAG_Z } else { 0 }
-                    | if (old & 0x0F) + 1 > 0x0F { FLAG_H } else { 0 };
             }
             0x35 => {
                 let addr = self.get_hl();
                 let old = self.read8(mmu, addr);
-                let val = old.wrapping_sub(1);
+                let val = self.alu_dec(old);
                 self.write8(mmu, addr, val);
-                self.f = (self.f & FLAG_C)
-                    | FLAG_N
-                    | if val == 0 { FLAG_Z } else { 0 }
-                    | if old & 0x0F == 0 { FLAG_H } else { 0 };
             }
             0x36 => {
                 let val = self.fetch8(mmu);
@@ -836,23 +768,10 @@ impl Cpu {
                 self.tick(mmu, 1);
             }
             0x3C => {
-                let res = self.a.wrapping_add(1);
-                self.f = (self.f & FLAG_C)
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if (self.a & 0x0F) + 1 > 0x0F {
-                        FLAG_H
-                    } else {
-                        0
-                    };
-                self.a = res;
+                self.a = self.alu_inc(self.a);
             }
             0x3D => {
-                let res = self.a.wrapping_sub(1);
-                self.f = (self.f & FLAG_C)
-                    | FLAG_N
-                    | if res == 0 { FLAG_Z } else { 0 }
-                    | if self.a & 0x0F == 0 { FLAG_H } else { 0 };
-                self.a = res;
+                self.a = self.alu_dec(self.a);
             }
             0x3E => {
                 let val = self.fetch8(mmu);
@@ -864,31 +783,8 @@ impl Cpu {
             opcode @ 0x40..=0x7F if opcode != 0x76 => {
                 let dest = (opcode >> 3) & 0x07;
                 let src = opcode & 0x07;
-                let val = match src {
-                    0 => self.b,
-                    1 => self.c,
-                    2 => self.d,
-                    3 => self.e,
-                    4 => self.h,
-                    5 => self.l,
-                    6 => self.read8(mmu, self.get_hl()),
-                    7 => self.a,
-                    _ => unreachable!(),
-                };
-                match dest {
-                    0 => self.b = val,
-                    1 => self.c = val,
-                    2 => self.d = val,
-                    3 => self.e = val,
-                    4 => self.h = val,
-                    5 => self.l = val,
-                    6 => {
-                        let addr = self.get_hl();
-                        self.write8(mmu, addr, val);
-                    }
-                    7 => self.a = val,
-                    _ => unreachable!(),
-                }
+                let val = self.read_reg(mmu, src);
+                self.write_reg(mmu, dest, val);
             }
             0x76 => {
                 let pending = mmu.if_reg & mmu.ie_reg;
@@ -903,18 +799,7 @@ impl Cpu {
                 self.write8(mmu, addr, self.a);
             }
             opcode @ 0x80..=0x87 => {
-                let src = opcode & 0x07;
-                let val = match src {
-                    0 => self.b,
-                    1 => self.c,
-                    2 => self.d,
-                    3 => self.e,
-                    4 => self.h,
-                    5 => self.l,
-                    6 => self.read8(mmu, self.get_hl()),
-                    7 => self.a,
-                    _ => unreachable!(),
-                };
+                let val = self.read_reg(mmu, opcode & 0x07);
                 let (res, carry) = self.a.overflowing_add(val);
                 self.f = if res == 0 { FLAG_Z } else { 0 }
                     | if (self.a & 0x0F) + (val & 0x0F) > 0x0F {
@@ -926,18 +811,7 @@ impl Cpu {
                 self.a = res;
             }
             opcode @ 0x88..=0x8F => {
-                let src = opcode & 0x07;
-                let val = match src {
-                    0 => self.b,
-                    1 => self.c,
-                    2 => self.d,
-                    3 => self.e,
-                    4 => self.h,
-                    5 => self.l,
-                    6 => self.read8(mmu, self.get_hl()),
-                    7 => self.a,
-                    _ => unreachable!(),
-                };
+                let val = self.read_reg(mmu, opcode & 0x07);
                 let carry_in = if self.f & FLAG_C != 0 { 1 } else { 0 };
                 let (res1, carry1) = self.a.overflowing_add(val);
                 let (res2, carry2) = res1.overflowing_add(carry_in);
@@ -951,18 +825,7 @@ impl Cpu {
                 self.a = res2;
             }
             opcode @ 0x90..=0x97 => {
-                let src = opcode & 0x07;
-                let val = match src {
-                    0 => self.b,
-                    1 => self.c,
-                    2 => self.d,
-                    3 => self.e,
-                    4 => self.h,
-                    5 => self.l,
-                    6 => self.read8(mmu, self.get_hl()),
-                    7 => self.a,
-                    _ => unreachable!(),
-                };
+                let val = self.read_reg(mmu, opcode & 0x07);
                 let (res, borrow) = self.a.overflowing_sub(val);
                 self.f = FLAG_N
                     | if res == 0 { FLAG_Z } else { 0 }
@@ -975,18 +838,7 @@ impl Cpu {
                 self.a = res;
             }
             opcode @ 0x98..=0x9F => {
-                let src = opcode & 0x07;
-                let val = match src {
-                    0 => self.b,
-                    1 => self.c,
-                    2 => self.d,
-                    3 => self.e,
-                    4 => self.h,
-                    5 => self.l,
-                    6 => self.read8(mmu, self.get_hl()),
-                    7 => self.a,
-                    _ => unreachable!(),
-                };
+                let val = self.read_reg(mmu, opcode & 0x07);
                 let carry_in = if self.f & FLAG_C != 0 { 1 } else { 0 };
                 let (res1, borrow1) = self.a.overflowing_sub(val);
                 let (res2, borrow2) = res1.overflowing_sub(carry_in);
@@ -1001,34 +853,12 @@ impl Cpu {
                 self.a = res2;
             }
             opcode @ 0xA0..=0xA7 => {
-                let src = opcode & 0x07;
-                let val = match src {
-                    0 => self.b,
-                    1 => self.c,
-                    2 => self.d,
-                    3 => self.e,
-                    4 => self.h,
-                    5 => self.l,
-                    6 => self.read8(mmu, self.get_hl()),
-                    7 => self.a,
-                    _ => unreachable!(),
-                };
+                let val = self.read_reg(mmu, opcode & 0x07);
                 self.a &= val;
                 self.f = if self.a == 0 { FLAG_Z } else { 0 } | FLAG_H;
             }
             opcode @ 0xA8..=0xAE => {
-                let src = opcode & 0x07;
-                let val = match src {
-                    0 => self.b,
-                    1 => self.c,
-                    2 => self.d,
-                    3 => self.e,
-                    4 => self.h,
-                    5 => self.l,
-                    6 => self.read8(mmu, self.get_hl()),
-                    7 => self.a,
-                    _ => unreachable!(),
-                };
+                let val = self.read_reg(mmu, opcode & 0x07);
                 self.a ^= val;
                 self.f = if self.a == 0 { FLAG_Z } else { 0 };
             }
@@ -1038,34 +868,12 @@ impl Cpu {
                 self.f = 0x80;
             }
             opcode @ 0xB0..=0xB7 => {
-                let src = opcode & 0x07;
-                let val = match src {
-                    0 => self.b,
-                    1 => self.c,
-                    2 => self.d,
-                    3 => self.e,
-                    4 => self.h,
-                    5 => self.l,
-                    6 => self.read8(mmu, self.get_hl()),
-                    7 => self.a,
-                    _ => unreachable!(),
-                };
+                let val = self.read_reg(mmu, opcode & 0x07);
                 self.a |= val;
                 self.f = if self.a == 0 { FLAG_Z } else { 0 };
             }
             opcode @ 0xB8..=0xBF => {
-                let src = opcode & 0x07;
-                let val = match src {
-                    0 => self.b,
-                    1 => self.c,
-                    2 => self.d,
-                    3 => self.e,
-                    4 => self.h,
-                    5 => self.l,
-                    6 => self.read8(mmu, self.get_hl()),
-                    7 => self.a,
-                    _ => unreachable!(),
-                };
+                let val = self.read_reg(mmu, opcode & 0x07);
                 let res = self.a.wrapping_sub(val);
                 self.f = FLAG_N
                     | if res == 0 { FLAG_Z } else { 0 }
