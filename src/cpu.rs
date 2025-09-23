@@ -437,29 +437,47 @@ impl Cpu {
         }
 
         if self.ime {
-            let (bit, vector) = Self::next_interrupt(pending);
-            mmu.if_reg &= !bit;
-
-            let was_buffered = (self.halt_pending & bit) != 0;
+            let (initial_bit, _) = Self::next_interrupt(pending);
             let mut return_pc = self.pc;
 
             if let Some(halt_pc) = self.halt_pc {
-                if was_buffered {
+                if (self.halt_pending & initial_bit) != 0 {
                     return_pc = halt_pc.wrapping_sub(1);
                 } else if self.halted {
                     return_pc = halt_pc;
                 }
             }
 
-            if was_buffered {
+            self.ime = false;
+
+            self.sp = self.sp.wrapping_sub(1);
+            self.write8(mmu, self.sp, (return_pc >> 8) as u8);
+
+            let mut queue = mmu.ie_reg & 0x1F;
+
+            self.sp = self.sp.wrapping_sub(1);
+            self.write8(mmu, self.sp, return_pc as u8);
+
+            queue &= mmu.if_reg & 0x1F;
+
+            if queue == 0 {
+                self.exit_halt();
+                self.pc = 0;
+                self.tick(mmu, 3);
+                return;
+            }
+
+            let (bit, vector) = Self::next_interrupt(queue);
+
+            mmu.if_reg &= !bit;
+
+            if (self.halt_pending & bit) != 0 {
                 self.halt_pending &= !bit;
             } else {
                 self.exit_halt();
             }
 
-            self.push_stack(mmu, return_pc);
             self.pc = vector;
-            self.ime = false;
             self.tick(mmu, 3);
         } else if self.halted {
             self.exit_halt();

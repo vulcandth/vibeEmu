@@ -313,7 +313,6 @@ fn instr__daa_gb() {
 }
 
 #[test]
-#[ignore]
 fn interrupts__ie_push_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/interrupts/ie_push.gb"),
