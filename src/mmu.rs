@@ -277,6 +277,12 @@ impl Mmu {
     }
 
     fn dma_read_byte(&mut self, addr: u16) -> u8 {
+        let addr = if !self.cgb_mode && (0xFE00..=0xFF9F).contains(&addr) {
+            addr.wrapping_sub(0x2000)
+        } else {
+            addr
+        };
+
         self.read_byte_inner(addr, true)
     }
 

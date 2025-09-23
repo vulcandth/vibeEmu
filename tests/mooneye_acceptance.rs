@@ -376,7 +376,6 @@ fn oam_dma__reg_read_gb() {
 }
 
 #[test]
-#[ignore]
 fn oam_dma__sources_GS_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/oam_dma/sources-GS.gb"),
