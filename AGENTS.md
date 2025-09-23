@@ -25,6 +25,7 @@ Run the full suite whenever you touch Rust code or modify build configuration:
 2. `cargo clippy --workspace --all-targets -- -D warnings`
 3. `cargo test`
 4. `cargo test --release`
+5. `python scripts/update_test_status.py` (updates `TEST_STATUS.md` with the latest pass/fail data, including ignored ROM suites)
 
 Integration tests automatically download required ROM bundles into `test_roms/` on first run; ensure network access is available
 and leave the archive intact for subsequent runs. Investigate failing third-party ROMs instead of deleting or disabling tests.

@@ -112,3 +112,9 @@ jobs:
 
       - name: Test release
         run: cargo test --release --verbose
+
+      - name: Update test status report
+        run: python scripts/update_test_status.py
+
+      - name: Verify test status report is up to date
+        run: git diff --exit-code TEST_STATUS.md

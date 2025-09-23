@@ -1,0 +1,605 @@
+# Test Status
+
+_Last updated: 2025-09-23 01:59:14 UTC_
+
+
+Commands executed:
+- `cargo test --lib -- --include-ignored`
+- `cargo test --bin vibeEmu -- --include-ignored`
+- `cargo test --doc`
+- `cargo test --test apu -- --include-ignored`
+- `cargo test --test apu_quirks -- --include-ignored`
+- `cargo test --test cartridge -- --include-ignored`
+- `cargo test --test cgb_acid2_rom -- --include-ignored`
+- `cargo test --test channel_activation -- --include-ignored`
+- `cargo test --test cpu -- --include-ignored`
+- `cargo test --test cpu_instrs_rom -- --include-ignored`
+- `cargo test --test dmg_acid2_rom -- --include-ignored`
+- `cargo test --test dmg_sound_roms -- --include-ignored`
+- `cargo test --test halt_bug_rom -- --include-ignored`
+- `cargo test --test instr_timing_rom -- --include-ignored`
+- `cargo test --test mem_timing_rom -- --include-ignored`
+- `cargo test --test mmu -- --include-ignored`
+- `cargo test --test mooneye_acceptance -- --include-ignored`
+- `cargo test --test ppu -- --include-ignored`
+- `cargo test --test same_suite -- --include-ignored`
+- `cargo test --test timer -- --include-ignored`
+
+
+Combined exit code: 101
+
+
+## Overall Summary
+
+| Category | Passed | Failed | Ignored | Measured | Total | Pass % |
+| --- | --- | --- | --- | --- | --- | --- |
+| ROM Test Suites | 104 | 81 | 0 | 0 | 185 | 56.2% |
+| Integration Tests | 156 | 18 | 0 | 0 | 174 | 89.7% |
+| Unit Tests | 5 | 0 | 0 | 0 | 5 | 100.0% |
+| **Overall** | 265 | 99 | 0 | 0 | 364 | 72.8% |
+
+## Failing Tests
+
+- `ch2_first_sample_after_trigger_is_zero` _(Category: Integration Tests; Module: apu)_
+- `div_apu_envelope_clock` _(Category: Integration Tests; Module: apu)_
+- `duty_step_advances_each_period` _(Category: Integration Tests; Module: apu)_
+- `duty_step_not_reset_on_retrigger` _(Category: Integration Tests; Module: apu)_
+- `first_sample_after_trigger_is_zero` _(Category: Integration Tests; Module: apu)_
+- `frame_sequencer_tick` _(Category: Integration Tests; Module: apu)_
+- `nr32_volume_change_mid_playback` _(Category: Integration Tests; Module: apu)_
+- `nr32_volume_control` _(Category: Integration Tests; Module: apu)_
+- `nr42_register_unchanged_after_envelope` _(Category: Integration Tests; Module: apu)_
+- `nr44_trigger_resets_lfsr_and_envelope_timer` _(Category: Integration Tests; Module: apu)_
+- `pcm34_noise_output` _(Category: Integration Tests; Module: apu)_
+- `pcm_register_sample_values` _(Category: Integration Tests; Module: apu)_
+- `sweep_trigger_and_step` _(Category: Integration Tests; Module: apu)_
+- `wave_buffer_cleared_on_power_on` _(Category: Integration Tests; Module: apu)_
+- `wave_channel_first_sample_uses_old_buffer` _(Category: Integration Tests; Module: apu)_
+- `wave_channel_outputs_wave_ram_data` _(Category: Integration Tests; Module: apu)_
+- `wave_channel_wraps_after_32_samples` _(Category: Integration Tests; Module: apu)_
+- `writes_ignored_when_disabled` _(Category: Integration Tests; Module: apu)_
+- `dmg_sound_02_len_ctr` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
+- `dmg_sound_03_trigger` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
+- `dmg_sound_04_sweep` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
+- `dmg_sound_05_sweep_details` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
+- `dmg_sound_08_len_ctr_during_power` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
+- `dmg_sound_09_wave_read_while_on` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
+- `dmg_sound_10_wave_trigger_while_on` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
+- `dmg_sound_11_regs_after_power` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
+- `dmg_sound_12_wave_write_while_on` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
+- `bits__unused_hwio_GS_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `boot_div2_S_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `boot_div_S_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `boot_div_dmg0_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `boot_div_dmgABCmgb_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `boot_hwio_S_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `boot_hwio_dmg0_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `boot_hwio_dmgABCmgb_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `boot_regs_dmg0_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `boot_regs_mgb_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `boot_regs_sgb2_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `boot_regs_sgb_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `interrupts__ie_push_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `oam_dma__sources_GS_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `ppu__hblank_ly_scx_timing_GS_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `ppu__intr_2_mode0_timing_sprites_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `ppu__lcdon_timing_GS_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `ppu__lcdon_write_timing_GS_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `ppu__stat_irq_blocking_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `ppu__stat_lyc_onoff_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `ppu__vblank_stat_intr_GS_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `rapid_di_ei_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `serial__boot_sclk_align_dmgABCmgb_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `timer__tima_write_reloading_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `timer__tma_write_reloading_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
+- `same_suite__apu__channel_1__channel_1_extra_length_clocking_cgb0B_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_1__channel_1_freq_change_timing_cgb0BC_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_1__channel_1_freq_change_timing_cgbDE_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_1__channel_1_stop_div_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_1__channel_1_sweep_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_1__channel_1_sweep_restart_2_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_1__channel_1_sweep_restart_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_2__channel_2_extra_length_clocking_cgb0B_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_2__channel_2_stop_div_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_and_glitch_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_delay_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_extra_length_clocking_cgb0_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_extra_length_clocking_cgbB_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_first_sample_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_freq_change_delay_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_restart_delay_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_restart_during_delay_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_restart_stop_delay_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_shift_delay_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_shift_skip_delay_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_stop_div_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_wave_ram_locked_write_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_3__channel_3_wave_ram_sync_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_align_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_delay_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_equivalent_frequencies_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_extra_length_clocking_cgb0B_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_freq_change_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_frequency_alignment_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_lfsr15_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_lfsr_15_7_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_lfsr_7_15_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_lfsr_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_lfsr_restart_fast_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_lfsr_restart_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__channel_4__channel_4_volume_div_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__div_trigger_volume_10_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__div_write_trigger_10_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__div_write_trigger_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__div_write_trigger_volume_10_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__apu__div_write_trigger_volume_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__dma__gdma_addr_mask_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__dma__hdma_lcd_off_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__dma__hdma_mode0_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__interrupt__ei_delay_halt_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__sgb__command_mlt_req_1_incrementing_gb` _(Category: ROM Test Suites; Module: same_suite)_
+- `same_suite__sgb__command_mlt_req_gb` _(Category: ROM Test Suites; Module: same_suite)_
+
+## Detailed Results
+
+### ROM Test Suites
+
+#### cartridge (2/2 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `battery_ram_saved_to_disk` | ✅ Pass |
+| `mbc30_header_detection` | ✅ Pass |
+
+#### cgb_acid2_rom (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `cgb_acid2_rom` | ✅ Pass |
+
+#### cpu_instrs_rom (11/11 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `cpu_instrs_01_special` | ✅ Pass |
+| `cpu_instrs_02_interrupts` | ✅ Pass |
+| `cpu_instrs_03_op_sp_hl` | ✅ Pass |
+| `cpu_instrs_04_op_r_imm` | ✅ Pass |
+| `cpu_instrs_05_op_rp` | ✅ Pass |
+| `cpu_instrs_06_ld_r_r` | ✅ Pass |
+| `cpu_instrs_07_jr_jp_call_ret_rst` | ✅ Pass |
+| `cpu_instrs_08_misc_instrs` | ✅ Pass |
+| `cpu_instrs_09_op_r_r` | ✅ Pass |
+| `cpu_instrs_10_bit_ops` | ✅ Pass |
+| `cpu_instrs_11_op_a_hl` | ✅ Pass |
+
+#### dmg_acid2_rom (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `dmg_acid2_rom` | ✅ Pass |
+
+#### dmg_sound_roms (3/12 passing, 25.0%)
+
+| Test | Result |
+| --- | --- |
+| `dmg_sound_01_registers` | ✅ Pass |
+| `dmg_sound_06_overflow_on_trigger` | ✅ Pass |
+| `dmg_sound_07_len_sweep_period_sync` | ✅ Pass |
+| `dmg_sound_02_len_ctr` | ❌ Fail |
+| `dmg_sound_03_trigger` | ❌ Fail |
+| `dmg_sound_04_sweep` | ❌ Fail |
+| `dmg_sound_05_sweep_details` | ❌ Fail |
+| `dmg_sound_08_len_ctr_during_power` | ❌ Fail |
+| `dmg_sound_09_wave_read_while_on` | ❌ Fail |
+| `dmg_sound_10_wave_trigger_while_on` | ❌ Fail |
+| `dmg_sound_11_regs_after_power` | ❌ Fail |
+| `dmg_sound_12_wave_write_while_on` | ❌ Fail |
+
+#### halt_bug_rom (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `halt_bug_rom` | ✅ Pass |
+
+#### instr_timing_rom (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `instr_timing` | ✅ Pass |
+
+#### mem_timing_rom (3/3 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `mem_timing_modify` | ✅ Pass |
+| `mem_timing_read` | ✅ Pass |
+| `mem_timing_write` | ✅ Pass |
+
+#### mooneye_acceptance (50/75 passing, 66.7%)
+
+| Test | Result |
+| --- | --- |
+| `add_sp_e_timing_gb` | ✅ Pass |
+| `bits__mem_oam_gb` | ✅ Pass |
+| `bits__reg_f_gb` | ✅ Pass |
+| `boot_regs_dmgABC_gb` | ✅ Pass |
+| `call_cc_timing2_gb` | ✅ Pass |
+| `call_cc_timing_gb` | ✅ Pass |
+| `call_timing2_gb` | ✅ Pass |
+| `call_timing_gb` | ✅ Pass |
+| `di_timing_GS_gb` | ✅ Pass |
+| `div_timing_gb` | ✅ Pass |
+| `ei_sequence_gb` | ✅ Pass |
+| `ei_timing_gb` | ✅ Pass |
+| `halt_ime0_ei_gb` | ✅ Pass |
+| `halt_ime0_nointr_timing_gb` | ✅ Pass |
+| `halt_ime1_timing2_GS_gb` | ✅ Pass |
+| `halt_ime1_timing_gb` | ✅ Pass |
+| `if_ie_registers_gb` | ✅ Pass |
+| `instr__daa_gb` | ✅ Pass |
+| `intr_timing_gb` | ✅ Pass |
+| `jp_cc_timing_gb` | ✅ Pass |
+| `jp_timing_gb` | ✅ Pass |
+| `ld_hl_sp_e_timing_gb` | ✅ Pass |
+| `oam_dma__basic_gb` | ✅ Pass |
+| `oam_dma__reg_read_gb` | ✅ Pass |
+| `oam_dma_restart_gb` | ✅ Pass |
+| `oam_dma_start_gb` | ✅ Pass |
+| `oam_dma_timing_gb` | ✅ Pass |
+| `pop_timing_gb` | ✅ Pass |
+| `ppu__intr_1_2_timing_GS_gb` | ✅ Pass |
+| `ppu__intr_2_0_timing_gb` | ✅ Pass |
+| `ppu__intr_2_mode0_timing_gb` | ✅ Pass |
+| `ppu__intr_2_mode3_timing_gb` | ✅ Pass |
+| `ppu__intr_2_oam_ok_timing_gb` | ✅ Pass |
+| `push_timing_gb` | ✅ Pass |
+| `ret_cc_timing_gb` | ✅ Pass |
+| `ret_timing_gb` | ✅ Pass |
+| `reti_intr_timing_gb` | ✅ Pass |
+| `reti_timing_gb` | ✅ Pass |
+| `rst_timing_gb` | ✅ Pass |
+| `timer__div_write_gb` | ✅ Pass |
+| `timer__rapid_toggle_gb` | ✅ Pass |
+| `timer__tim00_div_trigger_gb` | ✅ Pass |
+| `timer__tim00_gb` | ✅ Pass |
+| `timer__tim01_div_trigger_gb` | ✅ Pass |
+| `timer__tim01_gb` | ✅ Pass |
+| `timer__tim10_div_trigger_gb` | ✅ Pass |
+| `timer__tim10_gb` | ✅ Pass |
+| `timer__tim11_div_trigger_gb` | ✅ Pass |
+| `timer__tim11_gb` | ✅ Pass |
+| `timer__tima_reload_gb` | ✅ Pass |
+| `bits__unused_hwio_GS_gb` | ❌ Fail |
+| `boot_div2_S_gb` | ❌ Fail |
+| `boot_div_S_gb` | ❌ Fail |
+| `boot_div_dmg0_gb` | ❌ Fail |
+| `boot_div_dmgABCmgb_gb` | ❌ Fail |
+| `boot_hwio_S_gb` | ❌ Fail |
+| `boot_hwio_dmg0_gb` | ❌ Fail |
+| `boot_hwio_dmgABCmgb_gb` | ❌ Fail |
+| `boot_regs_dmg0_gb` | ❌ Fail |
+| `boot_regs_mgb_gb` | ❌ Fail |
+| `boot_regs_sgb2_gb` | ❌ Fail |
+| `boot_regs_sgb_gb` | ❌ Fail |
+| `interrupts__ie_push_gb` | ❌ Fail |
+| `oam_dma__sources_GS_gb` | ❌ Fail |
+| `ppu__hblank_ly_scx_timing_GS_gb` | ❌ Fail |
+| `ppu__intr_2_mode0_timing_sprites_gb` | ❌ Fail |
+| `ppu__lcdon_timing_GS_gb` | ❌ Fail |
+| `ppu__lcdon_write_timing_GS_gb` | ❌ Fail |
+| `ppu__stat_irq_blocking_gb` | ❌ Fail |
+| `ppu__stat_lyc_onoff_gb` | ❌ Fail |
+| `ppu__vblank_stat_intr_GS_gb` | ❌ Fail |
+| `rapid_di_ei_gb` | ❌ Fail |
+| `serial__boot_sclk_align_dmgABCmgb_gb` | ❌ Fail |
+| `timer__tima_write_reloading_gb` | ❌ Fail |
+| `timer__tma_write_reloading_gb` | ❌ Fail |
+
+#### same_suite (31/78 passing, 39.7%)
+
+| Test | Result |
+| --- | --- |
+| `same_suite__apu__channel_1__channel_1_align_cpu_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_align_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_delay_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_duty_delay_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_duty_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_freq_change_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_freq_change_timing_A_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_nrx2_glitch_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_nrx2_speed_change_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_restart_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_restart_nrx2_glitch_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_stop_restart_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_volume_div_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_volume_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_align_cpu_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_align_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_delay_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_duty_delay_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_duty_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_freq_change_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_nrx2_glitch_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_nrx2_speed_change_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_restart_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_restart_nrx2_glitch_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_stop_restart_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_volume_div_gb` | ✅ Pass |
+| `same_suite__apu__channel_2__channel_2_volume_gb` | ✅ Pass |
+| `same_suite__apu__channel_3__channel_3_stop_delay_gb` | ✅ Pass |
+| `same_suite__apu__channel_3__channel_3_wave_ram_dac_on_rw_gb` | ✅ Pass |
+| `same_suite__dma__gbc_dma_cont_gb` | ✅ Pass |
+| `same_suite__ppu__blocking_bgpi_increase_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_extra_length_clocking_cgb0B_gb` | ❌ Fail |
+| `same_suite__apu__channel_1__channel_1_freq_change_timing_cgb0BC_gb` | ❌ Fail |
+| `same_suite__apu__channel_1__channel_1_freq_change_timing_cgbDE_gb` | ❌ Fail |
+| `same_suite__apu__channel_1__channel_1_stop_div_gb` | ❌ Fail |
+| `same_suite__apu__channel_1__channel_1_sweep_gb` | ❌ Fail |
+| `same_suite__apu__channel_1__channel_1_sweep_restart_2_gb` | ❌ Fail |
+| `same_suite__apu__channel_1__channel_1_sweep_restart_gb` | ❌ Fail |
+| `same_suite__apu__channel_2__channel_2_extra_length_clocking_cgb0B_gb` | ❌ Fail |
+| `same_suite__apu__channel_2__channel_2_stop_div_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_and_glitch_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_delay_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_extra_length_clocking_cgb0_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_extra_length_clocking_cgbB_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_first_sample_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_freq_change_delay_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_restart_delay_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_restart_during_delay_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_restart_stop_delay_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_shift_delay_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_shift_skip_delay_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_stop_div_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_wave_ram_locked_write_gb` | ❌ Fail |
+| `same_suite__apu__channel_3__channel_3_wave_ram_sync_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_align_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_delay_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_equivalent_frequencies_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_extra_length_clocking_cgb0B_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_freq_change_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_frequency_alignment_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_lfsr15_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_lfsr_15_7_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_lfsr_7_15_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_lfsr_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_lfsr_restart_fast_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_lfsr_restart_gb` | ❌ Fail |
+| `same_suite__apu__channel_4__channel_4_volume_div_gb` | ❌ Fail |
+| `same_suite__apu__div_trigger_volume_10_gb` | ❌ Fail |
+| `same_suite__apu__div_write_trigger_10_gb` | ❌ Fail |
+| `same_suite__apu__div_write_trigger_gb` | ❌ Fail |
+| `same_suite__apu__div_write_trigger_volume_10_gb` | ❌ Fail |
+| `same_suite__apu__div_write_trigger_volume_gb` | ❌ Fail |
+| `same_suite__dma__gdma_addr_mask_gb` | ❌ Fail |
+| `same_suite__dma__hdma_lcd_off_gb` | ❌ Fail |
+| `same_suite__dma__hdma_mode0_gb` | ❌ Fail |
+| `same_suite__interrupt__ei_delay_halt_gb` | ❌ Fail |
+| `same_suite__sgb__command_mlt_req_1_incrementing_gb` | ❌ Fail |
+| `same_suite__sgb__command_mlt_req_gb` | ❌ Fail |
+
+
+### Integration Tests
+
+#### apu (91/109 passing, 83.5%)
+
+| Test | Result |
+| --- | --- |
+| `dac_off_disables_channel` | ✅ Pass |
+| `div_apu_length_clock` | ✅ Pass |
+| `div_apu_sweep_clock` | ✅ Pass |
+| `double_speed_preserves_lf_div_phase` | ✅ Pass |
+| `duty_step_reset_when_apu_powered_off` | ✅ Pass |
+| `envelope_zero_does_not_disable_channel` | ✅ Pass |
+| `nr11_length_counter_expires` | ✅ Pass |
+| `nr11_write_sets_duty_and_length` | ✅ Pass |
+| `nr12_bit3_enables_dac` | ✅ Pass |
+| `nr12_period_zero_sets_timer_to_8` | ✅ Pass |
+| `nr12_register_unchanged_after_envelope` | ✅ Pass |
+| `nr12_write_requires_retrigger` | ✅ Pass |
+| `nr12_zero_turns_off_dac` | ✅ Pass |
+| `nr13_period_change_delayed_until_sample_end` | ✅ Pass |
+| `nr13_write_sets_frequency_low_bits_and_is_write_only` | ✅ Pass |
+| `nr14_length_enable_read_write` | ✅ Pass |
+| `nr14_trigger_resets_length_and_volume` | ✅ Pass |
+| `nr14_write_sets_frequency_high_bits_and_is_write_only` | ✅ Pass |
+| `nr21_length_counter_expires` | ✅ Pass |
+| `nr21_write_sets_duty_and_length` | ✅ Pass |
+| `nr22_bit3_enables_dac` | ✅ Pass |
+| `nr22_period_zero_sets_timer_to_8` | ✅ Pass |
+| `nr22_register_unchanged_after_envelope` | ✅ Pass |
+| `nr22_write_requires_retrigger` | ✅ Pass |
+| `nr22_zero_turns_off_dac` | ✅ Pass |
+| `nr23_period_change_delayed_until_sample_end` | ✅ Pass |
+| `nr23_write_sets_frequency_low_bits_and_is_write_only` | ✅ Pass |
+| `nr24_length_enable_read_write` | ✅ Pass |
+| `nr24_trigger_resets_length_and_volume` | ✅ Pass |
+| `nr24_write_sets_frequency_high_bits_and_is_write_only` | ✅ Pass |
+| `nr30_dac_off_disables_channel` | ✅ Pass |
+| `nr31_length_counter_expires` | ✅ Pass |
+| `nr31_write_ignored_when_disabled` | ✅ Pass |
+| `nr31_write_sets_length` | ✅ Pass |
+| `nr33_period_change_delayed_until_sample_end` | ✅ Pass |
+| `nr33_write_sets_frequency_low_bits_and_is_write_only` | ✅ Pass |
+| `nr34_length_enable_read_write` | ✅ Pass |
+| `nr34_retrigger_resets_wave_position` | ✅ Pass |
+| `nr34_trigger_reload_timer_and_freq` | ✅ Pass |
+| `nr34_trigger_resets_length` | ✅ Pass |
+| `nr34_write_sets_frequency_high_bits_and_is_write_only` | ✅ Pass |
+| `nr41_high_bits_ignored` | ✅ Pass |
+| `nr41_length_counter_expires` | ✅ Pass |
+| `nr41_write_ignored_when_disabled` | ✅ Pass |
+| `nr41_write_sets_length` | ✅ Pass |
+| `nr41_zero_sets_full_length` | ✅ Pass |
+| `nr42_bit3_enables_dac` | ✅ Pass |
+| `nr42_write_requires_retrigger` | ✅ Pass |
+| `nr42_writes_ignored_when_disabled` | ✅ Pass |
+| `nr42_zero_turns_off_dac` | ✅ Pass |
+| `nr43_bit15_copies_to_bit7_in_short_mode` | ✅ Pass |
+| `nr43_lfsr_first_step` | ✅ Pass |
+| `nr43_lfsr_lockup_and_retrigger` | ✅ Pass |
+| `nr43_output_depends_on_lfsr` | ✅ Pass |
+| `nr43_period_calculation` | ✅ Pass |
+| `nr43_register_fields` | ✅ Pass |
+| `nr43_width7_mode` | ✅ Pass |
+| `nr44_length_enable_read_write` | ✅ Pass |
+| `nr44_trigger_resets_length_and_volume` | ✅ Pass |
+| `nr50_left_vs_right_volume` | ✅ Pass |
+| `nr50_vin_bits_ignored` | ✅ Pass |
+| `nr50_volume_zero_not_muted` | ✅ Pass |
+| `nr51_ch2_center` | ✅ Pass |
+| `nr51_ch2_left_only` | ✅ Pass |
+| `nr51_ch2_off` | ✅ Pass |
+| `nr51_ch2_right_only` | ✅ Pass |
+| `nr52_bits_ignore_dac_only` | ✅ Pass |
+| `nr52_channel_status_bits` | ✅ Pass |
+| `nr52_clears_registers_when_off` | ✅ Pass |
+| `nr52_power_toggle` | ✅ Pass |
+| `nr52_wave_ram_persist` | ✅ Pass |
+| `pcm_mask_defaults_to_full_on_reve` | ✅ Pass |
+| `pcm_mask_glitch_releases_after_first_sample` | ✅ Pass |
+| `pcm_mmu_mapping` | ✅ Pass |
+| `pcm_register_open_bus` | ✅ Pass |
+| `read_mask_unused_bits` | ✅ Pass |
+| `register_write_read_fidelity` | ✅ Pass |
+| `retrigger_preserves_timer_low_bits_ch1` | ✅ Pass |
+| `sample_generation` | ✅ Pass |
+| `sweep_disabled_when_period_zero` | ✅ Pass |
+| `sweep_disabled_with_zero_params` | ✅ Pass |
+| `sweep_frequency_write_lost` | ✅ Pass |
+| `sweep_overflow_with_period_zero_disables_channel` | ✅ Pass |
+| `sweep_subtraction_mode` | ✅ Pass |
+| `sweep_trigger_sets_shadow_and_timer` | ✅ Pass |
+| `sweep_updates_frequency_registers` | ✅ Pass |
+| `wave_channel_starts_at_index_one` | ✅ Pass |
+| `wave_ram_access` | ✅ Pass |
+| `wave_ram_accessible_with_dac_on_when_inactive` | ✅ Pass |
+| `wave_retrigger_emits_last_sample` | ✅ Pass |
+| `wave_sample_index_matches_frequency` | ✅ Pass |
+| `ch2_first_sample_after_trigger_is_zero` | ❌ Fail |
+| `div_apu_envelope_clock` | ❌ Fail |
+| `duty_step_advances_each_period` | ❌ Fail |
+| `duty_step_not_reset_on_retrigger` | ❌ Fail |
+| `first_sample_after_trigger_is_zero` | ❌ Fail |
+| `frame_sequencer_tick` | ❌ Fail |
+| `nr32_volume_change_mid_playback` | ❌ Fail |
+| `nr32_volume_control` | ❌ Fail |
+| `nr42_register_unchanged_after_envelope` | ❌ Fail |
+| `nr44_trigger_resets_lfsr_and_envelope_timer` | ❌ Fail |
+| `pcm34_noise_output` | ❌ Fail |
+| `pcm_register_sample_values` | ❌ Fail |
+| `sweep_trigger_and_step` | ❌ Fail |
+| `wave_buffer_cleared_on_power_on` | ❌ Fail |
+| `wave_channel_first_sample_uses_old_buffer` | ❌ Fail |
+| `wave_channel_outputs_wave_ram_data` | ❌ Fail |
+| `wave_channel_wraps_after_32_samples` | ❌ Fail |
+| `writes_ignored_when_disabled` | ❌ Fail |
+
+#### apu_quirks (7/7 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `extra_length_clocking_disables_channel` | ✅ Pass |
+| `noise_shift_15_freezes_lfsr` | ✅ Pass |
+| `sweep_negate_clear_disables` | ✅ Pass |
+| `trigger_envelope_timer_plus_one` | ✅ Pass |
+| `trigger_length_set_to_63_when_zero` | ✅ Pass |
+| `wave_retrigger_corrupts_ram` | ✅ Pass |
+| `zombie_mode_volume_change` | ✅ Pass |
+
+#### channel_activation (4/4 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `channel1_disabled_by_length_timer` | ✅ Pass |
+| `channel1_trigger_ignored_when_dac_off` | ✅ Pass |
+| `channel1_triggers_when_dac_on` | ✅ Pass |
+| `sweep_overflow_disables_channel1` | ✅ Pass |
+
+#### cpu (13/13 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `alu_immediate_ops` | ✅ Pass |
+| `alu_register_ops` | ✅ Pass |
+| `div_rate_double_speed` | ✅ Pass |
+| `double_speed_timer_scaling` | ✅ Pass |
+| `ei_delay` | ✅ Pass |
+| `halt_bug` | ✅ Pass |
+| `interrupt_handling` | ✅ Pass |
+| `jr_nz_cycles` | ✅ Pass |
+| `ld_rr_instructions` | ✅ Pass |
+| `simple_program` | ✅ Pass |
+| `stop_resets_div_and_pauses` | ✅ Pass |
+| `stop_speed_switch` | ✅ Pass |
+| `stop_speed_switch_resets_div` | ✅ Pass |
+
+#### mmu (10/10 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `boot_rom_disable` | ✅ Pass |
+| `cartridge_ram_access` | ✅ Pass |
+| `mbc1_ram_enable` | ✅ Pass |
+| `mbc1_rom_bank_switching` | ✅ Pass |
+| `oam_dma_initial_delay` | ✅ Pass |
+| `oam_dma_restart_timing` | ✅ Pass |
+| `oam_dma_transfer` | ✅ Pass |
+| `vram_bank_switch` | ✅ Pass |
+| `vram_oam_access_blocking` | ✅ Pass |
+| `wram_echo_and_bank_switch` | ✅ Pass |
+
+#### ppu (18/18 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `bg_disable_yields_color0` | ✅ Pass |
+| `cgb_bg_attr_priority` | ✅ Pass |
+| `cgb_bg_bank_select` | ✅ Pass |
+| `cgb_bg_palette` | ✅ Pass |
+| `cgb_bg_palette_autoinc_read` | ✅ Pass |
+| `cgb_master_priority` | ✅ Pass |
+| `cgb_obj_palette_autoinc_read` | ✅ Pass |
+| `cgb_obj_priority_mode_cgb` | ✅ Pass |
+| `cgb_obj_priority_mode_dmg` | ✅ Pass |
+| `obj_priority_color0` | ✅ Pass |
+| `register_access` | ✅ Pass |
+| `render_bg_scanline` | ✅ Pass |
+| `render_sprite_scanline` | ✅ Pass |
+| `render_window_scanline` | ✅ Pass |
+| `sprite_8x16_tile_offset` | ✅ Pass |
+| `sprite_x_priority` | ✅ Pass |
+| `step_vblank_interrupt` | ✅ Pass |
+| `window_internal_line_counter` | ✅ Pass |
+
+#### timer (13/13 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `div_increment` | ✅ Pass |
+| `div_reset_edge_tick` | ✅ Pass |
+| `div_resets_on_write` | ✅ Pass |
+| `tac_change_clock_select_edge_tick` | ✅ Pass |
+| `tac_clock_select_16khz` | ✅ Pass |
+| `tac_clock_select_262khz` | ✅ Pass |
+| `tac_clock_select_65khz` | ✅ Pass |
+| `tac_disable_edge_tick` | ✅ Pass |
+| `tima_increment_and_overflow` | ✅ Pass |
+| `tima_overflow_delay_and_reload` | ✅ Pass |
+| `tima_write_during_overflow_cancels_reload` | ✅ Pass |
+| `tima_write_during_reload_ignored` | ✅ Pass |
+| `tma_write_same_cycle_overflow` | ✅ Pass |
+
+
+### Unit Tests
+
+#### apu (5/5 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `apu::tests::dc_filter_active_when_dac_on` | ✅ Pass |
+| `apu::tests::dc_filter_channels_independent` | ✅ Pass |
+| `apu::tests::dc_filter_converges_to_zero` | ✅ Pass |
+| `apu::tests::dc_filter_reduces_constant_input` | ✅ Pass |
+| `apu::tests::dc_filter_reset_when_all_dacs_off` | ✅ Pass |
