@@ -94,7 +94,13 @@ impl Serial {
     pub fn read(&self, addr: u16) -> u8 {
         match addr {
             0xFF01 => self.sb,
-            0xFF02 => self.sc,
+            0xFF02 => {
+                if self.cgb_mode {
+                    self.sc
+                } else {
+                    self.sc | 0x7E
+                }
+            }
             _ => 0xFF,
         }
     }

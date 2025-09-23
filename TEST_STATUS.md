@@ -33,10 +33,10 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 117 | 68 | 0 | 0 | 185 | 63.2% |
+| ROM Test Suites | 118 | 67 | 0 | 0 | 185 | 63.8% |
 | Integration Tests | 156 | 18 | 0 | 0 | 174 | 89.7% |
 | Unit Tests | 5 | 0 | 0 | 0 | 5 | 100.0% |
-| **Overall** | 278 | 86 | 0 | 0 | 364 | 76.4% |
+| **Overall** | 279 | 85 | 0 | 0 | 364 | 76.6% |
 
 ## Failing Tests
 
@@ -67,7 +67,6 @@ Combined exit code: 101
 - `dmg_sound_10_wave_trigger_while_on` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
 - `dmg_sound_11_regs_after_power` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
 - `dmg_sound_12_wave_write_while_on` _(Category: ROM Test Suites; Module: dmg_sound_roms)_
-- `bits__unused_hwio_GS_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `boot_div2_S_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `boot_div_S_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
 - `boot_div_dmg0_gb` _(Category: ROM Test Suites; Module: mooneye_acceptance)_
@@ -203,13 +202,14 @@ Combined exit code: 101
 | `mem_timing_read` | ✅ Pass |
 | `mem_timing_write` | ✅ Pass |
 
-#### mooneye_acceptance (59/75 passing, 78.7%)
+#### mooneye_acceptance (60/75 passing, 80.0%)
 
 | Test | Result |
 | --- | --- |
 | `add_sp_e_timing_gb` | ✅ Pass |
 | `bits__mem_oam_gb` | ✅ Pass |
 | `bits__reg_f_gb` | ✅ Pass |
+| `bits__unused_hwio_GS_gb` | ✅ Pass |
 | `boot_hwio_dmg0_gb` | ✅ Pass |
 | `boot_hwio_dmgABCmgb_gb` | ✅ Pass |
 | `boot_regs_dmg0_gb` | ✅ Pass |
@@ -266,7 +266,6 @@ Combined exit code: 101
 | `timer__tima_reload_gb` | ✅ Pass |
 | `timer__tima_write_reloading_gb` | ✅ Pass |
 | `timer__tma_write_reloading_gb` | ✅ Pass |
-| `bits__unused_hwio_GS_gb` | ❌ Fail |
 | `boot_div2_S_gb` | ❌ Fail |
 | `boot_div_S_gb` | ❌ Fail |
 | `boot_div_dmg0_gb` | ❌ Fail |

@@ -396,7 +396,7 @@ impl Mmu {
                 }
             }
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
-            0xFFFF => self.ie_reg = (val & 0x1F) | (self.ie_reg & 0xE0),
+            0xFFFF => self.ie_reg = val,
             _ => {}
         }
     }

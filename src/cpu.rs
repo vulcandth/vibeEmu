@@ -433,7 +433,7 @@ impl Cpu {
     }
 
     fn handle_interrupts(&mut self, mmu: &mut crate::mmu::Mmu) {
-        let pending = mmu.if_reg & mmu.ie_reg;
+        let pending = (mmu.if_reg & mmu.ie_reg) & 0x1F;
         if pending == 0 {
             return;
         }
@@ -982,7 +982,7 @@ impl Cpu {
                 }
             }
             0x76 => {
-                let pending = mmu.if_reg & mmu.ie_reg;
+                let pending = (mmu.if_reg & mmu.ie_reg) & 0x1F;
                 if self.ime || pending == 0 {
                     self.enter_halt(self.pc, 0);
                 } else if self.ime_enable_delay > 0 {

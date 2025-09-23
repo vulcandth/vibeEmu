@@ -62,7 +62,6 @@ fn bits__reg_f_gb() {
 }
 
 #[test]
-#[ignore]
 fn bits__unused_hwio_GS_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/bits/unused_hwio-GS.gb"),
