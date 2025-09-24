@@ -104,7 +104,7 @@ impl Mmu {
             input: Input::new(),
             hdma: HdmaState {
                 src: 0,
-                dst: 0,
+                dst: Self::sanitize_vram_dma_dest(0),
                 blocks: 0,
                 mode: DmaMode::Gdma,
                 active: false,
@@ -341,18 +341,21 @@ impl Mmu {
             0xFF53 => {
                 if self.cgb_mode && !self.hdma.active {
                     let vram_hi = (val & 0x1F) as u16;
-                    self.hdma.dst = 0x8000 | (vram_hi << 8) | (self.hdma.dst & 0x00FF);
+                    let raw = (vram_hi << 8) | (self.hdma.dst & 0x00F0);
+                    self.hdma.dst = Self::sanitize_vram_dma_dest(raw);
                 }
             }
             0xFF54 => {
                 if self.cgb_mode && !self.hdma.active {
-                    self.hdma.dst = (self.hdma.dst & 0xFF00) | (val & 0xF0) as u16;
+                    let raw = (self.hdma.dst & 0x1F00) | (val as u16 & 0x00F0);
+                    self.hdma.dst = Self::sanitize_vram_dma_dest(raw);
                 }
             }
             0xFF55 => {
                 if !self.cgb_mode {
                     return;
                 }
+                self.hdma.dst = Self::sanitize_vram_dma_dest(self.hdma.dst);
                 let requested_blocks = (val & 0x7F) + 1;
                 if self.hdma.active && (val & 0x80) == 0 {
                     // Abort ongoing HDMA
@@ -461,11 +464,16 @@ impl Mmu {
         }
     }
 
+    #[inline]
+    fn sanitize_vram_dma_dest(addr: u16) -> u16 {
+        0x8000 | (addr & 0x1FF0)
+    }
+
     /// Perform a General DMA transfer immediately, consuming CPU cycles.
     fn start_gdma(&mut self, blocks: u8) {
         let total_bytes = blocks as usize * 0x10;
         let mut src = self.hdma.src;
-        let mut dst = self.hdma.dst;
+        let mut dst = Self::sanitize_vram_dma_dest(self.hdma.dst);
 
         for _ in 0..total_bytes {
             let byte = self.read_byte(src);
@@ -475,7 +483,7 @@ impl Mmu {
         }
 
         self.hdma.src = src;
-        self.hdma.dst = dst & 0xFFF0;
+        self.hdma.dst = Self::sanitize_vram_dma_dest(dst);
         self.hdma.active = false;
         self.hdma.blocks = 0;
         self.gdma_cycles = blocks as u32 * 8;
@@ -487,6 +495,7 @@ impl Mmu {
             return;
         }
 
+        self.hdma.dst = Self::sanitize_vram_dma_dest(self.hdma.dst);
         for _ in 0..0x10 {
             let byte = self.read_byte(self.hdma.src);
             self.vram_dma_write(self.hdma.dst, byte);
@@ -499,7 +508,7 @@ impl Mmu {
             self.hdma.active = false;
         }
 
-        self.hdma.dst &= 0xFFF0;
+        self.hdma.dst = Self::sanitize_vram_dma_dest(self.hdma.dst);
         self.gdma_cycles += 8;
     }
 
