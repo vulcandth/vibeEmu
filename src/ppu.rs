@@ -56,6 +56,7 @@ pub struct Ppu {
     scx: u8,
     ly: u8,
     lyc: u8,
+    lyc_eq_ly: bool,
     pub dma: u8,
     bgp: u8,
     obp0: u8,
@@ -85,7 +86,7 @@ pub struct Ppu {
     sprite_count: usize,
     /// Indicates a completed frame is available in `framebuffer`
     frame_ready: bool,
-    prev_stat_irq: u8,
+    stat_irq_line: bool,
     frame_counter: u64,
 }
 
@@ -114,6 +115,7 @@ impl Ppu {
             scx: 0,
             ly: 0,
             lyc: 0,
+            lyc_eq_ly: false,
             dma: 0,
             bgp: 0,
             obp0: 0,
@@ -135,7 +137,7 @@ impl Ppu {
             line_sprites: [Sprite::default(); MAX_SPRITES_PER_LINE],
             sprite_count: 0,
             frame_ready: false,
-            prev_stat_irq: 0,
+            stat_irq_line: false,
             frame_counter: 0,
         }
     }
@@ -214,6 +216,9 @@ impl Ppu {
                 }
             }
         }
+
+        self.lyc_eq_ly = self.ly == self.lyc;
+        self.stat_irq_line = false;
     }
 
     /// Load the default CGB palettes used when running a DMG cartridge in
@@ -312,6 +317,12 @@ impl Ppu {
         *index = auto | PAL_UNUSED_BIT | next_idx;
     }
 
+    fn update_lyc_compare(&mut self) {
+        if self.lcdc & 0x80 != 0 {
+            self.lyc_eq_ly = self.ly == self.lyc;
+        }
+    }
+
     pub fn read_reg(&mut self, addr: u16) -> u8 {
         match addr {
             0xFF40 => self.lcdc,
@@ -319,7 +330,7 @@ impl Ppu {
                 (self.stat & 0x78)
                     | 0x80
                     | (self.mode & 0x03)
-                    | if self.ly == self.lyc { 0x04 } else { 0 }
+                    | if self.lyc_eq_ly { 0x04 } else { 0 }
             }
             0xFF42 => self.scy,
             0xFF43 => self.scx,
@@ -376,12 +387,27 @@ impl Ppu {
 
     pub fn write_reg(&mut self, addr: u16, val: u8) {
         match addr {
-            0xFF40 => self.lcdc = val,
+            0xFF40 => {
+                let was_on = self.lcdc & 0x80 != 0;
+                self.lcdc = val;
+                if was_on && self.lcdc & 0x80 == 0 {
+                    self.mode = MODE_HBLANK;
+                    self.mode_clock = 0;
+                    self.win_line_counter = 0;
+                    self.ly = 0;
+                }
+                if self.lcdc & 0x80 != 0 {
+                    self.update_lyc_compare();
+                }
+            }
             0xFF41 => self.stat = (self.stat & 0x07) | (val & 0xF8),
             0xFF42 => self.scy = val,
             0xFF43 => self.scx = val,
             0xFF44 => {}
-            0xFF45 => self.lyc = val,
+            0xFF45 => {
+                self.lyc = val;
+                self.update_lyc_compare();
+            }
             0xFF46 => self.dma = val,
             0xFF47 => self.bgp = val,
             0xFF48 => self.obp0 = val,
@@ -673,6 +699,8 @@ impl Ppu {
                 continue;
             }
 
+            self.update_lyc_compare();
+
             self.mode_clock += increment;
 
             match self.mode {
@@ -680,18 +708,13 @@ impl Ppu {
                     if self.mode_clock >= MODE0_CYCLES {
                         self.mode_clock -= MODE0_CYCLES;
                         self.ly += 1;
+                        self.update_lyc_compare();
                         if self.ly == SCREEN_HEIGHT as u8 {
                             self.frame_ready = true;
                             self.mode = MODE_VBLANK;
-                            if self.stat & 0x10 != 0 {
-                                *if_reg |= 0x02;
-                            }
                             *if_reg |= 0x01;
                         } else {
                             self.mode = MODE_OAM;
-                            if self.stat & 0x20 != 0 {
-                                *if_reg |= 0x02;
-                            }
                         }
                     }
                 }
@@ -699,15 +722,14 @@ impl Ppu {
                     if self.mode_clock >= MODE1_CYCLES {
                         self.mode_clock -= MODE1_CYCLES;
                         self.ly += 1;
+                        self.update_lyc_compare();
                         if self.ly > SCREEN_HEIGHT as u8 + VBLANK_LINES - 1 {
                             self.ly = 0;
                             self.frame_ready = false;
                             self.win_line_counter = 0;
                             self.frame_counter = self.frame_counter.wrapping_add(1);
                             self.mode = MODE_OAM;
-                            if self.stat & 0x20 != 0 {
-                                *if_reg |= 0x02;
-                            }
+                            self.update_lyc_compare();
                         }
                     }
                 }
@@ -724,9 +746,6 @@ impl Ppu {
                         self.render_scanline();
                         self.mode = MODE_HBLANK;
                         hblank_triggered = true;
-                        if self.stat & 0x08 != 0 {
-                            *if_reg |= 0x02;
-                        }
                     }
                 }
                 _ => {}
@@ -738,32 +757,18 @@ impl Ppu {
     }
 
     fn update_stat_irq(&mut self, if_reg: &mut u8) {
-        let mut current = 0u8;
-        if self.ly == self.lyc && self.stat & 0x40 != 0 {
-            current |= 0x40;
-        }
-        match self.mode {
-            MODE_HBLANK => {
-                if self.stat & 0x08 != 0 {
-                    current |= 0x08;
-                }
-            }
-            MODE_VBLANK => {
-                if self.stat & 0x10 != 0 {
-                    current |= 0x10;
-                }
-            }
-            MODE_OAM => {
-                if self.stat & 0x20 != 0 {
-                    current |= 0x20;
-                }
-            }
-            _ => {}
-        }
-        if current & !self.prev_stat_irq != 0 {
+        let coincidence = self.lyc_eq_ly && self.stat & 0x40 != 0;
+        let mode_signal = match self.mode {
+            MODE_HBLANK => self.stat & 0x08 != 0,
+            MODE_VBLANK => self.stat & 0x10 != 0,
+            MODE_OAM => self.stat & 0x20 != 0,
+            _ => false,
+        };
+        let current = coincidence || mode_signal;
+        if current && !self.stat_irq_line {
             *if_reg |= 0x02;
         }
-        self.prev_stat_irq = current;
+        self.stat_irq_line = current;
     }
 }
 

@@ -510,7 +510,6 @@ fn ppu__lcdon_write_timing_GS_gb() {
 }
 
 #[test]
-#[ignore]
 fn ppu__stat_irq_blocking_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/ppu/stat_irq_blocking.gb"),
@@ -520,7 +519,6 @@ fn ppu__stat_irq_blocking_gb() {
 }
 
 #[test]
-#[ignore]
 fn ppu__stat_lyc_onoff_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/ppu/stat_lyc_onoff.gb"),
