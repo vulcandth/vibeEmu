@@ -1585,7 +1585,6 @@ impl Apu {
     }
 
     pub fn step(&mut self, cycles: u16) {
-        let cps = CPU_CLOCK_HZ / self.sample_rate;
         // Advance square channels at 2 MHz: 1 tick per 2 CPU cycles (accumulated)
         self.mhz2_residual += cycles as i32;
         let ticks_2mhz = self.mhz2_residual / 2;
@@ -1607,9 +1606,9 @@ impl Apu {
             self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
             self.ch3.step(1, &self.wave_ram);
             self.ch4.step(1);
-            self.sample_timer += 1;
-            if self.sample_timer >= cps {
-                self.sample_timer -= cps;
+            self.sample_timer = self.sample_timer.saturating_add(self.sample_rate);
+            while self.sample_timer >= CPU_CLOCK_HZ {
+                self.sample_timer -= CPU_CLOCK_HZ;
                 let (left, right) = self.mix_output();
                 self.push_sample(left);
                 self.push_sample(right);

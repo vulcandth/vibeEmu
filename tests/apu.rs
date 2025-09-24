@@ -10,6 +10,36 @@ fn tick_machine(apu: &mut Apu, div: &mut u16, cycles: u16) {
 }
 
 #[test]
+fn honours_requested_sample_rate() {
+    const CPU_CLOCK_HZ: u64 = 4_194_304;
+    const SAMPLE_RATE: u32 = 9_600;
+    const TEST_CYCLES: u32 = (CPU_CLOCK_HZ / 10) as u32;
+    const STEP: u16 = 32;
+
+    let mut apu = Apu::new();
+    apu.set_sample_rate(SAMPLE_RATE);
+
+    let mut remaining = TEST_CYCLES;
+    while remaining >= STEP as u32 {
+        apu.step(STEP);
+        remaining -= STEP as u32;
+    }
+    if remaining > 0 {
+        apu.step(remaining as u16);
+    }
+
+    let mut produced = 0usize;
+    while apu.pop_sample().is_some() {
+        produced += 1;
+    }
+
+    assert_eq!(produced % 2, 0, "APU output should produce stereo pairs");
+
+    let expected_frames = ((TEST_CYCLES as u64) * SAMPLE_RATE as u64 / CPU_CLOCK_HZ) as usize;
+    assert_eq!(produced, expected_frames * 2);
+}
+
+#[test]
 #[ignore]
 fn frame_sequencer_tick() {
     let mut apu = Apu::new();

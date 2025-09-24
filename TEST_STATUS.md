@@ -34,9 +34,9 @@ Combined exit code: 101
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
 | ROM Test Suites | 123 | 62 | 0 | 0 | 185 | 66.5% |
-| Integration Tests | 156 | 18 | 0 | 0 | 174 | 89.7% |
+| Integration Tests | 157 | 18 | 0 | 0 | 175 | 89.7% |
 | Unit Tests | 5 | 0 | 0 | 0 | 5 | 100.0% |
-| **Overall** | 284 | 80 | 0 | 0 | 364 | 78.0% |
+| **Overall** | 285 | 80 | 0 | 0 | 365 | 78.1% |
 
 ## Failing Tests
 
@@ -363,7 +363,7 @@ Combined exit code: 101
 
 ### Integration Tests
 
-#### apu (91/109 passing, 83.5%)
+#### apu (92/110 passing, 83.6%)
 
 | Test | Result |
 | --- | --- |
@@ -373,6 +373,7 @@ Combined exit code: 101
 | `double_speed_preserves_lf_div_phase` | ✅ Pass |
 | `duty_step_reset_when_apu_powered_off` | ✅ Pass |
 | `envelope_zero_does_not_disable_channel` | ✅ Pass |
+| `honours_requested_sample_rate` | ✅ Pass |
 | `nr11_length_counter_expires` | ✅ Pass |
 | `nr11_write_sets_duty_and_length` | ✅ Pass |
 | `nr12_bit3_enables_dac` | ✅ Pass |
