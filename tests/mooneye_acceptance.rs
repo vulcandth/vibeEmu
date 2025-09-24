@@ -528,7 +528,6 @@ fn ppu__stat_lyc_onoff_gb() {
 }
 
 #[test]
-#[ignore]
 fn ppu__vblank_stat_intr_GS_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/ppu/vblank_stat_intr-GS.gb"),

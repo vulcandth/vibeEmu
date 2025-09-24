@@ -87,6 +87,7 @@ pub struct Ppu {
     /// Indicates a completed frame is available in `framebuffer`
     frame_ready: bool,
     stat_irq_line: bool,
+    dmg_mode2_vblank_irq_pending: bool,
     frame_counter: u64,
 }
 
@@ -138,6 +139,7 @@ impl Ppu {
             sprite_count: 0,
             frame_ready: false,
             stat_irq_line: false,
+            dmg_mode2_vblank_irq_pending: false,
             frame_counter: 0,
         }
     }
@@ -219,6 +221,7 @@ impl Ppu {
 
         self.lyc_eq_ly = self.ly == self.lyc;
         self.stat_irq_line = false;
+        self.dmg_mode2_vblank_irq_pending = false;
     }
 
     /// Load the default CGB palettes used when running a DMG cartridge in
@@ -696,6 +699,7 @@ impl Ppu {
                 self.ly = 0;
                 self.mode_clock = 0;
                 self.win_line_counter = 0;
+                self.dmg_mode2_vblank_irq_pending = false;
                 continue;
             }
 
@@ -712,6 +716,9 @@ impl Ppu {
                         if self.ly == SCREEN_HEIGHT as u8 {
                             self.frame_ready = true;
                             self.mode = MODE_VBLANK;
+                            if !self.cgb {
+                                self.dmg_mode2_vblank_irq_pending = true;
+                            }
                             *if_reg |= 0x01;
                         } else {
                             self.mode = MODE_OAM;
@@ -764,11 +771,18 @@ impl Ppu {
             MODE_OAM => self.stat & 0x20 != 0,
             _ => false,
         };
+        let glitch_pending = if self.cgb {
+            false
+        } else {
+            self.dmg_mode2_vblank_irq_pending
+        };
+        let glitch = glitch_pending && self.stat & 0x20 != 0;
+        self.dmg_mode2_vblank_irq_pending = false;
         let current = coincidence || mode_signal;
-        if current && !self.stat_irq_line {
+        if (current && !self.stat_irq_line) || glitch {
             *if_reg |= 0x02;
         }
-        self.stat_irq_line = current;
+        self.stat_irq_line = current || glitch;
     }
 }
 
