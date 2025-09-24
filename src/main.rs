@@ -21,7 +21,6 @@ use log::info;
 use pixels::{Pixels, SurfaceTexture};
 use rfd::FileDialog;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, Event, MouseButton, WindowEvent};
@@ -166,9 +165,7 @@ fn spawn_vram_window(
 fn emulate_until(gb: &mut gameboy::GameBoy, speed: Speed, event_loop: &ActiveEventLoop) {
     let target = unsafe { NEXT_FRAME.get_or_insert_with(|| Instant::now() + FRAME_TIME) };
 
-    if let Ok(mut apu) = gb.mmu.apu.lock() {
-        apu.set_speed(speed.factor);
-    }
+    gb.mmu.apu.set_speed(speed.factor);
 
     while !gb.mmu.ppu.frame_ready() {
         gb.cpu.step(&mut gb.mmu);
@@ -374,7 +371,7 @@ fn main() {
     let _stream = if args.headless {
         None
     } else {
-        audio::start_stream(Arc::clone(&gb.mmu.apu))
+        audio::start_stream(gb.mmu.audio_bus.clone())
     };
 
     let mut frame = vec![0u32; 160 * 144];
@@ -496,9 +493,7 @@ fn main() {
                                     let mask = if code == KeyCode::Space {
                                         speed.fast = pressed;
                                         speed.factor = if speed.fast { FF_MULT } else { 1.0 };
-                                        if let Ok(mut apu) = gb.mmu.apu.lock() {
-                                            apu.set_speed(speed.factor);
-                                        }
+                                        gb.mmu.apu.set_speed(speed.factor);
                                         None
                                     } else {
                                         match code {

@@ -221,14 +221,11 @@ impl Cpu {
         let prev_div = mmu.timer.div;
         mmu.timer.step(hw_cycles, &mut mmu.if_reg);
         let curr_div = mmu.timer.div;
-        {
-            let mut apu = mmu.apu.lock().unwrap();
-            // Advance 2 MHz domain first so duty edges and suppression changes
-            // are visible to the subsequent 1 MHz staging/PCM update in the
-            // same CPU step (aligns with the APU's internal ordering for audio updates).
-            apu.step(hw_cycles);
-            apu.tick(prev_div, curr_div, self.double_speed);
-        }
+        // Advance 2 MHz domain first so duty edges and suppression changes
+        // are visible to the subsequent 1 MHz staging/PCM update in the
+        // same CPU step (aligns with the APU's internal ordering for audio updates).
+        mmu.apu.step(hw_cycles);
+        mmu.apu.tick(prev_div, curr_div, self.double_speed);
         mmu.serial
             .step(prev_div, curr_div, self.double_speed, &mut mmu.if_reg);
         if mmu.ppu.step(hw_cycles, &mut mmu.if_reg) {

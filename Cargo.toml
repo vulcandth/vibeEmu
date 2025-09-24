@@ -21,6 +21,7 @@ env_logger = "0.11"
 bytemuck = "1.23"
 rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+crossbeam-queue = "0.3"
 
 [patch.crates-io]
 imgui-wgpu = { path = "vendor/imgui-wgpu-0.24.0" }

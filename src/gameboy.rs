@@ -44,8 +44,9 @@ impl GameBoy {
     pub fn reset(&mut self) {
         let cart = self.mmu.cart.take();
         let boot = self.mmu.boot_rom.take();
+        let audio_bus = self.mmu.audio_bus.clone();
         self.cpu = Cpu::new_with_mode_and_revision(self.cgb, self.dmg_revision);
-        self.mmu = Mmu::new_with_revisions(self.cgb, self.dmg_revision, self.cgb_revision);
+        self.mmu = Mmu::with_audio_bus(self.cgb, self.dmg_revision, self.cgb_revision, audio_bus);
         if let Some(c) = cart {
             self.mmu.load_cart(c);
         }

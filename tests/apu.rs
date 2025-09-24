@@ -299,10 +299,10 @@ fn pcm_mmu_mapping() {
     mmu.write_byte(0xFF17, 0xF0);
     mmu.write_byte(0xFF19, 0x80);
     {
-        let mut apu = mmu.apu.lock().unwrap();
+        let apu = &mut mmu.apu;
         let mut div = 0u16;
         for _ in 0..(8300 / 4) {
-            tick_machine(&mut apu, &mut div, 4);
+            tick_machine(apu, &mut div, 4);
         }
     }
     assert_eq!(mmu.read_byte(0xFF76), 0xF0);

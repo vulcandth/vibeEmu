@@ -1,5 +1,5 @@
 use crate::{
-    apu::Apu,
+    apu::{Apu, ApuAudioBus},
     cartridge::Cartridge,
     hardware::{CgbRevision, DmgRevision},
     input::Input,
@@ -7,7 +7,6 @@ use crate::{
     serial::Serial,
     timer::Timer,
 };
-use std::sync::{Arc, Mutex};
 
 const WRAM_BANK_SIZE: usize = 0x1000;
 
@@ -45,7 +44,8 @@ pub struct Mmu {
     pub ie_reg: u8,
     pub serial: Serial,
     pub ppu: Ppu,
-    pub apu: Arc<Mutex<Apu>>,
+    pub apu: Apu,
+    pub audio_bus: ApuAudioBus,
     pub timer: Timer,
     pub input: Input,
     hdma: HdmaState,
@@ -76,6 +76,16 @@ impl Mmu {
         dmg_revision: DmgRevision,
         cgb_revision: CgbRevision,
     ) -> Self {
+        let audio_bus = ApuAudioBus::new();
+        Self::with_audio_bus(cgb, dmg_revision, cgb_revision, audio_bus)
+    }
+
+    pub fn with_audio_bus(
+        cgb: bool,
+        dmg_revision: DmgRevision,
+        cgb_revision: CgbRevision,
+        audio_bus: ApuAudioBus,
+    ) -> Self {
         let mut timer = Timer::new();
         // Power-on DIV phase differs between DMG revisions. These values match
         // the phases measured by mooneye's boot_div acceptance tests so the
@@ -88,6 +98,8 @@ impl Mmu {
         let mut ppu = Ppu::new_with_mode(cgb);
         ppu.apply_boot_state(if cgb { None } else { Some(dmg_revision) });
 
+        let apu = Apu::with_audio_bus(cgb, cgb_revision, audio_bus.clone());
+
         Self {
             wram: [[0; WRAM_BANK_SIZE]; 8],
             wram_bank: 1,
@@ -99,7 +111,8 @@ impl Mmu {
             ie_reg: 0,
             serial: Serial::new(cgb, dmg_revision),
             ppu,
-            apu: Arc::new(Mutex::new(Apu::new_with_config(cgb, cgb_revision))),
+            apu,
+            audio_bus,
             timer,
             input: Input::new(),
             hdma: HdmaState {
@@ -189,7 +202,7 @@ impl Mmu {
             0xFF01 | 0xFF02 => self.serial.read(addr),
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg,
-            0xFF10..=0xFF3F => self.apu.lock().unwrap().read_reg(addr),
+            0xFF10..=0xFF3F => self.apu.read_reg(addr),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.read_reg(addr),
             0xFF46 => self.ppu.dma,
             0xFF51 => {
@@ -264,7 +277,7 @@ impl Mmu {
             }
             0xFF76 | 0xFF77 => {
                 if self.cgb_mode {
-                    self.apu.lock().unwrap().read_pcm(addr)
+                    self.apu.read_pcm(addr)
                 } else {
                     0xFF
                 }
@@ -326,7 +339,7 @@ impl Mmu {
             0xFF01 | 0xFF02 => self.serial.write(addr, val),
             0xFF04..=0xFF07 => self.timer.write(addr, val, &mut self.if_reg),
             0xFF0F => self.if_reg = (val & 0x1F) | (self.if_reg & 0xE0),
-            0xFF10..=0xFF3F => self.apu.lock().unwrap().write_reg(addr, val),
+            0xFF10..=0xFF3F => self.apu.write_reg(addr, val),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
             0xFF51 => {
                 if self.cgb_mode && !self.hdma.active {
@@ -512,12 +525,9 @@ impl Mmu {
         let prev_div = self.timer.div;
         self.timer.step(hw_cycles, &mut self.if_reg);
         let curr_div = self.timer.div;
-        {
-            let mut apu = self.apu.lock().unwrap();
-            // Advance 2 MHz domain before 1 MHz staging to match APU internal ordering
-            apu.step(hw_cycles);
-            apu.tick(prev_div, curr_div, self.key1 & 0x80 != 0);
-        }
+        // Advance 2 MHz domain before 1 MHz staging to match APU internal ordering
+        self.apu.step(hw_cycles);
+        self.apu.tick(prev_div, curr_div, self.key1 & 0x80 != 0);
         let _ = self.ppu.step(hw_cycles, &mut self.if_reg);
     }
 }

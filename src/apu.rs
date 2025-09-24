@@ -1,4 +1,8 @@
-use std::collections::VecDeque;
+use crossbeam_queue::ArrayQueue;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
 
 use crate::hardware::CgbRevision;
 
@@ -16,9 +20,13 @@ const CPU_CLOCK_HZ: u32 = 4_194_304;
 // 512 Hz frame sequencer tick (not doubled in CGB mode)
 const FRAME_SEQUENCER_PERIOD: u32 = 8192;
 const VOLUME_FACTOR: i16 = 64;
+pub const DEFAULT_SAMPLE_RATE: u32 = 44_100;
 pub const AUDIO_LATENCY_MS: u32 = 40;
 // Audio sample pipeline delay is computed dynamically when a channel is
 // triggered.  See `trigger_square` for details.
+
+const AUDIO_FIFO_CAPACITY: usize =
+    ((DEFAULT_SAMPLE_RATE as usize * AUDIO_LATENCY_MS as usize) / 1000) * 2;
 
 const POWER_ON_REGS: [u8; 0x30] = [
     0x80, 0xBF, 0xF3, 0xFF, 0xBF, 0xFF, 0x3F, 0x00, 0xFF, 0xBF, 0x7F, 0xFF, 0x9F, 0xFF, 0xBF, 0xFF,
@@ -38,6 +46,53 @@ const DUTY_TABLE: [[u8; 8]; 4] = [
     [1, 0, 0, 0, 0, 1, 1, 1], // 50%   -> 10000111
     [0, 1, 1, 1, 1, 1, 1, 0], // 75%   -> 01111110
 ];
+
+#[derive(Clone)]
+pub struct ApuAudioBus {
+    queue: Arc<ArrayQueue<i16>>,
+    sample_rate: Arc<AtomicU32>,
+}
+
+impl ApuAudioBus {
+    pub fn new() -> Self {
+        Self::with_sample_rate(DEFAULT_SAMPLE_RATE)
+    }
+
+    pub fn with_sample_rate(initial_rate: u32) -> Self {
+        Self {
+            queue: Arc::new(ArrayQueue::new(AUDIO_FIFO_CAPACITY)),
+            sample_rate: Arc::new(AtomicU32::new(initial_rate)),
+        }
+    }
+
+    pub fn push(&self, sample: i16) {
+        while self.queue.push(sample).is_err() {
+            let _ = self.queue.pop();
+        }
+    }
+
+    pub fn pop(&self) -> Option<i16> {
+        self.queue.pop()
+    }
+
+    pub fn set_sample_rate(&self, rate: u32) {
+        self.sample_rate.store(rate, Ordering::Release);
+    }
+
+    pub fn desired_sample_rate(&self) -> u32 {
+        self.sample_rate.load(Ordering::Acquire)
+    }
+
+    pub fn clear(&self) {
+        while self.queue.pop().is_some() {}
+    }
+}
+
+impl Default for ApuAudioBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Default, Clone, Copy)]
 struct EnvelopeClock {
@@ -564,7 +619,7 @@ pub struct Apu {
     sequencer: FrameSequencer,
     sample_timer: u32,
     sample_rate: u32,
-    samples: VecDeque<i16>,
+    audio_bus: ApuAudioBus,
     pcm_samples: [u8; 4],
     pcm_active: [bool; 4],
     pcm_mask: [u8; 2],
@@ -606,9 +661,6 @@ pub struct Apu {
 }
 
 impl Apu {
-    // Keep <= 40 ms of stereo samples in the queue
-    const MAX_SAMPLES: usize = ((44100 * AUDIO_LATENCY_MS as usize) / 1000) * 2;
-
     fn calc_hp_coef(rate: u32) -> f32 {
         0.999_958_f32.powf(4_194_304.0 / rate as f32)
     }
@@ -621,11 +673,19 @@ impl Apu {
         if self.speed_factor != 1.0 {
             return;
         }
-        if self.samples.len() >= Self::MAX_SAMPLES {
-            let excess = self.samples.len() + 1 - Self::MAX_SAMPLES;
-            self.samples.drain(..excess);
+        self.audio_bus.push(s);
+    }
+
+    pub fn audio_bus(&self) -> ApuAudioBus {
+        self.audio_bus.clone()
+    }
+
+    fn sync_sample_rate_from_bus(&mut self) {
+        let desired = self.audio_bus.desired_sample_rate();
+        if desired != 0 && desired != self.sample_rate {
+            self.sample_rate = desired;
+            self.hp_coef = Apu::calc_hp_coef(desired);
         }
-        self.samples.push_back(s);
     }
 
     fn read_mask(addr: u16) -> u8 {
@@ -665,7 +725,7 @@ impl Apu {
         self.regs.fill(0);
         self.nr50 = 0;
         self.nr51 = 0;
-        self.samples.clear();
+        self.audio_bus.clear();
         self.pcm_samples = [0; 4];
         self.pcm_active = [false; 4];
         self.pcm_mask = [0xFF; 2];
@@ -771,7 +831,8 @@ impl Apu {
             Apu::nrx2_glitch_step(vol, new_val, old_val, lock)
         }
     }
-    fn new_internal() -> Self {
+    fn new_internal(audio_bus: ApuAudioBus) -> Self {
+        let sample_rate = audio_bus.desired_sample_rate();
         let mut apu = Self {
             ch1: SquareChannel::new(true),
             ch2: SquareChannel::new(false),
@@ -785,13 +846,13 @@ impl Apu {
             nr52: 0xF1,
             sequencer: FrameSequencer::new(),
             sample_timer: 0,
-            sample_rate: 44_100,
-            samples: VecDeque::with_capacity(Self::MAX_SAMPLES),
+            sample_rate,
+            audio_bus,
             pcm_samples: [0; 4],
             pcm_active: [false; 4],
             pcm_mask: [0xFF; 2],
             speed_factor: 1.0,
-            hp_coef: Apu::calc_hp_coef(44_100),
+            hp_coef: Apu::calc_hp_coef(sample_rate),
             hp_prev_input_left: 0.0,
             hp_prev_output_left: 0.0,
             hp_prev_input_right: 0.0,
@@ -849,7 +910,16 @@ impl Apu {
     }
 
     pub fn new_with_config(cgb: bool, revision: CgbRevision) -> Self {
-        let mut apu = Self::new_internal();
+        let bus = ApuAudioBus::new();
+        let mut apu = Self::new_internal(bus);
+        apu.cgb_mode = cgb;
+        apu.cgb_revision = revision;
+        apu.hp_coef = Apu::calc_hp_coef(apu.sample_rate);
+        apu
+    }
+
+    pub fn with_audio_bus(cgb: bool, revision: CgbRevision, audio_bus: ApuAudioBus) -> Self {
+        let mut apu = Self::new_internal(audio_bus);
         apu.cgb_mode = cgb;
         apu.cgb_revision = revision;
         apu.hp_coef = Apu::calc_hp_coef(apu.sample_rate);
@@ -1384,6 +1454,7 @@ impl Apu {
         // Store the current CPU speed so trigger_square can select the
         // correct initial delay when a channel is triggered.
         self.double_speed = double_speed;
+        self.sync_sample_rate_from_bus();
         // Double-speed mode halves the CPU cycles per M-cycle, but we still emit
         // one 1 MHz stage tick every two CPU cycles so the staging pipeline aligns to the 1 MHz domain.
         let ticks = if double_speed { 2 } else { 4 };
@@ -1723,10 +1794,11 @@ impl Apu {
     pub fn set_sample_rate(&mut self, rate: u32) {
         self.sample_rate = rate;
         self.hp_coef = Apu::calc_hp_coef(rate);
+        self.audio_bus.set_sample_rate(rate);
     }
 
     pub fn pop_sample(&mut self) -> Option<i16> {
-        self.samples.pop_front()
+        self.audio_bus.pop()
     }
 
     pub fn sequencer_step(&self) -> u8 {
