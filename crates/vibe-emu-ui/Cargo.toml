@@ -13,8 +13,5 @@ imgui = { version = "0.12", features = ["docking", "tables-api"] }
 imgui-winit-support = "0.13"
 imgui-wgpu = "0.24"
 cpal = "0.16"
-log = "0.4"
-env_logger = "0.11"
-bytemuck = "1.23"
 rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+png = "0.17"

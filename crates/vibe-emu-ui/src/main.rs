@@ -6,10 +6,10 @@ mod ui;
 use clap::Parser;
 use imgui::{ConfigFlags, Context as ImguiContext};
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
-use log::info;
 use pixels::{Pixels, SurfaceTexture};
 use rfd::FileDialog;
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::CgbRevision};
@@ -24,13 +24,35 @@ fn load_window_icon() -> Option<Icon> {
         env!("CARGO_MANIFEST_DIR"),
         "/../../gfx/vibeEmu_512px.png"
     ));
-    if let Ok(img) = image::load_from_memory(icon_data) {
-        let img = img.into_rgba8();
-        let (w, h) = (img.width(), img.height());
-        Icon::from_rgba(img.into_raw(), w, h).ok()
-    } else {
-        None
+    let cursor = Cursor::new(&icon_data[..]);
+    let mut decoder = png::Decoder::new(cursor);
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let data = &buf[..info.buffer_size()];
+    let pixel_count = info.width as usize * info.height as usize;
+    let mut rgba = Vec::with_capacity(pixel_count * 4);
+    match reader.info().color_type {
+        png::ColorType::Rgba => rgba.extend_from_slice(data),
+        png::ColorType::Rgb => {
+            for chunk in data.chunks_exact(3) {
+                rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 0xFF]);
+            }
+        }
+        png::ColorType::Grayscale => {
+            for &g in data {
+                rgba.extend_from_slice(&[g, g, g, 0xFF]);
+            }
+        }
+        png::ColorType::GrayscaleAlpha => {
+            for chunk in data.chunks_exact(2) {
+                rgba.extend_from_slice(&[chunk[0], chunk[0], chunk[0], chunk[1]]);
+            }
+        }
+        _ => return None,
     }
+    Icon::from_rgba(rgba, info.width, info.height).ok()
 }
 
 const SCALE: u32 = 2;
@@ -261,12 +283,14 @@ fn draw_vram(win: &mut ui::window::UiWindow, gb: &mut GameBoy, ui: &imgui::Ui) {
 }
 
 fn draw_game_screen(pixels: &mut Pixels, frame: &[u32]) {
-    let pixel_frame: &mut [u32] = bytemuck::cast_slice_mut(pixels.frame_mut());
-    for (dst, src) in pixel_frame.iter_mut().zip(frame) {
+    for (dst, &src) in pixels.frame_mut().chunks_exact_mut(4).zip(frame.iter()) {
         let r = ((src >> 16) & 0xFF) as u8;
         let g = ((src >> 8) & 0xFF) as u8;
         let b = (src & 0xFF) as u8;
-        *dst = u32::from_ne_bytes([r, g, b, 0xFF]);
+        dst[0] = r;
+        dst[1] = g;
+        dst[2] = b;
+        dst[3] = 0xFF;
     }
 }
 
@@ -321,10 +345,9 @@ fn build_ui(
 }
 
 fn main() {
-    env_logger::init();
     let args = Args::parse();
 
-    info!("Starting emulator");
+    println!("Starting emulator");
 
     let rom_path = match args.rom {
         Some(p) => p,

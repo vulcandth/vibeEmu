@@ -1,5 +1,4 @@
 mod common;
-use image::ImageReader;
 use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
 
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
@@ -19,17 +18,14 @@ fn dmg_acid2_rom() {
         }
     }
 
-    let expected = ImageReader::open(common::rom_path("dmg-acid2/dmg-acid2-dmg.png"))
-        .unwrap()
-        .decode()
-        .unwrap()
-        .to_rgb8();
-    assert_eq!(expected.width(), 160);
-    assert_eq!(expected.height(), 144);
+    let (width, height, expected) =
+        common::load_png_rgb(common::rom_path("dmg-acid2/dmg-acid2-dmg.png"));
+    assert_eq!(width, 160);
+    assert_eq!(height, 144);
 
     let frame = gb.mmu.ppu.framebuffer();
-    for (idx, pixel) in expected.pixels().enumerate() {
-        let expected_color = match pixel.0 {
+    for (idx, pixel) in expected.iter().copied().enumerate() {
+        let expected_color = match pixel {
             [0x00, 0x00, 0x00] => DMG_PALETTE[3],
             [0x55, 0x55, 0x55] => DMG_PALETTE[2],
             [0xAA, 0xAA, 0xAA] => DMG_PALETTE[1],

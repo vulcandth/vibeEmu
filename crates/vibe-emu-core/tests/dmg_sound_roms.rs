@@ -1,5 +1,4 @@
 mod common;
-use image::ImageReader;
 use std::path::Path;
 use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
 
@@ -19,17 +18,13 @@ fn run_rom<P: AsRef<Path>, Q: AsRef<Path>>(rom_path: P, screenshot_path: Q) {
         }
     }
 
-    let expected = ImageReader::open(screenshot_path)
-        .unwrap()
-        .decode()
-        .unwrap()
-        .to_rgb8();
-    assert_eq!(expected.width(), 160);
-    assert_eq!(expected.height(), 144);
+    let (width, height, expected) = common::load_png_rgb(screenshot_path);
+    assert_eq!(width, 160);
+    assert_eq!(height, 144);
 
     let frame = gb.mmu.ppu.framebuffer();
-    for (idx, pixel) in expected.pixels().enumerate() {
-        let expected_color = match pixel.0 {
+    for (idx, pixel) in expected.iter().copied().enumerate() {
+        let expected_color = match pixel {
             [0xE0, 0xF8, 0xD0] => DMG_PALETTE[0],
             [0x08, 0x18, 0x20] => DMG_PALETTE[3],
             _ => panic!("unexpected color {:?}", pixel),
