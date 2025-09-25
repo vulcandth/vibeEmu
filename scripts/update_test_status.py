@@ -15,7 +15,7 @@ from typing import Dict, Iterable, List, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST_STATUS_FILE = REPO_ROOT / "TEST_STATUS.md"
-TESTS_DIR = REPO_ROOT / "tests"
+TESTS_DIR = REPO_ROOT / "crates" / "vibe-emu-core" / "tests"
 
 TEST_RESULT_RE = re.compile(
     r"^test\s+(?P<name>.+?)\s+\.\.\.\s+(?P<status>ok|FAILED|ignored|measured)(?:\s+\([^)]*\))?$"

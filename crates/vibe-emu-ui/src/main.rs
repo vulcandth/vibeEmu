@@ -1,19 +1,8 @@
 #![allow(dead_code)]
 
-mod apu;
 mod audio;
-mod cartridge;
-mod cpu;
-mod gameboy;
-mod hardware;
-mod input;
-mod mmu;
-mod ppu;
-mod serial;
-mod timer;
 mod ui;
 
-use crate::hardware::CgbRevision;
 use clap::Parser;
 use imgui::{ConfigFlags, Context as ImguiContext};
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
@@ -23,6 +12,7 @@ use rfd::FileDialog;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::CgbRevision};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -30,7 +20,10 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Icon, Window};
 
 fn load_window_icon() -> Option<Icon> {
-    let icon_data = include_bytes!("../gfx/vibeEmu_512px.png");
+    let icon_data = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../gfx/vibeEmu_512px.png"
+    ));
     if let Ok(img) = image::load_from_memory(icon_data) {
         let img = img.into_rgba8();
         let (w, h) = (img.width(), img.height());
@@ -163,7 +156,7 @@ fn spawn_vram_window(
 }
 
 #[allow(static_mut_refs)]
-fn emulate_until(gb: &mut gameboy::GameBoy, speed: Speed, event_loop: &ActiveEventLoop) {
+fn emulate_until(gb: &mut GameBoy, speed: Speed, event_loop: &ActiveEventLoop) {
     let target = unsafe { NEXT_FRAME.get_or_insert_with(|| Instant::now() + FRAME_TIME) };
 
     if let Ok(mut apu) = gb.mmu.apu.lock() {
@@ -186,7 +179,7 @@ fn emulate_until(gb: &mut gameboy::GameBoy, speed: Speed, event_loop: &ActiveEve
     }
 }
 
-fn draw_debugger(pixels: &mut Pixels, gb: &mut gameboy::GameBoy, ui: &imgui::Ui) {
+fn draw_debugger(pixels: &mut Pixels, gb: &mut GameBoy, ui: &imgui::Ui) {
     let _ = pixels.frame_mut();
     if let Some(_table) = ui.begin_table("regs", 2) {
         ui.table_next_row();
@@ -252,7 +245,7 @@ fn draw_debugger(pixels: &mut Pixels, gb: &mut gameboy::GameBoy, ui: &imgui::Ui)
     }
 }
 
-fn draw_vram(win: &mut ui::window::UiWindow, gb: &mut gameboy::GameBoy, ui: &imgui::Ui) {
+fn draw_vram(win: &mut ui::window::UiWindow, gb: &mut GameBoy, ui: &imgui::Ui) {
     let _ = win.pixels.frame_mut();
     if let Some(viewer) = win.vram_viewer.as_mut() {
         viewer.ui(
@@ -281,7 +274,7 @@ fn draw_game_screen(pixels: &mut Pixels, frame: &[u32]) {
 fn build_ui(
     state: &mut UiState,
     ui: &imgui::Ui,
-    gb: &mut gameboy::GameBoy,
+    gb: &mut GameBoy,
     _event_loop: &ActiveEventLoop,
     _platform: &mut WinitPlatform,
 ) {
@@ -301,7 +294,7 @@ fn build_ui(
                     if let Some(path) = FileDialog::new()
                         .add_filter("Game Boy ROM", &["gb", "gbc"])
                         .pick_file()
-                        && let Ok(cart) = cartridge::Cartridge::from_file(&path)
+                        && let Ok(cart) = Cartridge::from_file(&path)
                     {
                         gb.reset();
                         gb.mmu.load_cart(cart);
@@ -341,7 +334,7 @@ fn main() {
         }
     };
 
-    let cart = match cartridge::Cartridge::from_file(&rom_path) {
+    let cart = match Cartridge::from_file(&rom_path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to load ROM: {e}");
@@ -356,7 +349,7 @@ fn main() {
     } else {
         cart.cgb
     };
-    let mut gb = gameboy::GameBoy::new_with_revision(cgb_mode, CgbRevision::default());
+    let mut gb = GameBoy::new_with_revision(cgb_mode, CgbRevision::default());
     gb.mmu.load_cart(cart);
 
     if let Some(path) = args.bootrom {

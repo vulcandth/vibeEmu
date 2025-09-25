@@ -1,4 +1,4 @@
-use vibeEmu::apu::Apu;
+use vibe_emu_core::apu::Apu;
 
 fn tick_machine(apu: &mut Apu, div: &mut u16, cycles: u16) {
     let prev = *div;

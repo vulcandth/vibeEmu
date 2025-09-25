@@ -1,4 +1,4 @@
-use vibeEmu::{cartridge::Cartridge, cpu::Cpu, mmu::Mmu};
+use vibe_emu_core::{cartridge::Cartridge, cpu::Cpu, mmu::Mmu};
 
 #[test]
 fn simple_program() {

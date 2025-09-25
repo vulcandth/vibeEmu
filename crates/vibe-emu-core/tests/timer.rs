@@ -1,4 +1,4 @@
-use vibeEmu::timer::Timer;
+use vibe_emu_core::timer::Timer;
 
 #[test]
 fn div_increment() {

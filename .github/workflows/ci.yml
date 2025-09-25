@@ -10,10 +10,12 @@ on:
 
 jobs:
   build:
+    name: ${{ matrix.os }} / ${{ matrix.crate }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
+        crate: [vibe-emu-core, vibe-emu-ui]
     env:
       SCCACHE_VERSION: 0.10.0
 
@@ -95,13 +97,14 @@ jobs:
           restore-keys: ${{ runner.os }}-target-debug-
 
       - name: Check formatting
+        if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux'
         run: cargo fmt --all -- --check
 
       - name: Lint
-        run: cargo clippy -- -D warnings
+        run: cargo clippy -p ${{ matrix.crate }} --all-targets -- -D warnings
 
       - name: Test debug
-        run: cargo test --verbose
+        run: cargo test --verbose -p ${{ matrix.crate }}
 
       - name: Cache target (release)
         uses: actions/cache@v3
@@ -111,10 +114,12 @@ jobs:
           restore-keys: ${{ runner.os }}-target-release-
 
       - name: Test release
-        run: cargo test --release --verbose
+        run: cargo test --release --verbose -p ${{ matrix.crate }}
 
       - name: Update test status report
+        if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux'
         run: python scripts/update_test_status.py
 
       - name: Verify test status report is up to date
+        if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux'
         run: git diff --exit-code TEST_STATUS.md

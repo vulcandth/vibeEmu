@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 mod common;
-use vibeEmu::{
+use vibe_emu_core::{
     cartridge::Cartridge,
     gameboy::GameBoy,
     hardware::{CgbRevision, DmgRevision},

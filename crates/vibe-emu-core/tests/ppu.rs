@@ -1,4 +1,4 @@
-use vibeEmu::ppu::Ppu;
+use vibe_emu_core::ppu::Ppu;
 
 #[test]
 fn register_access() {

@@ -1,6 +1,6 @@
 use std::fs;
 use tempfile::tempdir;
-use vibeEmu::cartridge::{Cartridge, MbcType};
+use vibe_emu_core::cartridge::{Cartridge, MbcType};
 
 #[test]
 fn battery_ram_saved_to_disk() {

@@ -1,7 +1,7 @@
 mod common;
 use image::ImageReader;
 use std::path::Path;
-use vibeEmu::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
 
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
@@ -43,7 +43,7 @@ fn run_single(name: &str) {
         .join("blargg/dmg_sound/rom_singles")
         .join(name);
     let screenshot_name = name.replace(' ', "_").replace(".gb", ".png");
-    let screenshot = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let screenshot = common::workspace_root()
         .join("extra_screenshots/blargg/dmg_sound/rom_singles")
         .join(screenshot_name);
     run_rom(rom, screenshot);

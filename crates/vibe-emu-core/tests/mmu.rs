@@ -1,4 +1,4 @@
-use vibeEmu::{cartridge::Cartridge, mmu::Mmu};
+use vibe_emu_core::{cartridge::Cartridge, mmu::Mmu};
 
 #[test]
 fn wram_echo_and_bank_switch() {

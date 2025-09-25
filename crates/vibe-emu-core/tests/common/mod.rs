@@ -33,3 +33,19 @@ pub fn roms_dir() -> PathBuf {
 pub fn rom_path<P: AsRef<Path>>(relative: P) -> PathBuf {
     roms_dir().join(relative)
 }
+
+#[allow(dead_code)]
+pub fn workspace_root() -> PathBuf {
+    let mut ancestors = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors();
+    // current dir
+    ancestors.next();
+    // crates/vibe-emu-core
+    let crates_dir = ancestors
+        .next()
+        .expect("crate directory should have a parent");
+    // workspace root
+    ancestors
+        .next()
+        .unwrap_or(crates_dir)
+        .to_path_buf()
+}

@@ -1,6 +1,6 @@
 mod common;
 use image::ImageReader;
-use vibeEmu::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
 
 #[test]
 fn cgb_acid2_rom() {

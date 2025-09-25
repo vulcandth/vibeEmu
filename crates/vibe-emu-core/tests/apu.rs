@@ -1,6 +1,6 @@
-use vibeEmu::apu::Apu;
-use vibeEmu::hardware::CgbRevision;
-use vibeEmu::mmu::Mmu;
+use vibe_emu_core::apu::Apu;
+use vibe_emu_core::hardware::CgbRevision;
+use vibe_emu_core::mmu::Mmu;
 
 fn tick_machine(apu: &mut Apu, div: &mut u16, cycles: u16) {
     let prev = *div;

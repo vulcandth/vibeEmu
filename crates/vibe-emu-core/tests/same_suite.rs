@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 mod common;
 use std::time::{Duration, Instant};
-use vibeEmu::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 const FIB_SEQ: [u8; 6] = [3, 5, 8, 13, 21, 34];

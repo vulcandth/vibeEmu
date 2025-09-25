@@ -27,6 +27,10 @@ Run the full suite whenever you touch Rust code or modify build configuration:
 4. `cargo test --release`
 5. `python scripts/update_test_status.py` (updates `TEST_STATUS.md` with the latest pass/fail data, including ignored ROM suites)
 
+> **Speeding up local workflows:** When you are iterating on a change that only affects a single crate you can target that crate
+> with `cargo fmt -p <crate>`, `cargo clippy -p <crate> -- -D warnings`, and `cargo test -p <crate>`. This keeps feedback cycles
+> short while preserving the expectation that the full workspace suite passes before you submit a pull request.
+
 Integration tests automatically download required ROM bundles into `test_roms/` on first run; ensure network access is available
 and leave the archive intact for subsequent runs. Investigate failing third-party ROMs instead of deleting or disabling tests.
 

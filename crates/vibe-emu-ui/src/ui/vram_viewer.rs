@@ -2,7 +2,7 @@ use imgui::{self, TextureId};
 use imgui_wgpu::{Renderer, Texture, TextureConfig};
 use wgpu::{Extent3d, TextureFormat};
 
-use crate::ppu::Ppu;
+use vibe_emu_core::ppu::Ppu;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum VramTab {

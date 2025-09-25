@@ -1,5 +1,5 @@
 mod common;
-use vibeEmu::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
 
 fn run_instr_timing<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> String {
     let mut gb = GameBoy::new();

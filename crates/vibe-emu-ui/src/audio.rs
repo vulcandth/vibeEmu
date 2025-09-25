@@ -1,6 +1,6 @@
-use crate::apu::Apu;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
+use vibe_emu_core::apu::Apu;
 
 /// Start audio playback using `cpal` and stream samples produced by the APU.
 ///

@@ -11,14 +11,30 @@ vibeEmu is a Game Boy and Game Boy Color emulator written in Rust.  It aims to
 feature a cycle‑accurate CPU, MMU, PPU and APU along with a `winit` + `pixels`
 frontend.  An ImGui powered debug UI will expose a register viewer and a VRAM
 viewer, making the emulator useful both for playing games and for studying how
-the hardware works.
+the hardware works. The repository is organised as a Cargo workspace with two
+crates:
+
+- `vibe-emu-core` contains the platform-agnostic emulation library.
+- `vibe-emu-ui` provides the desktop frontend built on the core crate.
 
 ## Building
 
-Ensure you have a recent Rust toolchain installed. To build the project run:
+Ensure you have a recent Rust toolchain installed. You can compile the entire
+workspace from the repository root:
 
 ```bash
 cargo build
+```
+
+Each crate can also be built individually. The UI depends on the core library,
+so building the frontend will build the core automatically:
+
+```bash
+# Core library only
+cargo build -p vibe-emu-core
+
+# UI frontend (pulls in the core crate as a dependency)
+cargo build -p vibe-emu-ui
 ```
 
 The frontend uses `winit` with the `pixels` crate for window creation and
@@ -32,7 +48,7 @@ if you build on Linux.
 The emulator expects the path to a ROM file. The command below will start the emulator in CGB mode by default:
 
 ```bash
-cargo run -- path/to/rom.gb
+cargo run -p vibe-emu-ui -- path/to/rom.gb
 ```
 
 Pass `--dmg` to force DMG mode, `--cgb` to force CGB mode, or `--serial` to run in serial test mode. Add `--headless` to run without a window or audio output. When headless you can control execution with:
@@ -78,8 +94,14 @@ one.
 
 ## Testing
 
-Unit tests can be executed with:
+Unit tests for the emulation core can be executed with:
 
 ```bash
-cargo test
+cargo test -p vibe-emu-core
+```
+
+If you are iterating on the frontend, run its tests with:
+
+```bash
+cargo test -p vibe-emu-ui
 ```
