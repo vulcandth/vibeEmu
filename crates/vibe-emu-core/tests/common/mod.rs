@@ -44,8 +44,5 @@ pub fn workspace_root() -> PathBuf {
         .next()
         .expect("crate directory should have a parent");
     // workspace root
-    ancestors
-        .next()
-        .unwrap_or(crates_dir)
-        .to_path_buf()
+    ancestors.next().unwrap_or(crates_dir).to_path_buf()
 }
