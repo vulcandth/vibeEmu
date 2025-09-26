@@ -6,10 +6,10 @@ fn run_instr_timing<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> 
     let rom = std::fs::read(rom_path).expect("rom not found");
     gb.mmu.load_cart(Cartridge::load(rom));
 
+    let mut checked_up_to = 0;
     while gb.cpu.cycles < max_cycles {
         gb.cpu.step(&mut gb.mmu);
-        let out = String::from_utf8_lossy(gb.mmu.serial.peek_output());
-        if out.contains("Passed") || out.contains("Failed") {
+        if common::serial_contains_result(gb.mmu.serial.peek_output(), &mut checked_up_to) {
             break;
         }
     }
