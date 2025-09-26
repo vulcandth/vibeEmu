@@ -33,10 +33,10 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 1534 | 2080 | 0 | 0 | 3614 | 42.4% |
+| ROM Test Suites | 1530 | 2084 | 0 | 0 | 3614 | 42.3% |
 | Integration Tests | 156 | 18 | 0 | 0 | 174 | 89.7% |
 | Unit Tests | 5 | 0 | 0 | 0 | 5 | 100.0% |
-| **Overall** | 1694 | 2099 | 0 | 0 | 3793 | 44.7% |
+| **Overall** | 1691 | 2102 | 0 | 0 | 3793 | 44.6% |
 
 ## Failing Tests
 
@@ -326,6 +326,7 @@ Combined exit code: 101
 - `enable_display/enable_display_ly0_wemaster_1_dmg08_cgb04c_out3.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `enable_display/enable_display_ly0_wemaster_2_dmg08_cgb04c_out3.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `enable_display/frame0_ly_count_1_dmg08_cgb04c_out99.gbc` _(Category: ROM Test Suites; Module: gambatte)_
+- `enable_display/frame0_ly_count_2_dmg08_cgb04c_out9A.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `enable_display/frame0_ly_count_ds_1_cgb04c_out99.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `enable_display/frame0_m0irq_count_scx2_1_dmg08_cgb04c_out90.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `enable_display/frame0_m0irq_count_scx2_ds_1_cgb04c_out90.gbc` _(Category: ROM Test Suites; Module: gambatte)_
@@ -384,7 +385,6 @@ Combined exit code: 101
 - `enable_display/ly0_late_scx7_m3stat_scx1_2_dmg08_cgb04c_out84.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `enable_display/ly0_late_scx7_m3stat_scx3_1_dmg08_cgb04c_out87.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `enable_display/ly0_late_scx7_m3stat_scx3_2_dmg08_cgb04c_out84.gbc` _(Category: ROM Test Suites; Module: gambatte)_
-- `enable_display/ly0_late_vramr_2_dmg08_outFF_cgb04c_out55.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `enable_display/ly0_late_vramr_3_dmg08_cgb04c_outFF.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `enable_display/ly0_late_vramr_ds_2_cgb04c_outFF.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `enable_display/ly0_late_vramw_1_dmg08_cgb04c_outAA.gbc` _(Category: ROM Test Suites; Module: gambatte)_
@@ -567,7 +567,6 @@ Combined exit code: 101
 - `lycEnable/late_ff45_enable_after_m2int_dmg08_cgb04c_out2.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `lycEnable/late_ff45_enable_ds_2_cgb04c_out1.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `lycEnable/late_ff45_enable_ds_lcdoffset1_2_cgb04c_out0.gbc` _(Category: ROM Test Suites; Module: gambatte)_
-- `lycEnable/lcdoff_lycirqen_1_dmg08_cgb04c_outE2.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `lycEnable/lcdoff_lycirqen_4_dmg08_outE2_cgb04c_outE0.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `lycEnable/lyc0_ff41_disable_1_dmg08_outE2_cgb04c_outE0.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `lycEnable/lyc0_ff41_disable_2_dmg08_cgb04c_outE2.gbc` _(Category: ROM Test Suites; Module: gambatte)_
@@ -652,9 +651,13 @@ Combined exit code: 101
 - `m0enable/lycdisable_ff45_scx3_2_dmg08_out2_cgb04c_out0.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `m0enable/m0_trigger_delay_1_dmg08_cgb04c_out0.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `m0enable/m0_trigger_delay_2_dmg08_cgb04c_out2.gbc` _(Category: ROM Test Suites; Module: gambatte)_
+- `m0int_m0stat/m0int_m0stat_ds_1_cgb04c_out0.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `m0int_m0stat/m0int_m0stat_ds_2_cgb04c_out2.gbc` _(Category: ROM Test Suites; Module: gambatte)_
+- `m0int_m0stat/m0int_m0stat_scx2_1_dmg08_cgb04c_out0.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `m0int_m0stat/m0int_m0stat_scx2_2_dmg08_cgb04c_out2.gbc` _(Category: ROM Test Suites; Module: gambatte)_
+- `m0int_m0stat/m0int_m0stat_scx3_1_dmg08_cgb04c_out0.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `m0int_m0stat/m0int_m0stat_scx3_2_dmg08_cgb04c_out2.gbc` _(Category: ROM Test Suites; Module: gambatte)_
+- `m0int_m0stat/m0int_m0stat_scx5_ds_1_cgb04c_out0.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `m0int_m0stat/m0int_m0stat_scx5_ds_2_cgb04c_out2.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `m1/ly143_late_m0enable_1_dmg08_cgb04c_out3.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `m1/ly143_late_m0enable_2_dmg08_out3_cgb04c_out1.gbc` _(Category: ROM Test Suites; Module: gambatte)_
@@ -832,6 +835,7 @@ Combined exit code: 101
 - `m2int_m3stat/scx/m2int_scx6_m3stat_ds_1_cgb04c_out3.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `m2int_m3stat/scx/m2int_scx7_m3stat_ds_1_cgb04c_out3.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `m2int_m3stat/scx/m2int_scx8_m3stat_ds_1_cgb04c_out3.gbc` _(Category: ROM Test Suites; Module: gambatte)_
+- `miscmstatirq/lcdoff_statirqen_if_dmg08_cgb04c_outE0.gbc` _(Category: ROM Test Suites; Module: gambatte)_
 - `miscmstatirq/lycflag_statwirq_1_dmg08_out2.gb` _(Category: ROM Test Suites; Module: gambatte)_
 - `miscmstatirq/lycflag_statwirq_2_dmg08_out2.gb` _(Category: ROM Test Suites; Module: gambatte)_
 - `miscmstatirq/lycflag_statwirq_3_dmg08_out2.gb` _(Category: ROM Test Suites; Module: gambatte)_
@@ -2195,7 +2199,7 @@ Combined exit code: 101
 | `dmg_sound_11_regs_after_power` | ❌ Fail |
 | `dmg_sound_12_wave_write_while_on` | ❌ Fail |
 
-#### gambatte (1410/3429 passing, 41.1%)
+#### gambatte (1406/3429 passing, 41.0%)
 
 | Test | Result |
 | --- | --- |
@@ -2312,7 +2316,6 @@ Combined exit code: 101
 | `enable_display/enable_display_ly0_m2irq_dmg08_out0_cgb04c_out0.gbc` | ✅ Pass |
 | `enable_display/enable_display_ly0_oambusy_read_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `enable_display/enable_display_ly0_oambusy_read_ds_1_cgb04c_out0.gbc` | ✅ Pass |
-| `enable_display/frame0_ly_count_2_dmg08_cgb04c_out9A.gbc` | ✅ Pass |
 | `enable_display/frame0_ly_count_ds_2_cgb04c_out9A.gbc` | ✅ Pass |
 | `enable_display/frame0_m0irq_count_scx2_2_dmg08_cgb04c_out90.gbc` | ✅ Pass |
 | `enable_display/frame0_m0irq_count_scx2_ds_2_cgb04c_out90.gbc` | ✅ Pass |
@@ -2335,6 +2338,7 @@ Combined exit code: 101
 | `enable_display/ly0_late_cgbpw_1_cgb04c_outAA.gbc` | ✅ Pass |
 | `enable_display/ly0_late_cgbpw_ds_1_cgb04c_outAA.gbc` | ✅ Pass |
 | `enable_display/ly0_late_vramr_1_dmg08_cgb04c_out55.gbc` | ✅ Pass |
+| `enable_display/ly0_late_vramr_2_dmg08_outFF_cgb04c_out55.gbc` | ✅ Pass |
 | `enable_display/ly0_late_vramr_ds_1_cgb04c_out55.gbc` | ✅ Pass |
 | `enable_display/ly0_m0irq_scx0_2_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `enable_display/ly0_m0irq_scx0_ds_2_cgb04c_outE2.gbc` | ✅ Pass |
@@ -2528,6 +2532,7 @@ Combined exit code: 101
 | `lycEnable/late_ff45_enable_ds_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
 | `lycEnable/late_ff45_enable_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
 | `lycEnable/late_ff45_enable_lcdoffset1_2_cgb04c_out0.gbc` | ✅ Pass |
+| `lycEnable/lcdoff_lycirqen_1_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `lycEnable/lcdoff_lycirqen_2_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lcdoff_lycirqen_3_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lyc0_ff41_disable_ds_1_cgb04c_outE0.gbc` | ✅ Pass |
@@ -2663,10 +2668,6 @@ Combined exit code: 101
 | `m0enable/reenable_3_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m0int_m0irq/m0int_m0irq_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m0int_m0irq/m0int_m0irq_2_dmg08_cgb04c_out2.gbc` | ✅ Pass |
-| `m0int_m0stat/m0int_m0stat_ds_1_cgb04c_out0.gbc` | ✅ Pass |
-| `m0int_m0stat/m0int_m0stat_scx2_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
-| `m0int_m0stat/m0int_m0stat_scx3_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
-| `m0int_m0stat/m0int_m0stat_scx5_ds_1_cgb04c_out0.gbc` | ✅ Pass |
 | `m0int_m3stat/m0int_m3stat_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `m0int_m3stat/m0int_m3stat_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m0int_m3stat/m0int_m3stat_ds_1_cgb04c_out3.gbc` | ✅ Pass |
@@ -2778,7 +2779,6 @@ Combined exit code: 101
 | `m2int_m3stat/scx/m2int_scx6_m3stat_ds_2_cgb04c_out0.gbc` | ✅ Pass |
 | `m2int_m3stat/scx/m2int_scx7_m3stat_ds_2_cgb04c_out0.gbc` | ✅ Pass |
 | `m2int_m3stat/scx/m2int_scx8_m3stat_ds_2_cgb04c_out0.gbc` | ✅ Pass |
-| `miscmstatirq/lcdoff_statirqen_if_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/lycflag_statwirq_4_dmg08_out0.gb` | ✅ Pass |
 | `miscmstatirq/lycstatwirq_trigger_00_40_dmg08_out2_cgb04c_out2.gbc` | ✅ Pass |
 | `miscmstatirq/lycstatwirq_trigger_00_ff_dmg08_out2_cgb04c_out2.gbc` | ✅ Pass |
@@ -3868,6 +3868,7 @@ Combined exit code: 101
 | `enable_display/enable_display_ly0_wemaster_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `enable_display/enable_display_ly0_wemaster_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `enable_display/frame0_ly_count_1_dmg08_cgb04c_out99.gbc` | ❌ Fail |
+| `enable_display/frame0_ly_count_2_dmg08_cgb04c_out9A.gbc` | ❌ Fail |
 | `enable_display/frame0_ly_count_ds_1_cgb04c_out99.gbc` | ❌ Fail |
 | `enable_display/frame0_m0irq_count_scx2_1_dmg08_cgb04c_out90.gbc` | ❌ Fail |
 | `enable_display/frame0_m0irq_count_scx2_ds_1_cgb04c_out90.gbc` | ❌ Fail |
@@ -3926,7 +3927,6 @@ Combined exit code: 101
 | `enable_display/ly0_late_scx7_m3stat_scx1_2_dmg08_cgb04c_out84.gbc` | ❌ Fail |
 | `enable_display/ly0_late_scx7_m3stat_scx3_1_dmg08_cgb04c_out87.gbc` | ❌ Fail |
 | `enable_display/ly0_late_scx7_m3stat_scx3_2_dmg08_cgb04c_out84.gbc` | ❌ Fail |
-| `enable_display/ly0_late_vramr_2_dmg08_outFF_cgb04c_out55.gbc` | ❌ Fail |
 | `enable_display/ly0_late_vramr_3_dmg08_cgb04c_outFF.gbc` | ❌ Fail |
 | `enable_display/ly0_late_vramr_ds_2_cgb04c_outFF.gbc` | ❌ Fail |
 | `enable_display/ly0_late_vramw_1_dmg08_cgb04c_outAA.gbc` | ❌ Fail |
@@ -4109,7 +4109,6 @@ Combined exit code: 101
 | `lycEnable/late_ff45_enable_after_m2int_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `lycEnable/late_ff45_enable_ds_2_cgb04c_out1.gbc` | ❌ Fail |
 | `lycEnable/late_ff45_enable_ds_lcdoffset1_2_cgb04c_out0.gbc` | ❌ Fail |
-| `lycEnable/lcdoff_lycirqen_1_dmg08_cgb04c_outE2.gbc` | ❌ Fail |
 | `lycEnable/lcdoff_lycirqen_4_dmg08_outE2_cgb04c_outE0.gbc` | ❌ Fail |
 | `lycEnable/lyc0_ff41_disable_1_dmg08_outE2_cgb04c_outE0.gbc` | ❌ Fail |
 | `lycEnable/lyc0_ff41_disable_2_dmg08_cgb04c_outE2.gbc` | ❌ Fail |
@@ -4194,9 +4193,13 @@ Combined exit code: 101
 | `m0enable/lycdisable_ff45_scx3_2_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
 | `m0enable/m0_trigger_delay_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m0enable/m0_trigger_delay_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
+| `m0int_m0stat/m0int_m0stat_ds_1_cgb04c_out0.gbc` | ❌ Fail |
 | `m0int_m0stat/m0int_m0stat_ds_2_cgb04c_out2.gbc` | ❌ Fail |
+| `m0int_m0stat/m0int_m0stat_scx2_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m0int_m0stat/m0int_m0stat_scx2_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
+| `m0int_m0stat/m0int_m0stat_scx3_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m0int_m0stat/m0int_m0stat_scx3_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
+| `m0int_m0stat/m0int_m0stat_scx5_ds_1_cgb04c_out0.gbc` | ❌ Fail |
 | `m0int_m0stat/m0int_m0stat_scx5_ds_2_cgb04c_out2.gbc` | ❌ Fail |
 | `m1/ly143_late_m0enable_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/ly143_late_m0enable_2_dmg08_out3_cgb04c_out1.gbc` | ❌ Fail |
@@ -4374,6 +4377,7 @@ Combined exit code: 101
 | `m2int_m3stat/scx/m2int_scx6_m3stat_ds_1_cgb04c_out3.gbc` | ❌ Fail |
 | `m2int_m3stat/scx/m2int_scx7_m3stat_ds_1_cgb04c_out3.gbc` | ❌ Fail |
 | `m2int_m3stat/scx/m2int_scx8_m3stat_ds_1_cgb04c_out3.gbc` | ❌ Fail |
+| `miscmstatirq/lcdoff_statirqen_if_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
 | `miscmstatirq/lycflag_statwirq_1_dmg08_out2.gb` | ❌ Fail |
 | `miscmstatirq/lycflag_statwirq_2_dmg08_out2.gb` | ❌ Fail |
 | `miscmstatirq/lycflag_statwirq_3_dmg08_out2.gb` | ❌ Fail |
