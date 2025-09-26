@@ -24,7 +24,8 @@ fn dmg_acid2_rom() {
     assert_eq!(height, 144);
 
     let frame = gb.mmu.ppu.framebuffer();
-    for (idx, pixel) in expected.iter().copied().enumerate() {
+    for (idx, pixel) in expected.iter().enumerate() {
+        let pixel = *pixel;
         let expected_color = match pixel {
             [0x00, 0x00, 0x00] => DMG_PALETTE[3],
             [0x55, 0x55, 0x55] => DMG_PALETTE[2],

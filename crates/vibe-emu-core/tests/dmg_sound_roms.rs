@@ -23,7 +23,8 @@ fn run_rom<P: AsRef<Path>, Q: AsRef<Path>>(rom_path: P, screenshot_path: Q) {
     assert_eq!(height, 144);
 
     let frame = gb.mmu.ppu.framebuffer();
-    for (idx, pixel) in expected.iter().copied().enumerate() {
+    for (idx, pixel) in expected.iter().enumerate() {
+        let pixel = *pixel;
         let expected_color = match pixel {
             [0xE0, 0xF8, 0xD0] => DMG_PALETTE[0],
             [0x08, 0x18, 0x20] => DMG_PALETTE[3],

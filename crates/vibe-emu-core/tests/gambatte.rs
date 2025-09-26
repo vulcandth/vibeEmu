@@ -309,7 +309,7 @@ fn verify_result(run: &GambatteRun, stem: &str, out_str: &str, mode: Mode) -> Re
 }
 
 fn verify_png(run: &GambatteRun, stem: &str, png_path: &Path, mode: Mode) -> Result<(), String> {
-    let (width, height, mut expected) = common::load_png_rgb(png_path);
+    let (width, height, expected) = common::load_png_rgb(png_path);
     if width as usize != GB_WIDTH {
         return Err(format!("unexpected PNG width for {stem}"));
     }
@@ -317,7 +317,7 @@ fn verify_png(run: &GambatteRun, stem: &str, png_path: &Path, mode: Mode) -> Res
         return Err(format!("unexpected PNG height for {stem}"));
     }
 
-    for (idx, pixel) in expected.iter_mut().enumerate() {
+    for (idx, pixel) in expected.iter().enumerate() {
         let expected_pixel = normalize_pixel(pixel, mode);
         let actual = normalize_color(run.frame[idx], mode);
         if actual != expected_pixel {
@@ -326,7 +326,6 @@ fn verify_png(run: &GambatteRun, stem: &str, png_path: &Path, mode: Mode) -> Res
                 mode, expected_pixel, actual
             ));
         }
-        *pixel = expected_pixel;
     }
     Ok(())
 }

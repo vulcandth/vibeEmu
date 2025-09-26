@@ -22,7 +22,8 @@ fn cgb_acid2_rom() {
     assert_eq!(height, 144);
 
     let frame = gb.mmu.ppu.framebuffer();
-    for (idx, [r, g, b]) in expected.iter().copied().enumerate() {
+    for (idx, pixel) in expected.iter().enumerate() {
+        let &[r, g, b] = pixel;
         let expected_color = (r as u32) << 16 | (g as u32) << 8 | b as u32;
         assert_eq!(frame[idx], expected_color, "pixel mismatch at index {idx}");
     }

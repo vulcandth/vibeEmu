@@ -1,7 +1,18 @@
 use once_cell::sync::OnceCell;
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+
+#[derive(Clone)]
+struct CachedPng {
+    width: u32,
+    height: u32,
+    pixels: Arc<[[u8; 3]]>,
+}
+
+static PNG_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedPng>>> = OnceLock::new();
 
 static INIT: OnceCell<()> = OnceCell::new();
 
@@ -49,8 +60,20 @@ pub fn workspace_root() -> PathBuf {
 }
 
 #[allow(dead_code)]
-pub fn load_png_rgb<P: AsRef<Path>>(path: P) -> (u32, u32, Vec<[u8; 3]>) {
-    let file = File::open(path.as_ref()).expect("failed to open png");
+pub fn load_png_rgb<P: AsRef<Path>>(path: P) -> (u32, u32, Arc<[[u8; 3]]>) {
+    let path = path.as_ref();
+
+    let cache = PNG_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(cached) = cache
+        .lock()
+        .expect("failed to lock PNG cache")
+        .get(path)
+        .cloned()
+    {
+        return (cached.width, cached.height, Arc::clone(&cached.pixels));
+    }
+
+    let file = File::open(path).expect("failed to open png");
     let reader = BufReader::new(file);
     let mut decoder = png::Decoder::new(reader);
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
@@ -98,6 +121,24 @@ pub fn load_png_rgb<P: AsRef<Path>>(path: P) -> (u32, u32, Vec<[u8; 3]>) {
             }
         }
     }
+    let pixels: Arc<[[u8; 3]]> = Arc::from(pixels);
+
+    let cached = CachedPng {
+        width: info.width,
+        height: info.height,
+        pixels: Arc::clone(&pixels),
+    };
+
+    let mut cache_guard = cache.lock().expect("failed to lock PNG cache");
+    if let Some(existing) = cache_guard.get(path) {
+        return (
+            existing.width,
+            existing.height,
+            Arc::clone(&existing.pixels),
+        );
+    }
+    cache_guard.insert(path.to_path_buf(), cached);
+
     (info.width, info.height, pixels)
 }
 
