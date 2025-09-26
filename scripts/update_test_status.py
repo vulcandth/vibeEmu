@@ -297,17 +297,6 @@ def build_summary_table(categories: Dict[str, CategorySummary]) -> str:
     return "\n".join(lines)
 
 
-def summarize_failures(categories: Dict[str, CategorySummary]) -> List[str]:
-    failures: List[Tuple[str, str, str]] = []
-    for category_name, category in categories.items():
-        for module_name, module in category.modules.items():
-            for test_name, status_key in module.tests:
-                if status_key == "failed":
-                    failures.append((category_name, module_name, test_name))
-    failures.sort()
-    return [f"- `{test}` _(Category: {category}; Module: {module})_" for category, module, test in failures]
-
-
 def format_module_section(module: ModuleSummary) -> str:
     heading = f"#### {module.name} ({module.passed}/{module.total} passing, {module.pass_percentage:.1f}%)"
     lines = [heading, "", "| Test | Result |", "| --- | --- |"]
@@ -335,8 +324,6 @@ def render_markdown(
     cargo_exit_code: int,
 ) -> str:
     summary_table = build_summary_table(categories)
-    failure_lines = summarize_failures(categories)
-    failure_section = "\n".join(failure_lines) if failure_lines else "- None"
     category_sections = build_category_sections(categories)
 
     command_lines = "\n".join(f"- `{' '.join(cmd)}`" for cmd in commands)
@@ -349,8 +336,6 @@ def render_markdown(
         f"\n\nCombined exit code: {cargo_exit_code}\n",
         "\n## Overall Summary\n",
         summary_table,
-        "\n## Failing Tests\n",
-        failure_section,
         "\n## Detailed Results\n",
         category_sections,
     ]
