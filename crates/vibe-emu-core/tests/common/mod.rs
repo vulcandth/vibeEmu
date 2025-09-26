@@ -101,6 +101,7 @@ pub fn load_png_rgb<P: AsRef<Path>>(path: P) -> (u32, u32, Vec<[u8; 3]>) {
     (info.width, info.height, pixels)
 }
 
+#[allow(dead_code)]
 pub fn serial_contains_result(serial: &[u8], checked_up_to: &mut usize) -> bool {
     const PASSED: &[u8] = b"Passed";
     const FAILED: &[u8] = b"Failed";
