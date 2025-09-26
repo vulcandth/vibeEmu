@@ -949,7 +949,9 @@ impl Ppu {
                 continue;
             }
 
-            if !self.cgb && let Some(prev_cycle) = self.dmg_startup_cycle {
+            if !self.cgb
+                && let Some(prev_cycle) = self.dmg_startup_cycle
+            {
                 if prev_cycle < DMG_STARTUP_STAGE5_END {
                     let mut new_cycle = prev_cycle + increment;
                     if new_cycle > DMG_STARTUP_STAGE5_END {
