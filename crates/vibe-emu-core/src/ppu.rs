@@ -949,25 +949,23 @@ impl Ppu {
                 continue;
             }
 
-            if !self.cgb {
-                if let Some(prev_cycle) = self.dmg_startup_cycle {
-                    if prev_cycle < DMG_STARTUP_STAGE5_END {
-                        let mut new_cycle = prev_cycle + increment;
-                        if new_cycle > DMG_STARTUP_STAGE5_END {
-                            new_cycle = DMG_STARTUP_STAGE5_END;
-                        }
-                        self.handle_dmg_startup(prev_cycle, new_cycle, if_reg);
-                        if new_cycle >= DMG_STARTUP_STAGE5_END {
-                            self.dmg_startup_cycle = None;
-                        } else {
-                            self.dmg_startup_cycle = Some(new_cycle);
-                        }
-                        self.update_stat_irq(if_reg);
-                        continue;
-                    } else {
-                        self.dmg_startup_cycle = None;
-                        self.dmg_startup_stage = None;
+            if !self.cgb && let Some(prev_cycle) = self.dmg_startup_cycle {
+                if prev_cycle < DMG_STARTUP_STAGE5_END {
+                    let mut new_cycle = prev_cycle + increment;
+                    if new_cycle > DMG_STARTUP_STAGE5_END {
+                        new_cycle = DMG_STARTUP_STAGE5_END;
                     }
+                    self.handle_dmg_startup(prev_cycle, new_cycle, if_reg);
+                    if new_cycle >= DMG_STARTUP_STAGE5_END {
+                        self.dmg_startup_cycle = None;
+                    } else {
+                        self.dmg_startup_cycle = Some(new_cycle);
+                    }
+                    self.update_stat_irq(if_reg);
+                    continue;
+                } else {
+                    self.dmg_startup_cycle = None;
+                    self.dmg_startup_stage = None;
                 }
             }
 
