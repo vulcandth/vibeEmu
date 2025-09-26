@@ -2017,3 +2017,9 @@ window/on_screen/wxA6_wy01_wxA5_ly02.gbc
 window/on_screen/wxA6_wy01_wxA7_ly02.gbc
 window/on_screen/wxA6_wy8F.gbc
 window/reenable_ds_cgb04c_out3.gbc
+enable_display/frame0_ly_count_2_dmg08_cgb04c_out9A.gbc
+m0int_m0stat/m0int_m0stat_ds_1_cgb04c_out0.gbc
+m0int_m0stat/m0int_m0stat_scx2_1_dmg08_cgb04c_out0.gbc
+m0int_m0stat/m0int_m0stat_scx3_1_dmg08_cgb04c_out0.gbc
+m0int_m0stat/m0int_m0stat_scx5_ds_1_cgb04c_out0.gbc
+miscmstatirq/lcdoff_statirqen_if_dmg08_cgb04c_outE0.gbc
