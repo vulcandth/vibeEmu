@@ -1,5 +1,17 @@
 use crate::hardware::DmgRevision;
 
+#[cfg(feature = "ppu-trace")]
+macro_rules! ppu_trace {
+    ($($arg:tt)*) => {
+        eprintln!("[PPU] {}", format_args!($($arg)*));
+    };
+}
+
+#[cfg(not(feature = "ppu-trace"))]
+macro_rules! ppu_trace {
+    ($($arg:tt)*) => {};
+}
+
 // Screen resolution used by the Game Boy PPU
 const SCREEN_WIDTH: usize = 160;
 const SCREEN_HEIGHT: usize = 144;
@@ -42,6 +54,23 @@ const MODE_TRANSFER: u8 = 3;
 
 const BOOT_HOLD_CYCLES_DMG0: u16 = 8192;
 const BOOT_HOLD_CYCLES_DMGA: u16 = 8192;
+
+const DMG_STARTUP_STAGE0_END: u16 = 80;
+const DMG_STARTUP_STAGE1_END: u16 = 252;
+const DMG_STARTUP_STAGE2_END: u16 = 456;
+const DMG_STARTUP_STAGE3_END: u16 = 536;
+const DMG_STARTUP_STAGE4_END: u16 = 708;
+const DMG_STARTUP_STAGE5_END: u16 = 912;
+const DMG_STAGE2_LY1_TICK: u16 = 452;
+// Stage 5 keeps LY = 1 until just before the end of the line. The mooneye
+// lcdon_timing-GS test samples at machine cycles 174, 175 and 176 across its
+// passes (696, 700 and 704 T-cycles). It also checks that LY is still 1 at
+// machine cycle 224 (896 T-cycles) during the first pass but has advanced to 2
+// by machine cycle 226 (904 T-cycles) on the second pass. Transitioning LY at
+// 908 T-cycles satisfies both observations.
+const DMG_STAGE5_LY2_TICK: u16 = 908;
+const DMG_STAGE3_VRAM_BLOCK_TICK: u16 = 532;
+const DMG_POST_STARTUP_LINE2_VRAM_BLOCK_START: u16 = MODE2_CYCLES - 4;
 
 pub struct Ppu {
     pub vram: [[u8; VRAM_BANK_SIZE]; 2],
@@ -89,6 +118,13 @@ pub struct Ppu {
     stat_irq_line: bool,
     dmg_mode2_vblank_irq_pending: bool,
     frame_counter: u64,
+    dmg_startup_cycle: Option<u16>,
+    dmg_startup_stage: Option<usize>,
+    dmg_post_startup_line2: bool,
+    #[cfg(feature = "ppu-trace")]
+    debug_lcd_enable_timer: Option<u64>,
+    #[cfg(feature = "ppu-trace")]
+    debug_prev_mode: u8,
 }
 
 /// Default DMG palette colors in 0x00RRGGBB order for the `pixels` crate.
@@ -141,6 +177,13 @@ impl Ppu {
             stat_irq_line: false,
             dmg_mode2_vblank_irq_pending: false,
             frame_counter: 0,
+            dmg_startup_cycle: None,
+            dmg_startup_stage: None,
+            dmg_post_startup_line2: false,
+            #[cfg(feature = "ppu-trace")]
+            debug_lcd_enable_timer: None,
+            #[cfg(feature = "ppu-trace")]
+            debug_prev_mode: MODE_OAM,
         }
     }
 
@@ -322,12 +365,143 @@ impl Ppu {
 
     fn update_lyc_compare(&mut self) {
         if self.lcdc & 0x80 != 0 {
-            self.lyc_eq_ly = self.ly == self.lyc;
+            let mut coincide = self.ly == self.lyc;
+            if coincide
+                && !self.cgb
+                && let Some(stage) = self.dmg_startup_stage
+                && stage == 2
+                && self.ly == 1
+                && self.lyc == 1
+                && self
+                    .dmg_startup_cycle
+                    .is_some_and(|cycle| cycle < DMG_STARTUP_STAGE2_END)
+            {
+                coincide = false;
+            }
+            self.lyc_eq_ly = coincide;
         }
     }
 
+    pub fn oam_accessible(&self) -> bool {
+        if self.mode == MODE_OAM || self.mode == MODE_TRANSFER {
+            #[cfg(feature = "ppu-trace")]
+            if let Some(stage) = self.dmg_startup_stage {
+                if stage <= 5 {
+                    ppu_trace!(
+                        "oam blocked by mode stage={} cycle={:?}",
+                        stage,
+                        self.dmg_startup_cycle
+                    );
+                }
+            }
+            return false;
+        }
+
+        let mut allow = true;
+        if !self.cgb
+            && let Some(stage) = self.dmg_startup_stage
+        {
+            allow = match stage {
+                0 => true,
+                1 | 3 | 4 => false,
+                2 => self
+                    .dmg_startup_cycle
+                    .is_none_or(|cycle| cycle < DMG_STAGE2_LY1_TICK),
+                5 => self
+                    .dmg_startup_cycle
+                    .is_some_and(|cycle| cycle < DMG_STAGE5_LY2_TICK),
+                _ => true,
+            };
+            #[cfg(feature = "ppu-trace")]
+            if stage <= 5 {
+                ppu_trace!(
+                    "oam stage={} cycle={:?} allow={}",
+                    stage,
+                    self.dmg_startup_cycle,
+                    allow
+                );
+            }
+        }
+        allow
+    }
+
+    pub fn vram_accessible(&self) -> bool {
+        if self.mode == MODE_TRANSFER {
+            #[cfg(feature = "ppu-trace")]
+            {
+                if let Some(stage) = self.dmg_startup_stage {
+                    if stage <= 5 {
+                        ppu_trace!(
+                            "vram blocked by mode stage={} cycle={:?} mode_clock={}",
+                            stage,
+                            self.dmg_startup_cycle,
+                            self.mode_clock
+                        );
+                    }
+                } else {
+                    ppu_trace!(
+                        "vram blocked by mode stage=<none> cycle={:?} mode_clock={}",
+                        self.dmg_startup_cycle,
+                        self.mode_clock
+                    );
+                }
+            }
+            return false;
+        }
+
+        let mut allow = true;
+        if !self.cgb
+            && let Some(stage) = self.dmg_startup_stage
+        {
+            allow = match stage {
+                0 | 2 => true,
+                1 | 4 => false,
+                3 => self
+                    .dmg_startup_cycle
+                    .is_none_or(|cycle| cycle < DMG_STAGE3_VRAM_BLOCK_TICK),
+                5 => true,
+                _ => true,
+            };
+            #[cfg(feature = "ppu-trace")]
+            {
+                ppu_trace!(
+                    "vram stage={:?} cycle={:?} mode={} mode_clock={} allow={}",
+                    self.dmg_startup_stage,
+                    self.dmg_startup_cycle,
+                    self.mode,
+                    self.mode_clock,
+                    allow
+                );
+            }
+        } else if !self.cgb
+            && self.dmg_post_startup_line2
+            && self.mode == MODE_OAM
+            && self.mode_clock >= DMG_POST_STARTUP_LINE2_VRAM_BLOCK_START
+        {
+            allow = false;
+            #[cfg(feature = "ppu-trace")]
+            ppu_trace!(
+                "vram post-start block ly={} mode_clock={} allow={}",
+                self.ly,
+                self.mode_clock,
+                allow
+            );
+        }
+        allow
+    }
+
+    #[cfg(feature = "ppu-trace")]
+    pub(crate) fn debug_startup_snapshot(&self) -> (Option<usize>, Option<u16>, u8, u16) {
+        (
+            self.dmg_startup_stage,
+            self.dmg_startup_cycle,
+            self.mode,
+            self.mode_clock,
+        )
+    }
+
     pub fn read_reg(&mut self, addr: u16) -> u8 {
-        match addr {
+        let value = match addr {
             0xFF40 => self.lcdc,
             0xFF41 => {
                 (self.stat & 0x78)
@@ -385,7 +559,27 @@ impl Ppu {
                 }
             }
             _ => 0xFF,
+        };
+
+        #[cfg(feature = "ppu-trace")]
+        if !self.cgb && (self.dmg_startup_cycle.is_some() || self.ly < 5) {
+            match addr {
+                0xFF41 | 0xFF44 => {
+                    ppu_trace!(
+                        "DMG read {:04X} -> {:02X} (ly={} mode={} mode_clock={} dmg_cycle={:?})",
+                        addr,
+                        value,
+                        self.ly,
+                        self.mode,
+                        self.mode_clock,
+                        self.dmg_startup_cycle
+                    );
+                }
+                _ => {}
+            }
         }
+
+        value
     }
 
     pub fn write_reg(&mut self, addr: u16, val: u8) {
@@ -398,9 +592,40 @@ impl Ppu {
                     self.mode_clock = 0;
                     self.win_line_counter = 0;
                     self.ly = 0;
+                    ppu_trace!("LCD disabled");
+                    #[cfg(feature = "ppu-trace")]
+                    {
+                        self.debug_lcd_enable_timer = None;
+                    }
+                    self.dmg_startup_cycle = None;
+                    self.dmg_startup_stage = None;
+                    self.dmg_post_startup_line2 = false;
+                }
+                if !was_on && self.lcdc & 0x80 != 0 {
+                    ppu_trace!(
+                        "LCD enabled: mode={} ly={} mode_clock={}",
+                        self.mode,
+                        self.ly,
+                        self.mode_clock
+                    );
+                    #[cfg(feature = "ppu-trace")]
+                    {
+                        self.debug_lcd_enable_timer = Some(0);
+                        self.debug_prev_mode = self.mode;
+                    }
+                    if !self.cgb {
+                        self.dmg_startup_cycle = Some(0);
+                        self.dmg_startup_stage = Some(0);
+                        self.dmg_post_startup_line2 = false;
+                        self.mode = MODE_HBLANK;
+                        self.mode_clock = 0;
+                        self.ly = 0;
+                    }
                 }
                 if self.lcdc & 0x80 != 0 {
                     self.update_lyc_compare();
+                } else {
+                    self.lyc_eq_ly = false;
                 }
             }
             0xFF41 => self.stat = (self.stat & 0x07) | (val & 0xF8),
@@ -690,17 +915,52 @@ impl Ppu {
                 return false;
             }
         }
+
         let mut hblank_triggered = false;
         while remaining > 0 {
             let increment = remaining.min(4);
             remaining -= increment;
+
+            #[cfg(feature = "ppu-trace")]
+            let mut debug_cycles_after = None;
+            #[cfg(feature = "ppu-trace")]
+            {
+                if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+                    *timer += increment as u64;
+                    debug_cycles_after = Some(*timer);
+                }
+            }
+
             if self.lcdc & 0x80 == 0 {
                 self.mode = MODE_HBLANK;
                 self.ly = 0;
                 self.mode_clock = 0;
                 self.win_line_counter = 0;
                 self.dmg_mode2_vblank_irq_pending = false;
+                self.update_stat_irq(if_reg);
                 continue;
+            }
+
+            if !self.cgb {
+                if let Some(prev_cycle) = self.dmg_startup_cycle {
+                    if prev_cycle < DMG_STARTUP_STAGE5_END {
+                        let mut new_cycle = prev_cycle + increment;
+                        if new_cycle > DMG_STARTUP_STAGE5_END {
+                            new_cycle = DMG_STARTUP_STAGE5_END;
+                        }
+                        self.handle_dmg_startup(prev_cycle, new_cycle, if_reg);
+                        if new_cycle >= DMG_STARTUP_STAGE5_END {
+                            self.dmg_startup_cycle = None;
+                        } else {
+                            self.dmg_startup_cycle = Some(new_cycle);
+                        }
+                        self.update_stat_irq(if_reg);
+                        continue;
+                    } else {
+                        self.dmg_startup_cycle = None;
+                        self.dmg_startup_stage = None;
+                    }
+                }
             }
 
             self.update_lyc_compare();
@@ -720,8 +980,24 @@ impl Ppu {
                                 self.dmg_mode2_vblank_irq_pending = true;
                             }
                             *if_reg |= 0x01;
+                            #[cfg(feature = "ppu-trace")]
+                            if let Some(after) = debug_cycles_after {
+                                if after <= 512 {
+                                    ppu_trace!("entering VBlank at ly={} @{}", self.ly, after);
+                                }
+                            }
                         } else {
                             self.mode = MODE_OAM;
+                            #[cfg(feature = "ppu-trace")]
+                            if let Some(after) = debug_cycles_after {
+                                if after <= 512 {
+                                    ppu_trace!(
+                                        "transition -> MODE_OAM ly={} (after HBlank) @{}",
+                                        self.ly,
+                                        after
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -745,6 +1021,20 @@ impl Ppu {
                         self.mode_clock -= MODE2_CYCLES;
                         self.oam_scan();
                         self.mode = MODE_TRANSFER;
+                        if self.dmg_post_startup_line2 {
+                            self.dmg_post_startup_line2 = false;
+                        }
+                        #[cfg(feature = "ppu-trace")]
+                        if let Some(after) = debug_cycles_after {
+                            if after <= 512 {
+                                ppu_trace!(
+                                    "entering MODE3 ly={} mode_clock={} @{}",
+                                    self.ly,
+                                    self.mode_clock,
+                                    after
+                                );
+                            }
+                        }
                     }
                 }
                 MODE_TRANSFER => {
@@ -753,14 +1043,204 @@ impl Ppu {
                         self.render_scanline();
                         self.mode = MODE_HBLANK;
                         hblank_triggered = true;
+                        #[cfg(feature = "ppu-trace")]
+                        if let Some(after) = debug_cycles_after {
+                            if after <= 512 {
+                                ppu_trace!(
+                                    "entering HBlank ly={} mode_clock={} @{}",
+                                    self.ly,
+                                    self.mode_clock,
+                                    after
+                                );
+                            }
+                        }
                     }
                 }
                 _ => {}
             }
 
+            #[cfg(feature = "ppu-trace")]
+            {
+                if self.debug_prev_mode != self.mode {
+                    if let Some(after) = debug_cycles_after {
+                        if after <= 512 {
+                            ppu_trace!(
+                                "mode {} -> {} at {} cycles (ly={})",
+                                self.debug_prev_mode,
+                                self.mode,
+                                after,
+                                self.ly
+                            );
+                        }
+                    }
+                    self.debug_prev_mode = self.mode;
+                }
+            }
+
             self.update_stat_irq(if_reg);
         }
         hblank_triggered
+    }
+
+    fn dmg_startup_stage_bounds(stage: usize) -> (u16, u16) {
+        match stage {
+            0 => (0, DMG_STARTUP_STAGE0_END),
+            1 => (DMG_STARTUP_STAGE0_END, DMG_STARTUP_STAGE1_END),
+            2 => (DMG_STARTUP_STAGE1_END, DMG_STARTUP_STAGE2_END),
+            3 => (DMG_STARTUP_STAGE2_END, DMG_STARTUP_STAGE3_END),
+            4 => (DMG_STARTUP_STAGE3_END, DMG_STARTUP_STAGE4_END),
+            5 => (DMG_STARTUP_STAGE4_END, DMG_STARTUP_STAGE5_END),
+            _ => (DMG_STARTUP_STAGE5_END, DMG_STARTUP_STAGE5_END),
+        }
+    }
+
+    fn dmg_startup_stage_for_cycle(cycle: u16) -> usize {
+        if cycle < DMG_STARTUP_STAGE0_END {
+            0
+        } else if cycle < DMG_STARTUP_STAGE1_END {
+            1
+        } else if cycle < DMG_STARTUP_STAGE2_END {
+            2
+        } else if cycle < DMG_STARTUP_STAGE3_END {
+            3
+        } else if cycle < DMG_STARTUP_STAGE4_END {
+            4
+        } else if cycle < DMG_STARTUP_STAGE5_END {
+            5
+        } else {
+            6
+        }
+    }
+
+    fn handle_dmg_startup(&mut self, mut prev_cycle: u16, mut new_cycle: u16, _if_reg: &mut u8) {
+        if new_cycle > DMG_STARTUP_STAGE5_END {
+            new_cycle = DMG_STARTUP_STAGE5_END;
+        }
+
+        while prev_cycle < new_cycle {
+            let stage = Self::dmg_startup_stage_for_cycle(prev_cycle);
+            self.dmg_startup_stage = Some(stage);
+            let (stage_start, stage_end) = Self::dmg_startup_stage_bounds(stage);
+            let segment_end = new_cycle.min(stage_end);
+            if prev_cycle == stage_start {
+                self.update_lyc_compare();
+                #[cfg(feature = "ppu-trace")]
+                ppu_trace!(
+                    "startup stage={} start ly={} lyc={} lyc_eq_ly={} stat={:02X}",
+                    stage,
+                    self.ly,
+                    self.lyc,
+                    self.lyc_eq_ly,
+                    (self.stat & 0x78)
+                        | 0x80
+                        | (self.mode & 0x03)
+                        | if self.lyc_eq_ly { 0x04 } else { 0 }
+                );
+            }
+            #[cfg(feature = "ppu-trace")]
+            ppu_trace!(
+                "startup segment prev={} end={} stage={} ly={}",
+                prev_cycle,
+                segment_end,
+                stage,
+                self.ly
+            );
+
+            match stage {
+                0 => {
+                    self.mode = MODE_HBLANK;
+                    self.mode_clock = segment_end - stage_start;
+                    if segment_end == stage_end {
+                        self.mode = MODE_TRANSFER;
+                        self.mode_clock = 0;
+                    }
+                }
+                1 => {
+                    self.mode = MODE_TRANSFER;
+                    self.mode_clock = segment_end - stage_start;
+                    if segment_end == stage_end {
+                        self.render_scanline();
+                        self.mode = MODE_HBLANK;
+                        self.mode_clock = 0;
+                    }
+                }
+                2 => {
+                    self.mode = MODE_HBLANK;
+                    self.mode_clock = segment_end - stage_start;
+                    if self.ly == 0
+                        && prev_cycle < DMG_STAGE2_LY1_TICK
+                        && segment_end >= DMG_STAGE2_LY1_TICK
+                    {
+                        self.ly = 1;
+                        self.dmg_startup_cycle = Some(DMG_STAGE2_LY1_TICK);
+                        self.update_lyc_compare();
+                        #[cfg(feature = "ppu-trace")]
+                        ppu_trace!("startup ly->1 at {}", DMG_STAGE2_LY1_TICK);
+                    }
+                    if segment_end == stage_end {
+                        self.mode = MODE_OAM;
+                        self.mode_clock = 0;
+                        self.dmg_startup_cycle = Some(segment_end);
+                        self.update_lyc_compare();
+                    }
+                }
+                3 => {
+                    self.mode = MODE_OAM;
+                    self.mode_clock = segment_end - stage_start;
+                    if self.ly == 0
+                        && prev_cycle < DMG_STAGE2_LY1_TICK
+                        && segment_end >= DMG_STAGE2_LY1_TICK
+                    {
+                        self.ly = 1;
+                        self.update_lyc_compare();
+                        #[cfg(feature = "ppu-trace")]
+                        ppu_trace!("startup ly->1 at {}", DMG_STAGE2_LY1_TICK);
+                    }
+                    if segment_end == stage_end {
+                        self.mode = MODE_TRANSFER;
+                        self.mode_clock = 0;
+                    }
+                }
+                4 => {
+                    self.mode = MODE_TRANSFER;
+                    self.mode_clock = segment_end - stage_start;
+                    if segment_end == stage_end {
+                        self.render_scanline();
+                        self.mode = MODE_HBLANK;
+                        self.mode_clock = 0;
+                    }
+                }
+                5 => {
+                    self.mode = MODE_HBLANK;
+                    self.mode_clock = segment_end - stage_start;
+                    if self.ly == 1
+                        && prev_cycle < DMG_STAGE5_LY2_TICK
+                        && segment_end >= DMG_STAGE5_LY2_TICK
+                    {
+                        self.ly = 2;
+                        self.update_lyc_compare();
+                        self.dmg_post_startup_line2 = true;
+                        #[cfg(feature = "ppu-trace")]
+                        ppu_trace!("startup ly->2 at {}", DMG_STAGE5_LY2_TICK);
+                    }
+                    if segment_end == stage_end {
+                        self.mode = MODE_OAM;
+                        self.mode_clock = 0;
+                        self.dmg_startup_stage = None;
+                    }
+                }
+                _ => {}
+            }
+
+            prev_cycle = segment_end;
+            self.dmg_startup_cycle = Some(segment_end);
+        }
+
+        if new_cycle < DMG_STARTUP_STAGE5_END {
+            self.dmg_startup_stage = Some(Self::dmg_startup_stage_for_cycle(new_cycle));
+        } else {
+            self.dmg_startup_stage = None;
+        }
     }
 
     fn update_stat_irq(&mut self, if_reg: &mut u8) {

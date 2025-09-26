@@ -166,10 +166,28 @@ impl Mmu {
                 .unwrap_or(0xFF),
             0x0000..=0x7FFF => self.cart.as_ref().map(|c| c.read(addr)).unwrap_or(0xFF),
             0x8000..=0x9FFF => {
-                if self.ppu.mode == 3 {
-                    0xFF
+                let accessible = self.ppu.vram_accessible();
+                if accessible {
+                    let value = self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize];
+                    #[cfg(feature = "ppu-trace")]
+                    {
+                        let (stage, cycle, mode, mode_clock) = self.ppu.debug_startup_snapshot();
+                        eprintln!(
+                            "[PPU] VRAM read allow addr={:04X} val={:02X} stage={:?} cycle={:?} mode={} mode_clock={}",
+                            addr, value, stage, cycle, mode, mode_clock
+                        );
+                    }
+                    value
                 } else {
-                    self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize]
+                    #[cfg(feature = "ppu-trace")]
+                    {
+                        let (stage, cycle, mode, mode_clock) = self.ppu.debug_startup_snapshot();
+                        eprintln!(
+                            "[PPU] VRAM read blocked addr={:04X} stage={:?} cycle={:?} mode={} mode_clock={}",
+                            addr, stage, cycle, mode, mode_clock
+                        );
+                    }
+                    0xFF
                 }
             }
             0xA000..=0xBFFF => self.cart.as_ref().map(|c| c.read(addr)).unwrap_or(0xFF),
@@ -178,10 +196,10 @@ impl Mmu {
             0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize],
             0xF000..=0xFDFF => self.wram[self.wram_bank][(addr - 0xF000) as usize],
             0xFE00..=0xFE9F => {
-                if self.ppu.mode == 2 || self.ppu.mode == 3 {
-                    0xFF
-                } else {
+                if self.ppu.oam_accessible() {
                     self.ppu.oam[(addr - 0xFE00) as usize]
+                } else {
+                    0xFF
                 }
             }
             0xFEA0..=0xFEFF => 0xFF,
@@ -303,7 +321,7 @@ impl Mmu {
 
         match addr {
             0x8000..=0x9FFF => {
-                if self.ppu.mode != 3 {
+                if self.ppu.vram_accessible() {
                     self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize] = val;
                 }
             }
@@ -317,7 +335,7 @@ impl Mmu {
             0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize] = val,
             0xF000..=0xFDFF => self.wram[self.wram_bank][(addr - 0xF000) as usize] = val,
             0xFE00..=0xFE9F => {
-                if self.ppu.mode != 2 && self.ppu.mode != 3 {
+                if self.ppu.oam_accessible() {
                     self.ppu.oam[(addr - 0xFE00) as usize] = val;
                 }
             }

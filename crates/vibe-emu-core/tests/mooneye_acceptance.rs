@@ -490,7 +490,6 @@ fn ppu__intr_2_oam_ok_timing_gb() {
 }
 
 #[test]
-#[ignore]
 fn ppu__lcdon_timing_GS_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/ppu/lcdon_timing-GS.gb"),
