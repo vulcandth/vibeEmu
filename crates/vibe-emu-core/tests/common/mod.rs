@@ -101,22 +101,18 @@ pub fn load_png_rgb<P: AsRef<Path>>(path: P) -> (u32, u32, Vec<[u8; 3]>) {
     (info.width, info.height, pixels)
 }
 
-#[allow(dead_code)]
 pub fn serial_contains_result(serial: &[u8], checked_up_to: &mut usize) -> bool {
     const PASSED: &[u8] = b"Passed";
     const FAILED: &[u8] = b"Failed";
 
     let max_marker_len = PASSED.len().max(FAILED.len());
-    let start = checked_up_to
-        .saturating_sub(max_marker_len.saturating_sub(1))
-        .min(serial.len());
-    *checked_up_to = serial.len();
-
+    let lookbehind = max_marker_len.saturating_sub(1);
+    let start = checked_up_to.saturating_sub(lookbehind).min(serial.len());
     let window = &serial[start..];
-    window
-        .windows(PASSED.len())
-        .any(|chunk| chunk == PASSED)
-        || window
-            .windows(FAILED.len())
-            .any(|chunk| chunk == FAILED)
+
+    let found = window.windows(PASSED.len()).any(|chunk| chunk == PASSED)
+        || window.windows(FAILED.len()).any(|chunk| chunk == FAILED);
+
+    *checked_up_to = serial.len();
+    found
 }
