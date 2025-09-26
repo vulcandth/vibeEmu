@@ -74,6 +74,8 @@ fn render_window_scanline() {
 fn render_sprite_scanline() {
     let mut ppu = Ppu::new();
     ppu.write_reg(0xFF40, 0x82); // LCD on, sprites enabled
+    ppu.skip_startup_for_test();
+    let mut if_reg = 0u8;
     ppu.write_reg(0xFF48, 0xE4); // palette
     for i in 0..8 {
         ppu.vram[0][i * 2] = 0xFF;
@@ -83,7 +85,6 @@ fn render_sprite_scanline() {
     ppu.oam[1] = 8; // x
     ppu.oam[2] = 0; // tile
     ppu.oam[3] = 0; // flags
-    let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
     assert_eq!(ppu.framebuffer[0], 0x008BAC0F);
 }
@@ -92,6 +93,8 @@ fn render_sprite_scanline() {
 fn sprite_8x16_tile_offset() {
     let mut ppu = Ppu::new();
     ppu.write_reg(0xFF40, 0x86); // LCD on, sprites 8x16
+    ppu.skip_startup_for_test();
+    let mut if_reg = 0u8;
     ppu.write_reg(0xFF48, 0xE4);
     // top tile -> color 1
     ppu.vram[0][0] = 0xFF;
@@ -103,7 +106,6 @@ fn sprite_8x16_tile_offset() {
     ppu.oam[1] = 8;
     ppu.oam[2] = 1; // bit0 ignored
     ppu.oam[3] = 0;
-    let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
     assert_eq!(ppu.framebuffer[0], 0x008BAC0F);
     for _ in 0..8 {
@@ -116,6 +118,8 @@ fn sprite_8x16_tile_offset() {
 fn sprite_x_priority() {
     let mut ppu = Ppu::new();
     ppu.write_reg(0xFF40, 0x82); // LCD on, sprites enabled
+    ppu.skip_startup_for_test();
+    let mut if_reg = 0u8;
     ppu.write_reg(0xFF48, 0xE4);
     // tile 0 -> color 2
     ppu.vram[0][0] = 0x00;
@@ -133,7 +137,6 @@ fn sprite_x_priority() {
     ppu.oam[5] = 8;
     ppu.oam[6] = 1;
     ppu.oam[7] = 0;
-    let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
     assert_eq!(ppu.framebuffer[1], 0x008BAC0F);
 }
@@ -209,6 +212,8 @@ fn cgb_obj_priority_mode_dmg() {
 fn obj_priority_color0() {
     let mut ppu = Ppu::new();
     ppu.write_reg(0xFF40, 0x83); // LCD on, BG and OBJ
+    ppu.skip_startup_for_test();
+    let mut if_reg = 0u8;
     ppu.write_reg(0xFF47, 0xE4);
     ppu.write_reg(0xFF48, 0xE4);
     // BG tile -> color 0
@@ -222,7 +227,6 @@ fn obj_priority_color0() {
     ppu.oam[1] = 8;
     ppu.oam[2] = 1;
     ppu.oam[3] = 0x80; // behind BG
-    let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
     assert_eq!(ppu.framebuffer[0], 0x008BAC0F);
 }

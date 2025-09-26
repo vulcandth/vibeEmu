@@ -221,6 +221,16 @@ impl Ppu {
         Self::new_with_mode(false)
     }
 
+    pub fn skip_startup_for_test(&mut self) {
+        self.dmg_startup_cycle = None;
+        self.dmg_startup_stage = None;
+        self.dmg_post_startup_line2 = false;
+        self.mode = MODE_OAM;
+        self.mode_clock = 0;
+        self.ly = 0;
+        self.update_lyc_compare();
+    }
+
     pub fn in_hblank(&self) -> bool {
         self.mode == MODE_HBLANK
     }
@@ -624,8 +634,6 @@ impl Ppu {
                 }
                 if self.lcdc & 0x80 != 0 {
                     self.update_lyc_compare();
-                } else {
-                    self.lyc_eq_ly = false;
                 }
             }
             0xFF41 => self.stat = (self.stat & 0x07) | (val & 0xF8),
