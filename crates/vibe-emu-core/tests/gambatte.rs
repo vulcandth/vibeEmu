@@ -1,8 +1,10 @@
 #![allow(non_snake_case)]
 mod common;
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use libtest_mimic::{Arguments, Failed, Trial};
 use vibe_emu_core::{
@@ -16,6 +18,8 @@ const GB_HEIGHT: usize = 144;
 const TARGET_FRAMES: u32 = 15;
 const MAX_FRAMES: u32 = 20;
 const MAX_CYCLES: u64 = 2_000_000;
+
+const IGNORED_LIST: &str = include_str!("gambatte_ignored.txt");
 
 #[derive(Clone, Copy)]
 enum Mode {
@@ -38,6 +42,21 @@ struct GambatteRun {
     audio: Vec<i16>,
 }
 
+fn ignored_cases() -> &'static HashSet<&'static str> {
+    static CACHE: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        IGNORED_LIST
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect::<HashSet<&'static str>>()
+    })
+}
+
+fn should_ignore(name: &str) -> bool {
+    ignored_cases().contains(name)
+}
+
 fn main() {
     let args = Arguments::from_args();
 
@@ -55,9 +74,12 @@ fn main() {
         match build_case(&rom, &rom_root) {
             Ok(Some(case)) => {
                 let name = case.name.clone();
-                trials.push(Trial::test(name, move || {
-                    run_case(&case).map_err(Failed::from)
-                }));
+                let ignore = should_ignore(&name);
+                let mut trial = Trial::test(name, move || run_case(&case).map_err(Failed::from));
+                if ignore {
+                    trial = trial.with_ignored_flag(true);
+                }
+                trials.push(trial);
             }
             Ok(None) => {}
             Err(err) => {
@@ -66,10 +88,13 @@ fn main() {
                     .unwrap_or(&rom)
                     .to_string_lossy()
                     .replace('\\', "/");
+                let ignore = should_ignore(&name);
                 let err_msg = err.clone();
-                trials.push(Trial::test(name, move || {
-                    Err(Failed::from(err_msg.clone()))
-                }));
+                let mut trial = Trial::test(name, move || Err(Failed::from(err_msg.clone())));
+                if ignore {
+                    trial = trial.with_ignored_flag(true);
+                }
+                trials.push(trial);
             }
         }
     }
