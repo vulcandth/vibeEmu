@@ -251,9 +251,7 @@ fn detect_out_string(stem: &str, mode: Mode) -> Option<&'static str> {
             }
         }
         Mode::Cgb => {
-            if stem.contains("dmg08_out") && stem.contains("cgb04c_out") {
-                Some("cgb04c_out")
-            } else if stem.contains("cgb04c_out") {
+            if stem.contains("cgb04c_out") {
                 Some("cgb04c_out")
             } else if stem.contains("_out") {
                 Some("_out")
@@ -393,9 +391,9 @@ fn normalize_color(color: u32, mode: Mode) -> [u8; 3] {
 }
 
 fn grayscale_shade(color: u32) -> u8 {
-    let r = ((color >> 16) & 0xFF) as u32;
-    let g = ((color >> 8) & 0xFF) as u32;
-    let b = (color & 0xFF) as u32;
+    let r = (color >> 16) & 0xFF;
+    let g = (color >> 8) & 0xFF;
+    let b = color & 0xFF;
     grayscale_from_rgb(r as u8, g as u8, b as u8)
 }
 
