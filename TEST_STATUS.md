@@ -33,10 +33,10 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 1530 | 2084 | 0 | 0 | 3614 | 42.3% |
+| ROM Test Suites | 1531 | 2083 | 0 | 0 | 3614 | 42.4% |
 | Integration Tests | 156 | 18 | 0 | 0 | 174 | 89.7% |
 | Unit Tests | 5 | 0 | 0 | 0 | 5 | 100.0% |
-| **Overall** | 1691 | 2102 | 0 | 0 | 3793 | 44.6% |
+| **Overall** | 1692 | 2101 | 0 | 0 | 3793 | 44.6% |
 
 ## Detailed Results
 
@@ -3548,7 +3548,7 @@ Combined exit code: 101
 | `mem_timing_read` | ✅ Pass |
 | `mem_timing_write` | ✅ Pass |
 
-#### mooneye_acceptance (66/75 passing, 88.0%)
+#### mooneye_acceptance (67/75 passing, 89.3%)
 
 | Test | Result |
 | --- | --- |
@@ -3588,6 +3588,7 @@ Combined exit code: 101
 | `oam_dma_start_gb` | ✅ Pass |
 | `oam_dma_timing_gb` | ✅ Pass |
 | `pop_timing_gb` | ✅ Pass |
+| `ppu__hblank_ly_scx_timing_GS_gb` | ✅ Pass |
 | `ppu__intr_1_2_timing_GS_gb` | ✅ Pass |
 | `ppu__intr_2_0_timing_gb` | ✅ Pass |
 | `ppu__intr_2_mode0_timing_gb` | ✅ Pass |
@@ -3624,7 +3625,6 @@ Combined exit code: 101
 | `boot_regs_mgb_gb` | ❌ Fail |
 | `boot_regs_sgb2_gb` | ❌ Fail |
 | `boot_regs_sgb_gb` | ❌ Fail |
-| `ppu__hblank_ly_scx_timing_GS_gb` | ❌ Fail |
 | `ppu__intr_2_mode0_timing_sprites_gb` | ❌ Fail |
 | `ppu__lcdon_write_timing_GS_gb` | ❌ Fail |
 

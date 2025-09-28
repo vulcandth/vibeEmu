@@ -425,7 +425,6 @@ fn pop_timing_gb() {
 }
 
 #[test]
-#[ignore]
 fn ppu__hblank_ly_scx_timing_GS_gb() {
     let passed = run_mooneye_acceptance(
         common::rom_path("mooneye-test-suite/acceptance/ppu/hblank_ly_scx_timing-GS.gb"),

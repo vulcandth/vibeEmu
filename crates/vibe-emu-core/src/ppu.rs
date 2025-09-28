@@ -521,7 +521,21 @@ impl Ppu {
             }
             0xFF42 => self.scy,
             0xFF43 => self.scx,
-            0xFF44 => self.ly,
+            0xFF44 => {
+                let mut ly = self.ly;
+                if !self.cgb
+                    && self.lcdc & 0x80 != 0
+                    && self.lcdc & 0x01 != 0
+                    && self.mode == MODE_HBLANK
+                    && self.dmg_startup_cycle.is_none()
+                {
+                    let ahead = 4;
+                    if self.mode_clock + ahead >= self.dmg_hblank_ly_advance_cycle() {
+                        ly = self.next_visible_ly();
+                    }
+                }
+                ly
+            }
             0xFF45 => self.lyc,
             0xFF46 => self.dma,
             0xFF47 => self.bgp,
@@ -686,6 +700,23 @@ impl Ppu {
     #[inline(always)]
     fn dmg_shade(palette: u8, color_id: u8) -> u8 {
         (palette >> (color_id * 2)) & 0x03
+    }
+
+    fn next_visible_ly(&self) -> u8 {
+        if self.ly == SCREEN_HEIGHT as u8 + VBLANK_LINES - 1 {
+            0
+        } else {
+            self.ly.wrapping_add(1)
+        }
+    }
+
+    fn dmg_hblank_ly_advance_cycle(&self) -> u16 {
+        let adjustment = match self.scx & 0x07 {
+            0 => 0,
+            1..=4 => 4,
+            _ => 8,
+        };
+        MODE0_CYCLES - adjustment
     }
 
     fn render_scanline(&mut self) {
