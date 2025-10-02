@@ -27,19 +27,68 @@ enum Mode {
     Cgb,
 }
 
+struct ModeCase {
+    out: Option<&'static str>,
+    png: Option<PathBuf>,
+    needs_frame: bool,
+    needs_audio: bool,
+}
+
 struct GambatteCase {
     rom: PathBuf,
     name: String,
     stem: String,
-    dmg_out: Option<&'static str>,
-    cgb_out: Option<&'static str>,
-    dmg_png: Option<PathBuf>,
-    cgb_png: Option<PathBuf>,
+    dmg: ModeCase,
+    cgb: ModeCase,
+}
+
+#[derive(Clone, Copy)]
+struct ModeRequirements {
+    needs_frame: bool,
+    needs_audio: bool,
 }
 
 struct GambatteRun {
-    frame: Vec<u32>,
-    audio: Vec<i16>,
+    frame: Option<Vec<u32>>,
+    audio: Option<Vec<i16>>,
+}
+
+impl ModeCase {
+    fn new(stem: &str, out: Option<&'static str>, png: Option<PathBuf>) -> Result<Self, String> {
+        let mut needs_frame = png.is_some();
+        let mut needs_audio = false;
+
+        if let Some(out_str) = out {
+            let tail = expectation_tail(stem, out_str)?;
+            if tail.starts_with("audio0") || tail.starts_with("audio1") {
+                needs_audio = true;
+            } else {
+                needs_frame = true;
+            }
+        }
+
+        Ok(Self {
+            out,
+            png,
+            needs_frame,
+            needs_audio,
+        })
+    }
+
+    fn has_expectations(&self) -> bool {
+        self.out.is_some() || self.png.is_some()
+    }
+
+    fn requirements(&self) -> Option<ModeRequirements> {
+        if self.needs_frame || self.needs_audio {
+            Some(ModeRequirements {
+                needs_frame: self.needs_frame,
+                needs_audio: self.needs_audio,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 fn ignored_cases() -> &'static HashSet<&'static str> {
@@ -118,9 +167,6 @@ fn build_case(rom: &Path, rom_root: &Path) -> Result<Option<GambatteCase>, Strin
         .ok_or_else(|| format!("invalid ROM filename: {}", rom.display()))?
         .to_owned();
 
-    let dmg_out = detect_out_string(&stem, Mode::Dmg);
-    let cgb_out = detect_out_string(&stem, Mode::Cgb);
-
     let png_shared = rom.with_file_name(format!("{}_dmg08_cgb04c.png", stem));
     let png_dmg = rom.with_file_name(format!("{}_dmg08.png", stem));
     let png_cgb = rom.with_file_name(format!("{}_cgb04c.png", stem));
@@ -141,7 +187,10 @@ fn build_case(rom: &Path, rom_root: &Path) -> Result<Option<GambatteCase>, Strin
         None
     };
 
-    if dmg_out.is_none() && dmg_png.is_none() && cgb_out.is_none() && cgb_png.is_none() {
+    let dmg = ModeCase::new(&stem, detect_out_string(&stem, Mode::Dmg), dmg_png)?;
+    let cgb = ModeCase::new(&stem, detect_out_string(&stem, Mode::Cgb), cgb_png)?;
+
+    if !dmg.has_expectations() && !cgb.has_expectations() {
         return Ok(None);
     }
 
@@ -149,31 +198,26 @@ fn build_case(rom: &Path, rom_root: &Path) -> Result<Option<GambatteCase>, Strin
         rom: rom.to_path_buf(),
         name,
         stem,
-        dmg_out,
-        cgb_out,
-        dmg_png,
-        cgb_png,
+        dmg,
+        cgb,
     }))
 }
 
 fn run_case(case: &GambatteCase) -> Result<(), String> {
-    let run_dmg = case.dmg_out.is_some() || case.dmg_png.is_some();
-    let run_cgb = case.cgb_out.is_some() || case.cgb_png.is_some();
-
-    if let Some(result) = execute_mode(&case.rom, Mode::Dmg, run_dmg)? {
-        if let Some(out) = case.dmg_out {
+    if let Some(result) = execute_mode(&case.rom, Mode::Dmg, case.dmg.requirements())? {
+        if let Some(out) = case.dmg.out {
             verify_result(&result, &case.stem, out, Mode::Dmg)?;
         }
-        if let Some(png) = &case.dmg_png {
+        if let Some(png) = &case.dmg.png {
             verify_png(&result, &case.stem, png, Mode::Dmg)?;
         }
     }
 
-    if let Some(result) = execute_mode(&case.rom, Mode::Cgb, run_cgb)? {
-        if let Some(out) = case.cgb_out {
+    if let Some(result) = execute_mode(&case.rom, Mode::Cgb, case.cgb.requirements())? {
+        if let Some(out) = case.cgb.out {
             verify_result(&result, &case.stem, out, Mode::Cgb)?;
         }
-        if let Some(png) = &case.cgb_png {
+        if let Some(png) = &case.cgb.png {
             verify_png(&result, &case.stem, png, Mode::Cgb)?;
         }
     }
@@ -205,10 +249,14 @@ fn collect_roms(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(roms)
 }
 
-fn execute_mode(rom: &Path, mode: Mode, should_run: bool) -> Result<Option<GambatteRun>, String> {
-    if !should_run {
+fn execute_mode(
+    rom: &Path,
+    mode: Mode,
+    requirements: Option<ModeRequirements>,
+) -> Result<Option<GambatteRun>, String> {
+    let Some(requirements) = requirements else {
         return Ok(None);
-    }
+    };
 
     let rom_data =
         fs::read(rom).map_err(|err| format!("failed to read {}: {err}", rom.display()))?;
@@ -224,12 +272,18 @@ fn execute_mode(rom: &Path, mode: Mode, should_run: bool) -> Result<Option<Gamba
     gb.mmu.load_cart(cart);
 
     let mut frames = 0u32;
-    let mut frame = vec![0u32; GB_WIDTH * GB_HEIGHT];
+    let mut frame = if requirements.needs_frame {
+        Some(vec![0u32; GB_WIDTH * GB_HEIGHT])
+    } else {
+        None
+    };
     let start_cycles = gb.cpu.cycles;
     while frames < TARGET_FRAMES && gb.cpu.cycles - start_cycles <= MAX_CYCLES {
         gb.cpu.step(&mut gb.mmu);
         if gb.mmu.ppu.frame_ready() {
-            frame.copy_from_slice(gb.mmu.ppu.framebuffer());
+            if let Some(buffer) = frame.as_mut() {
+                buffer.copy_from_slice(gb.mmu.ppu.framebuffer());
+            }
             gb.mmu.ppu.clear_frame_flag();
             frames += 1;
             if frames >= MAX_FRAMES {
@@ -246,21 +300,23 @@ fn execute_mode(rom: &Path, mode: Mode, should_run: bool) -> Result<Option<Gamba
         ));
     }
 
-    let mut samples = Vec::new();
-    let mut apu = gb
-        .mmu
-        .apu
-        .lock()
-        .map_err(|_| format!("failed to lock APU for {}", rom.display()))?;
-    while let Some(sample) = apu.pop_sample() {
-        samples.push(sample);
-    }
-    drop(apu);
+    let audio = if requirements.needs_audio {
+        let mut samples = Vec::new();
+        let mut apu = gb
+            .mmu
+            .apu
+            .lock()
+            .map_err(|_| format!("failed to lock APU for {}", rom.display()))?;
+        while let Some(sample) = apu.pop_sample() {
+            samples.push(sample);
+        }
+        drop(apu);
+        Some(samples)
+    } else {
+        None
+    };
 
-    Ok(Some(GambatteRun {
-        frame,
-        audio: samples,
-    }))
+    Ok(Some(GambatteRun { frame, audio }))
 }
 
 fn detect_out_string(stem: &str, mode: Mode) -> Option<&'static str> {
@@ -287,28 +343,49 @@ fn detect_out_string(stem: &str, mode: Mode) -> Option<&'static str> {
     }
 }
 
+fn expectation_tail<'a>(stem: &'a str, out_str: &str) -> Result<&'a str, String> {
+    stem.find(out_str)
+        .map(|pos| &stem[pos + out_str.len()..])
+        .ok_or_else(|| format!("expected substring {out_str} in {stem}"))
+}
+
 fn verify_result(run: &GambatteRun, stem: &str, out_str: &str, mode: Mode) -> Result<(), String> {
-    let out_pos = stem
-        .find(out_str)
-        .ok_or_else(|| format!("expected substring {out_str} in {stem}"))?;
-    let tail = &stem[out_pos + out_str.len()..];
+    let tail = expectation_tail(stem, out_str)?;
 
     if tail.starts_with("audio0") {
-        if !is_silent(&run.audio) {
+        let audio = run
+            .audio
+            .as_ref()
+            .ok_or_else(|| format!("{stem}: {:?} mode did not collect audio data", mode))?;
+        if !is_silent(audio) {
             return Err(format!("{stem}: expected silence in {:?} mode", mode));
         }
     } else if tail.starts_with("audio1") {
-        if is_silent(&run.audio) {
+        let audio = run
+            .audio
+            .as_ref()
+            .ok_or_else(|| format!("{stem}: {:?} mode did not collect audio data", mode))?;
+        if is_silent(audio) {
             return Err(format!("{stem}: expected audio output in {:?} mode", mode));
         }
-    } else if !frame_buffer_matches(&run.frame, tail, mode) {
-        return Err(format!("{stem}: framebuffer mismatch for {:?} mode", mode));
+    } else {
+        let frame = run
+            .frame
+            .as_ref()
+            .ok_or_else(|| format!("{stem}: {:?} mode did not collect framebuffer data", mode))?;
+        if !frame_buffer_matches(frame, tail, mode) {
+            return Err(format!("{stem}: framebuffer mismatch for {:?} mode", mode));
+        }
     }
 
     Ok(())
 }
 
 fn verify_png(run: &GambatteRun, stem: &str, png_path: &Path, mode: Mode) -> Result<(), String> {
+    let frame = run
+        .frame
+        .as_ref()
+        .ok_or_else(|| format!("{stem}: {:?} mode did not collect framebuffer data", mode))?;
     let (width, height, expected) = common::load_png_rgb(png_path);
     if width as usize != GB_WIDTH {
         return Err(format!("unexpected PNG width for {stem}"));
@@ -319,7 +396,7 @@ fn verify_png(run: &GambatteRun, stem: &str, png_path: &Path, mode: Mode) -> Res
 
     for (idx, pixel) in expected.iter().enumerate() {
         let expected_pixel = normalize_pixel(pixel, mode);
-        let actual = normalize_color(run.frame[idx], mode);
+        let actual = normalize_color(frame[idx], mode);
         if actual != expected_pixel {
             return Err(format!(
                 "{stem}: pixel mismatch at index {idx} for {:?} mode (expected {:02X?}, got {:02X?})",
