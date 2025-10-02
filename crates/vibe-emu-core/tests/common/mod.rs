@@ -78,7 +78,10 @@ pub fn load_png_rgb<P: AsRef<Path>>(path: P) -> (u32, u32, Arc<[[u8; 3]]>) {
     let mut decoder = png::Decoder::new(reader);
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut png_reader = decoder.read_info().expect("failed to read png info");
-    let mut buf = vec![0; png_reader.output_buffer_size()];
+    let buffer_size = png_reader
+        .output_buffer_size()
+        .expect("failed to get png output buffer size");
+    let mut buf = vec![0; buffer_size];
     let info = png_reader
         .next_frame(&mut buf)
         .expect("failed to decode png frame");
