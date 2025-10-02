@@ -28,7 +28,8 @@ fn load_window_icon() -> Option<Icon> {
     let mut decoder = png::Decoder::new(cursor);
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let buffer_size = reader.output_buffer_size()?;
+    let mut buf = vec![0; buffer_size];
     let info = reader.next_frame(&mut buf).ok()?;
     let data = &buf[..info.buffer_size()];
     let pixel_count = info.width as usize * info.height as usize;
