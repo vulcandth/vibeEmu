@@ -61,6 +61,24 @@ If no limit is specified the emulator runs until interrupted.
 
 Test ROMs used for development are located in the `roms/` directory.
 
+### RGBDS symbol files
+
+When a ROM is loaded the emulator looks for an RGBDS `.sym` file with the same
+name in the same directory (for example `tetris.gb` alongside `tetris.sym`).
+If present, the symbols are parsed and made available to debuggers.
+
+### Remote debugging with GDB
+
+Pass `--gdb-port <PORT>` to start a GDB Remote Serial Protocol server for the
+running ROM. Execution will pause until a debugger connects:
+
+```bash
+cargo run -p vibe-emu-ui -- --gdb-port 2345 path/to/rom.gb
+```
+
+From `gdb` you can then attach with `target remote :2345`, inspect or modify
+registers/memory and control execution directly.
+
 ## Debugging UI
 
 Right‑click the main window to pause emulation and open a context menu.  From

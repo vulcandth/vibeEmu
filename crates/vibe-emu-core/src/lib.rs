@@ -4,6 +4,7 @@
 pub mod apu;
 pub mod cartridge;
 pub mod cpu;
+pub mod debug;
 pub mod gameboy;
 pub mod hardware;
 pub mod input;

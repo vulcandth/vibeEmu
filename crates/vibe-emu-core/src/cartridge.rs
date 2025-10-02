@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::debug::symbols::SymbolTable;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MbcType {
     NoMbc,
@@ -23,6 +25,7 @@ pub struct Cartridge {
     cart_type: u8,
     save_path: Option<PathBuf>,
     mbc_state: MbcState,
+    pub symbols: Option<SymbolTable>,
 }
 
 #[derive(Debug)]
@@ -70,6 +73,24 @@ impl Cartridge {
             if let Ok(bytes) = fs::read(&save) {
                 for (d, s) in cart.ram.iter_mut().zip(bytes.iter()) {
                     *d = *s;
+                }
+            }
+        }
+
+        if let Some(mut sym_path) = path.as_ref().file_stem().map(|stem| {
+            let mut sym = PathBuf::from(path.as_ref());
+            sym.set_file_name(stem);
+            sym
+        }) {
+            sym_path.set_extension("sym");
+            match SymbolTable::from_file(&sym_path) {
+                Ok(table) => {
+                    println!("Loaded {} symbols from {}", table.len(), sym_path.display());
+                    cart.symbols = Some(table);
+                }
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    eprintln!("Failed to load symbol file {}: {}", sym_path.display(), err);
                 }
             }
         }
@@ -127,6 +148,7 @@ impl Cartridge {
             cart_type,
             save_path: None,
             mbc_state,
+            symbols: None,
         }
     }
 

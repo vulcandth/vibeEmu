@@ -12,7 +12,9 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::CgbRevision};
+use vibe_emu_core::{
+    cartridge::Cartridge, debug::gdb::GdbServer, gameboy::GameBoy, hardware::CgbRevision,
+};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -121,6 +123,10 @@ struct Args {
     /// Number of CPU cycles to run in headless mode
     #[arg(long)]
     cycles: Option<u64>,
+
+    /// Start a GDB remote server listening on the given TCP port
+    #[arg(long = "gdb-port", value_name = "PORT")]
+    gdb_port: Option<u16>,
 }
 
 fn cursor_in_screen(window: &winit::window::Window, pos: PhysicalPosition<f64>) -> bool {
@@ -179,26 +185,78 @@ fn spawn_vram_window(
 }
 
 #[allow(static_mut_refs)]
-fn emulate_until(gb: &mut GameBoy, speed: Speed, event_loop: &ActiveEventLoop) {
+fn emulate_until(
+    gb: &mut GameBoy,
+    speed: Speed,
+    event_loop: &ActiveEventLoop,
+    gdb: Option<&mut GdbServer>,
+) {
     let target = unsafe { NEXT_FRAME.get_or_insert_with(|| Instant::now() + FRAME_TIME) };
 
     if let Ok(mut apu) = gb.mmu.apu.lock() {
         apu.set_speed(speed.factor);
     }
 
-    while !gb.mmu.ppu.frame_ready() {
-        gb.cpu.step(&mut gb.mmu);
-    }
+    match gdb {
+        Some(gdb) => {
+            loop {
+                if !gdb.is_executing() {
+                    event_loop.set_control_flow(ControlFlow::Poll);
+                    *target = Instant::now();
+                    break;
+                }
 
-    if !speed.fast {
-        event_loop.set_control_flow(ControlFlow::WaitUntil(*target));
-        while Instant::now() < *target {
-            std::hint::spin_loop();
+                if gb.mmu.ppu.frame_ready() {
+                    break;
+                }
+
+                gdb.poll(gb);
+                if !gdb.is_executing() {
+                    event_loop.set_control_flow(ControlFlow::Poll);
+                    *target = Instant::now();
+                    break;
+                }
+
+                if gdb.before_step(gb) {
+                    gdb.poll(gb);
+                    event_loop.set_control_flow(ControlFlow::Poll);
+                    *target = Instant::now();
+                    break;
+                }
+
+                gb.cpu.step(&mut gb.mmu);
+                gdb.after_step();
+            }
+
+            if gdb.is_executing() && gb.mmu.ppu.frame_ready() {
+                if !speed.fast {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(*target));
+                    while Instant::now() < *target {
+                        std::hint::spin_loop();
+                    }
+                    *target += FRAME_TIME;
+                } else {
+                    event_loop.set_control_flow(ControlFlow::Poll);
+                    *target = Instant::now();
+                }
+            }
         }
-        *target += FRAME_TIME;
-    } else {
-        event_loop.set_control_flow(ControlFlow::Poll);
-        *target = Instant::now();
+        None => {
+            while !gb.mmu.ppu.frame_ready() {
+                gb.cpu.step(&mut gb.mmu);
+            }
+
+            if !speed.fast {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(*target));
+                while Instant::now() < *target {
+                    std::hint::spin_loop();
+                }
+                *target += FRAME_TIME;
+            } else {
+                event_loop.set_control_flow(ControlFlow::Poll);
+                *target = Instant::now();
+            }
+        }
     }
 }
 
@@ -374,7 +432,19 @@ fn main() {
         cart.cgb
     };
     let mut gb = GameBoy::new_with_revision(cgb_mode, CgbRevision::default());
+    let debug_symbols = cart.symbols.clone();
     gb.mmu.load_cart(cart);
+
+    let gdb_server = match args.gdb_port {
+        Some(port) => match GdbServer::new(port, debug_symbols) {
+            Ok(server) => Some(server),
+            Err(err) => {
+                eprintln!("Failed to start GDB server on port {port}: {err}");
+                None
+            }
+        },
+        None => None,
+    };
 
     if let Some(path) = args.bootrom {
         match std::fs::read(&path) {
@@ -429,6 +499,8 @@ fn main() {
 
         let mut state = 0xFFu8;
         let mut cursor_pos = PhysicalPosition::new(0.0, 0.0);
+
+        let mut gdb_server = gdb_server;
 
         #[allow(deprecated)]
         let _ = event_loop.run(move |event, target| {
@@ -643,8 +715,18 @@ fn main() {
                     }
                 }
                 Event::AboutToWait => {
-                    if !ui_state.paused {
-                        emulate_until(&mut gb, speed, target);
+                    if let Some(gdb) = gdb_server.as_mut() {
+                        gdb.poll(&mut gb);
+                    }
+
+                    let should_run = if let Some(gdb) = gdb_server.as_ref() {
+                        gdb.is_executing()
+                    } else {
+                        !ui_state.paused
+                    };
+
+                    if should_run {
+                        emulate_until(&mut gb, speed, target, gdb_server.as_mut());
                     }
 
                     if gb.mmu.ppu.frame_ready() {
@@ -683,14 +765,39 @@ fn main() {
             }
         });
     } else {
+        let mut gdb_server = gdb_server;
         let frame_limit = args.frames;
         let cycle_limit = args.cycles;
         let second_limit = args.seconds.map(Duration::from_secs);
 
         let start = std::time::Instant::now();
         'headless: loop {
+            if let Some(gdb) = gdb_server.as_mut() {
+                gdb.poll(&mut gb);
+                if !gdb.is_executing() {
+                    std::thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+            }
+
             while !gb.mmu.ppu.frame_ready() {
+                if let Some(gdb) = gdb_server.as_mut()
+                    && gdb.before_step(&gb)
+                {
+                    gdb.poll(&mut gb);
+                    break;
+                }
+
                 gb.cpu.step(&mut gb.mmu);
+
+                if let Some(gdb) = gdb_server.as_mut() {
+                    gdb.after_step();
+                    gdb.poll(&mut gb);
+                    if !gdb.is_executing() {
+                        break;
+                    }
+                }
+
                 if let Some(max) = cycle_limit
                     && gb.cpu.cycles >= max
                 {
@@ -701,6 +808,10 @@ fn main() {
                 {
                     break 'headless;
                 }
+            }
+
+            if !gb.mmu.ppu.frame_ready() {
+                continue;
             }
 
             frame.copy_from_slice(gb.mmu.ppu.framebuffer());
