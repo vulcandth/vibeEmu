@@ -14,4 +14,4 @@ imgui-winit-support = "0.13"
 imgui-wgpu = "0.24"
 cpal = "0.16"
 rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
-png = "0.17"
+png = "0.18"
