@@ -58,7 +58,7 @@ enum MbcState {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 struct RtcRegisters {
     seconds: u8,
     minutes: u8,
@@ -78,19 +78,6 @@ struct Mbc3Rtc {
 
 const RTC_FILE_MAGIC: &[u8; 4] = b"RTC1";
 const RTC_FILE_VERSION: u8 = 1;
-
-impl Default for RtcRegisters {
-    fn default() -> Self {
-        Self {
-            seconds: 0,
-            minutes: 0,
-            hours: 0,
-            days: 0,
-            halt: false,
-            carry: false,
-        }
-    }
-}
 
 impl RtcRegisters {
     fn control_byte(&self) -> u8 {
@@ -306,10 +293,10 @@ impl Cartridge {
             rtc_path.set_extension("rtc");
             cart.rtc_path = Some(rtc_path.clone());
             if let Some(rtc) = cart.rtc_mut() {
-                if let Ok(bytes) = fs::read(&rtc_path) {
-                    if !rtc.load_from_bytes(&bytes) {
-                        eprintln!("Failed to parse RTC data from {}", rtc_path.display());
-                    }
+                if let Ok(bytes) = fs::read(&rtc_path)
+                    && !rtc.load_from_bytes(&bytes)
+                {
+                    eprintln!("Failed to parse RTC data from {}", rtc_path.display());
                 }
                 rtc.latch(SystemTime::now());
             }
