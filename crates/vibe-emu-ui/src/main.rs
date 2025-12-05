@@ -260,10 +260,10 @@ fn run_emulator_thread(
                     EmuCommand::SetSpeed(new_speed) => {
                         speed = new_speed;
                         next_frame = Instant::now() + FRAME_TIME;
-                        if let Ok(gb) = gb.lock() {
-                            if let Ok(mut apu) = gb.mmu.apu.lock() {
-                                apu.set_speed(speed.factor);
-                            }
+                        if let Ok(gb) = gb.lock()
+                            && let Ok(mut apu) = gb.mmu.apu.lock()
+                        {
+                            apu.set_speed(speed.factor);
                         }
                     }
                     EmuCommand::UpdateInput(state) => {
@@ -348,16 +348,15 @@ fn run_emulator_thread(
             }
         }
 
-        if let Some(frame) = frame_buf {
-            if tx
+        if let Some(frame) = frame_buf
+            && tx
                 .send(EmuEvent::Frame {
                     frame,
                     frame_index: frame_count,
                 })
                 .is_err()
-            {
-                break;
-            }
+        {
+            break;
         }
 
         if let Some(serial) = serial {
