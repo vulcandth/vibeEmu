@@ -53,31 +53,86 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = "$env:SCCACHE_VERSION"
-          $url = "https://github.com/mozilla/sccache/releases/download/v$version/sccache-v$version-x86_64-pc-windows-msvc.zip"
-          $zipPath = "$env:RUNNER_TEMP\sccache.zip"
-          $outDir = "$env:RUNNER_TEMP\sccache"
-          Invoke-WebRequest -Uri $url -OutFile $zipPath
-          Expand-Archive -Path $zipPath -DestinationPath $outDir
+          try {
+            $version = "$env:SCCACHE_VERSION"
+            $url = "https://github.com/mozilla/sccache/releases/download/v$version/sccache-v$version-x86_64-pc-windows-msvc.zip"
+            $zipPath = "$env:RUNNER_TEMP\sccache.zip"
+            $outDir = "$env:RUNNER_TEMP\sccache"
 
-          $exePath = Join-Path $outDir "sccache-v$version-x86_64-pc-windows-msvc\sccache.exe"
+            Invoke-WebRequest -Uri $url -OutFile $zipPath -ErrorAction Stop
+            Expand-Archive -Path $zipPath -DestinationPath $outDir -ErrorAction Stop
 
-          if (-Not (Test-Path "$env:USERPROFILE\.cargo\bin")) {
-            New-Item -ItemType Directory -Path "$env:USERPROFILE\.cargo\bin" | Out-Null
+            $exePath = Join-Path $outDir "sccache-v$version-x86_64-pc-windows-msvc\sccache.exe"
+
+            if (-Not (Test-Path "$env:USERPROFILE\.cargo\bin")) {
+              New-Item -ItemType Directory -Path "$env:USERPROFILE\.cargo\bin" | Out-Null
+            }
+
+            Copy-Item $exePath "$env:USERPROFILE\.cargo\bin\sccache.exe" -Force
+            Write-Host "sccache installed"
+          } catch {
+            Write-Warning "Failed to install sccache: $($_.Exception.Message). Continuing without sccache (cache will be unavailable)."
           }
-
-          Copy-Item $exePath "$env:USERPROFILE\.cargo\bin\sccache.exe" -Force
 
 
       - name: Install sccache (Linux)
         if: runner.os == 'Linux'
         run: |
+          set -eo pipefail
+
           tmpdir="$(mktemp -d)"
-          curl -sSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o "$tmpdir/sccache.tar.gz"
-          tar -xzf "$tmpdir/sccache.tar.gz" -C "$tmpdir"
+          out="$tmpdir/sccache.tar.gz"
           mkdir -p "$HOME/.cargo/bin"
-          cp "$tmpdir/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" "$HOME/.cargo/bin/"
+
+          version="${SCCACHE_VERSION}"
+          musl_asset="sccache-v${version}-x86_64-unknown-linux-musl.tar.gz"
+          gnu_asset="sccache-v${version}-x86_64-unknown-linux-gnu.tar.gz"
+          url_base="https://github.com/mozilla/sccache/releases/download/v${version}"
+
+          download() {
+            local url="$1"
+            echo "Downloading $url"
+            # --fail makes curl return non-zero on HTTP error responses
+            if ! curl -fSL "$url" -o "$out"; then
+              return 1
+            fi
+            return 0
+          }
+
+          # Try musl first, then gnu fallback
+          if ! download "${url_base}/${musl_asset}"; then
+            echo "musl asset not available; trying gnu asset"
+            if ! download "${url_base}/${gnu_asset}"; then
+              echo "Warning: failed to download sccache release assets; continuing without sccache (cache unavailable)."
+              exit 0
+            fi
+          fi
+
+          # Verify tarball looks valid before extracting
+          if ! tar -tzf "$out" >/dev/null 2>&1; then
+            echo "Warning: downloaded sccache file is not a valid tar.gz; continuing without sccache."
+            ls -l "$out"
+            head -n 80 "$out" || true
+            exit 0
+          fi
+
+          if ! tar -xzf "$out" -C "$tmpdir"; then
+            echo "Warning: extraction failed; continuing without sccache."
+            exit 0
+          fi
+
+          # Copy binary from expected locations (musl or gnu)
+          if [ -x "$tmpdir/sccache-v${version}-x86_64-unknown-linux-musl/sccache" ]; then
+            cp "$tmpdir/sccache-v${version}-x86_64-unknown-linux-musl/sccache" "$HOME/.cargo/bin/"
+          elif [ -x "$tmpdir/sccache-v${version}-x86_64-unknown-linux-gnu/sccache" ]; then
+            cp "$tmpdir/sccache-v${version}-x86_64-unknown-linux-gnu/sccache" "$HOME/.cargo/bin/"
+          else
+            echo "Warning: sccache binary not found in archive; continuing without sccache."
+            exit 0
+          fi
+
           chmod +x "$HOME/.cargo/bin/sccache"
+          echo "sccache installed"
 
       - name: Set RUSTC_WRAPPER
         run: echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
