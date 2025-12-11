@@ -239,6 +239,12 @@ impl Cpu {
 
     /// Tick at normal speed regardless of double_speed mode. Used for interrupt
     /// handling, which is a hardware operation that takes fixed wall-clock time.
+    ///
+    /// Interrupt handling always adds 4 T-cycles per M-cycle (normal speed timing)
+    /// to maintain consistent behavior relative to hardware timers like DIV and TIMA,
+    /// which increment at a fixed wall-clock rate regardless of CPU speed mode.
+    /// This ensures the blargg interrupt_time test ROM reports the same cycle count
+    /// in both normal and double-speed modes.
     fn tick_interrupt(&mut self, mmu: &mut crate::mmu::Mmu, m_cycles: u8) {
         let hw_cycles = CYCLES_PER_M_CYCLE * m_cycles as u16;
         self.cycles += hw_cycles as u64;
@@ -476,7 +482,9 @@ impl Cpu {
 
             self.ime = false;
 
-            // Push PC onto stack using tick_interrupt for consistent timing
+            // Push PC onto stack with fixed timing. We inline write8 logic here
+            // to use tick_interrupt instead of tick, ensuring interrupt handling
+            // takes consistent time across CPU speed modes.
             self.sp = self.sp.wrapping_sub(1);
             mmu.last_cpu_pc = Some(self.pc);
             mmu.write_byte(self.sp, (return_pc >> 8) as u8);

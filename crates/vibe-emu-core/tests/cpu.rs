@@ -83,11 +83,16 @@ fn interrupt_handling_double_speed() {
     assert_eq!(cpu.pc, 0x0040);
     assert_eq!(mmu.if_reg & 0x01, 0);
     assert_eq!(cpu.sp, 0xC0FE);
-    // PC after STOP is 2, then NOP at address 2 fetches and advances PC to 3
+    // After STOP at address 0, PC=2. Then NOP at address 2 is fetched (PC becomes 3).
+    // The interrupt handler saves PC=3 (the address after the NOP).
     assert_eq!(mmu.read_byte(0xC0FF), 0x00); // High byte of PC=3
     assert_eq!(mmu.read_byte(0xC0FE), 0x03); // Low byte of PC=3
     // In double speed: NOP takes 2 cycles, interrupt handling takes 20 cycles (fixed timing)
-    assert_eq!(cycles_elapsed, 22, "Expected 22 cycles (2 for NOP + 20 for interrupt), got {}", cycles_elapsed);
+    assert_eq!(
+        cycles_elapsed, 22,
+        "Expected 22 cycles (2 for NOP + 20 for interrupt), got {}",
+        cycles_elapsed
+    );
 }
 
 #[test]
