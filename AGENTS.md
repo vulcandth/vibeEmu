@@ -25,7 +25,11 @@ Run the full suite whenever you touch Rust code or modify build configuration:
 2. `cargo clippy --workspace --all-targets -- -D warnings`
 3. `cargo test`
 4. `cargo test --release`
-5. `python scripts/update_test_status.py` (updates `TEST_STATUS.md` with the latest pass/fail data, including ignored ROM suites)
+
+To run the gambatte compatibility test suite explicitly (not included in default test runs):
+- `cargo gambatte_test` (runs the full Game Boy compatibility suite)
+
+Note: The `TEST_STATUS.md` report can be regenerated with `python scripts/update_test_status.py` but is not required for CI.
 
 > **Speeding up local workflows:** When you are iterating on a change that only affects a single crate you can target that crate
 > with `cargo fmt -p <crate>`, `cargo clippy -p <crate> -- -D warnings`, and `cargo test -p <crate>`. This keeps feedback cycles

@@ -1,0 +1,4 @@
+[alias]
+# Run the gambatte (Game Boy compatibility suite) tests explicitly.
+# These tests are excluded from the default `cargo test` to speed up CI/local development.
+gambatte_test = "test -p vibe-emu-core --test gambatte"

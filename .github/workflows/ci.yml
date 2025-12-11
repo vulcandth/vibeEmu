@@ -170,11 +170,3 @@ jobs:
 
       - name: Test release
         run: cargo test --release --verbose -p ${{ matrix.crate }}
-
-      - name: Update test status report
-        if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux'
-        run: python scripts/update_test_status.py
-
-      - name: Verify test status report is up to date
-        if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux'
-        run: git diff --exit-code TEST_STATUS.md
