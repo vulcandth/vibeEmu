@@ -237,6 +237,27 @@ impl Cpu {
         mmu.dma_step(hw_cycles);
     }
 
+    /// Tick at normal speed regardless of double_speed mode. Used for interrupt
+    /// handling, which is a hardware operation that takes fixed wall-clock time.
+    fn tick_interrupt(&mut self, mmu: &mut crate::mmu::Mmu, m_cycles: u8) {
+        let hw_cycles = CYCLES_PER_M_CYCLE * m_cycles as u16;
+        self.cycles += hw_cycles as u64;
+        let prev_div = mmu.timer.div;
+        mmu.timer.step(hw_cycles, &mut mmu.if_reg);
+        let curr_div = mmu.timer.div;
+        {
+            let mut apu = mmu.apu.lock().unwrap();
+            apu.step(hw_cycles);
+            apu.tick(prev_div, curr_div, self.double_speed);
+        }
+        mmu.serial
+            .step(prev_div, curr_div, self.double_speed, &mut mmu.if_reg);
+        if mmu.ppu.step(hw_cycles, &mut mmu.if_reg) {
+            mmu.hdma_hblank_transfer();
+        }
+        mmu.dma_step(hw_cycles);
+    }
+
     #[inline(always)]
     fn fetch8(&mut self, mmu: &mut crate::mmu::Mmu) -> u8 {
         mmu.last_cpu_pc = Some(self.pc);
@@ -455,20 +476,25 @@ impl Cpu {
 
             self.ime = false;
 
+            // Push PC onto stack using tick_interrupt for consistent timing
             self.sp = self.sp.wrapping_sub(1);
-            self.write8(mmu, self.sp, (return_pc >> 8) as u8);
+            mmu.last_cpu_pc = Some(self.pc);
+            mmu.write_byte(self.sp, (return_pc >> 8) as u8);
+            self.tick_interrupt(mmu, 1);
 
             let mut queue = mmu.ie_reg & 0x1F;
 
             self.sp = self.sp.wrapping_sub(1);
-            self.write8(mmu, self.sp, return_pc as u8);
+            mmu.last_cpu_pc = Some(self.pc);
+            mmu.write_byte(self.sp, return_pc as u8);
+            self.tick_interrupt(mmu, 1);
 
             queue &= mmu.if_reg & 0x1F;
 
             if queue == 0 {
                 self.exit_halt();
                 self.pc = 0;
-                self.tick(mmu, 3);
+                self.tick_interrupt(mmu, 3);
                 return;
             }
 
@@ -483,7 +509,7 @@ impl Cpu {
             }
 
             self.pc = vector;
-            self.tick(mmu, 3);
+            self.tick_interrupt(mmu, 3);
         } else if self.halted {
             self.exit_halt();
         }

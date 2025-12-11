@@ -57,6 +57,40 @@ fn interrupt_handling() {
 }
 
 #[test]
+fn interrupt_handling_double_speed() {
+    // STOP to switch to double speed, then NOP
+    let program = vec![0x10, 0x00, 0x00];
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0;
+    cpu.sp = 0xC100;
+    cpu.ime = true;
+    let mut mmu = Mmu::new_with_mode(true);
+    mmu.load_cart(Cartridge::load(program));
+    mmu.key1 = 0x01; // request speed switch
+
+    cpu.step(&mut mmu); // STOP -> enable double speed
+    assert!(cpu.double_speed);
+
+    // Set up interrupt
+    mmu.if_reg = 0x01;
+    mmu.ie_reg = 0x01;
+
+    let cycles_before = cpu.cycles;
+    cpu.step(&mut mmu); // NOP + interrupt handling
+    let cycles_elapsed = cpu.cycles - cycles_before;
+
+    assert_eq!(cpu.pc, 0x0040);
+    assert_eq!(mmu.if_reg & 0x01, 0);
+    assert_eq!(cpu.sp, 0xC0FE);
+    // PC after STOP is 2, then NOP at address 2 fetches and advances PC to 3
+    assert_eq!(mmu.read_byte(0xC0FF), 0x00); // High byte of PC=3
+    assert_eq!(mmu.read_byte(0xC0FE), 0x03); // Low byte of PC=3
+    // In double speed: NOP takes 2 cycles, interrupt handling takes 20 cycles (fixed timing)
+    assert_eq!(cycles_elapsed, 22, "Expected 22 cycles (2 for NOP + 20 for interrupt), got {}", cycles_elapsed);
+}
+
+#[test]
 fn jr_nz_cycles() {
     // JR NZ should take 12 cycles when branch taken and 8 when not
     let program = vec![0x20, 0x01, 0x00];
