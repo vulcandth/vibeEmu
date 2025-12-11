@@ -106,6 +106,16 @@ If you are iterating on the frontend, run its tests with:
 cargo test -p vibe-emu-ui
 ```
 
+### Game Boy Compatibility Tests
+
+The gambatte (Game Boy compatibility suite) tests are **not** included in the default `cargo test` runs to keep feedback cycles fast. To run the full compatibility suite explicitly:
+
+```bash
+cargo gambatte_test
+```
+
+This will run the comprehensive gambatte test suite which validates emulation accuracy against reference implementations.
+
 ### Audio Snapshots
 
 Use the wave-channel helper to capture deterministic audio for regression checks:
