@@ -4,9 +4,10 @@ use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
 #[test]
-#[ignore] // CGB test shows 14-15 cycles instead of expected 13, but this is a massive
-          // improvement from the original 242. The 1-2 cycle discrepancy may be due to
-          // other timing issues in the emulator. DMG mode passes perfectly.
+#[ignore] // CGB test still shows EE (238) and F6 (246) instead of expected 0D (13).
+          // The current interrupt timing fix does not resolve the issue in CGB mode.
+          // Further investigation needed to understand why values are ~18-19x too high.
+          // DMG mode passes perfectly.
 fn interrupt_time_cgb() {
     let mut gb = GameBoy::new_with_mode(true);
     let rom = std::fs::read(common::rom_path("blargg/interrupt_time/interrupt_time.gb"))
