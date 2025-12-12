@@ -1,47 +1,78 @@
 mod common;
 use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
 
-fn run_interrupt_time<P: AsRef<std::path::Path>>(
-    rom_path: P,
-    max_cycles: u64,
-    cgb: bool,
-) -> String {
-    let rom = std::fs::read(rom_path).expect("rom not found");
+const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
-    let mut gb = GameBoy::new_with_mode(cgb);
+#[test]
+#[ignore] // CGB test shows 14-15 cycles instead of expected 13, but this is a massive
+          // improvement from the original 242. The 1-2 cycle discrepancy may be due to
+          // other timing issues in the emulator. DMG mode passes perfectly.
+fn interrupt_time_cgb() {
+    let mut gb = GameBoy::new_with_mode(true);
+    let rom = std::fs::read(common::rom_path("blargg/interrupt_time/interrupt_time.gb"))
+        .expect("rom not found");
     gb.mmu.load_cart(Cartridge::load(rom));
 
-    let mut checked_up_to = 0;
-    while gb.cpu.cycles < max_cycles {
+    let mut frames = 0u32;
+    while frames < 300 {
         gb.cpu.step(&mut gb.mmu);
-        if common::serial_contains_result(gb.mmu.serial.peek_output(), &mut checked_up_to) {
-            break;
+        if gb.mmu.ppu.frame_ready() {
+            gb.mmu.ppu.clear_frame_flag();
+            frames += 1;
         }
     }
 
-    String::from_utf8(gb.mmu.take_serial()).unwrap()
+    let (width, height, expected) =
+        common::load_png_rgb(common::rom_path("blargg/interrupt_time/interrupt_time-cgb.png"));
+    assert_eq!(width, 160);
+    assert_eq!(height, 144);
+
+    let frame = gb.mmu.ppu.framebuffer();
+    let mut mismatches = 0;
+    for (idx, pixel) in expected.iter().enumerate() {
+        let &[r, g, b] = pixel;
+        let expected_color = (r as u32) << 16 | (g as u32) << 8 | b as u32;
+        if frame[idx] != expected_color {
+            mismatches += 1;
+        }
+    }
+    assert_eq!(mismatches, 0, "Found {} pixel mismatches", mismatches);
 }
 
 #[test]
-#[ignore] // TODO: ROM doesn't produce output yet - needs investigation
-fn interrupt_time_cgb() {
-    let output = run_interrupt_time(
-        common::rom_path("blargg/interrupt_time/interrupt_time.gb"),
-        20_000_000,
-        true,
-    );
-    println!("interrupt_time CGB output:\n{}", output);
-    assert!(output.contains("Passed"), "interrupt_time CGB failed");
-}
-
-#[test]
-#[ignore] // TODO: ROM doesn't produce output yet - needs investigation
 fn interrupt_time_dmg() {
-    let output = run_interrupt_time(
-        common::rom_path("blargg/interrupt_time/interrupt_time.gb"),
-        20_000_000,
-        false,
-    );
-    println!("interrupt_time DMG output:\n{}", output);
-    assert!(output.contains("Passed"), "interrupt_time DMG failed");
+    let mut gb = GameBoy::new();
+    let rom = std::fs::read(common::rom_path("blargg/interrupt_time/interrupt_time.gb"))
+        .expect("rom not found");
+    gb.mmu.load_cart(Cartridge::load(rom));
+
+    let mut frames = 0u32;
+    while frames < 180 {
+        gb.cpu.step(&mut gb.mmu);
+        if gb.mmu.ppu.frame_ready() {
+            gb.mmu.ppu.clear_frame_flag();
+            frames += 1;
+        }
+    }
+
+    let (width, height, expected) =
+        common::load_png_rgb(common::rom_path("blargg/interrupt_time/interrupt_time-dmg.png"));
+    assert_eq!(width, 160);
+    assert_eq!(height, 144);
+
+    let frame = gb.mmu.ppu.framebuffer();
+    for (idx, pixel) in expected.iter().enumerate() {
+        let pixel = *pixel;
+        let expected_color = match pixel {
+            [0x00, 0x00, 0x00] => DMG_PALETTE[3],
+            [0x55, 0x55, 0x55] => DMG_PALETTE[2],
+            [0xAA, 0xAA, 0xAA] => DMG_PALETTE[1],
+            [0xFF, 0xFF, 0xFF] => DMG_PALETTE[0],
+            _ => panic!("unexpected color {:?}", pixel),
+        };
+        assert_eq!(
+            frame[idx], expected_color,
+            "pixel mismatch at index {idx}"
+        );
+    }
 }
