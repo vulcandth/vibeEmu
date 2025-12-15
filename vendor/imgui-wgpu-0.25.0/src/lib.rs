@@ -167,7 +167,7 @@ impl Texture {
         }
     }
 
-    /// Create a new GPU texture width the specified `config`.
+    /// Create a new GPU texture with the specified `config`.
     pub fn new(device: &Device, renderer: &Renderer, config: TextureConfig) -> Self {
         // Create the wgpu texture.
         let texture = Arc::new(device.create_texture(&TextureDescriptor {
@@ -775,7 +775,7 @@ impl Renderer {
 
         // Create font texture and upload it.
         let handle = fonts.build_rgba32_texture();
-        let font_texture_cnfig = TextureConfig {
+        let font_texture_config = TextureConfig {
             label: Some("imgui-wgpu font atlas"),
             size: Extent3d {
                 width: handle.width,
@@ -785,7 +785,7 @@ impl Renderer {
             ..Default::default()
         };
 
-        let font_texture = Texture::new(device, self, font_texture_cnfig);
+        let font_texture = Texture::new(device, self, font_texture_config);
         font_texture.write(queue, handle.data, handle.width, handle.height);
         fonts.tex_id = self.textures.insert(font_texture);
         // Clear imgui texture data to save memory.
