@@ -15,5 +15,5 @@ default = []
 vibe-emu-core = { path = "../vibe-emu-core" }
 vibe-emu-mobile-sys = { path = "../vibe-emu-mobile-sys", optional = true }
 thiserror = "2"
-socket2 = "0.5"
+socket2 = "0.6"
 
