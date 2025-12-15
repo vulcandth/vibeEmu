@@ -12,17 +12,23 @@
 [package]
 edition = "2021"
 name = "imgui-wgpu"
-version = "0.24.0"
+version = "0.25.0"
 authors = [
     "Noah Hüsser <yatekii@yatekii.ch>",
     "Connor Fitzgerald <connorwadefitzgerald@gmail.com>",
     "Steven Wittens <steven@acko.net>",
 ]
+build = false
 exclude = [
     ".gitignore",
     ".github",
     "resources",
 ]
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 description = "A wgpu render backend for imgui-rs."
 homepage = "https://github.com/Yatekii/imgui-wgpu-rs"
 documentation = "https://docs.rs/imgui-wgpu/"
@@ -81,6 +87,22 @@ min = 0
 replace = "- [Unreleased](https://github.com/Yatekii/imgui-wgpu-rs/compare/v{{version}}...HEAD)"
 search = "<!-- Begin Diffs -->"
 
+[lib]
+name = "imgui_wgpu"
+path = "src/lib.rs"
+
+[[example]]
+name = "cube"
+path = "examples/cube.rs"
+
+[[example]]
+name = "custom-texture"
+path = "examples/custom-texture.rs"
+
+[[example]]
+name = "hello-world"
+path = "examples/hello-world.rs"
+
 [dependencies.bytemuck]
 version = "1"
 
@@ -104,21 +126,21 @@ features = ["derive"]
 version = "0.18"
 
 [dev-dependencies.env_logger]
-version = "0.10"
+version = "0.11"
 
 [dev-dependencies.image]
-version = "0.24"
+version = "0.25"
 features = ["png"]
 default-features = false
 
 [dev-dependencies.imgui-winit-support]
-version = "0.11"
+version = "0.13"
 
 [dev-dependencies.pollster]
-version = "0.3"
+version = "0.4"
 
 [dev-dependencies.raw-window-handle]
-version = "0.5"
+version = "0.6"
 
 [dev-dependencies.winit]
-version = "0.27.5"
+version = "0.30"

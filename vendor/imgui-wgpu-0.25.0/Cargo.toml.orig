@@ -1,0 +1,62 @@
+[package]
+name = "imgui-wgpu"
+version = "0.25.0"
+authors = [
+	"Noah Hüsser <yatekii@yatekii.ch>",
+	"Connor Fitzgerald <connorwadefitzgerald@gmail.com>",
+	"Steven Wittens <steven@acko.net>",
+]
+edition = "2021"
+description = "A wgpu render backend for imgui-rs."
+documentation = "https://docs.rs/imgui-wgpu/"
+homepage = "https://github.com/Yatekii/imgui-wgpu-rs"
+repository = "https://github.com/Yatekii/imgui-wgpu-rs"
+readme = "README.md"
+categories = ["gui", "graphics", "rendering", "rendering::graphics-api"]
+keywords = ["gui", "graphics", "wgpu", "imgui"]
+license = "MIT OR Apache-2.0"
+
+exclude = [".gitignore", ".github", "resources"]
+
+[[package.metadata.release.pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "\\[Unreleased\\]\\(#unreleased\\)"
+replace = "[Unreleased](#unreleased)\n- [v{{version}}](#v{{version}})"
+[[package.metadata.release.pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "\\[v([0-9]+)\\.([0-9]+)\\.([0-9]+)\\]\\(#v[0-9\\.]+\\)"
+replace = "[v$1.$2.$3](#v$1$2$3)"
+[[package.metadata.release.pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "## Unreleased"
+replace = "## Unreleased\n\n## v{{version}}\n\nReleased {{date}}"
+[[package.metadata.release.pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "\\[Unreleased\\]\\(https://github.com/Yatekii/imgui-wgpu-rs/compare/v([a-z0-9.-]+)\\.\\.\\.HEAD\\)"
+replace = "[Unreleased](https://github.com/Yatekii/imgui-wgpu-rs/compare/v{{version}}...HEAD)\n- [v{{version}}](https://github.com/Yatekii/imgui-wgpu-rs/compare/v$1...v{{version}})"
+min = 0                                                                                                                                                                               # allow first increment
+[[package.metadata.release.pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "<!-- Begin Diffs -->"
+replace = "- [Unreleased](https://github.com/Yatekii/imgui-wgpu-rs/compare/v{{version}}...HEAD)"
+min = 0                                                                                          # allow non-first increment
+
+[dependencies]
+bytemuck = "1"
+imgui = "0.12"
+log = "0.4"
+smallvec = "1"
+wgpu = "0.17"
+
+[dev-dependencies]
+bytemuck = { version = "1.13", features = ["derive"] }
+cgmath = "0.18"
+env_logger = "0.11"
+image = { version = "0.25", default-features = false, features = ["png"] }
+imgui-winit-support = "0.13"
+pollster = "0.4"
+raw-window-handle = "0.6"
+winit = "0.30"
+
+[package.metadata.docs.rs]
+all-features = true

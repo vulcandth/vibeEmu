@@ -8,4 +8,4 @@ members = [
 resolver = "2"
 
 [patch.crates-io]
-imgui-wgpu = { path = "vendor/imgui-wgpu-0.24.0" }
+imgui-wgpu = { path = "vendor/imgui-wgpu-0.25.0" }
