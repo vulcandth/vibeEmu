@@ -14,7 +14,7 @@ This document provides detailed build instructions for vibeEmu on Windows, Linux
 - **Visual Studio Build Tools** or **Visual Studio** with C++ build tools
   - Download from [Visual Studio Downloads](https://visualstudio.microsoft.com/downloads/)
   - Select "Desktop development with C++" workload
-  - This is required for compiling the bundled `libmobile` C library
+  - This provides the MSVC compiler that Rust's `cc` crate uses to compile the bundled `libmobile` C library
 
 ### Linux
 
@@ -135,11 +135,11 @@ The release build provides significantly better emulation performance and is rec
 
 **Issue**: Build fails with "link.exe not found" or similar C++ linker errors.
 
-**Solution**: Ensure you have Visual Studio Build Tools installed with the "Desktop development with C++" workload. Restart your terminal after installation.
+**Solution**: Ensure you have Visual Studio Build Tools installed with the "Desktop development with C++" workload. The Rust `cc` crate automatically locates MSVC, but it needs to be installed first. Restart your terminal after installation.
 
 **Issue**: Cannot find `cl.exe` or MSVC compiler.
 
-**Solution**: Run the build from a "Developer Command Prompt" or "Developer PowerShell" that comes with Visual Studio, or ensure the MSVC tools are in your PATH.
+**Solution**: The `cc` crate usually detects MSVC automatically. If it fails, run the build from a "Developer Command Prompt" or "Developer PowerShell" that comes with Visual Studio, or ensure the MSVC tools are in your PATH.
 
 ### Linux
 

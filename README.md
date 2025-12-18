@@ -49,12 +49,21 @@ on your platform (e.g. MSVC Build Tools on Windows, or clang/gcc on Linux/macOS)
 
 **License Notice**: The bundled `libmobile` library is licensed under the **GNU Lesser General Public License (LGPL) v3**. See `vendor/libmobile-0.2.2/COPYING.LESSER` for the full license text. The LGPL permits linking this library into your application. If you wish to use a modified or updated version of `libmobile`, you have two options:
 
-1. **Use the system-provided library**: Build vibeEmu with the `mobile-system` feature to link against your own `libmobile` installation instead of the bundled version:
+1. **Use a pre-installed library**: If you have `libmobile` already compiled and installed on your system (e.g., via a package manager or custom build), you can link against it instead of the bundled version. The library must be findable via standard system library paths or by setting the `LIBMOBILE_LIB_DIR` environment variable to point to the directory containing the compiled library file (e.g., `libmobile.so` on Linux, `mobile.lib` on Windows).
    ```bash
    cargo build -p vibe-emu-ui --no-default-features --features mobile-system
    ```
 
 2. **Replace the vendored copy**: You may replace the contents of `vendor/libmobile-0.2.2/` with your modified or updated version and rebuild. The build system will automatically compile and link your replacement.
+   
+   Alternatively, to keep multiple versions side-by-side:
+   - Rename `vendor/libmobile-0.2.2/` to something else (e.g., `vendor/libmobile-0.2.2-original/`)
+   - Place your modified version in `vendor/libmobile-0.2.2/`
+   - Or place it in `vendor/libmobile/` and set the `LIBMOBILE_SRC_DIR` environment variable:
+     ```bash
+     export LIBMOBILE_SRC_DIR=/path/to/your/libmobile
+     cargo build -p vibe-emu-ui
+     ```
 
 If you want to build the UI without Mobile Adapter GB support entirely:
 
