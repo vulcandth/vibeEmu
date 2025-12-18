@@ -394,9 +394,6 @@ impl VramViewerWindow {
         texture.write(queue, buf, img_w as u32, img_h as u32);
         renderer.textures.insert(texture)
     }
-    // ──────────────────────────────────────────────────────────────────────────
-    // OBJ / OAM TAB
-    // ──────────────────────────────────────────────────────────────────────────
     fn build_oam_texture(
         &mut self,
         ppu: &mut Ppu,

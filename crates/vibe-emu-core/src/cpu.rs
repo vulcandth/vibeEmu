@@ -1320,7 +1320,6 @@ impl Cpu {
                 self.tick(mmu, 1);
                 self.push_stack(mmu, self.pc);
                 self.pc = target;
-                //  self.tick(mmu, 1);
             }
             0xC8 => {
                 if self.f & FLAG_Z != 0 {
