@@ -21,8 +21,6 @@ crates:
 
 ## Building
 
-### Quick Start
-
 Ensure you have a recent Rust toolchain installed, then build the entire workspace:
 
 ```bash
@@ -49,7 +47,7 @@ The UI builds with **Mobile Adapter GB** support enabled by default using the
 vendored `vendor/libmobile-0.2.2` sources. This requires a working C toolchain
 on your platform (e.g. MSVC Build Tools on Windows, or clang/gcc on Linux/macOS).
 
-**License Notice**: The bundled `libmobile` library is licensed under the **GNU Lesser General Public License (LGPL) v3**. The LGPL allows you to link this library into your application. If you wish to use a modified or updated version of `libmobile`, you have two options:
+**License Notice**: The bundled `libmobile` library is licensed under the **GNU Lesser General Public License (LGPL) v3**. See `vendor/libmobile-0.2.2/COPYING.LESSER` for the full license text. The LGPL permits linking this library into your application. If you wish to use a modified or updated version of `libmobile`, you have two options:
 
 1. **Use the system-provided library**: Build vibeEmu with the `mobile-system` feature to link against your own `libmobile` installation instead of the bundled version:
    ```bash

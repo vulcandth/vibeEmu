@@ -1,6 +1,6 @@
 # Building vibeEmu
 
-This document provides detailed build instructions for vibeEmu on Windows and Linux platforms.
+This document provides detailed build instructions for vibeEmu on Windows, Linux, and macOS platforms.
 
 ## Prerequisites
 
