@@ -229,6 +229,28 @@ fn ensure_daid_test_roms(dir: &Path) {
             &stop_mode3_png_path,
         );
     }
+
+    let scanline_bgp_rom_path = base.join("ppu_scanline_bgp.gb");
+    let scanline_bgp_gbc_png_path = base.join("ppu_scanline_bgp.gbc.png");
+    let scanline_bgp_dmg_png_path = base.join("ppu_scanline_bgp_0.dmg.png");
+    if !scanline_bgp_rom_path.exists() {
+        download_file(
+            "https://raw.githubusercontent.com/vulcandth/GBEmulatorShootout/main/testroms/daid/ppu_scanline_bgp.gb",
+            &scanline_bgp_rom_path,
+        );
+    }
+    if !scanline_bgp_gbc_png_path.exists() {
+        download_file(
+            "https://raw.githubusercontent.com/vulcandth/GBEmulatorShootout/main/testroms/daid/ppu_scanline_bgp.gbc.png",
+            &scanline_bgp_gbc_png_path,
+        );
+    }
+    if !scanline_bgp_dmg_png_path.exists() {
+        download_file(
+            "https://raw.githubusercontent.com/vulcandth/GBEmulatorShootout/main/testroms/daid/ppu_scanline_bgp_0.dmg.png",
+            &scanline_bgp_dmg_png_path,
+        );
+    }
 }
 
 pub fn roms_dir() -> PathBuf {

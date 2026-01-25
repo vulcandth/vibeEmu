@@ -26,6 +26,26 @@ fn assert_framebuffer_matches_png(gb: &GameBoy, png_relative_path: &str) {
     assert_eq!(height, 144);
 
     let frame = gb.mmu.ppu.framebuffer();
+
+    // Save actual output for debugging
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("test_roms")
+        .join("actual_output.png");
+    let mut pixels = Vec::with_capacity(160 * 144 * 3);
+    for c in frame.iter() {
+        pixels.push(((c >> 16) & 0xFF) as u8);
+        pixels.push(((c >> 8) & 0xFF) as u8);
+        pixels.push((c & 0xFF) as u8);
+    }
+    if let Ok(file) = std::fs::File::create(&path) {
+        let mut encoder = png::Encoder::new(file, 160, 144);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        if let Ok(mut writer) = encoder.write_header() {
+            writer.write_image_data(&pixels).ok();
+        }
+    }
+
     for (idx, pixel) in expected.iter().enumerate() {
         let &[r, g, b] = pixel;
         let expected_color = (r as u32) << 16 | (g as u32) << 8 | b as u32;
@@ -168,4 +188,35 @@ fn daid_stop_instr_cgb_mode3() {
 
     run_for_frames(&mut gb, 120);
     assert_framebuffer_matches_png(&gb, "daid/stop_instr_gbc_mode3.png");
+}
+
+#[test]
+fn daid_ppu_scanline_bgp_gbc() {
+    // Mid-scanline BGP changes should take effect immediately on GBC in DMG-compat mode.
+    // The test ROM writes different BGP values during mode 3 to create colored bands.
+    let rom = std::fs::read(common::rom_path("daid/ppu_scanline_bgp.gb")).expect("rom not found");
+
+    let mut gb = GameBoy::new_with_mode(true);
+    gb.mmu.load_cart(Cartridge::load(rom));
+
+    run_for_frames(&mut gb, 60);
+    assert_framebuffer_matches_png(&gb, "daid/ppu_scanline_bgp.gbc.png");
+}
+
+#[test]
+fn daid_ppu_scanline_bgp_dmg() {
+    // Mid-scanline BGP changes on DMG. The ROM writes different BGP values
+    // during mode 3 to create colored bands.
+    let rom = std::fs::read(common::rom_path("daid/ppu_scanline_bgp.gb")).expect("rom not found");
+
+    let mut gb = GameBoy::new_with_mode(false);
+    gb.mmu.load_cart(Cartridge::load(rom));
+
+    // Use grayscale palette to match the reference screenshots
+    gb.mmu
+        .ppu
+        .set_dmg_palette([0xFFFFFF, 0xAAAAAA, 0x555555, 0x000000]);
+
+    run_for_frames(&mut gb, 60);
+    assert_framebuffer_matches_png(&gb, "daid/ppu_scanline_bgp_0.dmg.png");
 }

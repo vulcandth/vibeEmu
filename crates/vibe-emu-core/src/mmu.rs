@@ -148,6 +148,8 @@ pub struct Mmu {
     /// Used for instructions like `LD A,[HL+]` / `LD A,[HL-]` that have a
     /// distinct corruption pattern on DMG.
     pub(crate) oam_bug_next_access: Option<OamBugAccess>,
+
+    pub watchpoints: crate::watchpoints::WatchpointEngine,
 }
 
 impl Mmu {
@@ -238,6 +240,7 @@ impl Mmu {
             last_cpu_pc: None,
             data_bus: 0xFF,
             main_bus: 0xFF,
+            watchpoints: crate::watchpoints::WatchpointEngine::default(),
         }
     }
 
@@ -309,6 +312,7 @@ impl Mmu {
             last_cpu_pc: None,
             data_bus: 0xFF,
             main_bus: 0xFF,
+            watchpoints: crate::watchpoints::WatchpointEngine::default(),
         }
     }
 
@@ -637,6 +641,7 @@ impl Mmu {
         if Self::updates_main_bus(addr) {
             self.main_bus = value;
         }
+        self.watchpoints.note_read(self.last_cpu_pc, addr, value);
         value
     }
 
@@ -682,6 +687,7 @@ impl Mmu {
         if Self::updates_main_bus(addr) {
             self.main_bus = val;
         }
+        self.watchpoints.note_write(self.last_cpu_pc, addr, val);
         if self.dma_cycles > 0 {
             match addr {
                 0x0000..=0x7FFF | 0xC000..=0xFDFF | 0xFF00..=0xFFFF => {}

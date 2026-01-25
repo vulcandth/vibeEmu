@@ -124,6 +124,9 @@ pub struct Ppu {
     ly: u8,
     lyc: u8,
     lyc_eq_ly: bool,
+    /// CGB: separate value used for LYC comparison, differs from LY during
+    /// line 153 quirk (LY becomes 0 early but comparison uses different timing)
+    ly_for_comparison: u8,
     pub dma: u8,
     bgp: u8,
     obp0: u8,
@@ -174,6 +177,8 @@ pub struct Ppu {
     frame_ready: bool,
     stat_irq_line: bool,
     dmg_mode2_vblank_irq_pending: bool,
+    /// CGB: tracks whether we've triggered the early LY=0 comparison during line 153
+    cgb_line153_ly0_triggered: bool,
     frame_counter: u64,
     dmg_startup_cycle: Option<u16>,
     dmg_startup_stage: Option<usize>,
@@ -249,6 +254,7 @@ impl Ppu {
             ly: 0,
             lyc: 0,
             lyc_eq_ly: false,
+            ly_for_comparison: 0,
             dma: 0,
             bgp: 0,
             obp0: 0,
@@ -291,6 +297,7 @@ impl Ppu {
             frame_ready: false,
             stat_irq_line: false,
             dmg_mode2_vblank_irq_pending: false,
+            cgb_line153_ly0_triggered: false,
             frame_counter: 0,
             dmg_startup_cycle: None,
             dmg_startup_stage: None,
@@ -408,11 +415,18 @@ impl Ppu {
         // The test ROM writes BGP every 16 T-cycles and expects 16-pixel wide
         // bands across the 160px line. If we scale timestamps across the full
         // MODE3 duration (172 cycles), the pattern compresses horizontally.
-        let mut x = mode3_t.min((SCREEN_WIDTH - 1) as u16) as u8;
-        if self.dmg_compat {
-            // In CGB DMG-compat mode, palette updates take effect on the next pixel.
-            x = x.saturating_add(1).min((SCREEN_WIDTH - 1) as u8);
-        }
+        let adjusted_t = if self.dmg_compat {
+            // In CGB DMG-compat mode, there's a 4-cycle offset between when
+            // the CPU write is visible and when the PPU applies it. Compensate
+            // by subtracting 4, then add 1 for the next-pixel effect.
+            // Net effect: -3 cycles (or equivalently, +1 to x after -4 to t).
+            mode3_t.saturating_sub(3)
+        } else {
+            // Pure DMG has a pipeline delay (~6 cycles) between when the CPU
+            // writes BGP and when the PPU applies it to subsequent pixels.
+            mode3_t.saturating_sub(6)
+        };
+        let x = adjusted_t.min((SCREEN_WIDTH - 1) as u16) as u8;
         if self.dmg_bgp_event_count >= DMG_BGP_EVENTS_MAX {
             // Saturate; keep the newest event so behavior remains stable.
             self.dmg_bgp_events[DMG_BGP_EVENTS_MAX - 1] = DmgBgpEvent { x, val };
@@ -425,25 +439,15 @@ impl Ppu {
     #[inline]
     fn dmg_bgp_for_pixel(&self, x: usize) -> u8 {
         let mut current = self.dmg_line_bgp_base;
-        let mut glitch_or: Option<u8> = None;
         let x = x as u8;
         for ev in self.dmg_bgp_events[..self.dmg_bgp_event_count].iter() {
-            if ev.x < x {
+            if ev.x <= x {
                 current = ev.val;
-            } else if ev.x == x {
-                if self.dmg_compat {
-                    // CGB DMG-compat mode is deterministic.
-                    current = ev.val;
-                } else {
-                    // DMG same-dot ambiguity: old/new/or transient OR.
-                    let acc = glitch_or.get_or_insert(current);
-                    *acc |= ev.val;
-                }
             } else {
                 break;
             }
         }
-        glitch_or.unwrap_or(current)
+        current
     }
 
     /// Set a runtime DMG palette. Colors are in 0x00RRGGBB order.
@@ -995,6 +999,7 @@ impl Ppu {
         self.set_mode(MODE_OAM);
         self.mode_clock = 0;
         self.ly = 0;
+        self.ly_for_comparison = 0;
         self.update_lyc_compare();
     }
 
@@ -1023,6 +1028,24 @@ impl Ppu {
         self.mode0_target_cycles
     }
 
+    pub fn mode(&self) -> u8 {
+        self.mode
+    }
+
+    pub fn bgp(&self) -> u8 {
+        self.bgp
+    }
+
+    /// Debug: get the BGP event count and events for the current line.
+    #[allow(dead_code)]
+    pub fn debug_dmg_bgp_events(&self) -> (u8, usize, Vec<(u8, u8)>) {
+        let events: Vec<(u8, u8)> = self.dmg_bgp_events[..self.dmg_bgp_event_count]
+            .iter()
+            .map(|e| (e.x, e.val))
+            .collect();
+        (self.dmg_line_bgp_base, self.dmg_bgp_event_count, events)
+    }
+
     pub fn lcd_enabled(&self) -> bool {
         self.lcdc & 0x80 != 0
     }
@@ -1047,6 +1070,7 @@ impl Ppu {
             self.stat = 0x85;
             self.set_mode(MODE_VBLANK);
             self.ly = 0;
+            self.ly_for_comparison = 0;
             self.boot_hold_cycles = 0;
         } else {
             self.stat = 0x00;
@@ -1054,17 +1078,19 @@ impl Ppu {
                 DmgRevision::Rev0 => {
                     self.set_mode(MODE_TRANSFER);
                     self.ly = 0x01;
+                    self.ly_for_comparison = 0x01;
                     self.boot_hold_cycles = BOOT_HOLD_CYCLES_DMG0;
                 }
                 DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => {
                     self.set_mode(MODE_HBLANK);
                     self.ly = 0x0A;
+                    self.ly_for_comparison = 0x0A;
                     self.boot_hold_cycles = BOOT_HOLD_CYCLES_DMGA;
                 }
             }
         }
 
-        self.lyc_eq_ly = self.ly == self.lyc;
+        self.lyc_eq_ly = self.ly_for_comparison == self.lyc;
         self.stat_irq_line = false;
         self.dmg_mode2_vblank_irq_pending = false;
     }
@@ -1169,12 +1195,14 @@ impl Ppu {
 
     fn update_lyc_compare(&mut self) {
         if self.lcdc & 0x80 != 0 {
-            let mut coincide = self.ly == self.lyc;
+            // Use ly_for_comparison for the LYC check (differs from LY during
+            // CGB line 153 quirk)
+            let mut coincide = self.ly_for_comparison == self.lyc;
             if coincide
                 && !self.cgb
                 && let Some(stage) = self.dmg_startup_stage
                 && stage == 2
-                && self.ly == 1
+                && self.ly_for_comparison == 1
                 && self.lyc == 1
                 && self
                     .dmg_startup_cycle
@@ -1896,6 +1924,7 @@ impl Ppu {
                     self.mode0_target_cycles = MODE0_CYCLES;
                     self.win_line_counter = 0;
                     self.ly = 0;
+                    self.ly_for_comparison = 0;
                     ppu_trace!("LCD disabled");
                     #[cfg(feature = "ppu-trace")]
                     {
@@ -1926,6 +1955,7 @@ impl Ppu {
                         self.mode3_target_cycles = MODE3_CYCLES;
                         self.mode0_target_cycles = MODE0_CYCLES;
                         self.ly = 0;
+                        self.ly_for_comparison = 0;
                     }
                 }
                 if self.lcdc & 0x80 != 0 {
@@ -2266,6 +2296,7 @@ impl Ppu {
             if self.lcdc & 0x80 == 0 {
                 self.set_mode(MODE_HBLANK);
                 self.ly = 0;
+                self.ly_for_comparison = 0;
                 self.mode_clock = 0;
                 self.win_line_counter = 0;
                 self.dmg_mode2_vblank_irq_pending = false;
@@ -2305,6 +2336,7 @@ impl Ppu {
                     if self.mode_clock >= target {
                         self.mode_clock -= target;
                         self.ly += 1;
+                        self.ly_for_comparison = self.ly;
                         self.update_lyc_compare();
                         if self.ly == SCREEN_HEIGHT as u8 {
                             self.frame_ready = true;
@@ -2335,18 +2367,50 @@ impl Ppu {
                     }
                 }
                 MODE_VBLANK => {
+                    // Line 153 quirk: Both CGB and DMG set ly_for_comparison
+                    // to 0 during line 153, causing LYC=0 STAT interrupts to
+                    // fire during VBlank rather than at the start of line 0.
+                    // On CGB, this happens immediately when line 153 starts.
+                    // On DMG, this also happens at the start of line 153.
+                    if self.ly == 153 && !self.cgb_line153_ly0_triggered {
+                        self.cgb_line153_ly0_triggered = true;
+                        self.ly_for_comparison = 0;
+                        if self.cgb {
+                            self.ly = 0;
+                        }
+                        self.update_lyc_compare();
+                    }
+
                     if self.mode_clock >= MODE1_CYCLES {
                         self.mode_clock -= MODE1_CYCLES;
-                        self.ly += 1;
-                        self.update_lyc_compare();
-                        if self.ly > SCREEN_HEIGHT as u8 + VBLANK_LINES - 1 {
+                        // Handle the transition from line 153's truncated timing
+                        if self.cgb_line153_ly0_triggered {
+                            // We already set ly_for_comparison=0 during the
+                            // line 153 quirk; now transition to Mode 2
+                            self.cgb_line153_ly0_triggered = false;
                             self.ly = 0;
                             self.frame_ready = false;
                             self.win_line_counter = 0;
                             self.frame_counter = self.frame_counter.wrapping_add(1);
                             self.set_mode(MODE_OAM);
-                            self.update_lyc_compare();
+                            // ly_for_comparison already 0, no need to update
+                        } else {
+                            self.ly += 1;
+                            self.ly_for_comparison = self.ly;
+                            // Reset the line 153 trigger when entering line 153
+                            if self.ly == 153 {
+                                self.cgb_line153_ly0_triggered = false;
+                            }
+                            if self.ly > SCREEN_HEIGHT as u8 + VBLANK_LINES - 1 {
+                                self.ly = 0;
+                                self.ly_for_comparison = 0;
+                                self.frame_ready = false;
+                                self.win_line_counter = 0;
+                                self.frame_counter = self.frame_counter.wrapping_add(1);
+                                self.set_mode(MODE_OAM);
+                            }
                         }
+                        self.update_lyc_compare();
                     }
                 }
                 MODE_OAM => {
@@ -2775,6 +2839,7 @@ impl Ppu {
                         && segment_end >= DMG_STAGE2_LY1_TICK
                     {
                         self.ly = 1;
+                        self.ly_for_comparison = 1;
                         self.dmg_startup_cycle = Some(DMG_STAGE2_LY1_TICK);
                         self.update_lyc_compare();
                         #[cfg(feature = "ppu-trace")]
@@ -2795,6 +2860,7 @@ impl Ppu {
                         && segment_end >= DMG_STAGE2_LY1_TICK
                     {
                         self.ly = 1;
+                        self.ly_for_comparison = 1;
                         self.update_lyc_compare();
                         #[cfg(feature = "ppu-trace")]
                         ppu_trace!("startup ly->1 at {}", DMG_STAGE2_LY1_TICK);
@@ -2821,6 +2887,7 @@ impl Ppu {
                         && segment_end >= DMG_STAGE5_LY2_TICK
                     {
                         self.ly = 2;
+                        self.ly_for_comparison = 2;
                         self.update_lyc_compare();
                         self.dmg_post_startup_line2 = true;
                         #[cfg(feature = "ppu-trace")]

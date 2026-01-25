@@ -31,6 +31,9 @@ pub mod input;
 /// Memory map and hardware plumbing.
 pub mod mmu;
 
+/// Optional debugger watchpoints (read/write/execute/jump).
+pub mod watchpoints;
+
 /// Pixel Processing Unit (PPU) emulation.
 pub mod ppu;
 

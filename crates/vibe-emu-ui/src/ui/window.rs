@@ -36,6 +36,7 @@ pub struct UiWindow {
 pub enum WindowKind {
     Debugger,
     VramViewer,
+    Watchpoints,
     Options,
     Main,
 }
