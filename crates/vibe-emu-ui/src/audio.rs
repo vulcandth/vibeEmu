@@ -16,7 +16,15 @@ pub fn start_stream(apu: &mut Apu, autoplay: bool) -> Option<cpal::Stream> {
             return None;
         }
     };
-    let device_name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
+    let device_name = match device.description() {
+        Ok(description) => match description.manufacturer() {
+            Some(manufacturer) => {
+                format!("{} ({manufacturer})", description.name())
+            }
+            None => description.name().to_string(),
+        },
+        Err(_) => "<unknown>".to_string(),
+    };
     let supported = match device.default_output_config() {
         Ok(c) => c,
         Err(e) => {
@@ -26,7 +34,7 @@ pub fn start_stream(apu: &mut Apu, autoplay: bool) -> Option<cpal::Stream> {
     };
     let sample_format = supported.sample_format();
     let config: cpal::StreamConfig = supported.into();
-    let consumer = apu.enable_output(config.sample_rate.0);
+    let consumer = apu.enable_output(config.sample_rate);
     let channels = config.channels as usize;
     let buffer_label = match &config.buffer_size {
         cpal::BufferSize::Default => "default".to_string(),
@@ -34,7 +42,7 @@ pub fn start_stream(apu: &mut Apu, autoplay: bool) -> Option<cpal::Stream> {
     };
     info!(
         "Audio stream config: device='{device_name}', format={sample_format:?}, rate={} Hz, channels={}, buffer={buffer_label}",
-        config.sample_rate.0, channels,
+        config.sample_rate, channels,
     );
     let err_fn = |err| error!("cpal stream error: {err}");
 
