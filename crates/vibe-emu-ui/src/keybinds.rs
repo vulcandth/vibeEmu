@@ -270,7 +270,7 @@ fn parse_key_code(raw: &str) -> Option<KeyCode> {
     }
 
     if s.len() == 1 {
-        let c = s.chars().next().unwrap();
+        let c = s.chars().next()?;
         if c.is_ascii_alphabetic() {
             return match c.to_ascii_uppercase() {
                 'A' => Some(KeyCode::KeyA),

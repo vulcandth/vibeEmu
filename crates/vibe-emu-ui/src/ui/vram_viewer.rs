@@ -16,9 +16,14 @@ pub struct VramViewerWindow {
     current: VramTab,
     /* BG-map */
     bg_map_tex: Option<TextureId>,
-    oam_tex: Option<TextureId>,
     bg_map_buf: Vec<u8>,
-    oam_buf: Vec<u8>,
+
+    /* OAM */
+    oam_sprite_textures: Vec<Option<TextureId>>,
+    oam_sprite_bufs: Vec<Vec<u8>>,
+    oam_selected: usize,
+    oam_last_frame: u64,
+    oam_sprite_h: u8,
 
     /* Tiles */
     tiles_tex: Option<TextureId>,
@@ -32,8 +37,6 @@ pub struct VramViewerWindow {
 
     last_frame: u64,
     tiles_last_frame: u64,
-    oam_last_frame: u64,
-    oam_sprite_h: u8,
 }
 
 impl VramViewerWindow {
@@ -47,11 +50,14 @@ impl VramViewerWindow {
 
             /* BG-map */
             bg_map_tex: None,
-            oam_tex: None,
             bg_map_buf: vec![0; 256 * 256 * 4],
-            // 80 × (sprite_height max 16) = 80 × 16 × 4 bytes – will be
-            // resized at runtime if OBJ size flag changes.
-            oam_buf: Vec::new(),
+
+            /* OAM - 40 sprites */
+            oam_sprite_textures: vec![None; 40],
+            oam_sprite_bufs: (0..40).map(|_| vec![0u8; 8 * 16 * 4]).collect(),
+            oam_selected: 0,
+            oam_last_frame: 0,
+            oam_sprite_h: 0,
 
             /* Tiles */
             tiles_tex: None,
@@ -65,8 +71,6 @@ impl VramViewerWindow {
 
             last_frame: 0,
             tiles_last_frame: 0,
-            oam_last_frame: 0,
-            oam_sprite_h: 0,
         }
     }
 
@@ -562,22 +566,104 @@ impl VramViewerWindow {
         texture.write(queue, buf, img_w as u32, img_h as u32);
         true
     }
-    fn build_oam_texture(
+
+    fn fill_sprite_buf(&mut self, sprite_idx: usize, ppu: &PpuSnapshot) -> (u32, u32) {
+        const TILE_W: usize = 8;
+        const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
+
+        let cgb = ppu.cgb;
+        let lcdc = ppu.lcdc;
+        let sprite_h: usize = if lcdc & 0x04 != 0 { 16 } else { 8 };
+
+        let buf = &mut self.oam_sprite_bufs[sprite_idx];
+        let needed = TILE_W * sprite_h * 4;
+        if buf.len() != needed {
+            buf.resize(needed, 0);
+        }
+        buf.fill(0);
+
+        let base = sprite_idx * 4;
+        let mut tile_num = ppu.oam[base + 2];
+        let attr = ppu.oam[base + 3];
+
+        let pal_idx_cgb = (attr & 0x07) as usize;
+        let dmg_pal = if attr & 0x10 != 0 {
+            ppu.obp(1)
+        } else {
+            ppu.obp(0)
+        };
+        let bank = if cgb && attr & 0x08 != 0 { 1 } else { 0 };
+        let x_flip = attr & 0x20 != 0;
+        let y_flip = attr & 0x40 != 0;
+
+        if sprite_h == 16 {
+            tile_num &= 0xFE;
+        }
+
+        for row in 0..sprite_h {
+            let mut src_row = if y_flip { sprite_h - 1 - row } else { row };
+            let tile_offset = if sprite_h == 16 && src_row >= 8 {
+                tile_num as usize + 1
+            } else {
+                tile_num as usize
+            };
+            if sprite_h == 16 && src_row >= 8 {
+                src_row -= 8;
+            }
+            let tile_addr = tile_offset * 16 + src_row * 2;
+            let vram = ppu.vram_bank(bank);
+            let lo = vram.get(tile_addr).copied().unwrap_or(0);
+            let hi = vram.get(tile_addr + 1).copied().unwrap_or(0);
+
+            for col in 0..TILE_W {
+                let src_col = if x_flip { col } else { 7 - col };
+                let bit = 7 - src_col;
+                let color_id = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
+
+                let color = if color_id == 0 {
+                    0x00000000
+                } else if cgb {
+                    ppu.cgb_ob_colors[pal_idx_cgb][color_id as usize]
+                } else {
+                    let shade = (dmg_pal >> (color_id * 2)) & 0x03;
+                    DMG_PALETTE[shade as usize]
+                };
+
+                let off = (row * TILE_W + col) * 4;
+                if color_id == 0 {
+                    buf[off] = 0x20;
+                    buf[off + 1] = 0x20;
+                    buf[off + 2] = 0x30;
+                    buf[off + 3] = 0xFF;
+                } else {
+                    buf[off] = ((color >> 16) & 0xFF) as u8;
+                    buf[off + 1] = ((color >> 8) & 0xFF) as u8;
+                    buf[off + 2] = (color & 0xFF) as u8;
+                    buf[off + 3] = 0xFF;
+                }
+            }
+        }
+
+        (TILE_W as u32, sprite_h as u32)
+    }
+
+    fn build_sprite_texture(
         &mut self,
+        sprite_idx: usize,
         ppu: &PpuSnapshot,
         renderer: &mut Renderer,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> TextureId {
-        let (img_w, img_h) = self.fill_oam_buf(ppu);
-        let rgba = &self.oam_buf;
+        let (img_w, img_h) = self.fill_sprite_buf(sprite_idx, ppu);
+        let rgba = &self.oam_sprite_bufs[sprite_idx];
         let config = TextureConfig {
             size: Extent3d {
                 width: img_w,
                 height: img_h,
                 depth_or_array_layers: 1,
             },
-            label: Some("OAM"),
+            label: Some("OAM_sprite"),
             format: Some(TextureFormat::Rgba8UnormSrgb),
             ..Default::default()
         };
@@ -586,97 +672,9 @@ impl VramViewerWindow {
         renderer.textures.insert(texture)
     }
 
-    fn fill_oam_buf(&mut self, ppu: &PpuSnapshot) -> (u32, u32) {
-        const COLS: usize = 10; // 10 sprites per row → 4 rows
-        const TOTAL: usize = 40;
-        const TILE_W: usize = 8;
-        const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
-
-        let cgb = ppu.cgb;
-        let lcdc = ppu.lcdc;
-        let sprite_h: usize = if lcdc & 0x04 != 0 { 16 } else { 8 };
-        let rows = TOTAL / COLS;
-        let img_w = COLS * TILE_W;
-        let img_h = rows * sprite_h;
-
-        let needed = img_w * img_h * 4;
-        if self.oam_buf.len() != needed {
-            self.oam_buf.resize(needed, 0);
-        }
-        let rgba = &mut self.oam_buf;
-        rgba.fill(0);
-
-        for i in 0..TOTAL {
-            let base = i * 4;
-            let mut tile_num = ppu.oam[base + 2];
-            let attr = ppu.oam[base + 3];
-
-            let pal_idx_cgb = (attr & 0x07) as usize;
-            let dmg_pal = if attr & 0x10 != 0 {
-                ppu.obp(1)
-            } else {
-                ppu.obp(0)
-            };
-            let bank = if cgb && attr & 0x08 != 0 { 1 } else { 0 };
-            let x_flip = attr & 0x20 != 0;
-            let y_flip = attr & 0x40 != 0;
-
-            if sprite_h == 16 {
-                tile_num &= 0xFE; // ignore LSB for 8×16 sprites
-            }
-
-            let tile_x = i % COLS;
-            let tile_y = i / COLS;
-
-            for row in 0..sprite_h {
-                // Handle Y-flip and second tile for 8×16 mode
-                let mut src_row = if y_flip { sprite_h - 1 - row } else { row };
-                let tile_offset = if sprite_h == 16 && src_row >= 8 {
-                    tile_num as usize + 1
-                } else {
-                    tile_num as usize
-                };
-                if sprite_h == 16 && src_row >= 8 {
-                    src_row -= 8;
-                }
-                let tile_addr = tile_offset * 16 + src_row * 2;
-                let vram = ppu.vram_bank(bank);
-                let lo = vram[tile_addr];
-                let hi = vram[tile_addr + 1];
-
-                for col in 0..TILE_W {
-                    let src_col = if x_flip { col } else { 7 - col };
-                    let bit = 7 - src_col;
-                    let color_id = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
-
-                    // Transparent?
-                    if color_id == 0 {
-                        continue;
-                    }
-
-                    let color = if cgb {
-                        ppu.cgb_ob_colors[pal_idx_cgb][color_id as usize]
-                    } else {
-                        let shade = (dmg_pal >> (color_id * 2)) & 0x03;
-                        DMG_PALETTE[shade as usize]
-                    };
-
-                    let x = tile_x * TILE_W + col;
-                    let y = tile_y * sprite_h + row;
-                    let off = (y * img_w + x) * 4;
-                    rgba[off] = ((color >> 16) & 0xFF) as u8;
-                    rgba[off + 1] = ((color >> 8) & 0xFF) as u8;
-                    rgba[off + 2] = (color & 0xFF) as u8;
-                    rgba[off + 3] = 0xFF;
-                }
-            }
-        }
-
-        (img_w as u32, img_h as u32)
-    }
-
-    fn update_oam_texture(
+    fn update_sprite_texture(
         &mut self,
+        sprite_idx: usize,
         tex_id: TextureId,
         ppu: &PpuSnapshot,
         renderer: &mut Renderer,
@@ -685,8 +683,9 @@ impl VramViewerWindow {
         let Some(texture) = renderer.textures.get_mut(tex_id) else {
             return false;
         };
-        let (img_w, img_h) = self.fill_oam_buf(ppu);
-        texture.write(queue, &self.oam_buf, img_w, img_h);
+        let (img_w, img_h) = self.fill_sprite_buf(sprite_idx, ppu);
+        let rgba = &self.oam_sprite_bufs[sprite_idx];
+        texture.write(queue, rgba, img_w, img_h);
         true
     }
 
@@ -699,39 +698,219 @@ impl VramViewerWindow {
         queue: &wgpu::Queue,
     ) {
         let frame = ppu.frame_counter;
-        let sprite_h = if ppu.lcdc & 0x04 != 0 { 16 } else { 8 };
+        let sprite_h = if ppu.lcdc & 0x04 != 0 { 16u8 } else { 8u8 };
+
         if self.oam_sprite_h != sprite_h {
             self.oam_sprite_h = sprite_h;
-            self.oam_tex = None;
+            for tex in &mut self.oam_sprite_textures {
+                *tex = None;
+            }
             self.oam_last_frame = 0;
         }
 
-        if self.oam_tex.is_none() {
-            self.oam_tex = Some(self.build_oam_texture(ppu, renderer, device, queue));
-            self.oam_last_frame = frame;
-        } else if frame != self.oam_last_frame {
-            if let Some(tex_id) = self.oam_tex {
-                if !self.update_oam_texture(tex_id, ppu, renderer, queue) {
-                    self.oam_tex = Some(self.build_oam_texture(ppu, renderer, device, queue));
-                }
-            } else {
-                self.oam_tex = Some(self.build_oam_texture(ppu, renderer, device, queue));
-            }
+        let needs_update = frame != self.oam_last_frame;
+        if needs_update {
             self.oam_last_frame = frame;
         }
 
-        let Some(tex_id) = self.oam_tex else {
-            return;
-        };
-        // Logical size of the generated bitmap – recompute every call
-        let sprite_h = sprite_h as f32;
-        let size = [80.0, 4.0 * sprite_h];
+        for i in 0..40 {
+            if self.oam_sprite_textures[i].is_none() {
+                self.oam_sprite_textures[i] =
+                    Some(self.build_sprite_texture(i, ppu, renderer, device, queue));
+            } else if needs_update
+                && let Some(tex_id) = self.oam_sprite_textures[i]
+                && !self.update_sprite_texture(i, tex_id, ppu, renderer, queue)
+            {
+                self.oam_sprite_textures[i] =
+                    Some(self.build_sprite_texture(i, ppu, renderer, device, queue));
+            }
+        }
+
+        let layout_flags = imgui::TableFlags::SIZING_STRETCH_PROP
+            | imgui::TableFlags::NO_SAVED_SETTINGS
+            | imgui::TableFlags::BORDERS_INNER_V;
+
+        if let Some(_layout) = ui.begin_table_with_flags("oam_layout", 2, layout_flags) {
+            ui.table_setup_column_with(imgui::TableColumnSetup {
+                name: "sprites",
+                flags: imgui::TableColumnFlags::WIDTH_STRETCH,
+                init_width_or_weight: 0.75,
+                user_id: imgui::Id::default(),
+            });
+            ui.table_setup_column_with(imgui::TableColumnSetup {
+                name: "details",
+                flags: imgui::TableColumnFlags::WIDTH_STRETCH,
+                init_width_or_weight: 0.25,
+                user_id: imgui::Id::default(),
+            });
+
+            ui.table_next_row();
+
+            ui.table_next_column();
+            self.draw_oam_grid(ui, ppu, sprite_h);
+
+            ui.table_next_column();
+            self.draw_oam_details(ui, ppu, sprite_h);
+        }
+    }
+
+    fn draw_oam_grid(&mut self, ui: &imgui::Ui, ppu: &PpuSnapshot, sprite_h: u8) {
+        const COLS: usize = 10;
+        const TOTAL: usize = 40;
+
+        let sprite_h_f = sprite_h as f32;
+        let scale = 2.0f32;
+        let tile_draw_w = 8.0 * scale;
+        let tile_draw_h = sprite_h_f * scale;
+
+        let cell_w = tile_draw_w + 8.0;
+        let cell_h = tile_draw_h + 48.0;
 
         let avail = ui.content_region_avail();
-        let scale = (avail[0] / size[0]).min(4.0);
-        let draw_size = [size[0] * scale, size[1] * scale];
+        ui.child_window("oam_grid")
+            .size([avail[0], avail[1]])
+            .build(|| {
+                for i in 0..TOTAL {
+                    let col = i % COLS;
 
-        imgui::Image::new(tex_id, draw_size).build(ui);
+                    if col != 0 {
+                        ui.same_line_with_pos(col as f32 * cell_w + 4.0);
+                    }
+
+                    let base = i * 4;
+                    let y_pos = ppu.oam[base];
+                    let x_pos = ppu.oam[base + 1];
+                    let tile_num = ppu.oam[base + 2];
+                    let attr = ppu.oam[base + 3];
+
+                    let pos0 = ui.cursor_screen_pos();
+
+                    ui.group(|| {
+                        if let Some(tex_id) = self.oam_sprite_textures[i] {
+                            imgui::Image::new(tex_id, [tile_draw_w, tile_draw_h]).build(ui);
+                        } else {
+                            ui.dummy([tile_draw_w, tile_draw_h]);
+                        }
+
+                        ui.text(format!("{:02X}", tile_num));
+                        ui.text(format!("{:02X}", y_pos));
+                        ui.text(format!("{:02X}", x_pos));
+                        ui.text(format!("{:02X}", attr));
+                    });
+
+                    let pos1 = [pos0[0] + cell_w - 4.0, pos0[1] + cell_h - 4.0];
+
+                    let clicked = ui.is_item_clicked();
+                    if clicked {
+                        self.oam_selected = i;
+                    }
+
+                    if self.oam_selected == i {
+                        let draw_list = ui.get_window_draw_list();
+                        draw_list
+                            .add_rect(
+                                [pos0[0] - 2.0, pos0[1] - 2.0],
+                                [pos1[0] + 2.0, pos1[1] + 2.0],
+                                imgui::ImColor32::from_rgb(0xFF, 0xFF, 0x00),
+                            )
+                            .thickness(2.0)
+                            .build();
+                    }
+
+                    if col == COLS - 1 {
+                        ui.dummy([0.0, 4.0]);
+                    }
+                }
+            });
+    }
+
+    fn draw_oam_details(&mut self, ui: &imgui::Ui, ppu: &PpuSnapshot, sprite_h: u8) {
+        let i = self.oam_selected;
+        let base = i * 4;
+        let y_pos = ppu.oam[base];
+        let x_pos = ppu.oam[base + 1];
+        let mut tile_num = ppu.oam[base + 2];
+        let attr = ppu.oam[base + 3];
+
+        if sprite_h == 16 {
+            tile_num &= 0xFE;
+        }
+
+        let x_flip = attr & 0x20 != 0;
+        let y_flip = attr & 0x40 != 0;
+        let priority = attr & 0x80 != 0;
+
+        let (pal_str, bank) = if ppu.cgb {
+            let pal_idx = attr & 0x07;
+            let bank = if attr & 0x08 != 0 { 1 } else { 0 };
+            (format!("OBJ {}", pal_idx), bank)
+        } else {
+            let pal = if attr & 0x10 != 0 { 1 } else { 0 };
+            (format!("OBJ {}", pal), 0u8)
+        };
+
+        let oam_addr = 0xFE00 + (i as u16 * 4);
+        let tile_addr = (tile_num as u16) * 16 + 0x8000;
+
+        ui.text("Details");
+        ui.separator();
+
+        if let Some(tex_id) = self.oam_sprite_textures[i] {
+            let scale = 4.0f32;
+            let draw_w = 8.0 * scale;
+            let draw_h = sprite_h as f32 * scale;
+            imgui::Image::new(tex_id, [draw_w, draw_h]).build(ui);
+        }
+
+        ui.separator();
+
+        if let Some(_t) = ui.begin_table_with_flags(
+            "oam_details",
+            2,
+            imgui::TableFlags::SIZING_FIXED_FIT | imgui::TableFlags::NO_SAVED_SETTINGS,
+        ) {
+            let row = |ui: &imgui::Ui, label: &str, value: String| {
+                ui.table_next_row();
+                ui.table_next_column();
+                ui.text(label);
+                ui.table_next_column();
+                ui.text(value);
+            };
+
+            row(ui, "X-loc", format!("{:02X}", x_pos));
+            row(ui, "Y-loc", format!("{:02X}", y_pos));
+            row(ui, "Tile No", format!("{:02X}", tile_num));
+            row(ui, "Attribute", format!("{:02X}", attr));
+            row(ui, "OAM addr", format!("{:04X}", oam_addr));
+            row(ui, "Tile Address", format!("{:X}:{:04X}", bank, tile_addr));
+
+            ui.table_next_row();
+            ui.table_next_column();
+            ui.text("X-flip");
+            ui.table_next_column();
+            let mut x_flip_val = x_flip;
+            ui.checkbox("##xflip", &mut x_flip_val);
+
+            ui.table_next_row();
+            ui.table_next_column();
+            ui.text("Y-flip");
+            ui.table_next_column();
+            let mut y_flip_val = y_flip;
+            ui.checkbox("##yflip", &mut y_flip_val);
+
+            ui.table_next_row();
+            ui.table_next_column();
+            ui.text("Priority");
+            ui.table_next_column();
+            let mut priority_val = priority;
+            ui.checkbox("##priority", &mut priority_val);
+
+            ui.table_next_row();
+            ui.table_next_column();
+            ui.text("Palette");
+            ui.table_next_column();
+            ui.text(&pal_str);
+        }
     }
     fn draw_palettes(
         &mut self,

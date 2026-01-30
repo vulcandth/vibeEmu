@@ -4,7 +4,7 @@
 //! a highly accurate Game Boy and Game Boy Color emulator.
 //!
 //! SameBoy is licensed under the MIT (Expat) License:
-//!   Copyright (c) 2015-2024 Lior Halphon
+//!   Copyright (c) 2015-2025 Lior Halphon
 //!   https://github.com/LIJI32/SameBoy
 //!
 //! Specifically, the following components are derived from SameBoy's `Core/apu.c`:

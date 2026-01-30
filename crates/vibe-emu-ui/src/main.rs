@@ -473,7 +473,7 @@ struct Args {
     #[arg(long)]
     mobile_diag: bool,
 
-    /// Path to a keybind configuration file (see README/UI_TODO for format)
+    /// Path to a keybind configuration file (lines: `name = KeyCode`)
     #[arg(long)]
     keybinds: Option<std::path::PathBuf>,
 }

@@ -164,9 +164,10 @@ The default controls are:
 - **Shift**: Select
 - **Enter**: Start
 - **Space**: Hold to fast-forward
+- **P**: Pause/unpause emulation
 - **Escape**: Quit the emulator
 
-Use the **right mouse button** to pause/resume and bring up the context menu.
+Use the **top menu bar** to load ROMs, change settings, or open debugging tools.
 
 ## Testing
 
