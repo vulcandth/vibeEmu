@@ -3606,7 +3606,7 @@ Used by:
 - [serde_spanned 0.6.9](https://github.com/toml-rs/toml)
 - [serde_spanned 1.0.4](https://github.com/toml-rs/toml)
 - [toml 0.8.23](https://github.com/toml-rs/toml)
-- [toml 0.9.6](https://github.com/toml-rs/toml)
+- [toml 0.9.11+spec-1.1.0](https://github.com/toml-rs/toml)
 - [toml_datetime 0.6.11](https://github.com/toml-rs/toml)
 - [toml_datetime 0.7.5+spec-1.1.0](https://github.com/toml-rs/toml)
 - [toml_edit 0.22.27](https://github.com/toml-rs/toml)
