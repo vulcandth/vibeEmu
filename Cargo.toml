@@ -6,6 +6,3 @@ members = [
     "crates/vibe-emu-mobile",
 ]
 resolver = "2"
-
-[patch.crates-io]
-imgui-wgpu = { path = "vendor/imgui-wgpu-0.24.0" }

@@ -15,12 +15,8 @@ default = ["mobile-bundled"]
 vibe-emu-core = { path = "../vibe-emu-core" }
 vibe-emu-mobile = { path = "../vibe-emu-mobile" }
 clap = { version = "4", features = ["derive"] }
-winit = { version = "0.30.12", features = ["rwh_05"] }
-wgpu = "0.17"
-pixels = "0.14"
-imgui = { version = "0.12", features = ["docking", "tables-api"] }
-imgui-winit-support = "0.13"
-imgui-wgpu = "0.24"
+eframe = { version = "0.30", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11"] }
+egui-wgpu = "0.30"
 cpal = "0.17"
 png = "0.18"
 log = "0.4"
