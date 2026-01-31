@@ -25,6 +25,7 @@ use vibe_emu_mobile::{
 
 use crossbeam_channel as cb;
 use keybinds::KeyBindings;
+use ui::debugger::{BreakpointSpec, DebuggerPauseReason, DebuggerState};
 use ui::snapshot::UiSnapshot;
 use ui_config::{EmulationMode, UiConfig, WindowSize};
 
@@ -289,14 +290,6 @@ enum OptionsTab {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum DebuggerTab {
-    #[default]
-    Registers,
-    Disassembly,
-    Memory,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum VramTab {
     #[default]
     BgMap,
@@ -463,9 +456,9 @@ struct VibeEmuApp {
 
     // Debugger state
     debugger_snapshot: Option<UiSnapshot>,
-    debugger_tab: DebuggerTab,
-    breakpoints: std::collections::BTreeSet<u16>,
-    goto_address: String,
+    debugger_state: DebuggerState,
+    add_breakpoint_input: String,
+    goto_disasm_input: String,
 
     // VRAM Viewer state
     vram_tab: VramTab,
@@ -517,7 +510,7 @@ impl VibeEmuApp {
             None
         };
 
-        Self {
+        let mut app = Self {
             gb,
             emu_tx,
             frame_rx,
@@ -541,9 +534,9 @@ impl VibeEmuApp {
             rebinding: None,
             options_tab: OptionsTab::default(),
             debugger_snapshot: None,
-            debugger_tab: DebuggerTab::default(),
-            breakpoints: std::collections::BTreeSet::new(),
-            goto_address: String::new(),
+            debugger_state: DebuggerState::default(),
+            add_breakpoint_input: String::new(),
+            goto_disasm_input: String::new(),
             vram_tab: VramTab::default(),
             vram_viewer: VramViewerState::default(),
             cached_ppu_snapshot: None,
@@ -561,7 +554,14 @@ impl VibeEmuApp {
             last_fps_update: std::time::Instant::now(),
             frame_count_since_update: 0,
             current_fps: 0.0,
+        };
+
+        // Load symbols for ROM if one was provided at startup
+        if let Some(ref path) = app.current_rom_path {
+            app.debugger_state.load_symbols_for_rom_path(Some(path));
         }
+
+        app
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
@@ -671,7 +671,8 @@ impl VibeEmuApp {
                     gb.mmu.load_cart(cart);
                     self._audio_stream = audio::start_stream(&mut gb.mmu.apu, true);
                 }
-                self.current_rom_path = Some(path);
+                self.current_rom_path = Some(path.clone());
+                self.debugger_state.load_symbols_for_rom_path(Some(&path));
                 self.paused = false;
                 let _ = self.emu_tx.send(EmuCommand::SetPaused(false));
                 info!("ROM loaded successfully");
@@ -1143,167 +1144,174 @@ impl VibeEmuApp {
     }
 
     fn draw_debugger_content(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            if ui
-                .button(if self.paused {
-                    "▶ Resume"
-                } else {
-                    "⏸ Pause"
-                })
-                .clicked()
-            {
-                self.paused = !self.paused;
-                let _ = self.emu_tx.send(EmuCommand::SetPaused(self.paused));
-            }
-            if ui.button("⏭ Step").clicked()
-                && self.paused
-                && let Ok(mut gb) = self.gb.lock()
-            {
-                let GameBoy { cpu, mmu, .. } = &mut *gb;
-                cpu.step(mmu);
-            }
-            if ui.button("🔄 Reset").clicked()
-                && let Ok(mut gb) = self.gb.lock()
-            {
-                gb.reset();
-                self._audio_stream = audio::start_stream(&mut gb.mmu.apu, true);
-            }
-        });
+        let Some(snapshot) = self.debugger_snapshot.clone() else {
+            ui.label("Unable to access emulator state");
+            return;
+        };
 
+        self.draw_debugger_toolbar(ui, &snapshot);
         ui.separator();
 
-        ui.horizontal(|ui| {
-            if ui
-                .selectable_label(self.debugger_tab == DebuggerTab::Registers, "Registers")
-                .clicked()
-            {
-                self.debugger_tab = DebuggerTab::Registers;
-            }
-            if ui
-                .selectable_label(self.debugger_tab == DebuggerTab::Disassembly, "Disassembly")
-                .clicked()
-            {
-                self.debugger_tab = DebuggerTab::Disassembly;
-            }
-            if ui
-                .selectable_label(self.debugger_tab == DebuggerTab::Memory, "Memory")
-                .clicked()
-            {
-                self.debugger_tab = DebuggerTab::Memory;
-            }
+        ui.columns(2, |columns| {
+            self.draw_disassembly_pane(&mut columns[0], &snapshot);
+            self.draw_state_panes(&mut columns[1], &snapshot);
         });
 
-        ui.separator();
-
-        match self.debugger_tab {
-            DebuggerTab::Registers => self.draw_registers_tab(ui),
-            DebuggerTab::Disassembly => self.draw_disassembly_tab(ui),
-            DebuggerTab::Memory => self.draw_memory_tab(ui),
+        if let Some(status) = self.debugger_state.status_line() {
+            ui.separator();
+            ui.label(egui::RichText::new(status).weak());
         }
     }
 
-    fn draw_registers_tab(&self, ui: &mut egui::Ui) {
-        let Some(snapshot) = &self.debugger_snapshot else {
-            ui.label("Unable to access emulator state");
-            return;
-        };
-        let cpu = &snapshot.cpu;
-        let ppu = &snapshot.ppu;
-        ui.columns(2, |columns| {
-            columns[0].heading("CPU Registers");
-            let af = ((cpu.a as u16) << 8) | (cpu.f as u16);
-            let bc = ((cpu.b as u16) << 8) | (cpu.c as u16);
-            let de = ((cpu.d as u16) << 8) | (cpu.e as u16);
-            let hl = ((cpu.h as u16) << 8) | (cpu.l as u16);
-            columns[0].monospace(format!("AF: {:04X}  (A={:02X} F={:02X})", af, cpu.a, cpu.f));
-            columns[0].monospace(format!("BC: {:04X}  (B={:02X} C={:02X})", bc, cpu.b, cpu.c));
-            columns[0].monospace(format!("DE: {:04X}  (D={:02X} E={:02X})", de, cpu.d, cpu.e));
-            columns[0].monospace(format!("HL: {:04X}  (H={:02X} L={:02X})", hl, cpu.h, cpu.l));
-            columns[0].monospace(format!("SP: {:04X}", cpu.sp));
-            columns[0].monospace(format!("PC: {:04X}", cpu.pc));
-            columns[0].add_space(8.0);
-            columns[0].monospace(format!(
-                "Flags: {}{}{}{}",
-                if cpu.f & 0x80 != 0 { "Z" } else { "-" },
-                if cpu.f & 0x40 != 0 { "N" } else { "-" },
-                if cpu.f & 0x20 != 0 { "H" } else { "-" },
-                if cpu.f & 0x10 != 0 { "C" } else { "-" },
-            ));
-            columns[0].monospace(format!("IME: {}", if cpu.ime { "1" } else { "0" }));
-            columns[0].monospace(format!("Cycles: {}", cpu.cycles));
+    fn draw_debugger_toolbar(&mut self, ui: &mut egui::Ui, snapshot: &UiSnapshot) {
+        let paused = self.paused;
 
-            columns[1].heading("I/O Registers");
-            columns[1].monospace(format!("LCDC: {:02X}", ppu.lcdc));
-            columns[1].monospace(format!("STAT: {:02X}", ppu.stat));
-            columns[1].monospace(format!("LY:   {:02X}", ppu.ly));
-            columns[1].monospace(format!("SCX:  {:02X}", ppu.scx));
-            columns[1].monospace(format!("SCY:  {:02X}", ppu.scy));
-            columns[1].monospace(format!("IF:   {:02X}", snapshot.debugger.if_reg));
-            columns[1].monospace(format!("IE:   {:02X}", snapshot.debugger.ie_reg));
+        ui.horizontal(|ui| {
+            let run_label = if paused { "▶ Run" } else { "⏸ Pause" };
+            if ui.button(run_label).clicked() {
+                if paused {
+                    self.debugger_state.request_continue_and_focus_main();
+                    self.paused = false;
+                    let _ = self.emu_tx.send(EmuCommand::SetPaused(false));
+                } else {
+                    self.debugger_state.request_pause();
+                    self.paused = true;
+                    let _ = self.emu_tx.send(EmuCommand::SetPaused(true));
+                }
+            }
+
+            if ui.button("⏭ Step").clicked() && paused {
+                self.do_single_step();
+            }
+
+            if paused {
+                if ui.button("Step Over").clicked() {
+                    self.debugger_state.request_step_over();
+                }
+                if ui.button("Step Out").clicked() {
+                    self.debugger_state.request_step_out();
+                }
+                if ui.button("Jump").clicked() {
+                    self.debugger_state.request_jump_to_cursor();
+                }
+                if ui.button("Call").clicked() {
+                    self.debugger_state.request_call_cursor();
+                }
+            }
+
+            if let Some(reason) = self.debugger_state.pause_reason() {
+                ui.separator();
+                let reason_text = match reason {
+                    DebuggerPauseReason::Manual => "Paused (manual)".to_string(),
+                    DebuggerPauseReason::Step => "Paused (step)".to_string(),
+                    DebuggerPauseReason::DebuggerFocus => "Paused (debugger focus)".to_string(),
+                    DebuggerPauseReason::Breakpoint { bank, addr } => {
+                        format!("Paused (breakpoint {:02X}:{:04X})", bank, addr)
+                    }
+                    DebuggerPauseReason::Watchpoint {
+                        trigger,
+                        addr,
+                        value,
+                        pc,
+                    } => {
+                        let label = match trigger {
+                            vibe_emu_core::watchpoints::WatchpointTrigger::Read => "read",
+                            vibe_emu_core::watchpoints::WatchpointTrigger::Write => "write",
+                            vibe_emu_core::watchpoints::WatchpointTrigger::Execute => "execute",
+                            vibe_emu_core::watchpoints::WatchpointTrigger::Jump => "jump",
+                        };
+                        let value_str = value.map(|v| format!("=${v:02X} ")).unwrap_or_default();
+                        let pc_str = pc.map(|p| format!("pc={p:04X} ")).unwrap_or_default();
+                        format!("Paused (watchpoint {label} {pc_str}{value_str}@ {addr:04X})")
+                    }
+                };
+                ui.label(egui::RichText::new(reason_text).weak());
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("BP:");
+            let bp_resp = ui.add(
+                egui::TextEdit::singleline(&mut self.add_breakpoint_input)
+                    .desired_width(100.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+            let bp_submitted =
+                bp_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if (ui.button("Add").clicked() || bp_submitted)
+                && let Some(bp) = self
+                    .debugger_state
+                    .parse_breakpoint_input(&self.add_breakpoint_input, snapshot)
+            {
+                self.debugger_state.add_breakpoint(bp);
+                self.add_breakpoint_input.clear();
+            }
+            if ui.button("Clear").clicked() {
+                self.debugger_state.clear_breakpoints();
+            }
+
+            ui.separator();
+
+            ui.label("Go:");
+            let goto_resp = ui.add(
+                egui::TextEdit::singleline(&mut self.goto_disasm_input)
+                    .desired_width(120.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+            let goto_submitted =
+                goto_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if ui.button("Go##goto_btn").clicked() || goto_submitted {
+                self.debugger_state
+                    .goto_address(&self.goto_disasm_input, snapshot);
+                self.goto_disasm_input.clear();
+            }
+
+            if ui.button("Reload .sym").clicked() {
+                self.debugger_state.reload_symbols();
+            }
         });
     }
 
-    fn draw_disassembly_tab(&mut self, ui: &mut egui::Ui) {
-        // Handle goto-address input before locking gb
-        let mut goto_target: Option<u16> = None;
-        ui.horizontal(|ui| {
-            ui.label("Go to:");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.goto_address)
-                    .desired_width(60.0)
-                    .font(egui::TextStyle::Monospace),
-            );
-            if ui.button("Go").clicked() {
-                let addr_str = self.goto_address.trim();
-                let addr_str = addr_str
-                    .strip_prefix("$")
-                    .or_else(|| addr_str.strip_prefix("0x"))
-                    .unwrap_or(addr_str);
-                if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
-                    goto_target = Some(addr);
-                }
-            }
-        });
-        ui.separator();
+    fn do_single_step(&mut self) {
+        if let Ok(mut gb) = self.gb.lock() {
+            let GameBoy { cpu, mmu, .. } = &mut *gb;
+            cpu.step(mmu);
+            // Update snapshot immediately after step so disassembly shows correct memory
+            self.debugger_snapshot = Some(UiSnapshot::from_gb(&mut gb, true));
+        }
+        self.debugger_state
+            .set_pause_reason(DebuggerPauseReason::Step);
+    }
 
-        let Some(snapshot) = &self.debugger_snapshot else {
-            ui.label("Unable to access emulator state");
-            return;
-        };
+    fn draw_disassembly_pane(&mut self, ui: &mut egui::Ui, snapshot: &UiSnapshot) {
+        ui.heading("Disassembly");
+
         let pc = snapshot.cpu.pc;
         let dbg = &snapshot.debugger;
+        let active_bank = dbg.active_rom_bank.min(0xFF) as u8;
 
-        ui.label(format!("PC = ${pc:04X}"));
-        ui.separator();
+        let start_addr = pc.saturating_sub(0x30);
 
-        // If goto was requested, use that address as the center; otherwise use PC
-        let center_addr = goto_target.unwrap_or(pc);
-        let start_addr = center_addr.saturating_sub(0x20);
-
-        // Get memory from snapshot's mem_image if available, otherwise use disassembly_bytes
         let mem: Vec<u8> = if let Some(mem_image) = &dbg.mem_image {
-            (0..0x80)
-                .map(|i| mem_image[start_addr.wrapping_add(i) as usize])
-                .collect()
-        } else {
-            let base = dbg.disassembly_base;
-            (0..0x80)
+            (0..0x100)
                 .map(|i| {
                     let addr = start_addr.wrapping_add(i);
-                    let offset = addr.wrapping_sub(base) as usize;
-                    dbg.disassembly_bytes.get(offset).copied().unwrap_or(0)
+                    mem_image.get(addr as usize).copied().unwrap_or(0)
                 })
                 .collect()
+        } else {
+            vec![0; 0x100]
         };
 
-        let mut bp_toggle: Option<u16> = None;
+        let mut bp_toggle: Option<BreakpointSpec> = None;
+        let mut cursor_click: Option<BreakpointSpec> = None;
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 egui::Grid::new("disasm_grid")
                     .num_columns(4)
-                    .spacing([12.0, 2.0])
+                    .spacing([8.0, 2.0])
                     .striped(true)
                     .show(ui, |ui| {
                         ui.strong("BP");
@@ -1313,7 +1321,7 @@ impl VibeEmuApp {
                         ui.end_row();
 
                         let mut addr = start_addr;
-                        while addr < start_addr.wrapping_add(0x60) {
+                        while addr < start_addr.wrapping_add(0x80) {
                             let rel_addr = addr.wrapping_sub(start_addr) as usize;
                             if rel_addr >= mem.len() {
                                 break;
@@ -1322,12 +1330,31 @@ impl VibeEmuApp {
                             let (mnemonic, len) = ui::disasm::decode_sm83(&mem[rel_addr..], addr);
                             let bytes = ui::disasm::format_bytes(&mem[rel_addr..], 0, len);
 
-                            let has_bp = self.breakpoints.contains(&addr);
-                            let bp_symbol = if has_bp { "●" } else { "○" };
-                            let bp_color = if has_bp {
-                                egui::Color32::RED
+                            let bp_bank = if (0x4000..=0x7FFF).contains(&addr) {
+                                active_bank
+                            } else if addr < 0x4000 {
+                                0
                             } else {
-                                egui::Color32::GRAY
+                                0xFF
+                            };
+
+                            let bp_spec = BreakpointSpec {
+                                bank: bp_bank,
+                                addr,
+                            };
+                            let bp_enabled = self.debugger_state.has_breakpoint(&bp_spec);
+                            let is_cursor = self.debugger_state.cursor() == Some(bp_spec);
+                            let is_pc = addr == pc;
+
+                            let bp_symbol = match bp_enabled {
+                                Some(true) => "●",
+                                Some(false) => "○",
+                                None => " ",
+                            };
+                            let bp_color = match bp_enabled {
+                                Some(true) => egui::Color32::RED,
+                                Some(false) => egui::Color32::DARK_RED,
+                                None => egui::Color32::GRAY,
                             };
 
                             if ui
@@ -1340,80 +1367,218 @@ impl VibeEmuApp {
                                 )
                                 .clicked()
                             {
-                                bp_toggle = Some(addr);
+                                bp_toggle = Some(bp_spec);
                             }
 
-                            let is_pc = addr == pc;
-                            let addr_text = format!("{:04X}", addr);
-
-                            if is_pc {
-                                ui.colored_label(egui::Color32::YELLOW, &addr_text);
-                                ui.colored_label(egui::Color32::YELLOW, &bytes);
-                                ui.colored_label(egui::Color32::YELLOW, &mnemonic);
+                            let display_bank = if addr < 0x4000 {
+                                0
+                            } else if (0x4000..=0x7FFF).contains(&addr) {
+                                active_bank
                             } else {
-                                ui.monospace(&addr_text);
-                                ui.monospace(&bytes);
-                                ui.monospace(&mnemonic);
-                            }
-                            ui.end_row();
+                                0xFF
+                            };
 
+                            let addr_text = if display_bank == 0xFF {
+                                format!("--:{:04X}", addr)
+                            } else {
+                                format!("{:02X}:{:04X}", display_bank, addr)
+                            };
+
+                            let text_color = if is_pc {
+                                egui::Color32::YELLOW
+                            } else if is_cursor {
+                                egui::Color32::LIGHT_BLUE
+                            } else {
+                                ui.style().visuals.text_color()
+                            };
+
+                            let addr_resp = ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&addr_text)
+                                        .color(text_color)
+                                        .monospace(),
+                                )
+                                .sense(egui::Sense::click()),
+                            );
+                            if addr_resp.clicked() {
+                                cursor_click = Some(bp_spec);
+                            }
+
+                            let bytes_resp = ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&bytes).color(text_color).monospace(),
+                                )
+                                .sense(egui::Sense::click()),
+                            );
+                            if bytes_resp.clicked() {
+                                cursor_click = Some(bp_spec);
+                            }
+
+                            let label = self.debugger_state.first_label_for(bp_bank, addr);
+                            let instr_text = if let Some(lbl) = label {
+                                format!("{lbl}: {mnemonic}")
+                            } else {
+                                mnemonic
+                            };
+
+                            let instr_resp = ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&instr_text)
+                                        .color(text_color)
+                                        .monospace(),
+                                )
+                                .sense(egui::Sense::click()),
+                            );
+                            if instr_resp.clicked() {
+                                cursor_click = Some(bp_spec);
+                            }
+
+                            ui.end_row();
                             addr = addr.wrapping_add(len);
                         }
                     });
             });
 
-        if let Some(addr) = bp_toggle {
-            if self.breakpoints.contains(&addr) {
-                self.breakpoints.remove(&addr);
-            } else {
-                self.breakpoints.insert(addr);
-            }
+        if let Some(bp) = bp_toggle {
+            self.debugger_state.toggle_breakpoint(bp);
+        }
+        if let Some(bp) = cursor_click {
+            self.debugger_state.set_cursor(bp);
         }
     }
 
-    fn draw_memory_tab(&self, ui: &mut egui::Ui) {
-        let Some(snapshot) = &self.debugger_snapshot else {
-            ui.label("Unable to access emulator state");
-            return;
-        };
+    fn draw_state_panes(&mut self, ui: &mut egui::Ui, snapshot: &UiSnapshot) {
+        let cpu = &snapshot.cpu;
 
-        ui.horizontal(|ui| {
-            ui.label("Memory hex view - showing first 256 bytes");
-        });
+        ui.heading("CPU");
+        egui::Grid::new("cpu_regs")
+            .num_columns(2)
+            .spacing([8.0, 2.0])
+            .show(ui, |ui| {
+                let af = ((cpu.a as u16) << 8) | cpu.f as u16;
+                let bc = ((cpu.b as u16) << 8) | cpu.c as u16;
+                let de = ((cpu.d as u16) << 8) | cpu.e as u16;
+                let hl = ((cpu.h as u16) << 8) | cpu.l as u16;
+
+                ui.monospace("AF");
+                ui.monospace(format!("{:04X}", af));
+                ui.end_row();
+                ui.monospace("BC");
+                ui.monospace(format!("{:04X}", bc));
+                ui.end_row();
+                ui.monospace("DE");
+                ui.monospace(format!("{:04X}", de));
+                ui.end_row();
+                ui.monospace("HL");
+                ui.monospace(format!("{:04X}", hl));
+                ui.end_row();
+                ui.monospace("SP");
+                ui.monospace(format!("{:04X}", cpu.sp));
+                ui.end_row();
+                ui.monospace("PC");
+                ui.monospace(format!("{:04X}", cpu.pc));
+                ui.end_row();
+
+                let f = cpu.f;
+                let z = if (f & 0x80) != 0 { 'Z' } else { '-' };
+                let n = if (f & 0x40) != 0 { 'N' } else { '-' };
+                let h = if (f & 0x20) != 0 { 'H' } else { '-' };
+                let c = if (f & 0x10) != 0 { 'C' } else { '-' };
+                ui.monospace("Flags");
+                ui.monospace(format!("{z}{n}{h}{c}"));
+                ui.end_row();
+
+                ui.monospace("IME");
+                ui.monospace(format!("{}", cpu.ime));
+                ui.end_row();
+                ui.monospace("Cycles");
+                ui.monospace(format!("{}", cpu.cycles));
+                ui.end_row();
+            });
+
         ui.separator();
+        ui.heading("I/O");
+        egui::Grid::new("io_regs")
+            .num_columns(2)
+            .spacing([8.0, 2.0])
+            .show(ui, |ui| {
+                ui.monospace("LCDC");
+                ui.monospace(format!("{:02X}", snapshot.ppu.lcdc));
+                ui.end_row();
+                ui.monospace("STAT");
+                ui.monospace(format!("{:02X}", snapshot.ppu.stat));
+                ui.end_row();
+                ui.monospace("LY");
+                ui.monospace(format!("{:02X}", snapshot.ppu.ly));
+                ui.end_row();
+                ui.monospace("SCX");
+                ui.monospace(format!("{:02X}", snapshot.ppu.scx));
+                ui.end_row();
+                ui.monospace("SCY");
+                ui.monospace(format!("{:02X}", snapshot.ppu.scy));
+                ui.end_row();
+                ui.monospace("IF");
+                ui.monospace(format!("{:02X}", snapshot.debugger.if_reg));
+                ui.end_row();
+                ui.monospace("IE");
+                ui.monospace(format!("{:02X}", snapshot.debugger.ie_reg));
+                ui.end_row();
+            });
 
-        let mem_image = snapshot.debugger.mem_image.as_ref();
+        ui.separator();
+        ui.heading("Breakpoints");
+
+        let mut to_remove: Option<BreakpointSpec> = None;
+        let entries: Vec<(BreakpointSpec, bool)> = self
+            .debugger_state
+            .all_breakpoints()
+            .map(|(&bp, &en)| (bp, en))
+            .collect();
 
         egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
+            .id_salt("bp_list")
+            .max_height(120.0)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.monospace("      ");
-                    for i in 0..16 {
-                        ui.monospace(format!("{:02X} ", i));
-                    }
-                });
-                ui.separator();
-
-                for row_idx in 0..16usize {
-                    let addr = row_idx * 16;
+                for (bp, enabled) in entries {
                     ui.horizontal(|ui| {
-                        ui.monospace(format!("{:04X}: ", addr));
-                        for col in 0..16 {
-                            let byte = mem_image.map(|m| m[addr + col]).unwrap_or(0);
-                            ui.monospace(format!("{:02X} ", byte));
+                        let mut en = enabled;
+                        if ui.checkbox(&mut en, "").changed() {
+                            self.debugger_state.toggle_breakpoint(bp);
                         }
-                        ui.add_space(8.0);
-                        for col in 0..16 {
-                            let byte = mem_image.map(|m| m[addr + col]).unwrap_or(0);
-                            let ch = if byte.is_ascii_graphic() || byte == b' ' {
-                                byte as char
-                            } else {
-                                '.'
-                            };
-                            ui.monospace(format!("{}", ch));
+
+                        let sym_label = self.debugger_state.first_label_for(bp.bank, bp.addr);
+                        let label = if let Some(sym) = sym_label {
+                            format!("{:02X}:{:04X}  {sym}", bp.bank, bp.addr)
+                        } else {
+                            format!("{:02X}:{:04X}", bp.bank, bp.addr)
+                        };
+                        ui.monospace(&label);
+
+                        if ui.small_button("Remove").clicked() {
+                            to_remove = Some(bp);
                         }
                     });
+                }
+            });
+
+        if let Some(bp) = to_remove {
+            self.debugger_state.remove_breakpoint(&bp);
+        }
+
+        ui.separator();
+        ui.heading("Stack");
+
+        let base = snapshot.debugger.stack_base;
+        let bytes = &snapshot.debugger.stack_bytes;
+
+        egui::ScrollArea::vertical()
+            .id_salt("stack_view")
+            .max_height(100.0)
+            .show(ui, |ui| {
+                for (i, chunk) in bytes.chunks_exact(2).take(16).enumerate() {
+                    let addr = base.wrapping_add((i as u16) * 2);
+                    let val = (chunk[1] as u16) << 8 | (chunk[0] as u16);
+                    ui.monospace(format!("{addr:04X}: {val:04X}"));
                 }
             });
     }

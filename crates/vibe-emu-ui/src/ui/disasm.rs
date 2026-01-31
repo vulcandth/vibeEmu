@@ -1,5 +1,8 @@
+/// Decode an SM83 instruction from the given memory slice.
+/// `mem` should be a slice starting at the instruction to decode.
+/// `addr` is the absolute address (used for relative jump target display).
 pub fn decode_sm83(mem: &[u8], addr: u16) -> (String, u16) {
-    let get = |offset: usize| -> u8 { mem.get(addr as usize + offset).copied().unwrap_or(0) };
+    let get = |offset: usize| -> u8 { mem.get(offset).copied().unwrap_or(0) };
     let op = get(0);
     let imm8 = || get(1);
     let imm16 = || {
