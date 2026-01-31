@@ -31,9 +31,25 @@ use ui::snapshot::UiSnapshot;
 use ui_config::{EmulationMode, UiConfig, WindowSize};
 
 const DEFAULT_WINDOW_SCALE: u32 = 2;
+const GB_WIDTH: f32 = 160.0;
+const GB_HEIGHT: f32 = 144.0;
+const MENU_BAR_HEIGHT: f32 = 24.0;
+const STATUS_BAR_HEIGHT: f32 = 24.0;
 const GB_FPS: f64 = 59.7275;
 const FRAME_TIME: Duration = Duration::from_nanos((1e9_f64 / GB_FPS) as u64);
 const FF_MULT: f32 = 4.0;
+
+use std::sync::LazyLock;
+static VIEWPORT_DEBUGGER: LazyLock<egui::ViewportId> =
+    LazyLock::new(|| egui::ViewportId::from_hash_of("debugger"));
+static VIEWPORT_VRAM_VIEWER: LazyLock<egui::ViewportId> =
+    LazyLock::new(|| egui::ViewportId::from_hash_of("vram_viewer"));
+static VIEWPORT_WATCHPOINTS: LazyLock<egui::ViewportId> =
+    LazyLock::new(|| egui::ViewportId::from_hash_of("watchpoints"));
+static VIEWPORT_OPTIONS: LazyLock<egui::ViewportId> =
+    LazyLock::new(|| egui::ViewportId::from_hash_of("options"));
+static VIEWPORT_MOBILE_ADAPTER: LazyLock<egui::ViewportId> =
+    LazyLock::new(|| egui::ViewportId::from_hash_of("mobile_adapter"));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum LogLevelArg {
@@ -155,7 +171,7 @@ fn init_logging(args: &Args) {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter));
     logger.filter_module("wgpu", log::LevelFilter::Warn);
     logger.filter_module("wgpu_core", log::LevelFilter::Warn);
-    logger.filter_module("wgpu_hal", log::LevelFilter::Warn);
+    logger.filter_module("wgpu_hal", log::LevelFilter::Error);
     logger.filter_module("naga", log::LevelFilter::Warn);
     logger.format_timestamp_millis().init();
 
@@ -507,7 +523,7 @@ impl VibeEmuApp {
             emulation_mode,
             dmg_bootrom_path: String::new(),
             cgb_bootrom_path: String::new(),
-            selected_window_scale: 1, // 2x
+            selected_window_scale: (DEFAULT_WINDOW_SCALE - 1) as usize,
             rebinding: None,
             options_tab: OptionsTab::default(),
             debugger_snapshot: None,
@@ -777,11 +793,11 @@ impl eframe::App for VibeEmuApp {
             .show(ctx, |ui| {
                 if let Some(tex) = &self.texture {
                     let available = ui.available_size();
-                    let scale = (available.x / 160.0)
-                        .min(available.y / 144.0)
+                    let scale = (available.x / GB_WIDTH)
+                        .min(available.y / GB_HEIGHT)
                         .floor()
                         .max(1.0);
-                    let size = egui::vec2(160.0 * scale, 144.0 * scale);
+                    let size = egui::vec2(GB_WIDTH * scale, GB_HEIGHT * scale);
                     let offset = (available - size) / 2.0;
                     let rect = egui::Rect::from_min_size(
                         ui.min_rect().min + egui::vec2(offset.x, offset.y),
@@ -823,213 +839,262 @@ impl eframe::App for VibeEmuApp {
 
 impl VibeEmuApp {
     fn draw_options_window(&mut self, ctx: &egui::Context) {
-        let mut show = self.show_options;
-        egui::Window::new("Options")
-            .open(&mut show)
-            .default_size([400.0, 300.0])
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui
-                        .selectable_label(self.options_tab == OptionsTab::Keybinds, "Keybinds")
-                        .clicked()
-                    {
-                        self.options_tab = OptionsTab::Keybinds;
-                    }
-                    if ui
-                        .selectable_label(self.options_tab == OptionsTab::Emulation, "Emulation")
-                        .clicked()
-                    {
-                        self.options_tab = OptionsTab::Emulation;
-                    }
-                });
+        ctx.show_viewport_immediate(
+            *VIEWPORT_OPTIONS,
+            egui::ViewportBuilder::default()
+                .with_title("Options")
+                .with_inner_size([400.0, 300.0]),
+            |ctx, class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    self.show_options = false;
+                }
 
-                ui.separator();
-                ui.add_space(8.0);
-
-                match self.options_tab {
-                    OptionsTab::Keybinds => {
-                        if self.rebinding.is_some() {
-                            ui.horizontal(|ui| {
-                                ui.colored_label(egui::Color32::YELLOW, "Waiting for key...");
-                                if ui.button("Cancel").clicked() {
-                                    self.rebinding = None;
-                                }
-                            });
-                            ui.separator();
-
-                            ctx.input(|i| {
-                                for key in i.keys_down.iter() {
-                                    if let Some(target) = self.rebinding {
-                                        self.keybinds.rebind(target, *key);
-                                        self.rebinding = None;
-                                        break;
-                                    }
-                                }
-                            });
-                        }
-
-                        ui.label("Click Rebind, then press a key.");
-                        ui.add_space(4.0);
-
-                        egui::Grid::new("keybinds_grid")
-                            .num_columns(3)
-                            .spacing([20.0, 4.0])
-                            .show(ui, |ui| {
-                                let fmt_joy = |keybinds: &KeyBindings, mask: u8| -> String {
-                                    keybinds
-                                        .key_for_joypad_mask(mask)
-                                        .map(|k| format!("{k:?}"))
-                                        .unwrap_or_else(|| "<unbound>".to_string())
-                                };
-
-                                for (label, mask) in [
-                                    ("Up", 0x04u8),
-                                    ("Down", 0x08),
-                                    ("Left", 0x02),
-                                    ("Right", 0x01),
-                                ] {
-                                    ui.label(label);
-                                    ui.label(fmt_joy(&self.keybinds, mask));
-                                    if ui.button("Rebind").clicked() {
-                                        self.rebinding = Some(RebindTarget::Joypad(mask));
-                                    }
-                                    ui.end_row();
-                                }
-
-                                ui.separator();
-                                ui.end_row();
-
-                                for (label, mask) in [
-                                    ("A", 0x10u8),
-                                    ("B", 0x20),
-                                    ("Select", 0x40),
-                                    ("Start", 0x80),
-                                ] {
-                                    ui.label(label);
-                                    ui.label(fmt_joy(&self.keybinds, mask));
-                                    if ui.button("Rebind").clicked() {
-                                        self.rebinding = Some(RebindTarget::Joypad(mask));
-                                    }
-                                    ui.end_row();
-                                }
-                            });
-                    }
-                    OptionsTab::Emulation => {
-                        ui.horizontal(|ui| {
-                            ui.label("DMG Boot ROM:");
-                            ui.text_edit_singleline(&mut self.dmg_bootrom_path);
-                            if ui.button("Browse...").clicked()
-                                && let Some(path) = FileDialog::new().pick_file()
-                            {
-                                self.dmg_bootrom_path = path.to_string_lossy().to_string();
-                            }
+                match class {
+                    egui::ViewportClass::Embedded => {
+                        egui::Window::new("Options").show(ctx, |ui| {
+                            self.draw_options_content(ui, ctx);
                         });
-
-                        ui.horizontal(|ui| {
-                            ui.label("CGB Boot ROM:");
-                            ui.text_edit_singleline(&mut self.cgb_bootrom_path);
-                            if ui.button("Browse...").clicked()
-                                && let Some(path) = FileDialog::new().pick_file()
-                            {
-                                self.cgb_bootrom_path = path.to_string_lossy().to_string();
-                            }
-                        });
-
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            ui.label("Window Scale:");
-                            egui::ComboBox::from_id_salt("window_scale")
-                                .selected_text(match self.selected_window_scale {
-                                    0 => "1x",
-                                    1 => "2x",
-                                    2 => "3x",
-                                    3 => "4x",
-                                    4 => "5x",
-                                    5 => "6x",
-                                    _ => "2x",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.selected_window_scale, 0, "1x");
-                                    ui.selectable_value(&mut self.selected_window_scale, 1, "2x");
-                                    ui.selectable_value(&mut self.selected_window_scale, 2, "3x");
-                                    ui.selectable_value(&mut self.selected_window_scale, 3, "4x");
-                                    ui.selectable_value(&mut self.selected_window_scale, 4, "5x");
-                                    ui.selectable_value(&mut self.selected_window_scale, 5, "6x");
-                                });
+                    }
+                    _ => {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            self.draw_options_content(ui, ctx);
                         });
                     }
                 }
-            });
-        self.show_options = show;
+            },
+        );
+    }
+
+    fn draw_options_content(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(self.options_tab == OptionsTab::Keybinds, "Keybinds")
+                .clicked()
+            {
+                self.options_tab = OptionsTab::Keybinds;
+            }
+            if ui
+                .selectable_label(self.options_tab == OptionsTab::Emulation, "Emulation")
+                .clicked()
+            {
+                self.options_tab = OptionsTab::Emulation;
+            }
+        });
+
+        ui.separator();
+        ui.add_space(8.0);
+
+        match self.options_tab {
+            OptionsTab::Keybinds => {
+                if self.rebinding.is_some() {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(egui::Color32::YELLOW, "Waiting for key...");
+                        if ui.button("Cancel").clicked() {
+                            self.rebinding = None;
+                        }
+                    });
+                    ui.separator();
+
+                    ctx.input(|i| {
+                        for key in i.keys_down.iter() {
+                            if let Some(target) = self.rebinding {
+                                self.keybinds.rebind(target, *key);
+                                self.rebinding = None;
+                                break;
+                            }
+                        }
+                    });
+                }
+
+                ui.label("Click Rebind, then press a key.");
+                ui.add_space(4.0);
+
+                egui::Grid::new("keybinds_grid")
+                    .num_columns(3)
+                    .spacing([20.0, 4.0])
+                    .show(ui, |ui| {
+                        let fmt_joy = |keybinds: &KeyBindings, mask: u8| -> String {
+                            keybinds
+                                .key_for_joypad_mask(mask)
+                                .map(|k| format!("{k:?}"))
+                                .unwrap_or_else(|| "<unbound>".to_string())
+                        };
+
+                        for (label, mask) in [
+                            ("Up", 0x04u8),
+                            ("Down", 0x08),
+                            ("Left", 0x02),
+                            ("Right", 0x01),
+                        ] {
+                            ui.label(label);
+                            ui.label(fmt_joy(&self.keybinds, mask));
+                            if ui.button("Rebind").clicked() {
+                                self.rebinding = Some(RebindTarget::Joypad(mask));
+                            }
+                            ui.end_row();
+                        }
+
+                        ui.separator();
+                        ui.end_row();
+
+                        for (label, mask) in [
+                            ("A", 0x10u8),
+                            ("B", 0x20),
+                            ("Select", 0x40),
+                            ("Start", 0x80),
+                        ] {
+                            ui.label(label);
+                            ui.label(fmt_joy(&self.keybinds, mask));
+                            if ui.button("Rebind").clicked() {
+                                self.rebinding = Some(RebindTarget::Joypad(mask));
+                            }
+                            ui.end_row();
+                        }
+                    });
+            }
+            OptionsTab::Emulation => {
+                ui.horizontal(|ui| {
+                    ui.label("DMG Boot ROM:");
+                    ui.text_edit_singleline(&mut self.dmg_bootrom_path);
+                    if ui.button("Browse...").clicked()
+                        && let Some(path) = FileDialog::new().pick_file()
+                    {
+                        self.dmg_bootrom_path = path.to_string_lossy().to_string();
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("CGB Boot ROM:");
+                    ui.text_edit_singleline(&mut self.cgb_bootrom_path);
+                    if ui.button("Browse...").clicked()
+                        && let Some(path) = FileDialog::new().pick_file()
+                    {
+                        self.cgb_bootrom_path = path.to_string_lossy().to_string();
+                    }
+                });
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label("Window Scale:");
+                    let prev_scale = self.selected_window_scale;
+                    egui::ComboBox::from_id_salt("window_scale")
+                        .selected_text(match self.selected_window_scale {
+                            0 => "1x",
+                            1 => "2x",
+                            2 => "3x",
+                            3 => "4x",
+                            4 => "5x",
+                            5 => "6x",
+                            _ => "2x",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.selected_window_scale, 0, "1x");
+                            ui.selectable_value(&mut self.selected_window_scale, 1, "2x");
+                            ui.selectable_value(&mut self.selected_window_scale, 2, "3x");
+                            ui.selectable_value(&mut self.selected_window_scale, 3, "4x");
+                            ui.selectable_value(&mut self.selected_window_scale, 4, "5x");
+                            ui.selectable_value(&mut self.selected_window_scale, 5, "6x");
+                        });
+                    if self.selected_window_scale != prev_scale {
+                        let scale = (self.selected_window_scale + 1) as f32;
+                        let new_size = egui::vec2(
+                            GB_WIDTH * scale,
+                            GB_HEIGHT * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
+                        );
+                        ctx.send_viewport_cmd_to(
+                            egui::ViewportId::ROOT,
+                            egui::ViewportCommand::InnerSize(new_size),
+                        );
+                    }
+                });
+            }
+        }
     }
 
     fn draw_debugger_window(&mut self, ctx: &egui::Context) {
-        let mut show = self.show_debugger;
-        egui::Window::new("Debugger")
-            .open(&mut show)
-            .default_size([700.0, 500.0])
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui
-                        .button(if self.paused {
-                            "▶ Resume"
-                        } else {
-                            "⏸ Pause"
-                        })
-                        .clicked()
-                    {
-                        self.paused = !self.paused;
-                        let _ = self.emu_tx.send(EmuCommand::SetPaused(self.paused));
-                    }
-                    if ui.button("⏭ Step").clicked()
-                        && self.paused
-                        && let Ok(mut gb) = self.gb.lock()
-                    {
-                        let GameBoy { cpu, mmu, .. } = &mut *gb;
-                        cpu.step(mmu);
-                    }
-                    if ui.button("🔄 Reset").clicked()
-                        && let Ok(mut gb) = self.gb.lock()
-                    {
-                        gb.reset();
-                    }
-                });
-
-                ui.separator();
-
-                ui.horizontal(|ui| {
-                    if ui
-                        .selectable_label(self.debugger_tab == DebuggerTab::Registers, "Registers")
-                        .clicked()
-                    {
-                        self.debugger_tab = DebuggerTab::Registers;
-                    }
-                    if ui
-                        .selectable_label(
-                            self.debugger_tab == DebuggerTab::Disassembly,
-                            "Disassembly",
-                        )
-                        .clicked()
-                    {
-                        self.debugger_tab = DebuggerTab::Disassembly;
-                    }
-                    if ui
-                        .selectable_label(self.debugger_tab == DebuggerTab::Memory, "Memory")
-                        .clicked()
-                    {
-                        self.debugger_tab = DebuggerTab::Memory;
-                    }
-                });
-
-                ui.separator();
-
-                match self.debugger_tab {
-                    DebuggerTab::Registers => self.draw_registers_tab(ui),
-                    DebuggerTab::Disassembly => self.draw_disassembly_tab(ui),
-                    DebuggerTab::Memory => self.draw_memory_tab(ui),
+        ctx.show_viewport_immediate(
+            *VIEWPORT_DEBUGGER,
+            egui::ViewportBuilder::default()
+                .with_title("Debugger")
+                .with_inner_size([700.0, 500.0]),
+            |ctx, class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    self.show_debugger = false;
                 }
-            });
-        self.show_debugger = show;
+
+                match class {
+                    egui::ViewportClass::Embedded => {
+                        egui::Window::new("Debugger").show(ctx, |ui| {
+                            self.draw_debugger_content(ui);
+                        });
+                    }
+                    _ => {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            self.draw_debugger_content(ui);
+                        });
+                    }
+                }
+            },
+        );
+    }
+
+    fn draw_debugger_content(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui
+                .button(if self.paused {
+                    "▶ Resume"
+                } else {
+                    "⏸ Pause"
+                })
+                .clicked()
+            {
+                self.paused = !self.paused;
+                let _ = self.emu_tx.send(EmuCommand::SetPaused(self.paused));
+            }
+            if ui.button("⏭ Step").clicked()
+                && self.paused
+                && let Ok(mut gb) = self.gb.lock()
+            {
+                let GameBoy { cpu, mmu, .. } = &mut *gb;
+                cpu.step(mmu);
+            }
+            if ui.button("🔄 Reset").clicked()
+                && let Ok(mut gb) = self.gb.lock()
+            {
+                gb.reset();
+            }
+        });
+
+        ui.separator();
+
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(self.debugger_tab == DebuggerTab::Registers, "Registers")
+                .clicked()
+            {
+                self.debugger_tab = DebuggerTab::Registers;
+            }
+            if ui
+                .selectable_label(self.debugger_tab == DebuggerTab::Disassembly, "Disassembly")
+                .clicked()
+            {
+                self.debugger_tab = DebuggerTab::Disassembly;
+            }
+            if ui
+                .selectable_label(self.debugger_tab == DebuggerTab::Memory, "Memory")
+                .clicked()
+            {
+                self.debugger_tab = DebuggerTab::Memory;
+            }
+        });
+
+        ui.separator();
+
+        match self.debugger_tab {
+            DebuggerTab::Registers => self.draw_registers_tab(ui),
+            DebuggerTab::Disassembly => self.draw_disassembly_tab(ui),
+            DebuggerTab::Memory => self.draw_memory_tab(ui),
+        }
     }
 
     fn draw_registers_tab(&self, ui: &mut egui::Ui) {
@@ -1240,164 +1305,204 @@ impl VibeEmuApp {
     }
 
     fn draw_watchpoints_window(&mut self, ctx: &egui::Context) {
-        let mut show = self.show_watchpoints;
-        egui::Window::new("Watchpoints")
-            .open(&mut show)
-            .default_size([400.0, 300.0])
-            .show(ctx, |ui| {
-                ui.heading("Add Watchpoint");
-                ui.horizontal(|ui| {
-                    ui.label("Start:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.wp_edit_start_addr)
-                            .desired_width(60.0)
-                            .font(egui::TextStyle::Monospace),
-                    );
-                    ui.label("End:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.wp_edit_end_addr)
-                            .desired_width(60.0)
-                            .font(egui::TextStyle::Monospace),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.wp_edit_on_read, "Read");
-                    ui.checkbox(&mut self.wp_edit_on_write, "Write");
-                    if ui.button("Add").clicked() {
-                        let start_str = self.wp_edit_start_addr.trim();
-                        let start_str = start_str
-                            .strip_prefix("$")
-                            .or_else(|| start_str.strip_prefix("0x"))
-                            .unwrap_or(start_str);
-                        let end_str = self.wp_edit_end_addr.trim();
-                        let end_str = end_str
-                            .strip_prefix("$")
-                            .or_else(|| end_str.strip_prefix("0x"))
-                            .unwrap_or(end_str);
+        ctx.show_viewport_immediate(
+            *VIEWPORT_WATCHPOINTS,
+            egui::ViewportBuilder::default()
+                .with_title("Watchpoints")
+                .with_inner_size([400.0, 300.0]),
+            |ctx, class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    self.show_watchpoints = false;
+                }
 
-                        if let Ok(start) = u16::from_str_radix(start_str, 16) {
-                            let end = u16::from_str_radix(end_str, 16).unwrap_or(start);
-                            let wp = vibe_emu_core::watchpoints::Watchpoint {
-                                id: self.next_watchpoint_id,
-                                enabled: true,
-                                range: start..=end,
-                                on_read: self.wp_edit_on_read,
-                                on_write: self.wp_edit_on_write,
-                                on_execute: false,
-                                on_jump: false,
-                                value_match: None,
-                                message: None,
-                            };
-                            self.next_watchpoint_id += 1;
-                            self.watchpoints.push(wp);
-                            self.wp_edit_start_addr.clear();
-                            self.wp_edit_end_addr.clear();
-                        }
+                match class {
+                    egui::ViewportClass::Embedded => {
+                        egui::Window::new("Watchpoints").show(ctx, |ui| {
+                            self.draw_watchpoints_content(ui);
+                        });
                     }
-                });
+                    _ => {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            self.draw_watchpoints_content(ui);
+                        });
+                    }
+                }
+            },
+        );
+    }
 
-                ui.separator();
-                ui.heading("Active Watchpoints");
+    fn draw_watchpoints_content(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Add Watchpoint");
+        ui.horizontal(|ui| {
+            ui.label("Start:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.wp_edit_start_addr)
+                    .desired_width(60.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+            ui.label("End:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.wp_edit_end_addr)
+                    .desired_width(60.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.wp_edit_on_read, "Read");
+            ui.checkbox(&mut self.wp_edit_on_write, "Write");
+            if ui.button("Add").clicked() {
+                let start_str = self.wp_edit_start_addr.trim();
+                let start_str = start_str
+                    .strip_prefix("$")
+                    .or_else(|| start_str.strip_prefix("0x"))
+                    .unwrap_or(start_str);
+                let end_str = self.wp_edit_end_addr.trim();
+                let end_str = end_str
+                    .strip_prefix("$")
+                    .or_else(|| end_str.strip_prefix("0x"))
+                    .unwrap_or(end_str);
 
-                let mut to_remove: Option<usize> = None;
-                let mut to_toggle: Option<usize> = None;
+                if let Ok(start) = u16::from_str_radix(start_str, 16) {
+                    let end = u16::from_str_radix(end_str, 16).unwrap_or(start);
+                    let wp = vibe_emu_core::watchpoints::Watchpoint {
+                        id: self.next_watchpoint_id,
+                        enabled: true,
+                        range: start..=end,
+                        on_read: self.wp_edit_on_read,
+                        on_write: self.wp_edit_on_write,
+                        on_execute: false,
+                        on_jump: false,
+                        value_match: None,
+                        message: None,
+                    };
+                    self.next_watchpoint_id += 1;
+                    self.watchpoints.push(wp);
+                    self.wp_edit_start_addr.clear();
+                    self.wp_edit_end_addr.clear();
+                }
+            }
+        });
 
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
+        ui.separator();
+        ui.heading("Active Watchpoints");
+
+        let mut to_remove: Option<usize> = None;
+        let mut to_toggle: Option<usize> = None;
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Grid::new("watchpoints_grid")
+                    .num_columns(5)
+                    .spacing([12.0, 4.0])
+                    .striped(true)
                     .show(ui, |ui| {
-                        egui::Grid::new("watchpoints_grid")
-                            .num_columns(5)
-                            .spacing([12.0, 4.0])
-                            .striped(true)
-                            .show(ui, |ui| {
-                                ui.strong("En");
-                                ui.strong("Range");
-                                ui.strong("R");
-                                ui.strong("W");
-                                ui.strong("");
-                                ui.end_row();
+                        ui.strong("En");
+                        ui.strong("Range");
+                        ui.strong("R");
+                        ui.strong("W");
+                        ui.strong("");
+                        ui.end_row();
 
-                                for (i, wp) in self.watchpoints.iter().enumerate() {
-                                    let enabled_text = if wp.enabled { "✓" } else { "○" };
-                                    if ui.button(enabled_text).clicked() {
-                                        to_toggle = Some(i);
-                                    }
+                        for (i, wp) in self.watchpoints.iter().enumerate() {
+                            let enabled_text = if wp.enabled { "✓" } else { "○" };
+                            if ui.button(enabled_text).clicked() {
+                                to_toggle = Some(i);
+                            }
 
-                                    let start = *wp.range.start();
-                                    let end = *wp.range.end();
-                                    if start == end {
-                                        ui.monospace(format!("${:04X}", start));
-                                    } else {
-                                        ui.monospace(format!("${:04X}-${:04X}", start, end));
-                                    }
+                            let start = *wp.range.start();
+                            let end = *wp.range.end();
+                            if start == end {
+                                ui.monospace(format!("${:04X}", start));
+                            } else {
+                                ui.monospace(format!("${:04X}-${:04X}", start, end));
+                            }
 
-                                    ui.monospace(if wp.on_read { "R" } else { "-" });
-                                    ui.monospace(if wp.on_write { "W" } else { "-" });
+                            ui.monospace(if wp.on_read { "R" } else { "-" });
+                            ui.monospace(if wp.on_write { "W" } else { "-" });
 
-                                    if ui.button("✕").clicked() {
-                                        to_remove = Some(i);
-                                    }
-                                    ui.end_row();
-                                }
-                            });
+                            if ui.button("✕").clicked() {
+                                to_remove = Some(i);
+                            }
+                            ui.end_row();
+                        }
                     });
-
-                if let Some(i) = to_toggle
-                    && let Some(wp) = self.watchpoints.get_mut(i)
-                {
-                    wp.enabled = !wp.enabled;
-                }
-                if let Some(i) = to_remove {
-                    self.watchpoints.remove(i);
-                }
             });
-        self.show_watchpoints = show;
+
+        if let Some(i) = to_toggle
+            && let Some(wp) = self.watchpoints.get_mut(i)
+        {
+            wp.enabled = !wp.enabled;
+        }
+        if let Some(i) = to_remove {
+            self.watchpoints.remove(i);
+        }
     }
 
     fn draw_mobile_adapter_window(&mut self, ctx: &egui::Context) {
-        let mut show = self.show_mobile_adapter;
-        egui::Window::new("Mobile Adapter")
-            .open(&mut show)
-            .default_size([350.0, 200.0])
-            .show(ctx, |ui| {
-                ui.heading("Mobile Adapter Configuration");
-                ui.separator();
+        ctx.show_viewport_immediate(
+            *VIEWPORT_MOBILE_ADAPTER,
+            egui::ViewportBuilder::default()
+                .with_title("Mobile Adapter")
+                .with_inner_size([350.0, 200.0]),
+            |ctx, class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    self.show_mobile_adapter = false;
+                }
 
-                ui.checkbox(&mut self.mobile_enabled, "Enable Mobile Adapter");
+                match class {
+                    egui::ViewportClass::Embedded => {
+                        egui::Window::new("Mobile Adapter").show(ctx, |ui| {
+                            self.draw_mobile_adapter_content(ui);
+                        });
+                    }
+                    _ => {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            self.draw_mobile_adapter_content(ui);
+                        });
+                    }
+                }
+            },
+        );
+    }
 
-                ui.add_enabled_ui(self.mobile_enabled, |ui| {
-                    ui.separator();
-                    ui.label("DNS Servers:");
-                    ui.horizontal(|ui| {
-                        ui.label("Primary:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.mobile_dns1)
-                                .desired_width(150.0)
-                                .hint_text("e.g. 8.8.8.8"),
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Secondary:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.mobile_dns2)
-                                .desired_width(150.0)
-                                .hint_text("e.g. 8.8.4.4"),
-                        );
-                    });
+    fn draw_mobile_adapter_content(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Mobile Adapter Configuration");
+        ui.separator();
 
-                    ui.separator();
-                    ui.label("Relay Server:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.mobile_relay)
-                            .desired_width(250.0)
-                            .hint_text("relay.example.com:port"),
-                    );
+        ui.checkbox(&mut self.mobile_enabled, "Enable Mobile Adapter");
 
-                    ui.separator();
-                    ui.label("Note: Mobile Adapter changes require ROM reload to take effect.");
-                });
+        ui.add_enabled_ui(self.mobile_enabled, |ui| {
+            ui.separator();
+            ui.label("DNS Servers:");
+            ui.horizontal(|ui| {
+                ui.label("Primary:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.mobile_dns1)
+                        .desired_width(150.0)
+                        .hint_text("e.g. 8.8.8.8"),
+                );
             });
-        self.show_mobile_adapter = show;
+            ui.horizontal(|ui| {
+                ui.label("Secondary:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.mobile_dns2)
+                        .desired_width(150.0)
+                        .hint_text("e.g. 8.8.4.4"),
+                );
+            });
+
+            ui.separator();
+            ui.label("Relay Server:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.mobile_relay)
+                    .desired_width(250.0)
+                    .hint_text("relay.example.com:port"),
+            );
+
+            ui.separator();
+            ui.label("Note: Mobile Adapter changes require ROM reload to take effect.");
+        });
     }
 
     fn draw_vram_viewer_window(&mut self, ctx: &egui::Context) {
@@ -1407,52 +1512,77 @@ impl VibeEmuApp {
             None
         };
 
-        let mut show = self.show_vram_viewer;
-        egui::Window::new("VRAM Viewer")
-            .open(&mut show)
-            .default_size([520.0, 450.0])
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui
-                        .selectable_label(self.vram_tab == VramTab::BgMap, "BG Map")
-                        .clicked()
-                    {
-                        self.vram_tab = VramTab::BgMap;
-                    }
-                    if ui
-                        .selectable_label(self.vram_tab == VramTab::Tiles, "Tiles")
-                        .clicked()
-                    {
-                        self.vram_tab = VramTab::Tiles;
-                    }
-                    if ui
-                        .selectable_label(self.vram_tab == VramTab::Oam, "OAM")
-                        .clicked()
-                    {
-                        self.vram_tab = VramTab::Oam;
-                    }
-                    if ui
-                        .selectable_label(self.vram_tab == VramTab::Palettes, "Palettes")
-                        .clicked()
-                    {
-                        self.vram_tab = VramTab::Palettes;
-                    }
-                });
-
-                ui.separator();
-
-                if let Some(ppu) = ppu_snapshot {
-                    match self.vram_tab {
-                        VramTab::BgMap => self.draw_bg_map_tab(ui, ctx, &ppu),
-                        VramTab::Tiles => self.draw_tiles_tab(ui, ctx, &ppu),
-                        VramTab::Oam => self.draw_oam_tab(ui, ctx, &ppu),
-                        VramTab::Palettes => self.draw_palettes_tab(ui, &ppu),
-                    }
-                } else {
-                    ui.label("Unable to access emulator state");
+        ctx.show_viewport_immediate(
+            *VIEWPORT_VRAM_VIEWER,
+            egui::ViewportBuilder::default()
+                .with_title("VRAM Viewer")
+                .with_inner_size([520.0, 450.0]),
+            |ctx, class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    self.show_vram_viewer = false;
                 }
-            });
-        self.show_vram_viewer = show;
+
+                match class {
+                    egui::ViewportClass::Embedded => {
+                        egui::Window::new("VRAM Viewer").show(ctx, |ui| {
+                            self.draw_vram_viewer_content(ui, ctx, ppu_snapshot.as_ref());
+                        });
+                    }
+                    _ => {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            self.draw_vram_viewer_content(ui, ctx, ppu_snapshot.as_ref());
+                        });
+                    }
+                }
+            },
+        );
+    }
+
+    fn draw_vram_viewer_content(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        ppu_snapshot: Option<&ui::snapshot::PpuSnapshot>,
+    ) {
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(self.vram_tab == VramTab::BgMap, "BG Map")
+                .clicked()
+            {
+                self.vram_tab = VramTab::BgMap;
+            }
+            if ui
+                .selectable_label(self.vram_tab == VramTab::Tiles, "Tiles")
+                .clicked()
+            {
+                self.vram_tab = VramTab::Tiles;
+            }
+            if ui
+                .selectable_label(self.vram_tab == VramTab::Oam, "OAM")
+                .clicked()
+            {
+                self.vram_tab = VramTab::Oam;
+            }
+            if ui
+                .selectable_label(self.vram_tab == VramTab::Palettes, "Palettes")
+                .clicked()
+            {
+                self.vram_tab = VramTab::Palettes;
+            }
+        });
+
+        ui.separator();
+
+        if let Some(ppu) = ppu_snapshot {
+            match self.vram_tab {
+                VramTab::BgMap => self.draw_bg_map_tab(ui, ctx, ppu),
+                VramTab::Tiles => self.draw_tiles_tab(ui, ctx, ppu),
+                VramTab::Oam => self.draw_oam_tab(ui, ctx, ppu),
+                VramTab::Palettes => self.draw_palettes_tab(ui, ppu),
+            }
+        } else {
+            ui.label("Unable to access emulator state");
+        }
     }
 
     fn draw_bg_map_tab(
@@ -1935,6 +2065,11 @@ fn main() {
         }
     });
 
+    if headless && cart.is_none() {
+        error!("No ROM supplied (required for --headless)");
+        std::process::exit(1);
+    }
+
     let cgb_mode = match load_config.emulation_mode {
         EmulationMode::ForceDmg => false,
         EmulationMode::ForceCgb => true,
@@ -1991,10 +2126,15 @@ fn main() {
         );
     });
 
+    let scale = DEFAULT_WINDOW_SCALE as f32;
+    let initial_size = [
+        GB_WIDTH * scale,
+        GB_HEIGHT * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
+    ];
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("vibeEmu")
-            .with_inner_size([160.0 * 2.0, 144.0 * 2.0 + 32.0])
+            .with_inner_size(initial_size)
             .with_icon(load_window_icon().unwrap_or_default()),
         ..Default::default()
     };

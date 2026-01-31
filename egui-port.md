@@ -77,6 +77,89 @@ Migration checklist for replacing imgui/pixels with egui and upgrading wgpu per 
 - [x] Port keybinds.rs to use `egui::Key` instead of `winit::keyboard::KeyCode`
 - [x] Preserve multi-window support (debugger, VRAM viewer, watchpoints, options)
 
+## Multi-Window / Viewport Support
+
+All tool windows (debugger, VRAM viewer, watchpoints, options) run in their own native OS windows using egui's viewport system.
+
+### Viewport Type Decisions
+
+| Window | Viewport Type | Rationale |
+|--------|---------------|-----------|
+| Debugger | Immediate | Needs direct access to app state for stepping, breakpoints, memory inspection |
+| VRAM Viewer | Immediate | Frequently accesses PPU state; could be deferred later for optimization |
+| Watchpoints | Immediate | Modifies watchpoint list directly; simple and infrequent use |
+| Options | Immediate | Directly modifies app settings (keybinds, paths); simple UI |
+| Mobile Adapter | Immediate | Directly modifies mobile adapter settings; simple UI |
+
+### Implementation Checklist
+
+- [x] Create `ViewportId` constants for each window:
+  - `VIEWPORT_DEBUGGER`
+  - `VIEWPORT_VRAM_VIEWER`
+  - `VIEWPORT_WATCHPOINTS`
+  - `VIEWPORT_OPTIONS`
+  - `VIEWPORT_MOBILE_ADAPTER`
+- [x] Refactor `draw_debugger_window` to use `ctx.show_viewport_immediate`
+- [x] Refactor `draw_vram_viewer_window` to use `ctx.show_viewport_immediate`
+- [x] Refactor `draw_watchpoints_window` to use `ctx.show_viewport_immediate`
+- [x] Refactor `draw_options_window` to use `ctx.show_viewport_immediate`
+- [x] Refactor `draw_mobile_adapter_window` to use `ctx.show_viewport_immediate`
+- [x] Handle `ViewportInfo::close_requested()` in each viewport to set `show_*` flag to false
+- [x] Handle `ViewportClass::Embedded` fallback for platforms that don't support viewports (web)
+- [x] Set appropriate default window sizes via `ViewportBuilder::with_inner_size`
+
+### Code Pattern
+
+```rust
+// In VibeEmuApp, define viewport IDs
+const VIEWPORT_DEBUGGER: egui::ViewportId = egui::ViewportId::from_hash_of("debugger");
+const VIEWPORT_VRAM_VIEWER: egui::ViewportId = egui::ViewportId::from_hash_of("vram_viewer");
+const VIEWPORT_WATCHPOINTS: egui::ViewportId = egui::ViewportId::from_hash_of("watchpoints");
+const VIEWPORT_OPTIONS: egui::ViewportId = egui::ViewportId::from_hash_of("options");
+
+// In update(), replace window drawing with viewport:
+if self.show_debugger {
+    ctx.show_viewport_immediate(
+        VIEWPORT_DEBUGGER,
+        egui::ViewportBuilder::default()
+            .with_title("Debugger")
+            .with_inner_size([650.0, 500.0]),
+        |ui, class| {
+            match class {
+                egui::ViewportClass::Embedded => {
+                    // Fallback for web/unsupported platforms
+                    egui::Window::new("Debugger").show(ui.ctx(), |ui| {
+                        self.draw_debugger_content(ui);
+                    });
+                }
+                _ => {
+                    egui::CentralPanel::default().show_inside(ui, |ui| {
+                        self.draw_debugger_content(ui);
+                    });
+                }
+            }
+            if ui.input(|i| i.viewport().close_requested()) {
+                self.show_debugger = false;
+            }
+        },
+    );
+}
+```
+
+### Refactoring Steps
+
+1. Extract the inner UI drawing logic from each `draw_*_window` method into a `draw_*_content` method
+2. Replace the `egui::Window::new(...).show()` pattern with `ctx.show_viewport_immediate()`
+3. Use `egui::CentralPanel::default().show_inside(ui, ...)` for the main content area
+4. Add close request handling to hide the window when the OS close button is clicked
+
+### Notes
+
+- eframe automatically enables viewports on native platforms
+- On web, viewports fall back to embedded `egui::Window` widgets automatically
+- `ViewportId::from_hash_of()` is not const; use lazy_static or compute once at startup
+- Each viewport window has its own title bar, can be resized/moved independently
+
 ## Testing
 
 - [x] Project compiles successfully with new dependencies
