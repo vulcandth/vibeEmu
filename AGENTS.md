@@ -2,8 +2,8 @@
 
 This repository contains **vibeEmu**, a cycle-accurate Game Boy / Game Boy Color emulator written in Rust. The core emulation
 lives in `src/` (modules for the CPU, MMU, PPU, APU, timer, cartridge, input, serial, audio, and the `GameBoy` facade). The
-`src/ui/` module provides the `winit` + `pixels` frontend, while integration tests reside under `tests/`. Assets such as logos
-and screenshots live in `gfx/` and `extra_screenshots/`, and a patched copy of `imgui-wgpu` is vendored under `vendor/`.
+`src/ui/` module provides the `egui` + `eframe` frontend, while integration tests reside under `tests/`. Assets such as logos
+and screenshots live in `gfx/` and `extra_screenshots/`, and a patched copy of `libmobile` is vendored under `vendor/`.
 
 ## Before you write code
 - Read `README.md`, the relevant modules, and existing tests to understand the current architecture and command-line options.

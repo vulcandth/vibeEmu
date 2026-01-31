@@ -3,7 +3,6 @@
 
 mod audio;
 mod keybinds;
-mod scaler;
 mod ui;
 mod ui_config;
 
@@ -26,7 +25,6 @@ use vibe_emu_mobile::{
 
 use crossbeam_channel as cb;
 use keybinds::KeyBindings;
-pub use scaler::GameScaler;
 use ui::snapshot::UiSnapshot;
 use ui_config::{EmulationMode, UiConfig, WindowSize};
 
@@ -48,8 +46,6 @@ static VIEWPORT_WATCHPOINTS: LazyLock<egui::ViewportId> =
     LazyLock::new(|| egui::ViewportId::from_hash_of("watchpoints"));
 static VIEWPORT_OPTIONS: LazyLock<egui::ViewportId> =
     LazyLock::new(|| egui::ViewportId::from_hash_of("options"));
-static VIEWPORT_MOBILE_ADAPTER: LazyLock<egui::ViewportId> =
-    LazyLock::new(|| egui::ViewportId::from_hash_of("mobile_adapter"));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum LogLevelArg {
@@ -171,8 +167,9 @@ fn init_logging(args: &Args) {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter));
     logger.filter_module("wgpu", log::LevelFilter::Warn);
     logger.filter_module("wgpu_core", log::LevelFilter::Warn);
-    logger.filter_module("wgpu_hal", log::LevelFilter::Error);
+    logger.filter_module("wgpu_hal", log::LevelFilter::Off);
     logger.filter_module("naga", log::LevelFilter::Warn);
+    logger.filter_module("egui_wgpu", log::LevelFilter::Warn);
     logger.format_timestamp_millis().init();
 
     struct CoreLogForwarder;
@@ -288,6 +285,7 @@ enum OptionsTab {
     #[default]
     Keybinds,
     Emulation,
+    MobileAdapter,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -472,6 +470,7 @@ struct VibeEmuApp {
     // VRAM Viewer state
     vram_tab: VramTab,
     vram_viewer: VramViewerState,
+    cached_ppu_snapshot: Option<ui::snapshot::PpuSnapshot>,
 
     // Watchpoints window state
     show_watchpoints: bool,
@@ -483,7 +482,6 @@ struct VibeEmuApp {
     wp_edit_on_write: bool,
 
     // Mobile Adapter state
-    show_mobile_adapter: bool,
     mobile_enabled: bool,
     mobile_dns1: String,
     mobile_dns2: String,
@@ -548,6 +546,7 @@ impl VibeEmuApp {
             goto_address: String::new(),
             vram_tab: VramTab::default(),
             vram_viewer: VramViewerState::default(),
+            cached_ppu_snapshot: None,
             show_watchpoints: false,
             watchpoints: Vec::new(),
             next_watchpoint_id: 1,
@@ -555,7 +554,6 @@ impl VibeEmuApp {
             wp_edit_end_addr: String::new(),
             wp_edit_on_read: true,
             wp_edit_on_write: true,
-            show_mobile_adapter: false,
             mobile_enabled: false,
             mobile_dns1: String::new(),
             mobile_dns2: String::new(),
@@ -718,6 +716,7 @@ impl eframe::App for VibeEmuApp {
                     if ui.button("Reset").clicked() {
                         if let Ok(mut gb) = self.gb.lock() {
                             gb.reset();
+                            self._audio_stream = audio::start_stream(&mut gb.mmu.apu, true);
                         }
                         ui.close_menu();
                     }
@@ -769,11 +768,6 @@ impl eframe::App for VibeEmuApp {
                         self.show_watchpoints = !self.show_watchpoints;
                         ui.close_menu();
                     }
-                    ui.separator();
-                    if ui.button("Mobile Adapter...").clicked() {
-                        self.show_mobile_adapter = !self.show_mobile_adapter;
-                        ui.close_menu();
-                    }
                 });
 
                 ui.menu_button("Options", |ui| {
@@ -789,30 +783,42 @@ impl eframe::App for VibeEmuApp {
         egui::TopBottomPanel::bottom("status_bar")
             .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(4.0))
             .show(ctx, |ui| {
+                let total_width = ui.available_width();
+
                 ui.horizontal(|ui| {
-                    // ROM name
-                    if let Some(path) = &self.current_rom_path {
-                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                            ui.label(name);
-                        }
-                    } else {
-                        ui.label("No ROM");
-                    }
-
-                    ui.separator();
-
-                    // Emulation status
-                    if self.paused {
-                        ui.colored_label(egui::Color32::YELLOW, "⏸ Paused");
+                    // Emulation status (left side, always visible)
+                    let status_text = if self.paused {
+                        ("⏸ Paused", egui::Color32::YELLOW)
                     } else if self.fast_forward {
-                        ui.colored_label(egui::Color32::GREEN, "⏩ Fast Forward");
+                        ("⏩ Fast", egui::Color32::GREEN)
                     } else {
-                        ui.colored_label(egui::Color32::GREEN, "▶ Running");
+                        ("▶ Running", egui::Color32::GREEN)
+                    };
+                    ui.colored_label(status_text.1, status_text.0);
+
+                    // Calculate space needed for FPS (approximate)
+                    let fps_text = format!("{:.1} FPS", self.current_fps);
+                    let fps_reserve = 80.0;
+
+                    let remaining = total_width - ui.min_rect().width() - fps_reserve - 30.0;
+
+                    // ROM name only if there's enough room
+                    if remaining > 60.0
+                        && let Some(path) = &self.current_rom_path
+                        && let Some(name) = path.file_name().and_then(|n| n.to_str())
+                    {
+                        ui.separator();
+                        ui.add_sized(
+                            [remaining.min(200.0), ui.available_height()],
+                            egui::Label::new(name)
+                                .truncate()
+                                .wrap_mode(egui::TextWrapMode::Truncate),
+                        );
                     }
 
+                    // FPS counter (right-aligned)
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // FPS counter
-                        ui.label(format!("{:.1} FPS", self.current_fps));
+                        ui.label(fps_text);
                     });
                 });
             });
@@ -850,10 +856,6 @@ impl eframe::App for VibeEmuApp {
 
         if self.show_watchpoints {
             self.draw_watchpoints_window(ctx);
-        }
-
-        if self.show_mobile_adapter {
-            self.draw_mobile_adapter_window(ctx);
         }
 
         if self.show_options {
@@ -914,6 +916,15 @@ impl VibeEmuApp {
                 .clicked()
             {
                 self.options_tab = OptionsTab::Emulation;
+            }
+            if ui
+                .selectable_label(
+                    self.options_tab == OptionsTab::MobileAdapter,
+                    "Mobile Adapter",
+                )
+                .clicked()
+            {
+                self.options_tab = OptionsTab::MobileAdapter;
             }
         });
 
@@ -1057,10 +1068,50 @@ impl VibeEmuApp {
                     }
                 });
             }
+            OptionsTab::MobileAdapter => {
+                ui.checkbox(&mut self.mobile_enabled, "Enable Mobile Adapter");
+
+                ui.add_enabled_ui(self.mobile_enabled, |ui| {
+                    ui.separator();
+                    ui.label("DNS Servers:");
+                    ui.horizontal(|ui| {
+                        ui.label("Primary:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.mobile_dns1)
+                                .desired_width(150.0)
+                                .hint_text("e.g. 8.8.8.8"),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Secondary:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.mobile_dns2)
+                                .desired_width(150.0)
+                                .hint_text("e.g. 8.8.4.4"),
+                        );
+                    });
+
+                    ui.separator();
+                    ui.label("Relay Server:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.mobile_relay)
+                            .desired_width(250.0)
+                            .hint_text("relay.example.com:port"),
+                    );
+
+                    ui.separator();
+                    ui.label("Note: Changes require ROM reload to take effect.");
+                });
+            }
         }
     }
 
     fn draw_debugger_window(&mut self, ctx: &egui::Context) {
+        // Use try_lock to avoid blocking the emulator thread during fast forward
+        if let Ok(mut gb) = self.gb.try_lock() {
+            self.debugger_snapshot = Some(UiSnapshot::from_gb(&mut gb, self.paused));
+        }
+
         ctx.show_viewport_immediate(
             *VIEWPORT_DEBUGGER,
             egui::ViewportBuilder::default()
@@ -1111,6 +1162,7 @@ impl VibeEmuApp {
                 && let Ok(mut gb) = self.gb.lock()
             {
                 gb.reset();
+                self._audio_stream = audio::start_stream(&mut gb.mmu.apu, true);
             }
         });
 
@@ -1147,45 +1199,44 @@ impl VibeEmuApp {
     }
 
     fn draw_registers_tab(&self, ui: &mut egui::Ui) {
-        if let Ok(mut gb) = self.gb.lock() {
-            let snapshot = UiSnapshot::from_gb(&mut gb, self.paused);
-            let cpu = &snapshot.cpu;
-            let ppu = &snapshot.ppu;
-            ui.columns(2, |columns| {
-                columns[0].heading("CPU Registers");
-                let af = ((cpu.a as u16) << 8) | (cpu.f as u16);
-                let bc = ((cpu.b as u16) << 8) | (cpu.c as u16);
-                let de = ((cpu.d as u16) << 8) | (cpu.e as u16);
-                let hl = ((cpu.h as u16) << 8) | (cpu.l as u16);
-                columns[0].monospace(format!("AF: {:04X}  (A={:02X} F={:02X})", af, cpu.a, cpu.f));
-                columns[0].monospace(format!("BC: {:04X}  (B={:02X} C={:02X})", bc, cpu.b, cpu.c));
-                columns[0].monospace(format!("DE: {:04X}  (D={:02X} E={:02X})", de, cpu.d, cpu.e));
-                columns[0].monospace(format!("HL: {:04X}  (H={:02X} L={:02X})", hl, cpu.h, cpu.l));
-                columns[0].monospace(format!("SP: {:04X}", cpu.sp));
-                columns[0].monospace(format!("PC: {:04X}", cpu.pc));
-                columns[0].add_space(8.0);
-                columns[0].monospace(format!(
-                    "Flags: {}{}{}{}",
-                    if cpu.f & 0x80 != 0 { "Z" } else { "-" },
-                    if cpu.f & 0x40 != 0 { "N" } else { "-" },
-                    if cpu.f & 0x20 != 0 { "H" } else { "-" },
-                    if cpu.f & 0x10 != 0 { "C" } else { "-" },
-                ));
-                columns[0].monospace(format!("IME: {}", if cpu.ime { "1" } else { "0" }));
-                columns[0].monospace(format!("Cycles: {}", cpu.cycles));
-
-                columns[1].heading("I/O Registers");
-                columns[1].monospace(format!("LCDC: {:02X}", ppu.lcdc));
-                columns[1].monospace(format!("STAT: {:02X}", ppu.stat));
-                columns[1].monospace(format!("LY:   {:02X}", ppu.ly));
-                columns[1].monospace(format!("SCX:  {:02X}", ppu.scx));
-                columns[1].monospace(format!("SCY:  {:02X}", ppu.scy));
-                columns[1].monospace(format!("IF:   {:02X}", snapshot.debugger.if_reg));
-                columns[1].monospace(format!("IE:   {:02X}", snapshot.debugger.ie_reg));
-            });
-        } else {
+        let Some(snapshot) = &self.debugger_snapshot else {
             ui.label("Unable to access emulator state");
-        }
+            return;
+        };
+        let cpu = &snapshot.cpu;
+        let ppu = &snapshot.ppu;
+        ui.columns(2, |columns| {
+            columns[0].heading("CPU Registers");
+            let af = ((cpu.a as u16) << 8) | (cpu.f as u16);
+            let bc = ((cpu.b as u16) << 8) | (cpu.c as u16);
+            let de = ((cpu.d as u16) << 8) | (cpu.e as u16);
+            let hl = ((cpu.h as u16) << 8) | (cpu.l as u16);
+            columns[0].monospace(format!("AF: {:04X}  (A={:02X} F={:02X})", af, cpu.a, cpu.f));
+            columns[0].monospace(format!("BC: {:04X}  (B={:02X} C={:02X})", bc, cpu.b, cpu.c));
+            columns[0].monospace(format!("DE: {:04X}  (D={:02X} E={:02X})", de, cpu.d, cpu.e));
+            columns[0].monospace(format!("HL: {:04X}  (H={:02X} L={:02X})", hl, cpu.h, cpu.l));
+            columns[0].monospace(format!("SP: {:04X}", cpu.sp));
+            columns[0].monospace(format!("PC: {:04X}", cpu.pc));
+            columns[0].add_space(8.0);
+            columns[0].monospace(format!(
+                "Flags: {}{}{}{}",
+                if cpu.f & 0x80 != 0 { "Z" } else { "-" },
+                if cpu.f & 0x40 != 0 { "N" } else { "-" },
+                if cpu.f & 0x20 != 0 { "H" } else { "-" },
+                if cpu.f & 0x10 != 0 { "C" } else { "-" },
+            ));
+            columns[0].monospace(format!("IME: {}", if cpu.ime { "1" } else { "0" }));
+            columns[0].monospace(format!("Cycles: {}", cpu.cycles));
+
+            columns[1].heading("I/O Registers");
+            columns[1].monospace(format!("LCDC: {:02X}", ppu.lcdc));
+            columns[1].monospace(format!("STAT: {:02X}", ppu.stat));
+            columns[1].monospace(format!("LY:   {:02X}", ppu.ly));
+            columns[1].monospace(format!("SCX:  {:02X}", ppu.scx));
+            columns[1].monospace(format!("SCY:  {:02X}", ppu.scy));
+            columns[1].monospace(format!("IF:   {:02X}", snapshot.debugger.if_reg));
+            columns[1].monospace(format!("IE:   {:02X}", snapshot.debugger.ie_reg));
+        });
     }
 
     fn draw_disassembly_tab(&mut self, ui: &mut egui::Ui) {
@@ -1211,146 +1262,156 @@ impl VibeEmuApp {
         });
         ui.separator();
 
-        if let Ok(mut gb) = self.gb.lock() {
-            let pc = gb.cpu.pc;
+        let Some(snapshot) = &self.debugger_snapshot else {
+            ui.label("Unable to access emulator state");
+            return;
+        };
+        let pc = snapshot.cpu.pc;
+        let dbg = &snapshot.debugger;
 
-            ui.label(format!("PC = ${pc:04X}"));
-            ui.separator();
+        ui.label(format!("PC = ${pc:04X}"));
+        ui.separator();
 
-            // If goto was requested, use that address as the center; otherwise use PC
-            let center_addr = goto_target.unwrap_or(pc);
-            let start_addr = center_addr.saturating_sub(0x20);
-            let mut mem = [0u8; 0x80];
-            for (i, b) in mem.iter_mut().enumerate() {
-                *b = gb.mmu.read_byte(start_addr.wrapping_add(i as u16));
-            }
+        // If goto was requested, use that address as the center; otherwise use PC
+        let center_addr = goto_target.unwrap_or(pc);
+        let start_addr = center_addr.saturating_sub(0x20);
 
-            let mut bp_toggle: Option<u16> = None;
+        // Get memory from snapshot's mem_image if available, otherwise use disassembly_bytes
+        let mem: Vec<u8> = if let Some(mem_image) = &dbg.mem_image {
+            (0..0x80)
+                .map(|i| mem_image[start_addr.wrapping_add(i) as usize])
+                .collect()
+        } else {
+            let base = dbg.disassembly_base;
+            (0..0x80)
+                .map(|i| {
+                    let addr = start_addr.wrapping_add(i);
+                    let offset = addr.wrapping_sub(base) as usize;
+                    dbg.disassembly_bytes.get(offset).copied().unwrap_or(0)
+                })
+                .collect()
+        };
 
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    egui::Grid::new("disasm_grid")
-                        .num_columns(4)
-                        .spacing([12.0, 2.0])
-                        .striped(true)
-                        .show(ui, |ui| {
-                            ui.strong("BP");
-                            ui.strong("Addr");
-                            ui.strong("Bytes");
-                            ui.strong("Instruction");
+        let mut bp_toggle: Option<u16> = None;
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Grid::new("disasm_grid")
+                    .num_columns(4)
+                    .spacing([12.0, 2.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.strong("BP");
+                        ui.strong("Addr");
+                        ui.strong("Bytes");
+                        ui.strong("Instruction");
+                        ui.end_row();
+
+                        let mut addr = start_addr;
+                        while addr < start_addr.wrapping_add(0x60) {
+                            let rel_addr = addr.wrapping_sub(start_addr) as usize;
+                            if rel_addr >= mem.len() {
+                                break;
+                            }
+
+                            let (mnemonic, len) = ui::disasm::decode_sm83(&mem[rel_addr..], addr);
+                            let bytes = ui::disasm::format_bytes(&mem[rel_addr..], 0, len);
+
+                            let has_bp = self.breakpoints.contains(&addr);
+                            let bp_symbol = if has_bp { "●" } else { "○" };
+                            let bp_color = if has_bp {
+                                egui::Color32::RED
+                            } else {
+                                egui::Color32::GRAY
+                            };
+
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(bp_symbol).color(bp_color),
+                                    )
+                                    .frame(false)
+                                    .min_size(egui::vec2(16.0, 0.0)),
+                                )
+                                .clicked()
+                            {
+                                bp_toggle = Some(addr);
+                            }
+
+                            let is_pc = addr == pc;
+                            let addr_text = format!("{:04X}", addr);
+
+                            if is_pc {
+                                ui.colored_label(egui::Color32::YELLOW, &addr_text);
+                                ui.colored_label(egui::Color32::YELLOW, &bytes);
+                                ui.colored_label(egui::Color32::YELLOW, &mnemonic);
+                            } else {
+                                ui.monospace(&addr_text);
+                                ui.monospace(&bytes);
+                                ui.monospace(&mnemonic);
+                            }
                             ui.end_row();
 
-                            let mut addr = start_addr;
-                            while addr < start_addr.wrapping_add(0x60) {
-                                let rel_addr = addr.wrapping_sub(start_addr) as usize;
-                                if rel_addr >= mem.len() {
-                                    break;
-                                }
+                            addr = addr.wrapping_add(len);
+                        }
+                    });
+            });
 
-                                let (mnemonic, len) =
-                                    ui::disasm::decode_sm83(&mem[rel_addr..], addr);
-                                let bytes = ui::disasm::format_bytes(&mem[rel_addr..], 0, len);
-
-                                let has_bp = self.breakpoints.contains(&addr);
-                                let bp_symbol = if has_bp { "●" } else { "○" };
-                                let bp_color = if has_bp {
-                                    egui::Color32::RED
-                                } else {
-                                    egui::Color32::GRAY
-                                };
-
-                                if ui
-                                    .add(
-                                        egui::Button::new(
-                                            egui::RichText::new(bp_symbol).color(bp_color),
-                                        )
-                                        .frame(false)
-                                        .min_size(egui::vec2(16.0, 0.0)),
-                                    )
-                                    .clicked()
-                                {
-                                    bp_toggle = Some(addr);
-                                }
-
-                                let is_pc = addr == pc;
-                                let addr_text = format!("{:04X}", addr);
-
-                                if is_pc {
-                                    ui.colored_label(egui::Color32::YELLOW, &addr_text);
-                                    ui.colored_label(egui::Color32::YELLOW, &bytes);
-                                    ui.colored_label(egui::Color32::YELLOW, &mnemonic);
-                                } else {
-                                    ui.monospace(&addr_text);
-                                    ui.monospace(&bytes);
-                                    ui.monospace(&mnemonic);
-                                }
-                                ui.end_row();
-
-                                addr = addr.wrapping_add(len);
-                            }
-                        });
-                });
-
-            if let Some(addr) = bp_toggle {
-                if self.breakpoints.contains(&addr) {
-                    self.breakpoints.remove(&addr);
-                } else {
-                    self.breakpoints.insert(addr);
-                }
+        if let Some(addr) = bp_toggle {
+            if self.breakpoints.contains(&addr) {
+                self.breakpoints.remove(&addr);
+            } else {
+                self.breakpoints.insert(addr);
             }
-        } else {
-            ui.label("Unable to access emulator state");
         }
     }
 
     fn draw_memory_tab(&self, ui: &mut egui::Ui) {
-        if let Ok(mut gb) = self.gb.lock() {
-            ui.horizontal(|ui| {
-                ui.label("Memory hex view - showing first 256 bytes");
-            });
-            ui.separator();
+        let Some(snapshot) = &self.debugger_snapshot else {
+            ui.label("Unable to access emulator state");
+            return;
+        };
 
-            let mut mem_cache = [[0u8; 16]; 16];
-            for row in 0..16u16 {
-                for col in 0..16u16 {
-                    mem_cache[row as usize][col as usize] = gb.mmu.read_byte(row * 16 + col);
-                }
-            }
+        ui.horizontal(|ui| {
+            ui.label("Memory hex view - showing first 256 bytes");
+        });
+        ui.separator();
 
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.monospace("      ");
-                        for i in 0..16 {
-                            ui.monospace(format!("{:02X} ", i));
-                        }
-                    });
-                    ui.separator();
+        let mem_image = snapshot.debugger.mem_image.as_ref();
 
-                    for (row_idx, row_bytes) in mem_cache.iter().enumerate() {
-                        let addr = row_idx * 16;
-                        ui.horizontal(|ui| {
-                            ui.monospace(format!("{:04X}: ", addr));
-                            for byte in row_bytes {
-                                ui.monospace(format!("{:02X} ", byte));
-                            }
-                            ui.add_space(8.0);
-                            for byte in row_bytes {
-                                let ch = if byte.is_ascii_graphic() || *byte == b' ' {
-                                    *byte as char
-                                } else {
-                                    '.'
-                                };
-                                ui.monospace(format!("{}", ch));
-                            }
-                        });
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.monospace("      ");
+                    for i in 0..16 {
+                        ui.monospace(format!("{:02X} ", i));
                     }
                 });
-        } else {
-            ui.label("Unable to access emulator state");
-        }
+                ui.separator();
+
+                for row_idx in 0..16usize {
+                    let addr = row_idx * 16;
+                    ui.horizontal(|ui| {
+                        ui.monospace(format!("{:04X}: ", addr));
+                        for col in 0..16 {
+                            let byte = mem_image.map(|m| m[addr + col]).unwrap_or(0);
+                            ui.monospace(format!("{:02X} ", byte));
+                        }
+                        ui.add_space(8.0);
+                        for col in 0..16 {
+                            let byte = mem_image.map(|m| m[addr + col]).unwrap_or(0);
+                            let ch = if byte.is_ascii_graphic() || byte == b' ' {
+                                byte as char
+                            } else {
+                                '.'
+                            };
+                            ui.monospace(format!("{}", ch));
+                        }
+                    });
+                }
+            });
     }
 
     fn draw_watchpoints_window(&mut self, ctx: &egui::Context) {
@@ -1488,78 +1549,14 @@ impl VibeEmuApp {
         }
     }
 
-    fn draw_mobile_adapter_window(&mut self, ctx: &egui::Context) {
-        ctx.show_viewport_immediate(
-            *VIEWPORT_MOBILE_ADAPTER,
-            egui::ViewportBuilder::default()
-                .with_title("Mobile Adapter")
-                .with_inner_size([350.0, 200.0]),
-            |ctx, class| {
-                if ctx.input(|i| i.viewport().close_requested()) {
-                    self.show_mobile_adapter = false;
-                }
-
-                match class {
-                    egui::ViewportClass::Embedded => {
-                        egui::Window::new("Mobile Adapter").show(ctx, |ui| {
-                            self.draw_mobile_adapter_content(ui);
-                        });
-                    }
-                    _ => {
-                        egui::CentralPanel::default().show(ctx, |ui| {
-                            self.draw_mobile_adapter_content(ui);
-                        });
-                    }
-                }
-            },
-        );
-    }
-
-    fn draw_mobile_adapter_content(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Mobile Adapter Configuration");
-        ui.separator();
-
-        ui.checkbox(&mut self.mobile_enabled, "Enable Mobile Adapter");
-
-        ui.add_enabled_ui(self.mobile_enabled, |ui| {
-            ui.separator();
-            ui.label("DNS Servers:");
-            ui.horizontal(|ui| {
-                ui.label("Primary:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.mobile_dns1)
-                        .desired_width(150.0)
-                        .hint_text("e.g. 8.8.8.8"),
-                );
-            });
-            ui.horizontal(|ui| {
-                ui.label("Secondary:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.mobile_dns2)
-                        .desired_width(150.0)
-                        .hint_text("e.g. 8.8.4.4"),
-                );
-            });
-
-            ui.separator();
-            ui.label("Relay Server:");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.mobile_relay)
-                    .desired_width(250.0)
-                    .hint_text("relay.example.com:port"),
-            );
-
-            ui.separator();
-            ui.label("Note: Mobile Adapter changes require ROM reload to take effect.");
-        });
-    }
-
     fn draw_vram_viewer_window(&mut self, ctx: &egui::Context) {
-        let ppu_snapshot = if let Ok(mut gb) = self.gb.lock() {
-            Some(UiSnapshot::from_gb(&mut gb, self.paused).ppu)
-        } else {
-            None
-        };
+        // Use try_lock to avoid blocking the emulator thread during fast forward
+        if let Ok(mut gb) = self.gb.try_lock() {
+            self.cached_ppu_snapshot = Some(UiSnapshot::from_gb(&mut gb, self.paused).ppu);
+        }
+
+        // Clone so we can pass it into the closure without borrowing self
+        let ppu_snapshot = self.cached_ppu_snapshot.clone();
 
         ctx.show_viewport_immediate(
             *VIEWPORT_VRAM_VIEWER,

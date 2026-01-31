@@ -3911,7 +3911,6 @@ dependencies = [
  "cpal",
  "crossbeam-channel",
  "eframe",
- "egui-wgpu",
  "env_logger",
  "log",
  "png",
