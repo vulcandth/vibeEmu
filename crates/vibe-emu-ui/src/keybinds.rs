@@ -1,7 +1,29 @@
 use eframe::egui::Key;
-use log::warn;
+use log::{info, warn};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+pub fn default_keybinds_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            return PathBuf::from(appdata).join("vibeemu").join("keybinds.toml");
+        }
+    }
+
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        return PathBuf::from(xdg).join("vibeemu").join("keybinds.toml");
+    }
+
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join(".config")
+            .join("vibeemu")
+            .join("keybinds.toml");
+    }
+
+    PathBuf::from("keybinds.toml")
+}
 
 #[derive(Clone)]
 pub struct KeyBindings {
@@ -178,6 +200,97 @@ impl KeyBindings {
             crate::RebindTarget::FastForward => self.fast_forward = key,
             crate::RebindTarget::Quit => self.quit = key,
         }
+    }
+
+    pub fn save_to_file(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let mut lines = Vec::new();
+        lines.push("# vibeEmu keybinds configuration".to_string());
+        lines.push(String::new());
+
+        let joypad_names = [
+            (0x04, "up"),
+            (0x08, "down"),
+            (0x02, "left"),
+            (0x01, "right"),
+            (0x10, "a"),
+            (0x20, "b"),
+            (0x40, "select"),
+            (0x80, "start"),
+        ];
+
+        for (mask, name) in joypad_names {
+            if let Some(key) = self.key_for_joypad_mask(mask) {
+                lines.push(format!("{} = {}", name, key_to_string(key)));
+            }
+        }
+
+        lines.push(String::new());
+        lines.push(format!("pause = {}", key_to_string(self.pause)));
+        lines.push(format!(
+            "fast_forward = {}",
+            key_to_string(self.fast_forward)
+        ));
+        lines.push(format!("quit = {}", key_to_string(self.quit)));
+
+        let content = lines.join("\n");
+        std::fs::write(path, content)?;
+        info!("Saved keybinds to {}", path.display());
+        Ok(())
+    }
+}
+
+fn key_to_string(key: Key) -> String {
+    match key {
+        Key::ArrowUp => "Up".to_string(),
+        Key::ArrowDown => "Down".to_string(),
+        Key::ArrowLeft => "Left".to_string(),
+        Key::ArrowRight => "Right".to_string(),
+        Key::Enter => "Enter".to_string(),
+        Key::Escape => "Escape".to_string(),
+        Key::Space => "Space".to_string(),
+        Key::Tab => "Tab".to_string(),
+        Key::Backspace => "Backspace".to_string(),
+        Key::A => "A".to_string(),
+        Key::B => "B".to_string(),
+        Key::C => "C".to_string(),
+        Key::D => "D".to_string(),
+        Key::E => "E".to_string(),
+        Key::F => "F".to_string(),
+        Key::G => "G".to_string(),
+        Key::H => "H".to_string(),
+        Key::I => "I".to_string(),
+        Key::J => "J".to_string(),
+        Key::K => "K".to_string(),
+        Key::L => "L".to_string(),
+        Key::M => "M".to_string(),
+        Key::N => "N".to_string(),
+        Key::O => "O".to_string(),
+        Key::P => "P".to_string(),
+        Key::Q => "Q".to_string(),
+        Key::R => "R".to_string(),
+        Key::S => "S".to_string(),
+        Key::T => "T".to_string(),
+        Key::U => "U".to_string(),
+        Key::V => "V".to_string(),
+        Key::W => "W".to_string(),
+        Key::X => "X".to_string(),
+        Key::Y => "Y".to_string(),
+        Key::Z => "Z".to_string(),
+        Key::Num0 => "0".to_string(),
+        Key::Num1 => "1".to_string(),
+        Key::Num2 => "2".to_string(),
+        Key::Num3 => "3".to_string(),
+        Key::Num4 => "4".to_string(),
+        Key::Num5 => "5".to_string(),
+        Key::Num6 => "6".to_string(),
+        Key::Num7 => "7".to_string(),
+        Key::Num8 => "8".to_string(),
+        Key::Num9 => "9".to_string(),
+        other => format!("{other:?}"),
     }
 }
 

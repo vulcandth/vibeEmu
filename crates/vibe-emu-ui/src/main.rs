@@ -393,13 +393,26 @@ fn run_emulator_thread(
             continue;
         }
 
-        let now = Instant::now();
-        if now < next_frame {
-            std::thread::sleep(next_frame - now);
-        }
-
         let frame_duration = Duration::from_secs_f64(1.0 / (GB_FPS * speed.factor as f64));
-        next_frame = Instant::now() + frame_duration;
+
+        if !speed.fast {
+            let now = Instant::now();
+            if now < next_frame {
+                std::thread::sleep(next_frame - now);
+            }
+
+            // Advance next_frame by the frame duration, keeping a fixed schedule.
+            // Allow catching up from small delays (up to ~3 frames behind) naturally,
+            // only reset if we fall too far behind to prevent runaway catch-up.
+            next_frame += frame_duration;
+            let max_behind = frame_duration * 3;
+            if next_frame + max_behind < Instant::now() {
+                next_frame = Instant::now();
+            }
+        } else {
+            // Fast forward: run as fast as possible, reset timing when we exit fast mode
+            next_frame = Instant::now() + frame_duration;
+        }
 
         let mut frame_buf = frame_pool_rx
             .try_recv()
@@ -434,6 +447,7 @@ struct VibeEmuApp {
     paused: bool,
     current_rom_path: Option<std::path::PathBuf>,
     keybinds: KeyBindings,
+    keybinds_path: std::path::PathBuf,
     joypad_state: u8,
     fast_forward: bool,
 
@@ -491,6 +505,7 @@ impl VibeEmuApp {
         frame_pool_tx: cb::Sender<Vec<u32>>,
         rom_path: Option<std::path::PathBuf>,
         keybinds: KeyBindings,
+        keybinds_path: std::path::PathBuf,
         emulation_mode: EmulationMode,
     ) -> Self {
         let paused = rom_path.is_none();
@@ -515,6 +530,7 @@ impl VibeEmuApp {
             paused,
             current_rom_path: rom_path,
             keybinds,
+            keybinds_path,
             joypad_state: 0xFF,
             fast_forward: false,
             show_debugger: false,
@@ -552,6 +568,7 @@ impl VibeEmuApp {
 
     fn handle_input(&mut self, ctx: &egui::Context) {
         let mut new_state = 0xFFu8;
+        let mut new_fast_forward = false;
 
         ctx.input(|i| {
             for (action, key) in self.keybinds.iter() {
@@ -569,11 +586,21 @@ impl VibeEmuApp {
                     }
                 }
             }
+
+            new_fast_forward = i.key_down(self.keybinds.fast_forward_key());
         });
 
         if new_state != self.joypad_state {
             self.joypad_state = new_state;
             let _ = self.emu_tx.send(EmuCommand::UpdateInput(new_state));
+        }
+
+        if new_fast_forward != self.fast_forward {
+            self.fast_forward = new_fast_forward;
+            let _ = self.emu_tx.send(EmuCommand::SetSpeed(Speed {
+                factor: 1.0,
+                fast: self.fast_forward,
+            }));
         }
     }
 
@@ -590,7 +617,9 @@ impl VibeEmuApp {
 
         let elapsed = self.last_fps_update.elapsed();
         if elapsed >= Duration::from_secs(1) {
-            self.current_fps = self.frame_count_since_update as f64 / elapsed.as_secs_f64();
+            let instant_fps = self.frame_count_since_update as f64 / elapsed.as_secs_f64();
+            // Exponential moving average for smoother display
+            self.current_fps = self.current_fps * 0.7 + instant_fps * 0.3;
             self.frame_count_since_update = 0;
             self.last_fps_update = std::time::Instant::now();
         }
@@ -623,9 +652,8 @@ impl VibeEmuApp {
     }
 
     fn load_rom(&mut self, path: std::path::PathBuf) {
-        match std::fs::read(&path) {
-            Ok(rom_data) => {
-                let cart = Cartridge::load(rom_data);
+        match Cartridge::from_file(&path) {
+            Ok(cart) => {
                 let cgb_mode = match self.emulation_mode {
                     EmulationMode::ForceDmg => false,
                     EmulationMode::ForceCgb => true,
@@ -636,6 +664,7 @@ impl VibeEmuApp {
                     cart.title, cart.cgb, self.emulation_mode, cgb_mode
                 );
                 if let Ok(mut gb) = self.gb.lock() {
+                    gb.mmu.save_cart_ram();
                     *gb = GameBoy::new_with_mode(cgb_mode);
                     gb.mmu.load_cart(cart);
                     self._audio_stream = audio::start_stream(&mut gb.mmu.apu, true);
@@ -646,7 +675,7 @@ impl VibeEmuApp {
                 info!("ROM loaded successfully");
             }
             Err(e) => {
-                error!("Failed to read ROM file: {e}");
+                error!("Failed to load ROM: {e}");
             }
         }
     }
@@ -835,6 +864,13 @@ impl eframe::App for VibeEmuApp {
             ctx.request_repaint();
         }
     }
+
+    fn on_exit(&mut self) {
+        if let Ok(mut gb) = self.gb.lock() {
+            gb.mmu.save_cart_ram();
+        }
+        let _ = self.emu_tx.send(EmuCommand::Shutdown);
+    }
 }
 
 impl VibeEmuApp {
@@ -899,6 +935,9 @@ impl VibeEmuApp {
                         for key in i.keys_down.iter() {
                             if let Some(target) = self.rebinding {
                                 self.keybinds.rebind(target, *key);
+                                if let Err(e) = self.keybinds.save_to_file(&self.keybinds_path) {
+                                    log::warn!("Failed to save keybinds: {e}");
+                                }
                                 self.rebinding = None;
                                 break;
                             }
@@ -950,6 +989,16 @@ impl VibeEmuApp {
                             }
                             ui.end_row();
                         }
+
+                        ui.separator();
+                        ui.end_row();
+
+                        ui.label("Fast Forward");
+                        ui.label(format!("{:?}", self.keybinds.fast_forward_key()));
+                        if ui.button("Rebind").clicked() {
+                            self.rebinding = Some(RebindTarget::FastForward);
+                        }
+                        ui.end_row();
                     });
             }
             OptionsTab::Emulation => {
@@ -1631,15 +1680,19 @@ impl VibeEmuApp {
                     };
 
                     let bank = if cgb && attr & 0x08 != 0 { 1 } else { 0 };
+                    let x_flip = cgb && attr & 0x20 != 0;
+                    let y_flip = cgb && attr & 0x40 != 0;
                     let vram = ppu.vram_bank(bank);
                     if tile_addr + 16 > vram.len() {
                         continue;
                     }
                     for row in 0..TILE {
-                        let lo = vram[tile_addr + row * 2];
-                        let hi = vram[tile_addr + row * 2 + 1];
+                        let actual_row = if y_flip { 7 - row } else { row };
+                        let lo = vram[tile_addr + actual_row * 2];
+                        let hi = vram[tile_addr + actual_row * 2 + 1];
                         for col in 0..TILE {
-                            let bit = 7 - col;
+                            let actual_col = if x_flip { col } else { 7 - col };
+                            let bit = actual_col;
                             let idx = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
                             let color = if cgb {
                                 let pal = (attr & 0x07) as usize;
@@ -1692,17 +1745,84 @@ impl VibeEmuApp {
                 egui::Color32::WHITE,
             );
 
+            // Draw viewport rectangle(s) with wrapping support
             let scx = ppu.scx as f32;
             let scy = ppu.scy as f32;
-            let viewport_rect = egui::Rect::from_min_size(
-                rect.min + egui::vec2(scx * scale, scy * scale),
-                egui::vec2(160.0 * scale, 144.0 * scale),
-            );
-            painter.rect_stroke(
-                viewport_rect,
-                0.0,
-                egui::Stroke::new(1.0, egui::Color32::RED),
-            );
+            let vp_w = 160.0;
+            let vp_h = 144.0;
+            let map_size = 256.0;
+
+            let stroke = egui::Stroke::new(1.0, egui::Color32::RED);
+
+            // Calculate wrapped regions
+            let x_wraps = scx + vp_w > map_size;
+            let y_wraps = scy + vp_h > map_size;
+
+            if !x_wraps && !y_wraps {
+                // Simple case: no wrapping
+                let viewport_rect = egui::Rect::from_min_size(
+                    rect.min + egui::vec2(scx * scale, scy * scale),
+                    egui::vec2(vp_w * scale, vp_h * scale),
+                );
+                painter.rect_stroke(viewport_rect, 0.0, stroke);
+            } else {
+                // Draw up to 4 rectangles for wrapped viewport
+                let x1_start = scx;
+                let x1_end = if x_wraps { map_size } else { scx + vp_w };
+                let x1_w = x1_end - x1_start;
+
+                let x2_start = 0.0;
+                let x2_w = if x_wraps {
+                    (scx + vp_w) - map_size
+                } else {
+                    0.0
+                };
+
+                let y1_start = scy;
+                let y1_end = if y_wraps { map_size } else { scy + vp_h };
+                let y1_h = y1_end - y1_start;
+
+                let y2_start = 0.0;
+                let y2_h = if y_wraps {
+                    (scy + vp_h) - map_size
+                } else {
+                    0.0
+                };
+
+                // Top-left region (always present)
+                let r1 = egui::Rect::from_min_size(
+                    rect.min + egui::vec2(x1_start * scale, y1_start * scale),
+                    egui::vec2(x1_w * scale, y1_h * scale),
+                );
+                painter.rect_stroke(r1, 0.0, stroke);
+
+                // Top-right region (if x wraps)
+                if x_wraps {
+                    let r2 = egui::Rect::from_min_size(
+                        rect.min + egui::vec2(x2_start * scale, y1_start * scale),
+                        egui::vec2(x2_w * scale, y1_h * scale),
+                    );
+                    painter.rect_stroke(r2, 0.0, stroke);
+                }
+
+                // Bottom-left region (if y wraps)
+                if y_wraps {
+                    let r3 = egui::Rect::from_min_size(
+                        rect.min + egui::vec2(x1_start * scale, y2_start * scale),
+                        egui::vec2(x1_w * scale, y2_h * scale),
+                    );
+                    painter.rect_stroke(r3, 0.0, stroke);
+                }
+
+                // Bottom-right region (if both wrap)
+                if x_wraps && y_wraps {
+                    let r4 = egui::Rect::from_min_size(
+                        rect.min + egui::vec2(x2_start * scale, y2_start * scale),
+                        egui::vec2(x2_w * scale, y2_h * scale),
+                    );
+                    painter.rect_stroke(r4, 0.0, stroke);
+                }
+            }
         }
     }
 
@@ -2057,13 +2177,15 @@ fn main() {
         cgb_bootrom_path: None,
     };
 
-    let cart: Option<Cartridge> = rom_path.as_ref().and_then(|p| match std::fs::read(p) {
-        Ok(data) => Some(Cartridge::load(data)),
-        Err(e) => {
-            error!("Failed to read ROM: {e}");
-            None
-        }
-    });
+    let cart: Option<Cartridge> = rom_path
+        .as_ref()
+        .and_then(|p| match Cartridge::from_file(p) {
+            Ok(cart) => Some(cart),
+            Err(e) => {
+                error!("Failed to load ROM: {e}");
+                None
+            }
+        });
 
     if headless && cart.is_none() {
         error!("No ROM supplied (required for --headless)");
@@ -2094,13 +2216,17 @@ fn main() {
         return;
     }
 
-    let keybinds = KeyBindings::default();
+    let keybinds_path = args
+        .keybinds
+        .clone()
+        .unwrap_or_else(keybinds::default_keybinds_path);
+    let keybinds = KeyBindings::load_from_file(&keybinds_path);
     let gb = Arc::new(Mutex::new(gb));
 
     let (to_emu_tx, to_emu_rx) = mpsc::channel();
-    let (from_emu_frame_tx, from_emu_frame_rx) = cb::bounded(1);
-    let (frame_pool_tx, frame_pool_rx) = cb::bounded::<Vec<u32>>(2);
-    for _ in 0..2 {
+    let (from_emu_frame_tx, from_emu_frame_rx) = cb::bounded(3);
+    let (frame_pool_tx, frame_pool_rx) = cb::bounded::<Vec<u32>>(4);
+    for _ in 0..4 {
         let _ = frame_pool_tx.send(vec![0u32; 160 * 144]);
     }
 
@@ -2153,6 +2279,7 @@ fn main() {
                 frame_pool_tx_clone,
                 rom_path_clone,
                 keybinds,
+                keybinds_path,
                 emulation_mode,
             )))
         }),
