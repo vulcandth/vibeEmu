@@ -28,25 +28,25 @@ Migration checklist for replacing imgui/pixels with egui and upgrading wgpu per 
 - [x] Port main menu bar (File, Debug, Emulation, Options)
 - [x] Port ROM loading dialogs (integrated with `rfd`)
 - [ ] Port Mobile Adapter menu
-- [ ] Port keybind capture modal
+- [x] Port keybind capture modal
 - [ ] Port status bar / overlay rendering
 
 ## UI Widgets: Options Window
 
 - [x] Options window placeholder created
-- [ ] Port Keybinds tab with action-key mapping table
-- [ ] Port Emulation tab with bootrom path inputs and browse buttons
-- [ ] Port window size and scaler options
+- [x] Port Keybinds tab with action-key mapping table
+- [x] Port Emulation tab with bootrom path inputs and browse buttons
+- [x] Port window size and scaler options
 
 ## UI Widgets: Debugger Window
 
 - [x] Debugger window placeholder created
 - [ ] Port disassembly list view with virtual scrolling (replace `imgui::ListClipper`)
 - [ ] Port breakpoint markers and toggle UI
-- [ ] Port register/state display panels
+- [x] Port register/state display panels
 - [ ] Port memory hex view
 - [ ] Port symbol file loading and goto-address input
-- [ ] Port step/continue/pause toolbar
+- [x] Port step/continue/pause toolbar
 
 ## UI Widgets: VRAM Viewer Window
 
@@ -74,7 +74,7 @@ Migration checklist for replacing imgui/pixels with egui and upgrading wgpu per 
 - [x] Update window icon loading to use `eframe::IconData`
 - [x] Migrate keyboard/input handling from winit events to egui's input system
 - [x] Port keybinds.rs to use `egui::Key` instead of `winit::keyboard::KeyCode`
-- [ ] Preserve multi-window support (debugger, VRAM viewer, watchpoints, options)
+- [x] Preserve multi-window support (debugger, VRAM viewer, watchpoints, options)
 
 ## Testing
 

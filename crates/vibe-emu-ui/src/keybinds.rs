@@ -160,6 +160,25 @@ impl KeyBindings {
             .collect::<Vec<_>>()
             .into_iter()
     }
+
+    pub fn key_for_joypad_mask(&self, mask: u8) -> Option<Key> {
+        self.joypad
+            .iter()
+            .find(|&(_, &m)| m == mask)
+            .map(|(k, _)| *k)
+    }
+
+    pub fn rebind(&mut self, target: crate::RebindTarget, key: Key) {
+        match target {
+            crate::RebindTarget::Joypad(mask) => {
+                self.joypad.retain(|_, &mut m| m != mask);
+                self.joypad.insert(key, mask);
+            }
+            crate::RebindTarget::Pause => self.pause = key,
+            crate::RebindTarget::FastForward => self.fast_forward = key,
+            crate::RebindTarget::Quit => self.quit = key,
+        }
+    }
 }
 
 fn parse_key(raw: &str) -> Option<Key> {

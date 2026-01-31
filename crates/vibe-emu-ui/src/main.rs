@@ -259,6 +259,38 @@ enum EmuEvent {
     Frame { frame: Vec<u32>, frame_index: u64 },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RebindTarget {
+    Joypad(u8),
+    Pause,
+    FastForward,
+    Quit,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum OptionsTab {
+    #[default]
+    Keybinds,
+    Emulation,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum DebuggerTab {
+    #[default]
+    Registers,
+    Disassembly,
+    Memory,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum VramTab {
+    #[default]
+    BgMap,
+    Tiles,
+    Oam,
+    Palettes,
+}
+
 struct EmuThreadChannels {
     rx: mpsc::Receiver<EmuCommand>,
     frame_tx: cb::Sender<EmuEvent>,
@@ -355,6 +387,20 @@ struct VibeEmuApp {
     show_debugger: bool,
     show_vram_viewer: bool,
     show_options: bool,
+
+    // Options window state
+    dmg_bootrom_path: String,
+    cgb_bootrom_path: String,
+    selected_window_scale: usize,
+    rebinding: Option<RebindTarget>,
+    options_tab: OptionsTab,
+
+    // Debugger state
+    debugger_snapshot: Option<UiSnapshot>,
+    debugger_tab: DebuggerTab,
+
+    // VRAM Viewer state
+    vram_tab: VramTab,
 }
 
 impl VibeEmuApp {
@@ -387,6 +433,14 @@ impl VibeEmuApp {
             show_debugger: false,
             show_vram_viewer: false,
             show_options: false,
+            dmg_bootrom_path: String::new(),
+            cgb_bootrom_path: String::new(),
+            selected_window_scale: 1, // 2x
+            rebinding: None,
+            options_tab: OptionsTab::default(),
+            debugger_snapshot: None,
+            debugger_tab: DebuggerTab::default(),
+            vram_tab: VramTab::default(),
         }
     }
 
@@ -558,32 +612,277 @@ impl eframe::App for VibeEmuApp {
         });
 
         if self.show_debugger {
-            egui::Window::new("Debugger")
-                .open(&mut self.show_debugger)
-                .show(ctx, |ui| {
-                    ui.label("Debugger window (TODO: port from imgui)");
-                });
+            self.draw_debugger_window(ctx);
         }
 
         if self.show_vram_viewer {
-            egui::Window::new("VRAM Viewer")
-                .open(&mut self.show_vram_viewer)
-                .show(ctx, |ui| {
-                    ui.label("VRAM Viewer (TODO: port from imgui)");
-                });
+            self.draw_vram_viewer_window(ctx);
         }
 
         if self.show_options {
-            egui::Window::new("Options")
-                .open(&mut self.show_options)
-                .show(ctx, |ui| {
-                    ui.label("Options (TODO: port from imgui)");
-                });
+            self.draw_options_window(ctx);
         }
 
         if !self.paused {
             ctx.request_repaint();
         }
+    }
+}
+
+impl VibeEmuApp {
+    fn draw_options_window(&mut self, ctx: &egui::Context) {
+        let mut show = self.show_options;
+        egui::Window::new("Options")
+            .open(&mut show)
+            .default_size([400.0, 300.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(self.options_tab == OptionsTab::Keybinds, "Keybinds")
+                        .clicked()
+                    {
+                        self.options_tab = OptionsTab::Keybinds;
+                    }
+                    if ui
+                        .selectable_label(self.options_tab == OptionsTab::Emulation, "Emulation")
+                        .clicked()
+                    {
+                        self.options_tab = OptionsTab::Emulation;
+                    }
+                });
+
+                ui.separator();
+                ui.add_space(8.0);
+
+                match self.options_tab {
+                    OptionsTab::Keybinds => {
+                        if self.rebinding.is_some() {
+                            ui.horizontal(|ui| {
+                                ui.colored_label(egui::Color32::YELLOW, "Waiting for key...");
+                                if ui.button("Cancel").clicked() {
+                                    self.rebinding = None;
+                                }
+                            });
+                            ui.separator();
+
+                            ctx.input(|i| {
+                                for key in i.keys_down.iter() {
+                                    if let Some(target) = self.rebinding {
+                                        self.keybinds.rebind(target, *key);
+                                        self.rebinding = None;
+                                        break;
+                                    }
+                                }
+                            });
+                        }
+
+                        ui.label("Click Rebind, then press a key.");
+                        ui.add_space(4.0);
+
+                        egui::Grid::new("keybinds_grid")
+                            .num_columns(3)
+                            .spacing([20.0, 4.0])
+                            .show(ui, |ui| {
+                                let fmt_joy = |keybinds: &KeyBindings, mask: u8| -> String {
+                                    keybinds
+                                        .key_for_joypad_mask(mask)
+                                        .map(|k| format!("{k:?}"))
+                                        .unwrap_or_else(|| "<unbound>".to_string())
+                                };
+
+                                for (label, mask) in [
+                                    ("Up", 0x04u8),
+                                    ("Down", 0x08),
+                                    ("Left", 0x02),
+                                    ("Right", 0x01),
+                                ] {
+                                    ui.label(label);
+                                    ui.label(fmt_joy(&self.keybinds, mask));
+                                    if ui.button("Rebind").clicked() {
+                                        self.rebinding = Some(RebindTarget::Joypad(mask));
+                                    }
+                                    ui.end_row();
+                                }
+
+                                ui.separator();
+                                ui.end_row();
+
+                                for (label, mask) in [
+                                    ("A", 0x10u8),
+                                    ("B", 0x20),
+                                    ("Select", 0x40),
+                                    ("Start", 0x80),
+                                ] {
+                                    ui.label(label);
+                                    ui.label(fmt_joy(&self.keybinds, mask));
+                                    if ui.button("Rebind").clicked() {
+                                        self.rebinding = Some(RebindTarget::Joypad(mask));
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                    }
+                    OptionsTab::Emulation => {
+                        ui.horizontal(|ui| {
+                            ui.label("DMG Boot ROM:");
+                            ui.text_edit_singleline(&mut self.dmg_bootrom_path);
+                            if ui.button("Browse...").clicked()
+                                && let Some(path) = FileDialog::new().pick_file()
+                            {
+                                self.dmg_bootrom_path = path.to_string_lossy().to_string();
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("CGB Boot ROM:");
+                            ui.text_edit_singleline(&mut self.cgb_bootrom_path);
+                            if ui.button("Browse...").clicked()
+                                && let Some(path) = FileDialog::new().pick_file()
+                            {
+                                self.cgb_bootrom_path = path.to_string_lossy().to_string();
+                            }
+                        });
+
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.label("Window Scale:");
+                            egui::ComboBox::from_id_salt("window_scale")
+                                .selected_text(match self.selected_window_scale {
+                                    0 => "1x",
+                                    1 => "2x",
+                                    2 => "3x",
+                                    3 => "4x",
+                                    4 => "5x",
+                                    5 => "6x",
+                                    _ => "2x",
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.selected_window_scale, 0, "1x");
+                                    ui.selectable_value(&mut self.selected_window_scale, 1, "2x");
+                                    ui.selectable_value(&mut self.selected_window_scale, 2, "3x");
+                                    ui.selectable_value(&mut self.selected_window_scale, 3, "4x");
+                                    ui.selectable_value(&mut self.selected_window_scale, 4, "5x");
+                                    ui.selectable_value(&mut self.selected_window_scale, 5, "6x");
+                                });
+                        });
+                    }
+                }
+            });
+        self.show_options = show;
+    }
+
+    fn draw_debugger_window(&mut self, ctx: &egui::Context) {
+        let mut show = self.show_debugger;
+        egui::Window::new("Debugger")
+            .open(&mut show)
+            .default_size([600.0, 400.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(if self.paused {
+                            "▶ Resume"
+                        } else {
+                            "⏸ Pause"
+                        })
+                        .clicked()
+                    {
+                        self.paused = !self.paused;
+                        let _ = self.emu_tx.send(EmuCommand::SetPaused(self.paused));
+                    }
+                    if ui.button("⏭ Step").clicked() && self.paused {
+                        // TODO: implement single step
+                    }
+                    if ui.button("🔄 Reset").clicked()
+                        && let Ok(mut gb) = self.gb.lock()
+                    {
+                        gb.reset();
+                    }
+                });
+
+                ui.separator();
+
+                ui.columns(2, |columns| {
+                    columns[0].heading("Registers");
+                    if let Ok(gb) = self.gb.lock() {
+                        let cpu = &gb.cpu;
+                        let af = ((cpu.a as u16) << 8) | (cpu.f as u16);
+                        let bc = ((cpu.b as u16) << 8) | (cpu.c as u16);
+                        let de = ((cpu.d as u16) << 8) | (cpu.e as u16);
+                        let hl = ((cpu.h as u16) << 8) | (cpu.l as u16);
+                        columns[0].monospace(format!("AF: {:04X}", af));
+                        columns[0].monospace(format!("BC: {:04X}", bc));
+                        columns[0].monospace(format!("DE: {:04X}", de));
+                        columns[0].monospace(format!("HL: {:04X}", hl));
+                        columns[0].monospace(format!("SP: {:04X}", cpu.sp));
+                        columns[0].monospace(format!("PC: {:04X}", cpu.pc));
+                        columns[0].add_space(8.0);
+                        columns[0].monospace(format!(
+                            "Flags: {}{}{}{}",
+                            if cpu.f & 0x80 != 0 { "Z" } else { "-" },
+                            if cpu.f & 0x40 != 0 { "N" } else { "-" },
+                            if cpu.f & 0x20 != 0 { "H" } else { "-" },
+                            if cpu.f & 0x10 != 0 { "C" } else { "-" },
+                        ));
+                    }
+
+                    columns[1].heading("Disassembly");
+                    columns[1].label("(Disassembly view - TODO)");
+                });
+            });
+        self.show_debugger = show;
+    }
+
+    fn draw_vram_viewer_window(&mut self, ctx: &egui::Context) {
+        let mut show = self.show_vram_viewer;
+        egui::Window::new("VRAM Viewer")
+            .open(&mut show)
+            .default_size([500.0, 400.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(self.vram_tab == VramTab::BgMap, "BG Map")
+                        .clicked()
+                    {
+                        self.vram_tab = VramTab::BgMap;
+                    }
+                    if ui
+                        .selectable_label(self.vram_tab == VramTab::Tiles, "Tiles")
+                        .clicked()
+                    {
+                        self.vram_tab = VramTab::Tiles;
+                    }
+                    if ui
+                        .selectable_label(self.vram_tab == VramTab::Oam, "OAM")
+                        .clicked()
+                    {
+                        self.vram_tab = VramTab::Oam;
+                    }
+                    if ui
+                        .selectable_label(self.vram_tab == VramTab::Palettes, "Palettes")
+                        .clicked()
+                    {
+                        self.vram_tab = VramTab::Palettes;
+                    }
+                });
+
+                ui.separator();
+
+                match self.vram_tab {
+                    VramTab::BgMap => {
+                        ui.label("Background Map - TODO: render tilemap as texture");
+                    }
+                    VramTab::Tiles => {
+                        ui.label("Tile Data - TODO: render tiles grid as texture");
+                    }
+                    VramTab::Oam => {
+                        ui.label("OAM Sprites - TODO: show sprite table");
+                    }
+                    VramTab::Palettes => {
+                        ui.label("Color Palettes - TODO: show palette swatches");
+                    }
+                }
+            });
+        self.show_vram_viewer = show;
     }
 }
 
