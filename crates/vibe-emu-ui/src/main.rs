@@ -291,6 +291,42 @@ enum VramTab {
     Palettes,
 }
 
+struct VramViewerState {
+    bg_map_tex: Option<egui::TextureHandle>,
+    bg_map_buf: Vec<u8>,
+    tiles_tex: Option<egui::TextureHandle>,
+    tiles_buf: Vec<u8>,
+    tiles_banks: u8,
+    oam_sprite_textures: Vec<Option<egui::TextureHandle>>,
+    oam_sprite_bufs: Vec<Vec<u8>>,
+    oam_selected: usize,
+    oam_sprite_h: u8,
+    palette_sel_is_bg: bool,
+    palette_sel_pal: u8,
+    palette_sel_col: u8,
+    last_frame: u64,
+}
+
+impl Default for VramViewerState {
+    fn default() -> Self {
+        Self {
+            bg_map_tex: None,
+            bg_map_buf: vec![0; 256 * 256 * 4],
+            tiles_tex: None,
+            tiles_buf: vec![0; 256 * 192 * 4],
+            tiles_banks: 1,
+            oam_sprite_textures: vec![None; 40],
+            oam_sprite_bufs: (0..40).map(|_| vec![0u8; 8 * 16 * 4]).collect(),
+            oam_selected: 0,
+            oam_sprite_h: 8,
+            palette_sel_is_bg: true,
+            palette_sel_pal: 0,
+            palette_sel_col: 0,
+            last_frame: 0,
+        }
+    }
+}
+
 struct EmuThreadChannels {
     rx: mpsc::Receiver<EmuCommand>,
     frame_tx: cb::Sender<EmuEvent>,
@@ -375,6 +411,7 @@ struct VibeEmuApp {
     emu_tx: mpsc::Sender<EmuCommand>,
     frame_rx: cb::Receiver<EmuEvent>,
     frame_pool_tx: cb::Sender<Vec<u32>>,
+    _audio_stream: Option<cpal::Stream>,
 
     framebuffer: Vec<u32>,
     texture: Option<egui::TextureHandle>,
@@ -389,6 +426,7 @@ struct VibeEmuApp {
     show_options: bool,
 
     // Options window state
+    emulation_mode: EmulationMode,
     dmg_bootrom_path: String,
     cgb_bootrom_path: String,
     selected_window_scale: usize,
@@ -398,12 +436,37 @@ struct VibeEmuApp {
     // Debugger state
     debugger_snapshot: Option<UiSnapshot>,
     debugger_tab: DebuggerTab,
+    breakpoints: std::collections::BTreeSet<u16>,
+    goto_address: String,
 
     // VRAM Viewer state
     vram_tab: VramTab,
+    vram_viewer: VramViewerState,
+
+    // Watchpoints window state
+    show_watchpoints: bool,
+    watchpoints: Vec<vibe_emu_core::watchpoints::Watchpoint>,
+    next_watchpoint_id: u32,
+    wp_edit_start_addr: String,
+    wp_edit_end_addr: String,
+    wp_edit_on_read: bool,
+    wp_edit_on_write: bool,
+
+    // Mobile Adapter state
+    show_mobile_adapter: bool,
+    mobile_enabled: bool,
+    mobile_dns1: String,
+    mobile_dns2: String,
+    mobile_relay: String,
+
+    // Status bar state
+    last_fps_update: std::time::Instant,
+    frame_count_since_update: u64,
+    current_fps: f64,
 }
 
 impl VibeEmuApp {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         _cc: &eframe::CreationContext<'_>,
         gb: Arc<Mutex<GameBoy>>,
@@ -412,17 +475,25 @@ impl VibeEmuApp {
         frame_pool_tx: cb::Sender<Vec<u32>>,
         rom_path: Option<std::path::PathBuf>,
         keybinds: KeyBindings,
+        emulation_mode: EmulationMode,
     ) -> Self {
         let paused = rom_path.is_none();
         if paused {
             let _ = emu_tx.send(EmuCommand::SetPaused(true));
         }
 
+        let audio_stream = if let Ok(mut gb_lock) = gb.lock() {
+            audio::start_stream(&mut gb_lock.mmu.apu, true)
+        } else {
+            None
+        };
+
         Self {
             gb,
             emu_tx,
             frame_rx,
             frame_pool_tx,
+            _audio_stream: audio_stream,
             framebuffer: vec![0u32; 160 * 144],
             texture: None,
             paused,
@@ -433,6 +504,7 @@ impl VibeEmuApp {
             show_debugger: false,
             show_vram_viewer: false,
             show_options: false,
+            emulation_mode,
             dmg_bootrom_path: String::new(),
             cgb_bootrom_path: String::new(),
             selected_window_scale: 1, // 2x
@@ -440,7 +512,25 @@ impl VibeEmuApp {
             options_tab: OptionsTab::default(),
             debugger_snapshot: None,
             debugger_tab: DebuggerTab::default(),
+            breakpoints: std::collections::BTreeSet::new(),
+            goto_address: String::new(),
             vram_tab: VramTab::default(),
+            vram_viewer: VramViewerState::default(),
+            show_watchpoints: false,
+            watchpoints: Vec::new(),
+            next_watchpoint_id: 1,
+            wp_edit_start_addr: String::new(),
+            wp_edit_end_addr: String::new(),
+            wp_edit_on_read: true,
+            wp_edit_on_write: true,
+            show_mobile_adapter: false,
+            mobile_enabled: false,
+            mobile_dns1: String::new(),
+            mobile_dns2: String::new(),
+            mobile_relay: String::new(),
+            last_fps_update: std::time::Instant::now(),
+            frame_count_since_update: 0,
+            current_fps: 0.0,
         }
     }
 
@@ -451,14 +541,14 @@ impl VibeEmuApp {
             for (action, key) in self.keybinds.iter() {
                 if i.key_down(*key) {
                     match action.as_str() {
-                        "a" => new_state &= !0x01,
-                        "b" => new_state &= !0x02,
-                        "select" => new_state &= !0x04,
-                        "start" => new_state &= !0x08,
-                        "right" => new_state &= !0x10,
-                        "left" => new_state &= !0x20,
-                        "up" => new_state &= !0x40,
-                        "down" => new_state &= !0x80,
+                        "right" => new_state &= !0x01,
+                        "left" => new_state &= !0x02,
+                        "up" => new_state &= !0x04,
+                        "down" => new_state &= !0x08,
+                        "a" => new_state &= !0x10,
+                        "b" => new_state &= !0x20,
+                        "select" => new_state &= !0x40,
+                        "start" => new_state &= !0x80,
                         _ => {}
                     }
                 }
@@ -479,6 +569,14 @@ impl VibeEmuApp {
             } = evt;
             std::mem::swap(&mut self.framebuffer, &mut frame);
             let _ = self.frame_pool_tx.try_send(frame);
+            self.frame_count_since_update += 1;
+        }
+
+        let elapsed = self.last_fps_update.elapsed();
+        if elapsed >= Duration::from_secs(1) {
+            self.current_fps = self.frame_count_since_update as f64 / elapsed.as_secs_f64();
+            self.frame_count_since_update = 0;
+            self.last_fps_update = std::time::Instant::now();
         }
     }
 
@@ -512,9 +610,19 @@ impl VibeEmuApp {
         match std::fs::read(&path) {
             Ok(rom_data) => {
                 let cart = Cartridge::load(rom_data);
+                let cgb_mode = match self.emulation_mode {
+                    EmulationMode::ForceDmg => false,
+                    EmulationMode::ForceCgb => true,
+                    EmulationMode::Auto => cart.cgb,
+                };
+                info!(
+                    "Loading ROM: {} (CGB header: {}, mode: {:?} → cgb_mode: {})",
+                    cart.title, cart.cgb, self.emulation_mode, cgb_mode
+                );
                 if let Ok(mut gb) = self.gb.lock() {
+                    *gb = GameBoy::new_with_mode(cgb_mode);
                     gb.mmu.load_cart(cart);
-                    gb.reset();
+                    self._audio_stream = audio::start_stream(&mut gb.mmu.apu, true);
                 }
                 self.current_rom_path = Some(path);
                 self.paused = false;
@@ -568,6 +676,39 @@ impl eframe::App for VibeEmuApp {
                         }
                         ui.close_menu();
                     }
+                    ui.separator();
+                    ui.menu_button("Mode", |ui| {
+                        if ui
+                            .radio_value(
+                                &mut self.emulation_mode,
+                                EmulationMode::Auto,
+                                "Auto (detect from ROM)",
+                            )
+                            .clicked()
+                        {
+                            ui.close_menu();
+                        }
+                        if ui
+                            .radio_value(
+                                &mut self.emulation_mode,
+                                EmulationMode::ForceDmg,
+                                "Force DMG",
+                            )
+                            .clicked()
+                        {
+                            ui.close_menu();
+                        }
+                        if ui
+                            .radio_value(
+                                &mut self.emulation_mode,
+                                EmulationMode::ForceCgb,
+                                "Force CGB",
+                            )
+                            .clicked()
+                        {
+                            ui.close_menu();
+                        }
+                    });
                 });
 
                 ui.menu_button("Debug", |ui| {
@@ -577,6 +718,15 @@ impl eframe::App for VibeEmuApp {
                     }
                     if ui.button("VRAM Viewer").clicked() {
                         self.show_vram_viewer = !self.show_vram_viewer;
+                        ui.close_menu();
+                    }
+                    if ui.button("Watchpoints").clicked() {
+                        self.show_watchpoints = !self.show_watchpoints;
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Mobile Adapter...").clicked() {
+                        self.show_mobile_adapter = !self.show_mobile_adapter;
                         ui.close_menu();
                     }
                 });
@@ -590,26 +740,60 @@ impl eframe::App for VibeEmuApp {
             });
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(tex) = &self.texture {
-                let available = ui.available_size();
-                let scale = (available.x / 160.0)
-                    .min(available.y / 144.0)
-                    .floor()
-                    .max(1.0);
-                let size = egui::vec2(160.0 * scale, 144.0 * scale);
-                let offset = (available - size) / 2.0;
-                let rect = egui::Rect::from_min_size(
-                    ui.min_rect().min + egui::vec2(offset.x, offset.y),
-                    size,
-                );
-                ui.put(rect, egui::Image::new(tex).fit_to_exact_size(size));
-            } else {
-                ui.centered_and_justified(|ui| {
-                    ui.label("No ROM loaded. Use File → Open ROM...");
+        // Status bar at the bottom
+        egui::TopBottomPanel::bottom("status_bar")
+            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(4.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    // ROM name
+                    if let Some(path) = &self.current_rom_path {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            ui.label(name);
+                        }
+                    } else {
+                        ui.label("No ROM");
+                    }
+
+                    ui.separator();
+
+                    // Emulation status
+                    if self.paused {
+                        ui.colored_label(egui::Color32::YELLOW, "⏸ Paused");
+                    } else if self.fast_forward {
+                        ui.colored_label(egui::Color32::GREEN, "⏩ Fast Forward");
+                    } else {
+                        ui.colored_label(egui::Color32::GREEN, "▶ Running");
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // FPS counter
+                        ui.label(format!("{:.1} FPS", self.current_fps));
+                    });
                 });
-            }
-        });
+            });
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none())
+            .show(ctx, |ui| {
+                if let Some(tex) = &self.texture {
+                    let available = ui.available_size();
+                    let scale = (available.x / 160.0)
+                        .min(available.y / 144.0)
+                        .floor()
+                        .max(1.0);
+                    let size = egui::vec2(160.0 * scale, 144.0 * scale);
+                    let offset = (available - size) / 2.0;
+                    let rect = egui::Rect::from_min_size(
+                        ui.min_rect().min + egui::vec2(offset.x, offset.y),
+                        size,
+                    );
+                    ui.put(rect, egui::Image::new(tex).fit_to_exact_size(size));
+                } else {
+                    ui.centered_and_justified(|ui| {
+                        ui.label("No ROM loaded. Use File → Open ROM...");
+                    });
+                }
+            });
 
         if self.show_debugger {
             self.draw_debugger_window(ctx);
@@ -617,6 +801,14 @@ impl eframe::App for VibeEmuApp {
 
         if self.show_vram_viewer {
             self.draw_vram_viewer_window(ctx);
+        }
+
+        if self.show_watchpoints {
+            self.draw_watchpoints_window(ctx);
+        }
+
+        if self.show_mobile_adapter {
+            self.draw_mobile_adapter_window(ctx);
         }
 
         if self.show_options {
@@ -775,7 +967,7 @@ impl VibeEmuApp {
         let mut show = self.show_debugger;
         egui::Window::new("Debugger")
             .open(&mut show)
-            .default_size([600.0, 400.0])
+            .default_size([700.0, 500.0])
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if ui
@@ -789,8 +981,12 @@ impl VibeEmuApp {
                         self.paused = !self.paused;
                         let _ = self.emu_tx.send(EmuCommand::SetPaused(self.paused));
                     }
-                    if ui.button("⏭ Step").clicked() && self.paused {
-                        // TODO: implement single step
+                    if ui.button("⏭ Step").clicked()
+                        && self.paused
+                        && let Ok(mut gb) = self.gb.lock()
+                    {
+                        let GameBoy { cpu, mmu, .. } = &mut *gb;
+                        cpu.step(mmu);
                     }
                     if ui.button("🔄 Reset").clicked()
                         && let Ok(mut gb) = self.gb.lock()
@@ -801,42 +997,420 @@ impl VibeEmuApp {
 
                 ui.separator();
 
-                ui.columns(2, |columns| {
-                    columns[0].heading("Registers");
-                    if let Ok(gb) = self.gb.lock() {
-                        let cpu = &gb.cpu;
-                        let af = ((cpu.a as u16) << 8) | (cpu.f as u16);
-                        let bc = ((cpu.b as u16) << 8) | (cpu.c as u16);
-                        let de = ((cpu.d as u16) << 8) | (cpu.e as u16);
-                        let hl = ((cpu.h as u16) << 8) | (cpu.l as u16);
-                        columns[0].monospace(format!("AF: {:04X}", af));
-                        columns[0].monospace(format!("BC: {:04X}", bc));
-                        columns[0].monospace(format!("DE: {:04X}", de));
-                        columns[0].monospace(format!("HL: {:04X}", hl));
-                        columns[0].monospace(format!("SP: {:04X}", cpu.sp));
-                        columns[0].monospace(format!("PC: {:04X}", cpu.pc));
-                        columns[0].add_space(8.0);
-                        columns[0].monospace(format!(
-                            "Flags: {}{}{}{}",
-                            if cpu.f & 0x80 != 0 { "Z" } else { "-" },
-                            if cpu.f & 0x40 != 0 { "N" } else { "-" },
-                            if cpu.f & 0x20 != 0 { "H" } else { "-" },
-                            if cpu.f & 0x10 != 0 { "C" } else { "-" },
-                        ));
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(self.debugger_tab == DebuggerTab::Registers, "Registers")
+                        .clicked()
+                    {
+                        self.debugger_tab = DebuggerTab::Registers;
                     }
-
-                    columns[1].heading("Disassembly");
-                    columns[1].label("(Disassembly view - TODO)");
+                    if ui
+                        .selectable_label(
+                            self.debugger_tab == DebuggerTab::Disassembly,
+                            "Disassembly",
+                        )
+                        .clicked()
+                    {
+                        self.debugger_tab = DebuggerTab::Disassembly;
+                    }
+                    if ui
+                        .selectable_label(self.debugger_tab == DebuggerTab::Memory, "Memory")
+                        .clicked()
+                    {
+                        self.debugger_tab = DebuggerTab::Memory;
+                    }
                 });
+
+                ui.separator();
+
+                match self.debugger_tab {
+                    DebuggerTab::Registers => self.draw_registers_tab(ui),
+                    DebuggerTab::Disassembly => self.draw_disassembly_tab(ui),
+                    DebuggerTab::Memory => self.draw_memory_tab(ui),
+                }
             });
         self.show_debugger = show;
     }
 
+    fn draw_registers_tab(&self, ui: &mut egui::Ui) {
+        if let Ok(mut gb) = self.gb.lock() {
+            let snapshot = UiSnapshot::from_gb(&mut gb, self.paused);
+            let cpu = &snapshot.cpu;
+            let ppu = &snapshot.ppu;
+            ui.columns(2, |columns| {
+                columns[0].heading("CPU Registers");
+                let af = ((cpu.a as u16) << 8) | (cpu.f as u16);
+                let bc = ((cpu.b as u16) << 8) | (cpu.c as u16);
+                let de = ((cpu.d as u16) << 8) | (cpu.e as u16);
+                let hl = ((cpu.h as u16) << 8) | (cpu.l as u16);
+                columns[0].monospace(format!("AF: {:04X}  (A={:02X} F={:02X})", af, cpu.a, cpu.f));
+                columns[0].monospace(format!("BC: {:04X}  (B={:02X} C={:02X})", bc, cpu.b, cpu.c));
+                columns[0].monospace(format!("DE: {:04X}  (D={:02X} E={:02X})", de, cpu.d, cpu.e));
+                columns[0].monospace(format!("HL: {:04X}  (H={:02X} L={:02X})", hl, cpu.h, cpu.l));
+                columns[0].monospace(format!("SP: {:04X}", cpu.sp));
+                columns[0].monospace(format!("PC: {:04X}", cpu.pc));
+                columns[0].add_space(8.0);
+                columns[0].monospace(format!(
+                    "Flags: {}{}{}{}",
+                    if cpu.f & 0x80 != 0 { "Z" } else { "-" },
+                    if cpu.f & 0x40 != 0 { "N" } else { "-" },
+                    if cpu.f & 0x20 != 0 { "H" } else { "-" },
+                    if cpu.f & 0x10 != 0 { "C" } else { "-" },
+                ));
+                columns[0].monospace(format!("IME: {}", if cpu.ime { "1" } else { "0" }));
+                columns[0].monospace(format!("Cycles: {}", cpu.cycles));
+
+                columns[1].heading("I/O Registers");
+                columns[1].monospace(format!("LCDC: {:02X}", ppu.lcdc));
+                columns[1].monospace(format!("STAT: {:02X}", ppu.stat));
+                columns[1].monospace(format!("LY:   {:02X}", ppu.ly));
+                columns[1].monospace(format!("SCX:  {:02X}", ppu.scx));
+                columns[1].monospace(format!("SCY:  {:02X}", ppu.scy));
+                columns[1].monospace(format!("IF:   {:02X}", snapshot.debugger.if_reg));
+                columns[1].monospace(format!("IE:   {:02X}", snapshot.debugger.ie_reg));
+            });
+        } else {
+            ui.label("Unable to access emulator state");
+        }
+    }
+
+    fn draw_disassembly_tab(&mut self, ui: &mut egui::Ui) {
+        // Handle goto-address input before locking gb
+        let mut goto_target: Option<u16> = None;
+        ui.horizontal(|ui| {
+            ui.label("Go to:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.goto_address)
+                    .desired_width(60.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+            if ui.button("Go").clicked() {
+                let addr_str = self.goto_address.trim();
+                let addr_str = addr_str
+                    .strip_prefix("$")
+                    .or_else(|| addr_str.strip_prefix("0x"))
+                    .unwrap_or(addr_str);
+                if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
+                    goto_target = Some(addr);
+                }
+            }
+        });
+        ui.separator();
+
+        if let Ok(mut gb) = self.gb.lock() {
+            let pc = gb.cpu.pc;
+
+            ui.label(format!("PC = ${pc:04X}"));
+            ui.separator();
+
+            // If goto was requested, use that address as the center; otherwise use PC
+            let center_addr = goto_target.unwrap_or(pc);
+            let start_addr = center_addr.saturating_sub(0x20);
+            let mut mem = [0u8; 0x80];
+            for (i, b) in mem.iter_mut().enumerate() {
+                *b = gb.mmu.read_byte(start_addr.wrapping_add(i as u16));
+            }
+
+            let mut bp_toggle: Option<u16> = None;
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::Grid::new("disasm_grid")
+                        .num_columns(4)
+                        .spacing([12.0, 2.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.strong("BP");
+                            ui.strong("Addr");
+                            ui.strong("Bytes");
+                            ui.strong("Instruction");
+                            ui.end_row();
+
+                            let mut addr = start_addr;
+                            while addr < start_addr.wrapping_add(0x60) {
+                                let rel_addr = addr.wrapping_sub(start_addr) as usize;
+                                if rel_addr >= mem.len() {
+                                    break;
+                                }
+
+                                let (mnemonic, len) =
+                                    ui::disasm::decode_sm83(&mem[rel_addr..], addr);
+                                let bytes = ui::disasm::format_bytes(&mem[rel_addr..], 0, len);
+
+                                let has_bp = self.breakpoints.contains(&addr);
+                                let bp_symbol = if has_bp { "●" } else { "○" };
+                                let bp_color = if has_bp {
+                                    egui::Color32::RED
+                                } else {
+                                    egui::Color32::GRAY
+                                };
+
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new(bp_symbol).color(bp_color),
+                                        )
+                                        .frame(false)
+                                        .min_size(egui::vec2(16.0, 0.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    bp_toggle = Some(addr);
+                                }
+
+                                let is_pc = addr == pc;
+                                let addr_text = format!("{:04X}", addr);
+
+                                if is_pc {
+                                    ui.colored_label(egui::Color32::YELLOW, &addr_text);
+                                    ui.colored_label(egui::Color32::YELLOW, &bytes);
+                                    ui.colored_label(egui::Color32::YELLOW, &mnemonic);
+                                } else {
+                                    ui.monospace(&addr_text);
+                                    ui.monospace(&bytes);
+                                    ui.monospace(&mnemonic);
+                                }
+                                ui.end_row();
+
+                                addr = addr.wrapping_add(len);
+                            }
+                        });
+                });
+
+            if let Some(addr) = bp_toggle {
+                if self.breakpoints.contains(&addr) {
+                    self.breakpoints.remove(&addr);
+                } else {
+                    self.breakpoints.insert(addr);
+                }
+            }
+        } else {
+            ui.label("Unable to access emulator state");
+        }
+    }
+
+    fn draw_memory_tab(&self, ui: &mut egui::Ui) {
+        if let Ok(mut gb) = self.gb.lock() {
+            ui.horizontal(|ui| {
+                ui.label("Memory hex view - showing first 256 bytes");
+            });
+            ui.separator();
+
+            let mut mem_cache = [[0u8; 16]; 16];
+            for row in 0..16u16 {
+                for col in 0..16u16 {
+                    mem_cache[row as usize][col as usize] = gb.mmu.read_byte(row * 16 + col);
+                }
+            }
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.monospace("      ");
+                        for i in 0..16 {
+                            ui.monospace(format!("{:02X} ", i));
+                        }
+                    });
+                    ui.separator();
+
+                    for (row_idx, row_bytes) in mem_cache.iter().enumerate() {
+                        let addr = row_idx * 16;
+                        ui.horizontal(|ui| {
+                            ui.monospace(format!("{:04X}: ", addr));
+                            for byte in row_bytes {
+                                ui.monospace(format!("{:02X} ", byte));
+                            }
+                            ui.add_space(8.0);
+                            for byte in row_bytes {
+                                let ch = if byte.is_ascii_graphic() || *byte == b' ' {
+                                    *byte as char
+                                } else {
+                                    '.'
+                                };
+                                ui.monospace(format!("{}", ch));
+                            }
+                        });
+                    }
+                });
+        } else {
+            ui.label("Unable to access emulator state");
+        }
+    }
+
+    fn draw_watchpoints_window(&mut self, ctx: &egui::Context) {
+        let mut show = self.show_watchpoints;
+        egui::Window::new("Watchpoints")
+            .open(&mut show)
+            .default_size([400.0, 300.0])
+            .show(ctx, |ui| {
+                ui.heading("Add Watchpoint");
+                ui.horizontal(|ui| {
+                    ui.label("Start:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.wp_edit_start_addr)
+                            .desired_width(60.0)
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    ui.label("End:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.wp_edit_end_addr)
+                            .desired_width(60.0)
+                            .font(egui::TextStyle::Monospace),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.wp_edit_on_read, "Read");
+                    ui.checkbox(&mut self.wp_edit_on_write, "Write");
+                    if ui.button("Add").clicked() {
+                        let start_str = self.wp_edit_start_addr.trim();
+                        let start_str = start_str
+                            .strip_prefix("$")
+                            .or_else(|| start_str.strip_prefix("0x"))
+                            .unwrap_or(start_str);
+                        let end_str = self.wp_edit_end_addr.trim();
+                        let end_str = end_str
+                            .strip_prefix("$")
+                            .or_else(|| end_str.strip_prefix("0x"))
+                            .unwrap_or(end_str);
+
+                        if let Ok(start) = u16::from_str_radix(start_str, 16) {
+                            let end = u16::from_str_radix(end_str, 16).unwrap_or(start);
+                            let wp = vibe_emu_core::watchpoints::Watchpoint {
+                                id: self.next_watchpoint_id,
+                                enabled: true,
+                                range: start..=end,
+                                on_read: self.wp_edit_on_read,
+                                on_write: self.wp_edit_on_write,
+                                on_execute: false,
+                                on_jump: false,
+                                value_match: None,
+                                message: None,
+                            };
+                            self.next_watchpoint_id += 1;
+                            self.watchpoints.push(wp);
+                            self.wp_edit_start_addr.clear();
+                            self.wp_edit_end_addr.clear();
+                        }
+                    }
+                });
+
+                ui.separator();
+                ui.heading("Active Watchpoints");
+
+                let mut to_remove: Option<usize> = None;
+                let mut to_toggle: Option<usize> = None;
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        egui::Grid::new("watchpoints_grid")
+                            .num_columns(5)
+                            .spacing([12.0, 4.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.strong("En");
+                                ui.strong("Range");
+                                ui.strong("R");
+                                ui.strong("W");
+                                ui.strong("");
+                                ui.end_row();
+
+                                for (i, wp) in self.watchpoints.iter().enumerate() {
+                                    let enabled_text = if wp.enabled { "✓" } else { "○" };
+                                    if ui.button(enabled_text).clicked() {
+                                        to_toggle = Some(i);
+                                    }
+
+                                    let start = *wp.range.start();
+                                    let end = *wp.range.end();
+                                    if start == end {
+                                        ui.monospace(format!("${:04X}", start));
+                                    } else {
+                                        ui.monospace(format!("${:04X}-${:04X}", start, end));
+                                    }
+
+                                    ui.monospace(if wp.on_read { "R" } else { "-" });
+                                    ui.monospace(if wp.on_write { "W" } else { "-" });
+
+                                    if ui.button("✕").clicked() {
+                                        to_remove = Some(i);
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                    });
+
+                if let Some(i) = to_toggle
+                    && let Some(wp) = self.watchpoints.get_mut(i)
+                {
+                    wp.enabled = !wp.enabled;
+                }
+                if let Some(i) = to_remove {
+                    self.watchpoints.remove(i);
+                }
+            });
+        self.show_watchpoints = show;
+    }
+
+    fn draw_mobile_adapter_window(&mut self, ctx: &egui::Context) {
+        let mut show = self.show_mobile_adapter;
+        egui::Window::new("Mobile Adapter")
+            .open(&mut show)
+            .default_size([350.0, 200.0])
+            .show(ctx, |ui| {
+                ui.heading("Mobile Adapter Configuration");
+                ui.separator();
+
+                ui.checkbox(&mut self.mobile_enabled, "Enable Mobile Adapter");
+
+                ui.add_enabled_ui(self.mobile_enabled, |ui| {
+                    ui.separator();
+                    ui.label("DNS Servers:");
+                    ui.horizontal(|ui| {
+                        ui.label("Primary:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.mobile_dns1)
+                                .desired_width(150.0)
+                                .hint_text("e.g. 8.8.8.8"),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Secondary:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.mobile_dns2)
+                                .desired_width(150.0)
+                                .hint_text("e.g. 8.8.4.4"),
+                        );
+                    });
+
+                    ui.separator();
+                    ui.label("Relay Server:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.mobile_relay)
+                            .desired_width(250.0)
+                            .hint_text("relay.example.com:port"),
+                    );
+
+                    ui.separator();
+                    ui.label("Note: Mobile Adapter changes require ROM reload to take effect.");
+                });
+            });
+        self.show_mobile_adapter = show;
+    }
+
     fn draw_vram_viewer_window(&mut self, ctx: &egui::Context) {
+        let ppu_snapshot = if let Ok(mut gb) = self.gb.lock() {
+            Some(UiSnapshot::from_gb(&mut gb, self.paused).ppu)
+        } else {
+            None
+        };
+
         let mut show = self.show_vram_viewer;
         egui::Window::new("VRAM Viewer")
             .open(&mut show)
-            .default_size([500.0, 400.0])
+            .default_size([520.0, 450.0])
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if ui
@@ -867,22 +1441,454 @@ impl VibeEmuApp {
 
                 ui.separator();
 
-                match self.vram_tab {
-                    VramTab::BgMap => {
-                        ui.label("Background Map - TODO: render tilemap as texture");
+                if let Some(ppu) = ppu_snapshot {
+                    match self.vram_tab {
+                        VramTab::BgMap => self.draw_bg_map_tab(ui, ctx, &ppu),
+                        VramTab::Tiles => self.draw_tiles_tab(ui, ctx, &ppu),
+                        VramTab::Oam => self.draw_oam_tab(ui, ctx, &ppu),
+                        VramTab::Palettes => self.draw_palettes_tab(ui, &ppu),
                     }
-                    VramTab::Tiles => {
-                        ui.label("Tile Data - TODO: render tiles grid as texture");
-                    }
-                    VramTab::Oam => {
-                        ui.label("OAM Sprites - TODO: show sprite table");
-                    }
-                    VramTab::Palettes => {
-                        ui.label("Color Palettes - TODO: show palette swatches");
-                    }
+                } else {
+                    ui.label("Unable to access emulator state");
                 }
             });
         self.show_vram_viewer = show;
+    }
+
+    fn draw_bg_map_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        ppu: &ui::snapshot::PpuSnapshot,
+    ) {
+        const DMG_COLORS: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
+        const MAP_W: usize = 32;
+        const MAP_H: usize = 32;
+        const TILE: usize = 8;
+        const IMG_W: usize = MAP_W * TILE;
+        const IMG_H: usize = MAP_H * TILE;
+
+        let frame = ppu.frame_counter;
+        if frame != self.vram_viewer.last_frame || self.vram_viewer.bg_map_tex.is_none() {
+            self.vram_viewer.last_frame = frame;
+            let rgba = &mut self.vram_viewer.bg_map_buf;
+            rgba.fill(0);
+
+            let lcdc = ppu.lcdc;
+            let map_base = if lcdc & 0x08 != 0 { 0x1C00 } else { 0x1800 };
+            let signed_mode = lcdc & 0x10 == 0;
+            let bgp = ppu.bgp;
+            let cgb = ppu.cgb;
+
+            for tile_y in 0..MAP_H {
+                for tile_x in 0..MAP_W {
+                    let tile_idx = ppu.vram0[map_base + tile_y * MAP_W + tile_x];
+                    let attr = if cgb {
+                        ppu.vram1[map_base + tile_y * MAP_W + tile_x]
+                    } else {
+                        0
+                    };
+                    let tile_num = if signed_mode {
+                        tile_idx as i8 as i16
+                    } else {
+                        tile_idx as i16
+                    };
+
+                    let tile_addr = if signed_mode {
+                        (0x1000i32 + (tile_num as i32) * 16) as usize
+                    } else {
+                        (tile_num as usize) * 16
+                    };
+
+                    let bank = if cgb && attr & 0x08 != 0 { 1 } else { 0 };
+                    let vram = ppu.vram_bank(bank);
+                    if tile_addr + 16 > vram.len() {
+                        continue;
+                    }
+                    for row in 0..TILE {
+                        let lo = vram[tile_addr + row * 2];
+                        let hi = vram[tile_addr + row * 2 + 1];
+                        for col in 0..TILE {
+                            let bit = 7 - col;
+                            let idx = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                            let color = if cgb {
+                                let pal = (attr & 0x07) as usize;
+                                ppu.cgb_bg_colors[pal][idx as usize]
+                            } else {
+                                let shade = (bgp >> (idx * 2)) & 0x03;
+                                DMG_COLORS[shade as usize]
+                            };
+                            let x = tile_x * TILE + col;
+                            let y = tile_y * TILE + row;
+                            let off = (y * IMG_W + x) * 4;
+                            rgba[off] = ((color >> 16) & 0xFF) as u8;
+                            rgba[off + 1] = ((color >> 8) & 0xFF) as u8;
+                            rgba[off + 2] = (color & 0xFF) as u8;
+                            rgba[off + 3] = 0xFF;
+                        }
+                    }
+                }
+            }
+
+            let pixels: Vec<egui::Color32> = rgba
+                .chunks_exact(4)
+                .map(|c| egui::Color32::from_rgb(c[0], c[1], c[2]))
+                .collect();
+            let image = egui::ColorImage {
+                size: [IMG_W, IMG_H],
+                pixels,
+            };
+            match &mut self.vram_viewer.bg_map_tex {
+                Some(tex) => tex.set(image, egui::TextureOptions::NEAREST),
+                None => {
+                    self.vram_viewer.bg_map_tex =
+                        Some(ctx.load_texture("bg_map", image, egui::TextureOptions::NEAREST));
+                }
+            }
+        }
+
+        if let Some(tex) = &self.vram_viewer.bg_map_tex {
+            let avail = ui.available_size();
+            let scale = (avail.x / 256.0).min(avail.y / 256.0).clamp(1.0, 2.0);
+            let draw_size = egui::vec2(256.0 * scale, 256.0 * scale);
+
+            let (response, painter) = ui.allocate_painter(draw_size, egui::Sense::hover());
+            let rect = response.rect;
+
+            painter.image(
+                tex.id(),
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+
+            let scx = ppu.scx as f32;
+            let scy = ppu.scy as f32;
+            let viewport_rect = egui::Rect::from_min_size(
+                rect.min + egui::vec2(scx * scale, scy * scale),
+                egui::vec2(160.0 * scale, 144.0 * scale),
+            );
+            painter.rect_stroke(
+                viewport_rect,
+                0.0,
+                egui::Stroke::new(1.0, egui::Color32::RED),
+            );
+        }
+    }
+
+    fn draw_tiles_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        ppu: &ui::snapshot::PpuSnapshot,
+    ) {
+        const DMG_COLORS: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
+        const TILE_W: usize = 8;
+        const TILE_H: usize = 8;
+        const TILES_PER_ROW: usize = 16;
+        const ROWS: usize = 24;
+
+        let banks: usize = if ppu.cgb { 2 } else { 1 };
+        let img_w = TILES_PER_ROW * TILE_W * banks;
+        let img_h = ROWS * TILE_H;
+
+        if banks != self.vram_viewer.tiles_banks as usize {
+            self.vram_viewer.tiles_banks = banks as u8;
+            self.vram_viewer.tiles_tex = None;
+        }
+
+        let frame = ppu.frame_counter;
+        if frame != self.vram_viewer.last_frame || self.vram_viewer.tiles_tex.is_none() {
+            let buf = &mut self.vram_viewer.tiles_buf[..img_w * img_h * 4];
+            buf.fill(0);
+
+            let bgp = ppu.bgp;
+
+            for bank in 0..banks {
+                for tile_idx in 0..384 {
+                    let col = tile_idx % TILES_PER_ROW;
+                    let row = tile_idx / TILES_PER_ROW;
+                    let tile_addr = tile_idx * 16;
+
+                    for y in 0..TILE_H {
+                        let vram = ppu.vram_bank(bank);
+                        let lo = vram[tile_addr + y * 2];
+                        let hi = vram[tile_addr + y * 2 + 1];
+
+                        for x in 0..TILE_W {
+                            let bit = 7 - x;
+                            let idx = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+
+                            let rgb = if ppu.cgb {
+                                ppu.cgb_bg_colors[0][idx as usize]
+                            } else {
+                                let shade = (bgp >> (idx * 2)) & 0x03;
+                                DMG_COLORS[shade as usize]
+                            };
+
+                            let px = (bank * 128) + (col * TILE_W) + x;
+                            let py = row * TILE_H + y;
+                            let off = (py * img_w + px) * 4;
+
+                            buf[off] = ((rgb >> 16) & 0xFF) as u8;
+                            buf[off + 1] = ((rgb >> 8) & 0xFF) as u8;
+                            buf[off + 2] = (rgb & 0xFF) as u8;
+                            buf[off + 3] = 0xFF;
+                        }
+                    }
+                }
+            }
+
+            let pixels: Vec<egui::Color32> = buf
+                .chunks_exact(4)
+                .map(|c| egui::Color32::from_rgb(c[0], c[1], c[2]))
+                .collect();
+            let image = egui::ColorImage {
+                size: [img_w, img_h],
+                pixels,
+            };
+            match &mut self.vram_viewer.tiles_tex {
+                Some(tex) => tex.set(image, egui::TextureOptions::NEAREST),
+                None => {
+                    self.vram_viewer.tiles_tex =
+                        Some(ctx.load_texture("tiles", image, egui::TextureOptions::NEAREST));
+                }
+            }
+        }
+
+        if let Some(tex) = &self.vram_viewer.tiles_tex {
+            let avail = ui.available_size();
+            let tex_w = img_w as f32;
+            let tex_h = img_h as f32;
+            let scale = (avail.x / tex_w).min(avail.y / tex_h).clamp(1.0, 3.0);
+            let draw_size = egui::vec2(tex_w * scale, tex_h * scale);
+            ui.image((tex.id(), draw_size));
+        }
+    }
+
+    fn draw_oam_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &egui::Context,
+        ppu: &ui::snapshot::PpuSnapshot,
+    ) {
+        let sprite_h: u8 = if ppu.lcdc & 0x04 != 0 { 16 } else { 8 };
+
+        if sprite_h != self.vram_viewer.oam_sprite_h {
+            self.vram_viewer.oam_sprite_h = sprite_h;
+        }
+
+        ui.columns(2, |columns| {
+            columns[0].heading("OAM Entries");
+            egui::ScrollArea::vertical()
+                .max_height(300.0)
+                .show(&mut columns[0], |ui| {
+                    egui::Grid::new("oam_grid")
+                        .num_columns(6)
+                        .spacing([8.0, 4.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.strong("#");
+                            ui.strong("Y");
+                            ui.strong("X");
+                            ui.strong("Tile");
+                            ui.strong("Attr");
+                            ui.strong("");
+                            ui.end_row();
+
+                            for i in 0..40 {
+                                let base = i * 4;
+                                let y_pos = ppu.oam[base];
+                                let x_pos = ppu.oam[base + 1];
+                                let tile_num = ppu.oam[base + 2];
+                                let attr = ppu.oam[base + 3];
+
+                                let selected = self.vram_viewer.oam_selected == i;
+                                if ui.selectable_label(selected, format!("{:02}", i)).clicked() {
+                                    self.vram_viewer.oam_selected = i;
+                                }
+                                ui.monospace(format!("{:02X}", y_pos));
+                                ui.monospace(format!("{:02X}", x_pos));
+                                ui.monospace(format!("{:02X}", tile_num));
+                                ui.monospace(format!("{:02X}", attr));
+                                ui.label("");
+                                ui.end_row();
+                            }
+                        });
+                });
+
+            columns[1].heading("Details");
+            columns[1].separator();
+
+            let i = self.vram_viewer.oam_selected;
+            if i < 40 {
+                let base = i * 4;
+                let y_pos = ppu.oam[base];
+                let x_pos = ppu.oam[base + 1];
+                let tile_num = ppu.oam[base + 2];
+                let attr = ppu.oam[base + 3];
+
+                let x_flip = attr & 0x20 != 0;
+                let y_flip = attr & 0x40 != 0;
+                let priority = attr & 0x80 != 0;
+
+                columns[1].monospace(format!("Sprite #{}", i));
+                columns[1].monospace(format!("Position: ({}, {})", x_pos, y_pos));
+                columns[1].monospace(format!("Tile: ${:02X}", tile_num));
+                columns[1].monospace(format!("Attr: ${:02X}", attr));
+                columns[1].add_space(4.0);
+                columns[1].monospace(format!("X-flip: {}", x_flip));
+                columns[1].monospace(format!("Y-flip: {}", y_flip));
+                columns[1].monospace(format!("Priority: {}", priority));
+                if ppu.cgb {
+                    columns[1].monospace(format!("Palette: OBJ{}", attr & 0x07));
+                    columns[1].monospace(format!("Bank: {}", if attr & 0x08 != 0 { 1 } else { 0 }));
+                } else {
+                    columns[1].monospace(format!(
+                        "Palette: OBP{}",
+                        if attr & 0x10 != 0 { 1 } else { 0 }
+                    ));
+                }
+            }
+        });
+    }
+
+    fn draw_palettes_tab(&mut self, ui: &mut egui::Ui, ppu: &ui::snapshot::PpuSnapshot) {
+        const DMG_COLORS: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
+        let bg_pals = if ppu.cgb { 8 } else { 1 };
+        let ob_pals = if ppu.cgb { 8 } else { 2 };
+
+        ui.columns(3, |columns| {
+            columns[0].heading("BG Palettes");
+            for pal in 0..bg_pals {
+                columns[0].horizontal(|ui| {
+                    ui.label(format!("{}:", pal));
+                    for col in 0..4 {
+                        let rgb = if ppu.cgb {
+                            ppu.cgb_bg_colors[pal][col]
+                        } else {
+                            let shade = (ppu.bgp >> (col * 2)) & 0x03;
+                            DMG_COLORS[shade as usize]
+                        };
+                        let r = ((rgb >> 16) & 0xFF) as u8;
+                        let g = ((rgb >> 8) & 0xFF) as u8;
+                        let b = (rgb & 0xFF) as u8;
+                        let color = egui::Color32::from_rgb(r, g, b);
+
+                        let selected = self.vram_viewer.palette_sel_is_bg
+                            && self.vram_viewer.palette_sel_pal as usize == pal
+                            && self.vram_viewer.palette_sel_col as usize == col;
+
+                        let (rect, response) =
+                            ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+                        if response.clicked() {
+                            self.vram_viewer.palette_sel_is_bg = true;
+                            self.vram_viewer.palette_sel_pal = pal as u8;
+                            self.vram_viewer.palette_sel_col = col as u8;
+                        }
+                        ui.painter().rect_filled(rect, 0.0, color);
+                        let stroke_color = if selected {
+                            egui::Color32::YELLOW
+                        } else {
+                            egui::Color32::GRAY
+                        };
+                        ui.painter()
+                            .rect_stroke(rect, 0.0, egui::Stroke::new(1.0, stroke_color));
+                    }
+                });
+            }
+
+            columns[1].heading("OBJ Palettes");
+            for pal in 0..ob_pals {
+                columns[1].horizontal(|ui| {
+                    ui.label(format!("{}:", pal));
+                    for col in 0..4 {
+                        let rgb = if ppu.cgb {
+                            ppu.cgb_ob_colors[pal][col]
+                        } else {
+                            let obp = if pal == 0 { ppu.obp0 } else { ppu.obp1 };
+                            let shade = (obp >> (col * 2)) & 0x03;
+                            DMG_COLORS[shade as usize]
+                        };
+                        let r = ((rgb >> 16) & 0xFF) as u8;
+                        let g = ((rgb >> 8) & 0xFF) as u8;
+                        let b = (rgb & 0xFF) as u8;
+                        let color = egui::Color32::from_rgb(r, g, b);
+
+                        let selected = !self.vram_viewer.palette_sel_is_bg
+                            && self.vram_viewer.palette_sel_pal as usize == pal
+                            && self.vram_viewer.palette_sel_col as usize == col;
+
+                        let (rect, response) =
+                            ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+                        if response.clicked() {
+                            self.vram_viewer.palette_sel_is_bg = false;
+                            self.vram_viewer.palette_sel_pal = pal as u8;
+                            self.vram_viewer.palette_sel_col = col as u8;
+                        }
+                        ui.painter().rect_filled(rect, 0.0, color);
+                        let stroke_color = if selected {
+                            egui::Color32::YELLOW
+                        } else {
+                            egui::Color32::GRAY
+                        };
+                        ui.painter()
+                            .rect_stroke(rect, 0.0, egui::Stroke::new(1.0, stroke_color));
+                    }
+                });
+            }
+
+            columns[2].heading("Selected Color");
+            let is_bg = self.vram_viewer.palette_sel_is_bg;
+            let pal = self.vram_viewer.palette_sel_pal as usize;
+            let col = self.vram_viewer.palette_sel_col as usize;
+
+            let rgb = if is_bg {
+                if ppu.cgb {
+                    ppu.cgb_bg_colors.get(pal).and_then(|p| p.get(col)).copied()
+                } else {
+                    let shade = (ppu.bgp >> (col * 2)) & 0x03;
+                    Some(DMG_COLORS[shade as usize])
+                }
+            } else if ppu.cgb {
+                ppu.cgb_ob_colors.get(pal).and_then(|p| p.get(col)).copied()
+            } else {
+                let obp = if pal == 0 { ppu.obp0 } else { ppu.obp1 };
+                let shade = (obp >> (col * 2)) & 0x03;
+                Some(DMG_COLORS[shade as usize])
+            };
+
+            if let Some(rgb) = rgb {
+                let r = ((rgb >> 16) & 0xFF) as u8;
+                let g = ((rgb >> 8) & 0xFF) as u8;
+                let b = (rgb & 0xFF) as u8;
+                let color = egui::Color32::from_rgb(r, g, b);
+
+                let (rect, _) =
+                    columns[2].allocate_exact_size(egui::vec2(48.0, 48.0), egui::Sense::hover());
+                columns[2].painter().rect_filled(rect, 0.0, color);
+                columns[2].painter().rect_stroke(
+                    rect,
+                    0.0,
+                    egui::Stroke::new(1.0, egui::Color32::WHITE),
+                );
+
+                let r5 = (r >> 3) as u16;
+                let g5 = (g >> 3) as u16;
+                let b5 = (b >> 3) as u16;
+                let word = r5 | (g5 << 5) | (b5 << 10);
+
+                columns[2].add_space(4.0);
+                columns[2].monospace(format!(
+                    "{} Pal {} Col {}",
+                    if is_bg { "BG" } else { "OBJ" },
+                    pal,
+                    col
+                ));
+                columns[2].monospace(format!("RGB: ({}, {}, {})", r, g, b));
+                columns[2].monospace(format!("GBC: ${:04X}", word));
+            }
+        });
     }
 }
 
@@ -988,7 +1994,7 @@ fn main() {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("vibeEmu")
-            .with_inner_size([160.0 * 2.0, 144.0 * 2.0 + 24.0])
+            .with_inner_size([160.0 * 2.0, 144.0 * 2.0 + 32.0])
             .with_icon(load_window_icon().unwrap_or_default()),
         ..Default::default()
     };
@@ -1007,6 +2013,7 @@ fn main() {
                 frame_pool_tx_clone,
                 rom_path_clone,
                 keybinds,
+                emulation_mode,
             )))
         }),
     ) {
