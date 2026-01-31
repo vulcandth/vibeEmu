@@ -565,6 +565,10 @@ impl VibeEmuApp {
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+
         let mut new_state = 0xFFu8;
         let mut new_fast_forward = false;
 
@@ -2201,14 +2205,39 @@ fn main() {
     }
 
     if headless {
-        let frames = args.frames.unwrap_or(600);
-        info!("Running headless for {frames} frames");
-        for _ in 0..frames {
-            gb.mmu.ppu.clear_frame_flag();
-            while !gb.mmu.ppu.frame_ready() {
-                gb.cpu.step(&mut gb.mmu);
+        enum Limit {
+            Frames(usize),
+            Seconds(u64),
+        }
+
+        let limit = if let Some(s) = args.seconds {
+            Limit::Seconds(s)
+        } else {
+            Limit::Frames(args.frames.unwrap_or(600))
+        };
+
+        match limit {
+            Limit::Frames(n) => {
+                info!("Running headless for {n} frames");
+                for _ in 0..n {
+                    gb.mmu.ppu.clear_frame_flag();
+                    while !gb.mmu.ppu.frame_ready() {
+                        gb.cpu.step(&mut gb.mmu);
+                    }
+                }
+            }
+            Limit::Seconds(s) => {
+                let target_frames = (s as f64 * GB_FPS).ceil() as usize;
+                info!("Running headless for {s} seconds (~{target_frames} frames)");
+                for _ in 0..target_frames {
+                    gb.mmu.ppu.clear_frame_flag();
+                    while !gb.mmu.ppu.frame_ready() {
+                        gb.cpu.step(&mut gb.mmu);
+                    }
+                }
             }
         }
+
         info!("Headless run complete");
         return;
     }
@@ -2218,6 +2247,96 @@ fn main() {
         .clone()
         .unwrap_or_else(keybinds::default_keybinds_path);
     let keybinds = KeyBindings::load_from_file(&keybinds_path);
+
+    if args.mobile {
+        let config_path = args.mobile_config.clone().unwrap_or_else(|| {
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(appdata) = std::env::var_os("APPDATA") {
+                    return std::path::PathBuf::from(appdata)
+                        .join("vibeemu")
+                        .join("mobile.config");
+                }
+            }
+
+            if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+                return std::path::PathBuf::from(xdg)
+                    .join("vibeemu")
+                    .join("mobile.config");
+            }
+
+            if let Some(home) = std::env::var_os("HOME") {
+                return std::path::PathBuf::from(home)
+                    .join(".local")
+                    .join("share")
+                    .join("vibeemu")
+                    .join("mobile.config");
+            }
+
+            std::path::PathBuf::from("mobile.config")
+        });
+
+        if let Some(parent) = config_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        match MobileAdapter::new_std(config_path) {
+            Ok(mut adapter) => {
+                let dns1 = args.mobile_dns1.as_ref().and_then(|dns| {
+                    dns.parse::<std::net::IpAddr>().ok().map(|ip| match ip {
+                        std::net::IpAddr::V4(v4) => MobileAddr::V4 {
+                            host: v4.octets(),
+                            port: 53,
+                        },
+                        std::net::IpAddr::V6(v6) => MobileAddr::V6 {
+                            host: v6.octets(),
+                            port: 53,
+                        },
+                    })
+                });
+
+                let dns2 = args.mobile_dns2.as_ref().and_then(|dns| {
+                    dns.parse::<std::net::IpAddr>().ok().map(|ip| match ip {
+                        std::net::IpAddr::V4(v4) => MobileAddr::V4 {
+                            host: v4.octets(),
+                            port: 53,
+                        },
+                        std::net::IpAddr::V6(v6) => MobileAddr::V6 {
+                            host: v6.octets(),
+                            port: 53,
+                        },
+                    })
+                });
+
+                let config = MobileConfig {
+                    device: args.mobile_device.into(),
+                    unmetered: args.mobile_unmetered,
+                    dns1: dns1.unwrap_or_default(),
+                    dns2: dns2.unwrap_or_default(),
+                    p2p_port: args.mobile_p2p_port,
+                    relay: MobileAddr::None,
+                    relay_token: None,
+                };
+
+                if let Err(e) = adapter.apply_config(&config) {
+                    warn!("Failed to apply mobile adapter config: {e}");
+                }
+
+                if let Err(e) = adapter.start() {
+                    warn!("Failed to start mobile adapter: {e}");
+                } else {
+                    info!("Mobile Adapter enabled");
+                    let adapter = Arc::new(Mutex::new(adapter));
+                    let link_port = MobileLinkPort::new(Arc::clone(&adapter));
+                    gb.mmu.serial.connect(Box::new(link_port));
+                }
+            }
+            Err(e) => {
+                warn!("Failed to create mobile adapter: {e}");
+            }
+        }
+    }
+
     let gb = Arc::new(Mutex::new(gb));
 
     let (to_emu_tx, to_emu_rx) = mpsc::channel();
