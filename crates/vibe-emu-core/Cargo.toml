@@ -17,7 +17,7 @@ cpu-trace = []
 [dev-dependencies]
 once_cell = "1"
 tempfile = "3"
-reqwest = { version = "0.13.1", features = ["blocking", "gzip"] }
+reqwest = { version = "0.13.2", features = ["blocking", "gzip"] }
 zip = "7.4.0"
 png = "0.18"
 libtest-mimic = "0.8"
