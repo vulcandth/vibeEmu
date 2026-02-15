@@ -13,6 +13,17 @@ fn oam_bug_trace_enabled() -> bool {
     })
 }
 
+fn dmg_mode3_lcdc_event_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_LCDC_EVENT_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
 #[cfg(feature = "ppu-trace")]
 macro_rules! ppu_trace {
     ($($arg:tt)*) => {
@@ -163,6 +174,7 @@ pub struct Ppu {
     line_priority: [bool; SCREEN_WIDTH],
     line_color_zero: [bool; SCREEN_WIDTH],
     cgb_line_obj_enabled: [bool; SCREEN_WIDTH],
+    dmg_line_obj_size_16: [bool; SCREEN_WIDTH],
     /// Latched sprites for the current scanline
     line_sprites: [Sprite; MAX_SPRITES_PER_LINE],
     sprite_count: usize,
@@ -216,6 +228,7 @@ pub struct Ppu {
     mode3_lcdc_base: u8,
     mode3_lcdc_event_count: usize,
     mode3_lcdc_events: [Mode3LcdcEvent; MODE3_LCDC_EVENTS_MAX],
+    pending_lcdc_write: Option<(u8, u8)>,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -228,6 +241,167 @@ struct DmgBgpEvent {
 const DMG_BGP_EVENTS_MAX: usize = 64;
 
 const MODE3_LCDC_EVENTS_MAX: usize = 64;
+
+const DMG_OBJ_SIZE_CAPTURE_BIAS_DEFAULT: i16 = 2;
+const DMG_OBJ_SIZE_CAPTURE_PHASE_WEIGHT_DEFAULT: i16 = 0;
+const DMG_OBJ_SIZE_LINE_BIAS_DEFAULT: i16 = 0;
+const DMG_OBJ_SIZE_SAMPLE_BIAS_SCX0_DEFAULT: i16 = -8;
+const DMG_OBJ_SIZE_SAMPLE_BIAS_SCXNZ_DEFAULT: i16 = -7;
+const DMG_OBJ_SIZE_SCX_FINE_WEIGHT_DEFAULT: i16 = 2;
+const DMG_OBJ_SIZE_SAMPLE_PX_WEIGHT_DEFAULT: i16 = 7;
+const DMG_OBJ_SIZE_SAMPLE_HI_DELTA_DEFAULT: i16 = 0;
+const DMG_OBJ_SIZE_SCX0_USE_FETCH_CONTROL_DEFAULT: bool = false;
+const DMG_OBJ_SIZE_8X8_CLAMP_DEFAULT: bool = false;
+const DMG_OBJ_SIZE_CAPTURE_USE_POSITION_DEFAULT: bool = false;
+const DMG_OBJ_SIZE_FETCH_SAMPLE_PX_DEFAULT: i16 = 7;
+const DMG_OBJ_SIZE_FETCH_LATCH_DEFAULT: bool = false;
+const DMG_MODE3_OBJECT_MATCH_BIAS_DEFAULT: i16 = -8;
+const DMG_OBJ_SIZE_FETCH_T_BIAS_DEFAULT: i16 = 0;
+const DMG_OBJ_SIZE_FETCH_HI_T_DELTA_DEFAULT: i16 = 1;
+const DMG_MODE3_OBJ_FETCH_STALL_EXTRA_DEFAULT: i16 = 0;
+const DMG_OBJ_SIZE_FETCH_USE_LIVE_LCDC_DEFAULT: bool = false;
+const DMG_OBJ_SIZE_SAMPLE_USE_T_DEFAULT: bool = false;
+const DMG_OBJ_SIZE_SAMPLE_T_BIAS_DEFAULT: i16 = 0;
+const DMG_OBJ_SIZE_USE_FETCH_T_FOR_FETCHED_DEFAULT: bool = false;
+const DMG_MODE3_OBJ_FETCH_READY_STATE_DEFAULT: i16 = 5;
+
+#[derive(Copy, Clone)]
+struct DmgObjSizeTuning {
+    capture_bias: i16,
+    capture_phase_weight: i16,
+    line_bias: i16,
+    sample_bias_scx0: i16,
+    sample_bias_scxnz: i16,
+    scx_fine_weight: i16,
+    scx0_use_fetch_control: bool,
+    size8_clamp: bool,
+    capture_use_position: bool,
+    sample_px_weight: i16,
+    sample_hi_delta: i16,
+    fetch_sample_px: i16,
+    use_fetch_latch: bool,
+    object_match_bias: i16,
+    fetch_t_bias: i16,
+    fetch_hi_t_delta: i16,
+    fetch_stall_extra: i16,
+    fetch_use_live_lcdc: bool,
+    sample_use_t: bool,
+    sample_t_bias: i16,
+    use_fetch_t_for_fetched: bool,
+    fetch_ready_state: i16,
+}
+
+fn read_obj_size_i16_env(key: &str, default: i16) -> i16 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<i16>().ok())
+        .unwrap_or(default)
+}
+
+fn read_obj_size_bool_env(key: &str, default: bool) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|v| {
+            let s = v.trim();
+            !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
+        })
+        .unwrap_or(default)
+}
+
+fn dmg_obj_size_tuning() -> &'static DmgObjSizeTuning {
+    use std::sync::OnceLock;
+    static TUNING: OnceLock<DmgObjSizeTuning> = OnceLock::new();
+    TUNING.get_or_init(|| DmgObjSizeTuning {
+        capture_bias: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_CAPTURE_BIAS",
+            DMG_OBJ_SIZE_CAPTURE_BIAS_DEFAULT,
+        ),
+        capture_phase_weight: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_CAPTURE_PHASE_WEIGHT",
+            DMG_OBJ_SIZE_CAPTURE_PHASE_WEIGHT_DEFAULT,
+        ),
+        line_bias: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_LINE_BIAS",
+            DMG_OBJ_SIZE_LINE_BIAS_DEFAULT,
+        ),
+        sample_bias_scx0: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_SAMPLE_BIAS_SCX0",
+            DMG_OBJ_SIZE_SAMPLE_BIAS_SCX0_DEFAULT,
+        ),
+        sample_bias_scxnz: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_SAMPLE_BIAS_SCXNZ",
+            DMG_OBJ_SIZE_SAMPLE_BIAS_SCXNZ_DEFAULT,
+        ),
+        scx_fine_weight: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_SCX_FINE_WEIGHT",
+            DMG_OBJ_SIZE_SCX_FINE_WEIGHT_DEFAULT,
+        ),
+        scx0_use_fetch_control: read_obj_size_bool_env(
+            "VIBEEMU_DMG_OBJ_SIZE_SCX0_USE_FETCH_CONTROL",
+            DMG_OBJ_SIZE_SCX0_USE_FETCH_CONTROL_DEFAULT,
+        ),
+        size8_clamp: read_obj_size_bool_env(
+            "VIBEEMU_DMG_OBJ_SIZE_8X8_CLAMP",
+            DMG_OBJ_SIZE_8X8_CLAMP_DEFAULT,
+        ),
+        capture_use_position: read_obj_size_bool_env(
+            "VIBEEMU_DMG_OBJ_SIZE_CAPTURE_USE_POSITION",
+            DMG_OBJ_SIZE_CAPTURE_USE_POSITION_DEFAULT,
+        ),
+        sample_px_weight: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_SAMPLE_PX_WEIGHT",
+            DMG_OBJ_SIZE_SAMPLE_PX_WEIGHT_DEFAULT,
+        ),
+        sample_hi_delta: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_SAMPLE_HI_DELTA",
+            DMG_OBJ_SIZE_SAMPLE_HI_DELTA_DEFAULT,
+        ),
+        fetch_sample_px: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_FETCH_SAMPLE_PX",
+            DMG_OBJ_SIZE_FETCH_SAMPLE_PX_DEFAULT,
+        ),
+        use_fetch_latch: read_obj_size_bool_env(
+            "VIBEEMU_DMG_OBJ_SIZE_FETCH_LATCH",
+            DMG_OBJ_SIZE_FETCH_LATCH_DEFAULT,
+        ),
+        object_match_bias: read_obj_size_i16_env(
+            "VIBEEMU_DMG_MODE3_OBJECT_MATCH_BIAS",
+            DMG_MODE3_OBJECT_MATCH_BIAS_DEFAULT,
+        ),
+        fetch_t_bias: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_FETCH_T_BIAS",
+            DMG_OBJ_SIZE_FETCH_T_BIAS_DEFAULT,
+        ),
+        fetch_hi_t_delta: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_FETCH_HI_T_DELTA",
+            DMG_OBJ_SIZE_FETCH_HI_T_DELTA_DEFAULT,
+        ),
+        fetch_stall_extra: read_obj_size_i16_env(
+            "VIBEEMU_DMG_MODE3_OBJ_FETCH_STALL_EXTRA",
+            DMG_MODE3_OBJ_FETCH_STALL_EXTRA_DEFAULT,
+        ),
+        fetch_use_live_lcdc: read_obj_size_bool_env(
+            "VIBEEMU_DMG_OBJ_SIZE_FETCH_USE_LIVE_LCDC",
+            DMG_OBJ_SIZE_FETCH_USE_LIVE_LCDC_DEFAULT,
+        ),
+        sample_use_t: read_obj_size_bool_env(
+            "VIBEEMU_DMG_OBJ_SIZE_SAMPLE_USE_T",
+            DMG_OBJ_SIZE_SAMPLE_USE_T_DEFAULT,
+        ),
+        sample_t_bias: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_SAMPLE_T_BIAS",
+            DMG_OBJ_SIZE_SAMPLE_T_BIAS_DEFAULT,
+        ),
+        use_fetch_t_for_fetched: read_obj_size_bool_env(
+            "VIBEEMU_DMG_OBJ_SIZE_USE_FETCH_T_FOR_FETCHED",
+            DMG_OBJ_SIZE_USE_FETCH_T_FOR_FETCHED_DEFAULT,
+        ),
+        fetch_ready_state: read_obj_size_i16_env(
+            "VIBEEMU_DMG_MODE3_OBJ_FETCH_READY_STATE",
+            DMG_MODE3_OBJ_FETCH_READY_STATE_DEFAULT,
+        ),
+    })
+}
 
 #[derive(Copy, Clone, Default)]
 struct Mode3LcdcEvent {
@@ -249,6 +423,13 @@ struct Sprite {
     flags: u8,
     oam_index: usize,
     fetched: bool,
+    obj_row_addr: u16,
+    obj_row_valid: bool,
+    obj_lo: u8,
+    obj_hi: u8,
+    obj_data_valid: bool,
+    fetch_t: u16,
+    fetch_t_valid: bool,
 }
 
 impl Ppu {
@@ -292,6 +473,7 @@ impl Ppu {
             line_priority: [false; SCREEN_WIDTH],
             line_color_zero: [false; SCREEN_WIDTH],
             cgb_line_obj_enabled: [true; SCREEN_WIDTH],
+            dmg_line_obj_size_16: [false; SCREEN_WIDTH],
             line_sprites: [Sprite::default(); MAX_SPRITES_PER_LINE],
             sprite_count: 0,
             oam_scan_index: 0,
@@ -326,6 +508,7 @@ impl Ppu {
             mode3_lcdc_base: 0,
             mode3_lcdc_event_count: 0,
             mode3_lcdc_events: [Mode3LcdcEvent::default(); MODE3_LCDC_EVENTS_MAX],
+            pending_lcdc_write: None,
             #[cfg(feature = "ppu-trace")]
             debug_lcd_enable_timer: None,
             #[cfg(feature = "ppu-trace")]
@@ -401,6 +584,7 @@ impl Ppu {
     fn begin_mode3_line(&mut self) {
         self.mode3_lcdc_base = self.lcdc;
         self.mode3_lcdc_event_count = 0;
+        self.dmg_line_obj_size_16.fill((self.lcdc & 0x04) != 0);
 
         // Mirror the simplified DMG fetcher/FIFO timing model used by
         // `dmg_compute_mode3_cycles_for_line` so Mode 3 sprite attribute reads
@@ -415,11 +599,18 @@ impl Ppu {
     }
 
     fn record_mode3_lcdc_event(&mut self, mode3_t: u16, val: u8) {
-        let t = mode3_t.min(self.mode3_target_cycles.saturating_sub(1));
+        let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+        let t = ((mode3_t as i16)
+            + if !self.cgb {
+                dmg_mode3_lcdc_event_t_bias()
+            } else {
+                0
+            })
+        .clamp(0, max_t) as u16;
         let x = if !self.cgb && (self.lcdc & 0x02) != 0 {
             // On DMG, use the live mode-3 pixel position so LCDC writes track
             // sprite-stall timing similarly to mid-line BGP writes.
-            let phase = (mode3_t >> 2) & 1;
+            let phase = (t >> 2) & 1;
             let raw = self
                 .mode3_lcd_x
                 .saturating_add(phase)
@@ -678,9 +869,166 @@ impl Ppu {
         self.dmg_lcdc_for_fetch_control_pixel(fetch_x)
     }
 
+    #[inline]
+    fn dmg_lcdc_for_mode3_t(&self, t: u16) -> u8 {
+        let mut current = self.mode3_lcdc_base;
+        for ev in self.mode3_lcdc_events[..self.mode3_lcdc_event_count].iter() {
+            if t < ev.t {
+                break;
+            }
+            current = ev.val;
+        }
+        current
+    }
+
+    #[inline]
+    fn compute_obj_row_addr_from_lcdc(
+        &self,
+        sprite_y: i16,
+        tile: u8,
+        flags: u8,
+        lcdc: u8,
+    ) -> usize {
+        let size_16 = (lcdc & 0x04) != 0;
+        let mut sprite_line = (self.ly as i16 - sprite_y).max(0) as usize;
+        sprite_line = if size_16 {
+            sprite_line & 0x0F
+        } else {
+            sprite_line & 0x07
+        };
+        if (flags & 0x40) != 0 {
+            sprite_line = if size_16 {
+                15usize.saturating_sub(sprite_line)
+            } else {
+                7usize.saturating_sub(sprite_line)
+            };
+        }
+
+        let mut tile_index = tile;
+        if size_16 {
+            tile_index &= 0xFE;
+            tile_index = tile_index.wrapping_add((sprite_line >> 3) as u8);
+        }
+
+        tile_index as usize * 16 + (sprite_line & 0x07) * 2
+    }
+
+    #[inline]
+    fn dmg_sample_obj_size_for_x(&self, sample_x: usize, tuning: &DmgObjSizeTuning) -> bool {
+        let apply_bias = |x: usize, bias: i16| -> usize {
+            if bias < 0 {
+                x.saturating_sub((-bias) as usize)
+            } else {
+                x.saturating_add(bias as usize).min(SCREEN_WIDTH - 1)
+            }
+        };
+        let sample_with_scx_bias = if (self.scx & 0x07) == 0 {
+            apply_bias(sample_x, tuning.sample_bias_scx0)
+        } else {
+            let scx_bias =
+                tuning.sample_bias_scxnz + ((self.scx & 0x07) as i16) * tuning.scx_fine_weight;
+            apply_bias(sample_x, scx_bias)
+        };
+        if tuning.sample_use_t {
+            let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+            let t = (sample_with_scx_bias as i16 + tuning.sample_t_bias).clamp(0, max_t) as u16;
+            return (self.dmg_lcdc_for_mode3_t(t) & 0x04) != 0;
+        }
+        if (self.scx & 0x07) == 0 {
+            if tuning.scx0_use_fetch_control {
+                (self.dmg_lcdc_for_fetch_control_pixel(sample_with_scx_bias) & 0x04) != 0
+            } else {
+                self.dmg_line_obj_size_16[sample_with_scx_bias]
+            }
+        } else {
+            (self.dmg_lcdc_for_fetch_control_pixel(sample_with_scx_bias) & 0x04) != 0
+        }
+    }
+
+    #[inline]
+    fn dmg_sample_obj_size_for_fetch_dot(&self, tuning: &DmgObjSizeTuning) -> bool {
+        let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+        let fetch_px_term = tuning.fetch_sample_px.clamp(0, 7) - 7;
+        let t =
+            (self.mode_clock as i16 + tuning.fetch_t_bias + fetch_px_term).clamp(0, max_t) as u16;
+        (self.dmg_lcdc_for_mode3_t(t) & 0x04) != 0
+    }
+
+    #[inline]
+    fn dmg_adjust_obj_sample_x_for_unfetched(sprite_x: i16, mut x: usize) -> usize {
+        if sprite_x <= 0 {
+            x = x.saturating_sub(2);
+        } else if sprite_x == 1 {
+            x = x.saturating_sub(1);
+        } else if sprite_x == 6 {
+            x = (x + 3).min(SCREEN_WIDTH - 1);
+        } else if sprite_x == 7 {
+            x = (x + 4).min(SCREEN_WIDTH - 1);
+        } else if sprite_x == 3 {
+            x = (x + 1).min(SCREEN_WIDTH - 1);
+        } else if (4..=5).contains(&sprite_x) {
+            x = (x + 2).min(SCREEN_WIDTH - 1);
+        }
+        x
+    }
+
+    #[inline]
+    fn dmg_latch_sprite_row_data_at_fetch(&mut self, idx: usize, tuning: &DmgObjSizeTuning) {
+        let sprite = self.line_sprites[idx];
+        let (size_16_lo, size_16_hi) = if tuning.fetch_use_live_lcdc {
+            let live = (self.lcdc & 0x04) != 0;
+            (live, live)
+        } else {
+            let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+            let t_lo = (self.mode_clock as i16 + tuning.fetch_t_bias).clamp(0, max_t) as u16;
+            let t_hi = (self.mode_clock as i16 + tuning.fetch_t_bias + tuning.fetch_hi_t_delta)
+                .clamp(0, max_t) as u16;
+            (
+                (self.dmg_lcdc_for_mode3_t(t_lo) & 0x04) != 0,
+                (self.dmg_lcdc_for_mode3_t(t_hi) & 0x04) != 0,
+            )
+        };
+        let lcdc_lo = if size_16_lo {
+            self.lcdc | 0x04
+        } else {
+            self.lcdc & !0x04
+        };
+        let lcdc_hi = if size_16_hi {
+            self.lcdc | 0x04
+        } else {
+            self.lcdc & !0x04
+        };
+        let addr_lo =
+            self.compute_obj_row_addr_from_lcdc(sprite.y, sprite.tile, sprite.flags, lcdc_lo);
+        let addr_hi =
+            self.compute_obj_row_addr_from_lcdc(sprite.y, sprite.tile, sprite.flags, lcdc_hi);
+
+        self.line_sprites[idx].obj_row_addr = addr_lo as u16;
+        self.line_sprites[idx].obj_row_valid = true;
+        self.line_sprites[idx].obj_lo = self.vram_read_for_render(0, addr_lo);
+        self.line_sprites[idx].obj_hi = self.vram_read_for_render(0, addr_hi + 1);
+        self.line_sprites[idx].obj_data_valid = true;
+    }
+
     /// Set a runtime DMG palette. Colors are in 0x00RRGGBB order.
     pub fn set_dmg_palette(&mut self, pal: [u32; 4]) {
         self.dmg_palette = pal;
+    }
+
+    pub fn queue_lcdc_write(&mut self, value: u8, delay_dots: u8) {
+        self.pending_lcdc_write = Some((value, delay_dots.max(1)));
+    }
+
+    fn tick_pending_lcdc_write(&mut self) {
+        let Some((value, delay)) = self.pending_lcdc_write else {
+            return;
+        };
+        if delay <= 1 {
+            self.pending_lcdc_write = None;
+            self.write_reg(0xFF40, value);
+        } else {
+            self.pending_lcdc_write = Some((value, delay - 1));
+        }
     }
 
     fn mode3_latch_sprite_attributes(&mut self) {
@@ -689,6 +1037,32 @@ impl Ppu {
         // occurs and when the background fetcher can be stalled for sprite fetch.
         // This keeps OAM tile/flags reads close to hardware timing so DMA overlap
         // hits the intended bytes.
+        let obj_size_tuning = dmg_obj_size_tuning();
+        let cap_base_x = if obj_size_tuning.capture_use_position {
+            let x = self.mode3_position_in_line + 8;
+            if (0..SCREEN_WIDTH as i16).contains(&x) {
+                Some(x as usize)
+            } else {
+                None
+            }
+        } else if self.mode3_lcd_x < SCREEN_WIDTH as u16 {
+            Some(self.mode3_lcd_x as usize)
+        } else {
+            None
+        };
+        if let Some(mut cap_x) = cap_base_x {
+            let phase = ((self.mode_clock >> 2) & 1) as i16;
+            let cap_bias =
+                obj_size_tuning.capture_bias + phase * obj_size_tuning.capture_phase_weight;
+            if cap_bias < 0 {
+                cap_x = cap_x.saturating_sub((-cap_bias) as usize);
+            } else {
+                cap_x = cap_x
+                    .saturating_add(cap_bias as usize)
+                    .min(SCREEN_WIDTH - 1);
+            }
+            self.dmg_line_obj_size_16[cap_x] = (self.lcdc & 0x04) != 0;
+        }
 
         if self.cgb && !self.dmg_compat {
             // CGB mode has different timing/behavior expectations (and this
@@ -712,11 +1086,23 @@ impl Ppu {
                 self.line_sprites[idx].tile = self.oam[base + 2];
                 self.line_sprites[idx].flags = self.oam[base + 3];
                 self.line_sprites[idx].fetched = true;
+                self.line_sprites[idx].obj_data_valid = false;
+                self.line_sprites[idx].fetch_t_valid = false;
+                if obj_size_tuning.use_fetch_latch {
+                    let row_addr = self.compute_obj_row_addr_from_lcdc(
+                        self.line_sprites[idx].y,
+                        self.line_sprites[idx].tile,
+                        self.line_sprites[idx].flags,
+                        self.lcdc,
+                    );
+                    self.line_sprites[idx].obj_row_addr = row_addr as u16;
+                    self.line_sprites[idx].obj_row_valid = true;
+                } else {
+                    self.line_sprites[idx].obj_row_valid = false;
+                }
                 self.mode3_sprite_latch_index += 1;
             }
         } else {
-            const DMG_MODE3_OBJECT_MATCH_BIAS: i16 = -8;
-
             let advance_fetcher = |bg_fifo: &mut u8, fetcher_state: &mut u8| {
                 if *fetcher_state == 6 {
                     if *bg_fifo == 0 {
@@ -763,7 +1149,7 @@ impl Ppu {
             let match_x = if self.mode3_position_in_line < -7 {
                 0u8
             } else {
-                let x = self.mode3_position_in_line + 8 + DMG_MODE3_OBJECT_MATCH_BIAS;
+                let x = self.mode3_position_in_line + 8 + obj_size_tuning.object_match_bias;
                 (x.clamp(0, 255) as u16).min(255) as u8
             };
 
@@ -784,6 +1170,26 @@ impl Ppu {
                         let base = sprite.oam_index * 4;
                         self.line_sprites[idx].tile = self.oam[base + 2];
                         self.line_sprites[idx].flags = self.oam[base + 3];
+                        self.line_sprites[idx].obj_data_valid = false;
+                        self.line_sprites[idx].fetch_t_valid = false;
+                        if obj_size_tuning.use_fetch_latch {
+                            let size_16 = self.dmg_sample_obj_size_for_fetch_dot(obj_size_tuning);
+                            let lcdc_for_obj = if size_16 {
+                                self.lcdc | 0x04
+                            } else {
+                                self.lcdc & !0x04
+                            };
+                            let row_addr = self.compute_obj_row_addr_from_lcdc(
+                                self.line_sprites[idx].y,
+                                self.line_sprites[idx].tile,
+                                self.line_sprites[idx].flags,
+                                lcdc_for_obj,
+                            );
+                            self.line_sprites[idx].obj_row_addr = row_addr as u16;
+                            self.line_sprites[idx].obj_row_valid = true;
+                        } else {
+                            self.line_sprites[idx].obj_row_valid = false;
+                        }
                     }
                     self.mode3_sprite_latch_index += 1;
                 }
@@ -803,7 +1209,8 @@ impl Ppu {
                 let raw_x = (sprite.x + 8).clamp(0, 255) as u8;
 
                 if raw_x == match_x {
-                    if self.mode3_fetcher_state < 5 || self.mode3_bg_fifo == 0 {
+                    let ready_state = obj_size_tuning.fetch_ready_state.clamp(0, 6) as u8;
+                    if self.mode3_fetcher_state < ready_state || self.mode3_bg_fifo == 0 {
                         tick_no_render(
                             &mut self.mode3_render_delay,
                             &mut self.mode3_bg_fifo,
@@ -821,7 +1228,36 @@ impl Ppu {
                     self.line_sprites[idx].tile = tile;
                     self.line_sprites[idx].flags = flags;
                     self.line_sprites[idx].fetched = true;
+                    self.line_sprites[idx].obj_data_valid = false;
+                    self.line_sprites[idx].fetch_t = self.mode_clock;
+                    self.line_sprites[idx].fetch_t_valid = true;
+                    if obj_size_tuning.use_fetch_latch {
+                        let size_16 = self.dmg_sample_obj_size_for_fetch_dot(obj_size_tuning);
+                        let lcdc_for_obj = if size_16 {
+                            self.lcdc | 0x04
+                        } else {
+                            self.lcdc & !0x04
+                        };
+                        let row_addr = self.compute_obj_row_addr_from_lcdc(
+                            self.line_sprites[idx].y,
+                            tile,
+                            flags,
+                            lcdc_for_obj,
+                        );
+                        self.line_sprites[idx].obj_row_addr = row_addr as u16;
+                        self.line_sprites[idx].obj_row_valid = true;
+                    } else {
+                        self.line_sprites[idx].obj_row_valid = false;
+                    }
+                    if obj_size_tuning.use_fetch_latch && !self.cgb {
+                        self.dmg_latch_sprite_row_data_at_fetch(idx, obj_size_tuning);
+                    }
                     self.mode3_sprite_latch_index += 1;
+                    if obj_size_tuning.fetch_stall_extra > 0 {
+                        self.mode3_render_delay = self
+                            .mode3_render_delay
+                            .saturating_add(obj_size_tuning.fetch_stall_extra as u16);
+                    }
 
                     // Back-to-back sprites at the same X incur additional delay.
                     if self.mode3_sprite_latch_index < self.sprite_count {
@@ -877,6 +1313,26 @@ impl Ppu {
                 let base = sprite.oam_index * 4;
                 self.line_sprites[self.mode3_sprite_latch_index].tile = self.oam[base + 2];
                 self.line_sprites[self.mode3_sprite_latch_index].flags = self.oam[base + 3];
+                self.line_sprites[self.mode3_sprite_latch_index].obj_data_valid = false;
+                self.line_sprites[self.mode3_sprite_latch_index].fetch_t_valid = false;
+                if obj_size_tuning.use_fetch_latch {
+                    let size_16 = self.dmg_sample_obj_size_for_fetch_dot(obj_size_tuning);
+                    let lcdc_for_obj = if size_16 {
+                        self.lcdc | 0x04
+                    } else {
+                        self.lcdc & !0x04
+                    };
+                    let row_addr = self.compute_obj_row_addr_from_lcdc(
+                        self.line_sprites[self.mode3_sprite_latch_index].y,
+                        self.line_sprites[self.mode3_sprite_latch_index].tile,
+                        self.line_sprites[self.mode3_sprite_latch_index].flags,
+                        lcdc_for_obj,
+                    );
+                    self.line_sprites[self.mode3_sprite_latch_index].obj_row_addr = row_addr as u16;
+                    self.line_sprites[self.mode3_sprite_latch_index].obj_row_valid = true;
+                } else {
+                    self.line_sprites[self.mode3_sprite_latch_index].obj_row_valid = false;
+                }
                 self.mode3_sprite_latch_index += 1;
             }
         }
@@ -906,6 +1362,13 @@ impl Ppu {
                             flags: 0,
                             oam_index: self.oam_scan_index,
                             fetched: false,
+                            obj_row_addr: 0,
+                            obj_row_valid: false,
+                            obj_lo: 0,
+                            obj_hi: 0,
+                            obj_data_valid: false,
+                            fetch_t: 0,
+                            fetch_t_valid: false,
                         };
                         self.sprite_count += 1;
                     }
@@ -2531,32 +2994,16 @@ impl Ppu {
         };
 
         if any_obj_enabled {
-            let sprite_height: i16 = if self.lcdc & 0x04 != 0 { 16 } else { 8 };
+            let obj_size_tuning = dmg_obj_size_tuning();
             let mut drawn = [false; SCREEN_WIDTH];
             for s in &self.line_sprites[..self.sprite_count] {
-                let mut tile = s.tile;
-                if sprite_height == 16 {
-                    tile &= 0xFE;
-                }
-                let mut line_idx = self.ly as i16 - s.y;
-                if s.flags & 0x40 != 0 {
-                    line_idx = sprite_height - 1 - line_idx;
-                }
+                let line_offset = (self.ly as i16 - s.y).max(0) as usize;
                 let bank = if cgb_render {
                     ((s.flags >> 3) & 0x01) as usize
                 } else {
                     0
                 };
                 for px in 0..8 {
-                    let bit = if s.flags & 0x20 != 0 { px } else { 7 - px };
-                    let addr = (tile + ((line_idx as usize) >> 3) as u8) as usize * 16
-                        + (line_idx as usize & 7) * 2;
-                    let lo = self.vram_read_for_render(bank, addr);
-                    let hi = self.vram_read_for_render(bank, addr + 1);
-                    let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                    if color_id == 0 {
-                        continue;
-                    }
                     let sx = s.x + px as i16;
                     if !(0i16..SCREEN_WIDTH as i16).contains(&sx) || drawn[sx as usize] {
                         continue;
@@ -2565,27 +3012,149 @@ impl Ppu {
                     if cgb_render && !self.cgb_line_obj_enabled[sx as usize] {
                         continue;
                     }
-                    if !cgb_render {
-                        let mut obj_sample_x = sx.clamp(0, (SCREEN_WIDTH - 1) as i16) as usize;
-                        if !s.fetched {
-                            if s.x <= 0 {
-                                obj_sample_x = obj_sample_x.saturating_sub(2);
-                            } else if s.x == 1 {
-                                obj_sample_x = obj_sample_x.saturating_sub(1);
-                            } else if s.x == 6 {
-                                obj_sample_x = (obj_sample_x + 3).min(SCREEN_WIDTH - 1);
-                            } else if s.x == 7 {
-                                obj_sample_x = (obj_sample_x + 4).min(SCREEN_WIDTH - 1);
-                            } else if s.x == 3 {
-                                obj_sample_x = (obj_sample_x + 1).min(SCREEN_WIDTH - 1);
-                            } else if (4..=5).contains(&s.x) {
-                                obj_sample_x = (obj_sample_x + 2).min(SCREEN_WIDTH - 1);
-                            }
+
+                    let bit = if s.flags & 0x20 != 0 { px } else { 7 - px };
+                    let color_id = if cgb_render {
+                        let sprite_height = if (self.lcdc & 0x04) != 0 {
+                            16usize
+                        } else {
+                            8usize
+                        };
+                        let mut sprite_line = if sprite_height == 16 {
+                            line_offset & 0x0F
+                        } else {
+                            line_offset & 0x07
+                        };
+                        if s.flags & 0x40 != 0 {
+                            sprite_line = if sprite_height == 16 {
+                                15usize.saturating_sub(sprite_line)
+                            } else {
+                                7usize.saturating_sub(sprite_line)
+                            };
                         }
-                        if (self.dmg_lcdc_for_pixel(obj_sample_x) & 0x02) == 0 {
+
+                        let mut tile = s.tile;
+                        if sprite_height == 16 {
+                            tile &= 0xFE;
+                            tile = tile.wrapping_add((sprite_line >> 3) as u8);
+                        }
+                        let addr = tile as usize * 16 + (sprite_line & 0x07) * 2;
+                        let lo = self.vram_read_for_render(bank, addr);
+                        let hi = self.vram_read_for_render(bank, addr + 1);
+                        ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1)
+                    } else {
+                        let mut obj_en_sample_x = sx.clamp(0, (SCREEN_WIDTH - 1) as i16) as usize;
+                        if !s.fetched {
+                            obj_en_sample_x =
+                                Self::dmg_adjust_obj_sample_x_for_unfetched(s.x, obj_en_sample_x);
+                        }
+                        if (self.dmg_lcdc_for_pixel(obj_en_sample_x) & 0x02) == 0 {
                             continue;
                         }
+
+                        let (lo, hi) = if s.obj_data_valid {
+                            (s.obj_lo, s.obj_hi)
+                        } else {
+                            // Fallback for sprites whose row wasn't latched in mode 3.
+                            let sample_px =
+                                s.x + (px as i16 * obj_size_tuning.sample_px_weight) / 7;
+                            let mut obj_sample_x =
+                                sample_px.clamp(0, (SCREEN_WIDTH - 1) as i16) as usize;
+                            if !s.fetched {
+                                obj_sample_x =
+                                    Self::dmg_adjust_obj_sample_x_for_unfetched(s.x, obj_sample_x);
+                            }
+
+                            let apply_bias = |x: usize, bias: i16| -> usize {
+                                if bias < 0 {
+                                    x.saturating_sub((-bias) as usize)
+                                } else {
+                                    x.saturating_add(bias as usize).min(SCREEN_WIDTH - 1)
+                                }
+                            };
+                            let (size_16_lo, size_16_hi) = if obj_size_tuning
+                                .use_fetch_t_for_fetched
+                                && s.fetch_t_valid
+                            {
+                                let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+                                let t_lo = (s.fetch_t as i16 + obj_size_tuning.fetch_t_bias)
+                                    .clamp(0, max_t)
+                                    as u16;
+                                let t_hi = (s.fetch_t as i16
+                                    + obj_size_tuning.fetch_t_bias
+                                    + obj_size_tuning.fetch_hi_t_delta)
+                                    .clamp(0, max_t)
+                                    as u16;
+                                (
+                                    (self.dmg_lcdc_for_mode3_t(t_lo) & 0x04) != 0,
+                                    (self.dmg_lcdc_for_mode3_t(t_hi) & 0x04) != 0,
+                                )
+                            } else {
+                                let size_16_lo =
+                                    self.dmg_sample_obj_size_for_x(obj_sample_x, obj_size_tuning);
+                                let obj_sample_x_hi =
+                                    apply_bias(obj_sample_x, obj_size_tuning.sample_hi_delta);
+                                let size_16_hi = self
+                                    .dmg_sample_obj_size_for_x(obj_sample_x_hi, obj_size_tuning);
+                                (size_16_lo, size_16_hi)
+                            };
+
+                            let line_offset_8 = if obj_size_tuning.line_bias < 0 {
+                                line_offset.saturating_sub((-obj_size_tuning.line_bias) as usize)
+                            } else {
+                                line_offset.saturating_add(obj_size_tuning.line_bias as usize)
+                            };
+                            let line_8 = if obj_size_tuning.size8_clamp {
+                                line_offset_8.min(7)
+                            } else {
+                                line_offset_8 & 0x07
+                            };
+                            let mut sprite_line_lo = if size_16_lo {
+                                line_offset & 0x0F
+                            } else {
+                                line_8
+                            };
+                            let mut sprite_line_hi = if size_16_hi {
+                                line_offset & 0x0F
+                            } else {
+                                line_8
+                            };
+                            if s.flags & 0x40 != 0 {
+                                sprite_line_lo = if size_16_lo {
+                                    15usize.saturating_sub(sprite_line_lo)
+                                } else {
+                                    7usize.saturating_sub(sprite_line_lo)
+                                };
+                                sprite_line_hi = if size_16_hi {
+                                    15usize.saturating_sub(sprite_line_hi)
+                                } else {
+                                    7usize.saturating_sub(sprite_line_hi)
+                                };
+                            }
+
+                            let mut tile_lo = s.tile;
+                            if size_16_lo {
+                                tile_lo &= 0xFE;
+                                tile_lo = tile_lo.wrapping_add((sprite_line_lo >> 3) as u8);
+                            }
+                            let mut tile_hi = s.tile;
+                            if size_16_hi {
+                                tile_hi &= 0xFE;
+                                tile_hi = tile_hi.wrapping_add((sprite_line_hi >> 3) as u8);
+                            }
+                            let addr_lo = tile_lo as usize * 16 + (sprite_line_lo & 0x07) * 2;
+                            let addr_hi = tile_hi as usize * 16 + (sprite_line_hi & 0x07) * 2;
+                            (
+                                self.vram_read_for_render(bank, addr_lo),
+                                self.vram_read_for_render(bank, addr_hi + 1),
+                            )
+                        };
+                        ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1)
+                    };
+                    if color_id == 0 {
+                        continue;
                     }
+
                     let bg_zero = if !bg_enabled {
                         true
                     } else if !cgb_render && (self.dmg_lcdc_for_pixel(sx as usize) & 0x01) == 0 {
@@ -2694,6 +3263,7 @@ impl Ppu {
             self.update_lyc_compare();
 
             self.mode_clock += increment;
+            self.tick_pending_lcdc_write();
 
             match self.mode {
                 MODE_HBLANK => {
@@ -3351,6 +3921,13 @@ mod mode3_timing_tests {
             flags: 0,
             oam_index: 0,
             fetched: false,
+            obj_row_addr: 0,
+            obj_row_valid: false,
+            obj_lo: 0,
+            obj_hi: 0,
+            obj_data_valid: false,
+            fetch_t: 0,
+            fetch_t_valid: false,
         };
         ppu.sprite_count = 1;
 
@@ -3370,6 +3947,13 @@ mod mode3_timing_tests {
                 flags: 0,
                 oam_index: i,
                 fetched: false,
+                obj_row_addr: 0,
+                obj_row_valid: false,
+                obj_lo: 0,
+                obj_hi: 0,
+                obj_data_valid: false,
+                fetch_t: 0,
+                fetch_t_valid: false,
             };
         }
         ppu.sprite_count = xs.len();

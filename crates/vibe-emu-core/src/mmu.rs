@@ -17,7 +17,11 @@ fn env_flag_enabled(var: &str) -> bool {
     // Cache a small fixed set to avoid repeated env parsing.
     let cache = CACHE.get_or_init(|| {
         let mut map = std::collections::HashMap::new();
-        for key in ["VIBEEMU_TRACE_OAMBUG", "VIBEEMU_TRACE_LCDC"] {
+        for key in [
+            "VIBEEMU_TRACE_OAMBUG",
+            "VIBEEMU_TRACE_LCDC",
+            "VIBEEMU_DMG_MODE3_LCDC_DELAY",
+        ] {
             let enabled = std::env::var_os(key)
                 .map(|v| {
                     let s = v.to_string_lossy();
@@ -853,12 +857,12 @@ impl Mmu {
             }
             0xFF40 => {
                 let lcd_was_on = self.ppu.lcd_enabled();
+                let old = self.ppu.read_reg(0xFF40);
                 if env_flag_enabled("VIBEEMU_TRACE_LCDC") {
                     let pc_str = self
                         .last_cpu_pc
                         .map(|p| format!("{:04X}", p))
                         .unwrap_or_else(|| "<none>".to_string());
-                    let old = self.ppu.read_reg(0xFF40);
                     core_trace!(
                         target: "vibe_emu_core::lcdc",
                         "LCDC write pc={} old={:02X} new={:02X}",
@@ -867,7 +871,19 @@ impl Mmu {
                         val
                     );
                 }
-                self.ppu.write_reg(addr, val);
+                if env_flag_enabled("VIBEEMU_DMG_MODE3_LCDC_DELAY")
+                    && !self.cgb_mode
+                    && lcd_was_on
+                    && self.ppu.mode == 3
+                {
+                    // DMG mode-3 LCDC writes can exhibit a brief transitional
+                    // value before the final value is observed by the PPU.
+                    let transitional = old | (val & 0x01);
+                    self.ppu.write_reg(addr, transitional);
+                    self.ppu.queue_lcdc_write(val, 1);
+                } else {
+                    self.ppu.write_reg(addr, val);
+                }
                 if lcd_was_on && !self.ppu.lcd_enabled() {
                     self.complete_active_hdma();
                 }
