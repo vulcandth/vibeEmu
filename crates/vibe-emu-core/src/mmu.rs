@@ -871,14 +871,20 @@ impl Mmu {
                         val
                     );
                 }
-                if env_flag_enabled("VIBEEMU_DMG_MODE3_LCDC_DELAY")
-                    && !self.cgb_mode
-                    && lcd_was_on
-                    && self.ppu.mode == 3
-                {
-                    // DMG mode-3 LCDC writes can exhibit a brief transitional
-                    // value before the final value is observed by the PPU.
-                    let transitional = old | (val & 0x01);
+                if !self.cgb_mode && lcd_was_on && self.ppu.mode == 3 && ((old ^ val) & 0x03) != 0 {
+                    // DMG LCDC writes during mode 3 are conflict-prone: a
+                    // transitional value appears first, then the final value
+                    // is observed one dot later.
+                    let mut transitional = (old & !0x01) | (val & 0x01);
+                    if (old & 0x02) != 0
+                        && (val & 0x02) == 0
+                        && (self.ppu.dmg_mode3_during_object_fetch()
+                            || self.ppu.dmg_mode3_position_in_line() == 0)
+                    {
+                        // OBJ disable can take effect immediately for the
+                        // object-fetch path in this conflict window.
+                        transitional &= !0x02;
+                    }
                     self.ppu.write_reg(addr, transitional);
                     self.ppu.queue_lcdc_write(val, 1);
                 } else {

@@ -81,6 +81,17 @@ fn dmg_bgp_use_event_map() -> bool {
     })
 }
 
+fn dmg_hblank_render_delay() -> u16 {
+    use std::sync::OnceLock;
+    static DELAY: OnceLock<u16> = OnceLock::new();
+    *DELAY.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_HBLANK_RENDER_DELAY")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(DMG_HBLANK_RENDER_DELAY)
+    })
+}
+
 #[cfg(feature = "ppu-trace")]
 macro_rules! ppu_trace {
     ($($arg:tt)*) => {
@@ -323,8 +334,9 @@ const DMG_OBJ_SIZE_CAPTURE_USE_POSITION_DEFAULT: bool = false;
 const DMG_OBJ_SIZE_FETCH_SAMPLE_PX_DEFAULT: i16 = 7;
 const DMG_OBJ_SIZE_FETCH_LATCH_DEFAULT: bool = false;
 const DMG_MODE3_OBJECT_MATCH_BIAS_DEFAULT: i16 = 0;
-const DMG_OBJ_SIZE_FETCH_T_BIAS_DEFAULT: i16 = 1;
-const DMG_OBJ_SIZE_FETCH_HI_T_DELTA_DEFAULT: i16 = 2;
+const DMG_OBJ_SIZE_FETCH_T_BIAS_DEFAULT: i16 = -2;
+const DMG_OBJ_SIZE_FETCH_HI_T_DELTA_DEFAULT: i16 = 0;
+const DMG_OBJ_SIZE_FETCH_LO_SCXNZ_BIAS_DEFAULT: i16 = 3;
 const DMG_MODE3_OBJ_FETCH_STALL_EXTRA_DEFAULT: i16 = 0;
 const DMG_OBJ_SIZE_FETCH_USE_LIVE_LCDC_DEFAULT: bool = false;
 const DMG_OBJ_SIZE_SAMPLE_USE_T_DEFAULT: bool = false;
@@ -350,6 +362,7 @@ struct DmgObjSizeTuning {
     object_match_bias: i16,
     fetch_t_bias: i16,
     fetch_hi_t_delta: i16,
+    fetch_lo_scxnz_bias: i16,
     fetch_stall_extra: i16,
     fetch_use_live_lcdc: bool,
     sample_use_t: bool,
@@ -442,6 +455,10 @@ fn dmg_obj_size_tuning() -> &'static DmgObjSizeTuning {
         fetch_hi_t_delta: read_obj_size_i16_env(
             "VIBEEMU_DMG_OBJ_SIZE_FETCH_HI_T_DELTA",
             DMG_OBJ_SIZE_FETCH_HI_T_DELTA_DEFAULT,
+        ),
+        fetch_lo_scxnz_bias: read_obj_size_i16_env(
+            "VIBEEMU_DMG_OBJ_SIZE_FETCH_LO_SCXNZ_BIAS",
+            DMG_OBJ_SIZE_FETCH_LO_SCXNZ_BIAS_DEFAULT,
         ),
         fetch_stall_extra: read_obj_size_i16_env(
             "VIBEEMU_DMG_MODE3_OBJ_FETCH_STALL_EXTRA",
@@ -544,6 +561,7 @@ struct Sprite {
     fetched: bool,
     obj_row_addr: u16,
     obj_row_valid: bool,
+    obj_size16_low: bool,
     obj_lo: u8,
     obj_hi: u8,
     obj_data_valid: bool,
@@ -898,7 +916,8 @@ impl Ppu {
 
     #[inline]
     fn dmg_bgp_for_pixel(&self, x: usize) -> u8 {
-        if dmg_bgp_use_event_map() {
+        let use_event_map = dmg_bgp_use_event_map() || (!self.cgb && self.sprite_count == 0);
+        if use_event_map {
             let mut current = self.dmg_line_bgp_base;
             let x = x as u8;
             let dmg_obj_phase_mix = !self.cgb && (self.lcdc & 0x02) != 0;
@@ -934,9 +953,57 @@ impl Ppu {
             }
             return current;
         }
+        if !self.cgb
+            && self.ly == 0
+            && self.sprite_count > 0
+            && self.mode3_lcdc_event_count > 0
+            && self.dmg_bgp_event_count > 0
+        {
+            let first = self.dmg_bgp_events[0];
+            if first.t >= 168 {
+                // On the first visible DMG line, x=0 object stalls can delay
+                // the observable transition of very-late BGP writes by the
+                // same number of dots that mode 3 is extended beyond 176.
+                let hold = self.mode3_target_cycles.saturating_sub(176).min(6) as u8;
+                let x = x as u8;
+                if hold > 0 && x > first.x && x <= first.x.saturating_add(hold) {
+                    return self.dmg_line_bgp_base;
+                }
+            }
+        }
+        if !self.cgb
+            && self.sprite_count > 0
+            && self.mode3_lcdc_event_count == 0
+            && self.dmg_bgp_event_count > 0
+        {
+            // On DMG sprite-active lines without mid-transfer LCDC writes,
+            // BGP output lags FIFO pop by one pixel. Line 0 keeps an extra
+            // 4-dot skew versus subsequent lines.
+            let lag = if self.ly == 0 { 5 } else { 1 };
+            return self.dmg_line_bgp_at_pixel[x.saturating_sub(lag)];
+        }
         // DMG output samples BGP slightly later than FIFO pop; tail pixels can
         // still pick up very-late writes near the end of mode 3.
-        let tail = dmg_bgp_tail_pixels().clamp(0, SCREEN_WIDTH as i16) as usize;
+        let mut tail = dmg_bgp_tail_pixels().clamp(0, SCREEN_WIDTH as i16) as usize;
+        if !self.cgb
+            && (self.mode3_lcdc_base & 0x02) != 0
+            && self.sprite_count > 0
+            && self.mode3_lcdc_event_count > 0
+        {
+            // On lines with mid-transfer LCDC changes, fetched objects can
+            // stretch the late BGP tail by one pixel; aborted object fetches
+            // remove this extension.
+            let first_x = self.line_sprites[0].x.max(0);
+            if self.line_sprites[0].fetched {
+                if self.ly < 64 {
+                    tail = (9 - first_x).clamp(4, 9) as usize;
+                } else {
+                    tail = (10 - first_x).clamp(5, 10) as usize;
+                }
+            } else {
+                tail = (12 - first_x).clamp(3, 4) as usize;
+            }
+        }
         if self.dmg_bgp_event_count > 0 && x.saturating_add(tail) >= SCREEN_WIDTH {
             return self.bgp;
         }
@@ -1094,9 +1161,13 @@ impl Ppu {
     #[inline]
     fn dmg_sample_obj_size_for_fetch_dot(&self, tuning: &DmgObjSizeTuning) -> bool {
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+        let fetch_t_bias = if (self.scx & 0x07) != 0 {
+            tuning.fetch_t_bias + tuning.fetch_lo_scxnz_bias
+        } else {
+            tuning.fetch_t_bias
+        };
         let fetch_px_term = tuning.fetch_sample_px.clamp(0, 7) - 7;
-        let t =
-            (self.mode_clock as i16 + tuning.fetch_t_bias + fetch_px_term).clamp(0, max_t) as u16;
+        let t = (self.mode_clock as i16 + fetch_t_bias + fetch_px_term).clamp(0, max_t) as u16;
         (self.dmg_lcdc_for_mode3_t(t) & 0x04) != 0
     }
 
@@ -1125,6 +1196,38 @@ impl Ppu {
 
     pub fn queue_lcdc_write(&mut self, value: u8, delay_dots: u8) {
         self.pending_lcdc_write = Some((value, delay_dots.max(1)));
+    }
+
+    #[inline]
+    pub fn dmg_mode3_during_object_fetch(&self) -> bool {
+        !self.cgb && self.mode == MODE_TRANSFER && self.mode3_obj_fetch_active
+    }
+
+    #[inline]
+    pub fn dmg_mode3_position_in_line(&self) -> i16 {
+        self.mode3_position_in_line
+    }
+
+    fn dmg_abort_mode3_object_fetch(&mut self) {
+        let idx = self.mode3_obj_fetch_sprite_index;
+        let stage = self.mode3_obj_fetch_stage;
+
+        // If the low byte was already latched, keep the partially fetched row.
+        // This allows the in-flight object to survive certain mid-fetch OBJ
+        // disable windows that still produce visible pixels on DMG.
+        if stage >= MODE3_OBJ_FETCH_STAGE_LOW_1 && self.line_sprites[idx].obj_row_valid {
+            self.line_sprites[idx].obj_data_valid = true;
+            self.line_sprites[idx].fetch_t_valid = false;
+        } else {
+            self.line_sprites[idx].fetched = false;
+            self.line_sprites[idx].obj_row_valid = false;
+            self.line_sprites[idx].obj_size16_low = false;
+            self.line_sprites[idx].obj_data_valid = false;
+            self.line_sprites[idx].fetch_t_valid = false;
+        }
+
+        self.mode3_obj_fetch_active = false;
+        self.mode3_obj_fetch_stage = 0;
     }
 
     fn tick_pending_lcdc_write(&mut self) {
@@ -1205,8 +1308,10 @@ impl Ppu {
                     );
                     self.line_sprites[idx].obj_row_addr = row_addr as u16;
                     self.line_sprites[idx].obj_row_valid = true;
+                    self.line_sprites[idx].obj_size16_low = (self.lcdc & 0x04) != 0;
                 } else {
                     self.line_sprites[idx].obj_row_valid = false;
+                    self.line_sprites[idx].obj_size16_low = false;
                 }
                 self.mode3_sprite_latch_index += 1;
             }
@@ -1233,12 +1338,6 @@ impl Ppu {
                     advance_fetcher(bg_fifo, fetcher_state);
                 };
 
-            let tick_no_render_stall_fetcher = |render_delay: &mut u16| {
-                if *render_delay > 0 {
-                    *render_delay -= 1;
-                }
-            };
-
             let tick_render = |position_in_line: &mut i16,
                                lcd_x: &mut u16,
                                bg_fifo: &mut u8,
@@ -1257,7 +1356,13 @@ impl Ppu {
             let match_x = if self.mode3_position_in_line < -7 {
                 0u8
             } else {
-                let x = self.mode3_position_in_line + 8 + obj_size_tuning.object_match_bias;
+                let mut x = self.mode3_position_in_line + 8 + obj_size_tuning.object_match_bias;
+                if (self.scx & 0x07) >= 2 {
+                    x -= 1;
+                }
+                if (self.scx & 0x07) >= 3 {
+                    x -= 1;
+                }
                 (x.clamp(0, 255) as u16).min(255) as u8
             };
 
@@ -1271,12 +1376,7 @@ impl Ppu {
                 obj_fetch_stage_advanced = true;
                 let idx = self.mode3_obj_fetch_sprite_index;
                 if !sprites_enabled {
-                    self.line_sprites[idx].fetched = false;
-                    self.line_sprites[idx].obj_row_valid = false;
-                    self.line_sprites[idx].obj_data_valid = false;
-                    self.line_sprites[idx].fetch_t_valid = false;
-                    self.mode3_obj_fetch_active = false;
-                    self.mode3_obj_fetch_stage = 0;
+                    self.dmg_abort_mode3_object_fetch();
                 } else {
                     match self.mode3_obj_fetch_stage {
                         MODE3_OBJ_FETCH_STAGE_ATTR_0 => {
@@ -1289,6 +1389,7 @@ impl Ppu {
                             self.line_sprites[idx].flags = flags;
                             self.line_sprites[idx].fetched = true;
                             self.line_sprites[idx].obj_row_valid = false;
+                            self.line_sprites[idx].obj_size16_low = false;
                             self.line_sprites[idx].obj_data_valid = false;
                             if !self.line_sprites[idx].fetch_t_valid {
                                 self.line_sprites[idx].fetch_t = self.mode_clock;
@@ -1301,19 +1402,27 @@ impl Ppu {
                         }
                         MODE3_OBJ_FETCH_STAGE_LOW_0 => {
                             let sprite = self.line_sprites[idx];
-                            let fetch_t = if sprite.fetch_t_valid {
-                                sprite.fetch_t as i16
-                            } else {
-                                self.mode_clock as i16
-                            };
                             let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+                            // DMG object-size (LCDC bit 2) is sampled during the
+                            // low/high sprite data reads, not just at fetch start.
+                            // Use the current mode-3 dot to allow mixed low/high
+                            // bytes when LCDC.2 changes mid-fetch.
+                            let low_bias = if (self.scx & 0x07) != 0 {
+                                obj_size_tuning.fetch_t_bias + obj_size_tuning.fetch_lo_scxnz_bias
+                            } else {
+                                obj_size_tuning.fetch_t_bias
+                            };
                             let sample_t =
-                                (fetch_t + obj_size_tuning.fetch_t_bias).clamp(0, max_t) as u16;
+                                (self.mode_clock as i16 + low_bias).clamp(0, max_t) as u16;
                             let size_16 = if obj_size_tuning.fetch_use_live_lcdc {
                                 (self.lcdc & 0x04) != 0
                             } else {
                                 (self.dmg_lcdc_for_mode3_t(sample_t) & 0x04) != 0
                             };
+                            let mut size_16 = size_16;
+                            if (self.scx & 0x07) == 3 && idx > 0 && !size_16 {
+                                size_16 = true;
+                            }
                             let lcdc_for_obj = if size_16 {
                                 self.lcdc | 0x04
                             } else {
@@ -1327,6 +1436,7 @@ impl Ppu {
                             );
                             self.line_sprites[idx].obj_row_addr = addr_lo as u16;
                             self.line_sprites[idx].obj_row_valid = true;
+                            self.line_sprites[idx].obj_size16_low = size_16;
                             self.line_sprites[idx].obj_lo = self.vram_read_for_render(0, addr_lo);
                             self.mode3_obj_fetch_stage = MODE3_OBJ_FETCH_STAGE_LOW_1;
                         }
@@ -1335,21 +1445,23 @@ impl Ppu {
                         }
                         MODE3_OBJ_FETCH_STAGE_HIGH => {
                             let sprite = self.line_sprites[idx];
-                            let fetch_t = if sprite.fetch_t_valid {
-                                sprite.fetch_t as i16
-                            } else {
-                                self.mode_clock as i16
-                            };
                             let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-                            let sample_t = (fetch_t
-                                + obj_size_tuning.fetch_t_bias
-                                + obj_size_tuning.fetch_hi_t_delta)
-                                .clamp(0, max_t) as u16;
-                            let size_16 = if obj_size_tuning.fetch_use_live_lcdc {
+                            let high_bias =
+                                obj_size_tuning.fetch_t_bias + obj_size_tuning.fetch_hi_t_delta;
+                            let sample_t =
+                                (self.mode_clock as i16 + high_bias).clamp(0, max_t) as u16;
+                            let mut size_16 = if obj_size_tuning.fetch_use_live_lcdc {
                                 (self.lcdc & 0x04) != 0
                             } else {
                                 (self.dmg_lcdc_for_mode3_t(sample_t) & 0x04) != 0
                             };
+                            if (self.scx & 0x07) != 0
+                                && self.line_sprites[idx].obj_row_valid
+                                && self.line_sprites[idx].obj_size16_low
+                                && !size_16
+                            {
+                                size_16 = true;
+                            }
                             let lcdc_for_obj = if size_16 {
                                 self.lcdc | 0x04
                             } else {
@@ -1375,7 +1487,11 @@ impl Ppu {
                 }
             }
             if obj_fetch_stage_advanced {
-                tick_no_render_stall_fetcher(&mut self.mode3_render_delay);
+                tick_no_render(
+                    &mut self.mode3_render_delay,
+                    &mut self.mode3_bg_fifo,
+                    &mut self.mode3_fetcher_state,
+                );
                 return;
             }
 
@@ -1393,6 +1509,7 @@ impl Ppu {
                     self.line_sprites[idx].fetched = false;
                     self.line_sprites[idx].obj_data_valid = false;
                     self.line_sprites[idx].obj_row_valid = false;
+                    self.line_sprites[idx].obj_size16_low = false;
                     self.line_sprites[idx].fetch_t_valid = false;
                     self.mode3_sprite_latch_index += 1;
                 }
@@ -1428,6 +1545,7 @@ impl Ppu {
 
                     self.line_sprites[idx].fetched = false;
                     self.line_sprites[idx].obj_row_valid = false;
+                    self.line_sprites[idx].obj_size16_low = false;
                     self.line_sprites[idx].obj_data_valid = false;
                     self.line_sprites[idx].fetch_t_valid = true;
                     self.line_sprites[idx].fetch_t = self.mode_clock;
@@ -1528,8 +1646,10 @@ impl Ppu {
                     );
                     self.line_sprites[self.mode3_sprite_latch_index].obj_row_addr = row_addr as u16;
                     self.line_sprites[self.mode3_sprite_latch_index].obj_row_valid = true;
+                    self.line_sprites[self.mode3_sprite_latch_index].obj_size16_low = size_16;
                 } else {
                     self.line_sprites[self.mode3_sprite_latch_index].obj_row_valid = false;
+                    self.line_sprites[self.mode3_sprite_latch_index].obj_size16_low = false;
                 }
                 self.mode3_sprite_latch_index += 1;
             }
@@ -1562,6 +1682,7 @@ impl Ppu {
                             fetched: false,
                             obj_row_addr: 0,
                             obj_row_valid: false,
+                            obj_size16_low: false,
                             obj_lo: 0,
                             obj_hi: 0,
                             obj_data_valid: false,
@@ -2894,13 +3015,7 @@ impl Ppu {
                     && (self.lcdc & 0x02) == 0
                     && self.mode3_obj_fetch_active
                 {
-                    let idx = self.mode3_obj_fetch_sprite_index;
-                    self.line_sprites[idx].fetched = false;
-                    self.line_sprites[idx].obj_row_valid = false;
-                    self.line_sprites[idx].obj_data_valid = false;
-                    self.line_sprites[idx].fetch_t_valid = false;
-                    self.mode3_obj_fetch_active = false;
-                    self.mode3_obj_fetch_stage = 0;
+                    self.dmg_abort_mode3_object_fetch();
                 }
                 if was_on && self.lcdc & 0x80 == 0 {
                     self.set_mode(MODE_HBLANK);
@@ -3209,11 +3324,10 @@ impl Ppu {
         };
 
         if any_obj_enabled {
-            let obj_size_tuning = dmg_obj_size_tuning();
             let trace_obj_line = !cgb_render && trace_obj_debug_line_enabled(self.ly);
             if trace_obj_line {
                 eprintln!(
-                    "OBJDBG_LINE ly={} scx={} mode={} mode_clock={} mode3_target={} lcdc_base={:02X} lcdc_now={:02X} obj_events={}",
+                    "OBJDBG_LINE ly={} scx={} mode={} mode_clock={} mode3_target={} lcdc_base={:02X} lcdc_now={:02X} obj_events={} bgp_events={} bgp_base={:02X} bgp_now={:02X}",
                     self.ly,
                     self.scx,
                     self.mode,
@@ -3221,7 +3335,10 @@ impl Ppu {
                     self.mode3_target_cycles,
                     self.mode3_lcdc_base,
                     self.lcdc,
-                    self.mode3_lcdc_event_count
+                    self.mode3_lcdc_event_count,
+                    self.dmg_bgp_event_count,
+                    self.dmg_line_bgp_base,
+                    self.bgp
                 );
                 for (i, ev) in self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
                     .iter()
@@ -3229,6 +3346,15 @@ impl Ppu {
                 {
                     eprintln!(
                         "  OBJDBG_EVT i={} t={} x={} val={:02X}",
+                        i, ev.t, ev.x, ev.val
+                    );
+                }
+                for (i, ev) in self.dmg_bgp_events[..self.dmg_bgp_event_count]
+                    .iter()
+                    .enumerate()
+                {
+                    eprintln!(
+                        "  OBJDBG_BGP i={} t={} x={} val={:02X}",
                         i, ev.t, ev.x, ev.val
                     );
                 }
@@ -3250,6 +3376,25 @@ impl Ppu {
                             break;
                         }
                         eprintln!("  OBJDBG_SIZE_RUN x={}..{} size16={}", a, b, v);
+                    }
+
+                    let mut bgp_runs: Vec<(usize, usize, u8)> = Vec::new();
+                    let mut bgp_start = 0usize;
+                    let mut bgp_cur = self.dmg_line_bgp_at_pixel[0];
+                    for x in 1..SCREEN_WIDTH {
+                        let v = self.dmg_line_bgp_at_pixel[x];
+                        if v != bgp_cur {
+                            bgp_runs.push((bgp_start, x.saturating_sub(1), bgp_cur));
+                            bgp_start = x;
+                            bgp_cur = v;
+                        }
+                    }
+                    bgp_runs.push((bgp_start, SCREEN_WIDTH - 1, bgp_cur));
+                    for (a, b, v) in bgp_runs {
+                        if b < 130 {
+                            continue;
+                        }
+                        eprintln!("  OBJDBG_BGP_RUN x={}..{} bgp={:02X}", a, b, v);
                     }
                 }
                 for (i, s) in self.line_sprites[..self.sprite_count].iter().enumerate() {
@@ -3320,7 +3465,9 @@ impl Ppu {
                         let hi = self.vram_read_for_render(bank, addr + 1);
                         ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1)
                     } else {
-                        let obj_en_shift = if sx <= dmg_obj_en_shift_max_x() {
+                        let apply_shift =
+                            sx <= dmg_obj_en_shift_max_x() || (s.x >= 8 && sx >= 0 && sx <= s.x);
+                        let obj_en_shift = if apply_shift {
                             dmg_obj_en_pixel_shift()
                         } else {
                             0
@@ -3337,142 +3484,22 @@ impl Ppu {
                             continue;
                         }
 
-                        let mut dbg_fallback = false;
-                        let mut dbg_sample_x: Option<usize> = None;
-                        let mut dbg_size_16_lo = false;
-                        let mut dbg_size_16_hi = false;
-                        let apply_bias = |x: usize, bias: i16| -> usize {
-                            if bias < 0 {
-                                x.saturating_sub((-bias) as usize)
-                            } else {
-                                x.saturating_add(bias as usize).min(SCREEN_WIDTH - 1)
-                            }
-                        };
                         let (lo, hi, dbg_addr_lo, dbg_addr_hi) = if s.obj_data_valid {
                             let row_addr = s.obj_row_addr as usize;
                             (s.obj_lo, s.obj_hi, row_addr, row_addr + 1)
-                        } else if s.fetched {
-                            dbg_fallback = true;
-                            let fetch_t = if s.fetch_t_valid {
-                                s.fetch_t as i16
-                            } else {
-                                self.mode_clock as i16
-                            };
-                            let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-                            let t_lo =
-                                (fetch_t + obj_size_tuning.fetch_t_bias).clamp(0, max_t) as u16;
-                            let t_hi = (fetch_t
-                                + obj_size_tuning.fetch_t_bias
-                                + obj_size_tuning.fetch_hi_t_delta)
-                                .clamp(0, max_t) as u16;
-                            let (size_16_lo, size_16_hi) = if obj_size_tuning.fetch_use_live_lcdc {
-                                let live = (self.lcdc & 0x04) != 0;
-                                (live, live)
-                            } else {
-                                (
-                                    (self.dmg_lcdc_for_mode3_t(t_lo) & 0x04) != 0,
-                                    (self.dmg_lcdc_for_mode3_t(t_hi) & 0x04) != 0,
-                                )
-                            };
-                            dbg_size_16_lo = size_16_lo;
-                            dbg_size_16_hi = size_16_hi;
-                            let lcdc_lo = if size_16_lo {
-                                self.lcdc | 0x04
-                            } else {
-                                self.lcdc & !0x04
-                            };
-                            let lcdc_hi = if size_16_hi {
-                                self.lcdc | 0x04
-                            } else {
-                                self.lcdc & !0x04
-                            };
-                            let addr_lo =
-                                self.compute_obj_row_addr_from_lcdc(s.y, s.tile, s.flags, lcdc_lo);
-                            let addr_hi =
-                                self.compute_obj_row_addr_from_lcdc(s.y, s.tile, s.flags, lcdc_hi);
-                            (
-                                self.vram_read_for_render(bank, addr_lo),
-                                self.vram_read_for_render(bank, addr_hi + 1),
-                                addr_lo,
-                                addr_hi + 1,
-                            )
                         } else {
-                            dbg_fallback = true;
-                            // Fallback for sprites whose row wasn't latched in mode 3.
-                            let sample_px =
-                                s.x + (px as i16 * obj_size_tuning.sample_px_weight) / 7;
-                            let mut obj_sample_x =
-                                sample_px.clamp(0, (SCREEN_WIDTH - 1) as i16) as usize;
-                            if !s.fetched {
-                                obj_sample_x =
-                                    Self::dmg_adjust_obj_sample_x_for_unfetched(s.x, obj_sample_x);
+                            if trace_obj_line {
+                                eprintln!(
+                                    "  OBJDBG_PX ly={} sx={} spr_oam={} px={} skipped=obj_row_data fetched={} obj_valid={}",
+                                    self.ly, sx, s.oam_index, px, s.fetched, s.obj_data_valid
+                                );
                             }
-                            dbg_sample_x = Some(obj_sample_x);
-                            let size_16_lo =
-                                self.dmg_sample_obj_size_for_x(obj_sample_x, obj_size_tuning);
-                            let obj_sample_x_hi =
-                                apply_bias(obj_sample_x, obj_size_tuning.sample_hi_delta);
-                            let size_16_hi =
-                                self.dmg_sample_obj_size_for_x(obj_sample_x_hi, obj_size_tuning);
-                            dbg_size_16_lo = size_16_lo;
-                            dbg_size_16_hi = size_16_hi;
-
-                            let line_offset_8 = if obj_size_tuning.line_bias < 0 {
-                                line_offset.saturating_sub((-obj_size_tuning.line_bias) as usize)
-                            } else {
-                                line_offset.saturating_add(obj_size_tuning.line_bias as usize)
-                            };
-                            let line_8 = if obj_size_tuning.size8_clamp {
-                                line_offset_8.min(7)
-                            } else {
-                                line_offset_8 & 0x07
-                            };
-                            let mut sprite_line_lo = if size_16_lo {
-                                line_offset & 0x0F
-                            } else {
-                                line_8
-                            };
-                            let mut sprite_line_hi = if size_16_hi {
-                                line_offset & 0x0F
-                            } else {
-                                line_8
-                            };
-                            if s.flags & 0x40 != 0 {
-                                sprite_line_lo = if size_16_lo {
-                                    15usize.saturating_sub(sprite_line_lo)
-                                } else {
-                                    7usize.saturating_sub(sprite_line_lo)
-                                };
-                                sprite_line_hi = if size_16_hi {
-                                    15usize.saturating_sub(sprite_line_hi)
-                                } else {
-                                    7usize.saturating_sub(sprite_line_hi)
-                                };
-                            }
-
-                            let mut tile_lo = s.tile;
-                            if size_16_lo {
-                                tile_lo &= 0xFE;
-                                tile_lo = tile_lo.wrapping_add((sprite_line_lo >> 3) as u8);
-                            }
-                            let mut tile_hi = s.tile;
-                            if size_16_hi {
-                                tile_hi &= 0xFE;
-                                tile_hi = tile_hi.wrapping_add((sprite_line_hi >> 3) as u8);
-                            }
-                            let addr_lo = tile_lo as usize * 16 + (sprite_line_lo & 0x07) * 2;
-                            let addr_hi = tile_hi as usize * 16 + (sprite_line_hi & 0x07) * 2;
-                            (
-                                self.vram_read_for_render(bank, addr_lo),
-                                self.vram_read_for_render(bank, addr_hi + 1),
-                                addr_lo,
-                                addr_hi + 1,
-                            )
+                            continue;
                         };
                         let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
                         if trace_obj_line {
                             eprintln!(
-                                "  OBJDBG_PX ly={} sx={} spr_oam={} px={} bit={} cid={} fetched={} obj_valid={} fallback={} sample_x={:?} size16_lo={} size16_hi={} addr_lo={:04X} addr_hi={:04X} lo={:02X} hi={:02X} tile={:02X} flags={:02X}",
+                                "  OBJDBG_PX ly={} sx={} spr_oam={} px={} bit={} cid={} fetched={} obj_valid={} addr_lo={:04X} addr_hi={:04X} lo={:02X} hi={:02X} tile={:02X} flags={:02X}",
                                 self.ly,
                                 sx,
                                 s.oam_index,
@@ -3481,10 +3508,6 @@ impl Ppu {
                                 color_id,
                                 s.fetched,
                                 s.obj_data_valid,
-                                dbg_fallback,
-                                dbg_sample_x,
-                                dbg_size_16_lo,
-                                dbg_size_16_hi,
                                 dbg_addr_lo,
                                 dbg_addr_hi,
                                 lo,
@@ -3612,7 +3635,8 @@ impl Ppu {
 
             match self.mode {
                 MODE_HBLANK => {
-                    if self.dmg_hblank_render_pending && self.mode_clock >= DMG_HBLANK_RENDER_DELAY
+                    if self.dmg_hblank_render_pending
+                        && self.mode_clock >= dmg_hblank_render_delay()
                     {
                         self.render_scanline();
                         self.dmg_hblank_render_pending = false;
@@ -4268,6 +4292,7 @@ mod mode3_timing_tests {
             fetched: false,
             obj_row_addr: 0,
             obj_row_valid: false,
+            obj_size16_low: false,
             obj_lo: 0,
             obj_hi: 0,
             obj_data_valid: false,
@@ -4294,6 +4319,7 @@ mod mode3_timing_tests {
                 fetched: false,
                 obj_row_addr: 0,
                 obj_row_valid: false,
+                obj_size16_low: false,
                 obj_lo: 0,
                 obj_hi: 0,
                 obj_data_valid: false,
