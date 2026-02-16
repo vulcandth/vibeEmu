@@ -131,6 +131,31 @@ fn assert_png_match(gb: &GameBoy, expected_png: &std::path::Path, debug_stem: &s
         println!(
             "{debug_stem} mismatch: {mismatches} pixels differ (bbox x={min_x}..={max_x}, y={min_y}..={max_y})"
         );
+        if std::env::var("VIBEEMU_DEBUG_MISMATCH_COORDS")
+            .ok()
+            .is_some()
+        {
+            let limit = std::env::var("VIBEEMU_DEBUG_MISMATCH_LIMIT")
+                .ok()
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .unwrap_or(256);
+            let mut printed = 0usize;
+            for (idx, &exp) in expected_frame.iter().enumerate() {
+                if frame[idx] == exp {
+                    continue;
+                }
+                let x = (idx as u32) % SCREEN_W;
+                let y = (idx as u32) / SCREEN_W;
+                println!(
+                    "mismatch_xy x={} y={} actual={:08X} expected={:08X}",
+                    x, y, frame[idx], exp
+                );
+                printed += 1;
+                if printed >= limit {
+                    break;
+                }
+            }
+        }
 
         let actual_path = std::path::Path::new("target/tmp/mealybug-tearoom-tests")
             .join(format!("{debug_stem}.actual.png"));

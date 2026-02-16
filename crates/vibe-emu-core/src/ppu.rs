@@ -46,6 +46,127 @@ fn dmg_bgp_tail_pixels() -> i16 {
     })
 }
 
+fn dmg_bg_fetch_lead_pixels() -> i16 {
+    use std::sync::OnceLock;
+    static LEAD: OnceLock<i16> = OnceLock::new();
+    *LEAD.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BG_FETCH_LEAD_PIXELS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(9)
+    })
+}
+
+fn dmg_bg_fetch_sample_px_in_tile() -> i16 {
+    use std::sync::OnceLock;
+    static SAMPLE: OnceLock<i16> = OnceLock::new();
+    *SAMPLE.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BG_FETCH_SAMPLE_PX_IN_TILE")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_bg_en_sample_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BG_EN_SAMPLE_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-2)
+    })
+}
+
+fn dmg_bg_en_left_extra_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BG_EN_LEFT_EXTRA_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_bg_en_left_x_threshold() -> i16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<i16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BG_EN_LEFT_X_THRESHOLD")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_bg_en_left_raw_threshold() -> i16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<i16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BG_EN_LEFT_RAW_THRESHOLD")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(1)
+    })
+}
+
+fn dmg_bg_en_first_event_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BG_EN_FIRST_EVENT_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_bg_en_left_raw_sample_shift() -> i16 {
+    use std::sync::OnceLock;
+    static SHIFT: OnceLock<i16> = OnceLock::new();
+    *SHIFT.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BG_EN_LEFT_RAW_SAMPLE_SHIFT")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(1)
+    })
+}
+
+fn dmg_bg_en_line0_sample_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BG_EN_LINE0_SAMPLE_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-4)
+    })
+}
+
+fn dmg_bgp_sprite_lag_pixels() -> i16 {
+    use std::sync::OnceLock;
+    static LAG: OnceLock<i16> = OnceLock::new();
+    *LAG.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_SPRITE_LAG_PIXELS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(1)
+    })
+}
+
+fn dmg_bgp_sprite_lag_line0_pixels() -> i16 {
+    use std::sync::OnceLock;
+    static LAG: OnceLock<i16> = OnceLock::new();
+    *LAG.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_SPRITE_LAG_LINE0_PIXELS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(5)
+    })
+}
+
 fn dmg_obj_en_pixel_shift() -> i16 {
     use std::sync::OnceLock;
     static SHIFT: OnceLock<i16> = OnceLock::new();
@@ -78,6 +199,150 @@ fn dmg_bgp_use_event_map() -> bool {
                 let s = v.trim();
                 !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
             })
+    })
+}
+
+fn dmg_bgp_use_t_sample() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_USE_T_SAMPLE")
+            .ok()
+            .is_some_and(|v| {
+                let s = v.trim();
+                !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
+            })
+    })
+}
+
+fn dmg_bgp_sample_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_SAMPLE_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_bgp_line0_sample_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_LINE0_SAMPLE_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_bgp_use_simple_event_x() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_USE_SIMPLE_EVENT_X")
+            .ok()
+            .is_some_and(|v| {
+                let s = v.trim();
+                !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
+            })
+    })
+}
+
+fn dmg_bgp_simple_event_x_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_SIMPLE_EVENT_X_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_bgp_falling_edge_delay_t() -> i16 {
+    use std::sync::OnceLock;
+    static DELAY: OnceLock<i16> = OnceLock::new();
+    *DELAY.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_FALLING_EDGE_DELAY_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_bgp_rising_edge_delay_t() -> i16 {
+    use std::sync::OnceLock;
+    static DELAY: OnceLock<i16> = OnceLock::new();
+    *DELAY.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_RISING_EDGE_DELAY_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_bgp_t_sample_use_obj_x_corr() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_T_SAMPLE_USE_OBJ_X_CORR")
+            .ok()
+            .is_some_and(|v| {
+                let s = v.trim();
+                !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
+            })
+    })
+}
+
+fn dmg_bgp_t_sample_use_first_x_phase_corr() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_T_SAMPLE_USE_FIRST_X_PHASE_CORR")
+            .ok()
+            .is_some_and(|v| {
+                let s = v.trim();
+                !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
+            })
+    })
+}
+
+fn dmg_bgp_t_sample_include_line0() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_T_SAMPLE_INCLUDE_LINE0")
+            .ok()
+            .is_some_and(|v| {
+                let s = v.trim();
+                !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
+            })
+    })
+}
+
+fn dmg_bgp_line0_edge_backstep() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_LINE0_EDGE_BACKSTEP")
+            .ok()
+            .is_some_and(|v| {
+                let s = v.trim();
+                !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
+            })
+    })
+}
+
+fn dmg_bgp_t_sample_first_x_phase_corr_mag() -> i16 {
+    use std::sync::OnceLock;
+    static MAG: OnceLock<i16> = OnceLock::new();
+    *MAG.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_T_SAMPLE_FIRST_X_PHASE_CORR_MAG")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(1)
     })
 }
 
@@ -248,6 +513,7 @@ pub struct Ppu {
     line_color_zero: [bool; SCREEN_WIDTH],
     cgb_line_obj_enabled: [bool; SCREEN_WIDTH],
     dmg_line_lcdc_at_pixel: [u8; SCREEN_WIDTH],
+    dmg_line_mode3_t_at_pixel: [u16; SCREEN_WIDTH],
     dmg_line_obj_size_16: [bool; SCREEN_WIDTH],
     /// Latched sprites for the current scanline
     line_sprites: [Sprite; MAX_SPRITES_PER_LINE],
@@ -611,6 +877,7 @@ impl Ppu {
             line_color_zero: [false; SCREEN_WIDTH],
             cgb_line_obj_enabled: [true; SCREEN_WIDTH],
             dmg_line_lcdc_at_pixel: [0; SCREEN_WIDTH],
+            dmg_line_mode3_t_at_pixel: [0; SCREEN_WIDTH],
             dmg_line_obj_size_16: [false; SCREEN_WIDTH],
             line_sprites: [Sprite::default(); MAX_SPRITES_PER_LINE],
             sprite_count: 0,
@@ -735,6 +1002,7 @@ impl Ppu {
         self.mode3_lcdc_base = self.lcdc;
         self.mode3_lcdc_event_count = 0;
         self.dmg_line_lcdc_at_pixel.fill(self.mode3_lcdc_base);
+        self.dmg_line_mode3_t_at_pixel.fill(0);
         self.dmg_line_obj_size_16.fill((self.lcdc & 0x04) != 0);
 
         // Mirror the simplified DMG fetcher/FIFO timing model used by
@@ -915,7 +1183,88 @@ impl Ppu {
     }
 
     #[inline]
+    fn dmg_bgp_for_mode3_t(&self, t: u16) -> u8 {
+        let mut current = self.dmg_line_bgp_base;
+        let rise_delay = dmg_bgp_rising_edge_delay_t().clamp(-8, 8);
+        let fall_delay = dmg_bgp_falling_edge_delay_t().clamp(-8, 8);
+        for ev in self.dmg_bgp_events[..self.dmg_bgp_event_count].iter() {
+            let mut event_t = ev.t as i16;
+            if !self.cgb {
+                if ev.val > current {
+                    event_t += rise_delay;
+                } else if ev.val < current {
+                    event_t += fall_delay;
+                }
+            }
+            let event_t =
+                event_t.clamp(0, self.mode3_target_cycles.saturating_sub(1) as i16) as u16;
+            if t < event_t {
+                break;
+            }
+            current = ev.val;
+        }
+        current
+    }
+
+    #[inline]
     fn dmg_bgp_for_pixel(&self, x: usize) -> u8 {
+        if !self.cgb
+            && dmg_bgp_use_t_sample()
+            && self.sprite_count > 0
+            && self.mode3_lcdc_event_count == 0
+            && self.dmg_bgp_event_count > 0
+            && (self.ly != 0 || dmg_bgp_t_sample_include_line0())
+        {
+            let x = x.min(SCREEN_WIDTH - 1);
+            let mut sample_x = x;
+            if self.mode3_lcdc_event_count == 0
+                && self.sprite_count > 0
+                && dmg_bgp_t_sample_use_obj_x_corr()
+                && x <= 12
+            {
+                sample_x = Self::dmg_adjust_obj_sample_x_for_unfetched(self.line_sprites[0].x, x);
+            }
+            let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+            let mut bias = dmg_bgp_sample_t_bias();
+            if self.ly == 0 {
+                bias += dmg_bgp_line0_sample_t_bias();
+            }
+            let mut sample_t =
+                (self.dmg_line_mode3_t_at_pixel[sample_x] as i16 + bias).clamp(0, max_t);
+            if self.mode3_lcdc_event_count == 0
+                && self.sprite_count > 0
+                && dmg_bgp_t_sample_use_first_x_phase_corr()
+            {
+                let first_x = self.line_sprites[0].x;
+                let mag = dmg_bgp_t_sample_first_x_phase_corr_mag().clamp(1, 24);
+                if first_x >= 0 && (x as i16) == first_x {
+                    if first_x <= 4 {
+                        sample_t = (sample_t + mag).min(max_t);
+                    } else if first_x >= 8 {
+                        sample_t = (sample_t + mag).min(max_t);
+                    }
+                }
+            }
+            let sample_t = sample_t as u16;
+            return self.dmg_bgp_for_mode3_t(sample_t);
+        }
+        if !self.cgb
+            && self.sprite_count > 0
+            && self.mode3_lcdc_event_count == 0
+            && self.dmg_bgp_event_count > 0
+            && dmg_bgp_use_simple_event_x()
+        {
+            let mut current = self.dmg_line_bgp_base;
+            let bias = dmg_bgp_simple_event_x_bias();
+            let sx = (x as i16 + bias).clamp(0, (SCREEN_WIDTH - 1) as i16) as u8;
+            for ev in self.dmg_bgp_events[..self.dmg_bgp_event_count].iter() {
+                if sx < ev.x {
+                    break;
+                }
+                current = ev.val;
+            }
+            return current;
+        }
         let use_event_map = dmg_bgp_use_event_map() || (!self.cgb && self.sprite_count == 0);
         if use_event_map {
             let mut current = self.dmg_line_bgp_base;
@@ -979,8 +1328,40 @@ impl Ppu {
             // On DMG sprite-active lines without mid-transfer LCDC writes,
             // BGP output lags FIFO pop by one pixel. Line 0 keeps an extra
             // 4-dot skew versus subsequent lines.
-            let lag = if self.ly == 0 { 5 } else { 1 };
-            return self.dmg_line_bgp_at_pixel[x.saturating_sub(lag)];
+            let lag = if self.ly == 0 {
+                dmg_bgp_sprite_lag_line0_pixels().clamp(0, 16) as usize
+            } else {
+                dmg_bgp_sprite_lag_pixels().clamp(0, 16) as usize
+            };
+            let mut sample_x = x.saturating_sub(lag);
+            if self.ly == 0 && dmg_bgp_line0_edge_backstep() {
+                if self.dmg_bgp_events[..self.dmg_bgp_event_count]
+                    .iter()
+                    .any(|ev| ev.x as usize == sample_x)
+                {
+                    sample_x = sample_x.saturating_sub(1);
+                }
+            }
+            if sample_x + 1 < SCREEN_WIDTH {
+                let cur = self.dmg_line_bgp_at_pixel[sample_x];
+                let next = self.dmg_line_bgp_at_pixel[sample_x + 1];
+                if next > cur {
+                    // On DMG OBJ-active lines, the first pixel of a rising BGP
+                    // transition can sample the newer palette one dot earlier
+                    // than the steady-state lag model.
+                    sample_x += 1;
+                }
+            }
+            let first_x = self.line_sprites[0].x;
+            if first_x >= 0 {
+                let fx = first_x as usize;
+                if first_x <= 4 && x == fx {
+                    sample_x = (sample_x + 2).min(SCREEN_WIDTH - 1);
+                } else if first_x >= 8 && ((x as i16) == first_x || (x as i16) == first_x + 1) {
+                    sample_x = (sample_x + 2).min(SCREEN_WIDTH - 1);
+                }
+            }
+            return self.dmg_line_bgp_at_pixel[sample_x];
         }
         // DMG output samples BGP slightly later than FIFO pop; tail pixels can
         // still pick up very-late writes near the end of mode 3.
@@ -1071,15 +1452,17 @@ impl Ppu {
 
     #[inline]
     fn dmg_lcdc_for_bg_fetch_pixel(&self, x: usize) -> u8 {
-        // BG map/tile-data control bits affect tile fetch selection rather than
-        // the already-shifted output pixel. Approximate this by sampling one
-        // tile earlier and quantizing to tile boundaries.
-        if x < 8 {
-            // The first visible tile comes from the preloaded fetch state.
-            return self.mode3_lcdc_base;
-        }
-        let fetch_x = x.saturating_sub(8) & !7usize;
-        self.dmg_lcdc_for_fetch_control_pixel(fetch_x)
+        // BG map/tile-data control bits are sampled by the fetcher before the
+        // corresponding tile pixels are popped. Use the recorded mode-3 dot of
+        // tile output and sample LCDC at a configurable dot backshift.
+        let backshift_t = dmg_bg_fetch_lead_pixels().clamp(0, 64) as u16;
+        let tile_x = x & !7usize;
+        let sample_px = {
+            let offset = dmg_bg_fetch_sample_px_in_tile().clamp(0, 7) as usize;
+            (tile_x + offset).min(SCREEN_WIDTH - 1)
+        };
+        let sample_t = self.dmg_line_mode3_t_at_pixel[sample_px].saturating_sub(backshift_t);
+        self.dmg_lcdc_for_bg_fetch_t(sample_t)
     }
 
     #[inline]
@@ -1092,6 +1475,84 @@ impl Ppu {
             current = ev.val;
         }
         current
+    }
+
+    #[inline]
+    fn dmg_lcdc_for_bg_en_mode3_t(&self, t: u16) -> u8 {
+        let mut current = self.mode3_lcdc_base;
+        let first_adj = dmg_bg_en_first_event_t_adjust().clamp(-32, 32);
+        for (i, ev) in self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+            .iter()
+            .enumerate()
+        {
+            let mut event_t = ev.t;
+            if !self.cgb && i == 0 && ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
+                if first_adj < 0 {
+                    event_t = event_t.saturating_sub((-first_adj) as u16);
+                } else if first_adj > 0 {
+                    event_t = event_t.saturating_add(first_adj as u16);
+                }
+            }
+            if t < event_t {
+                break;
+            }
+            current = ev.val;
+        }
+        current
+    }
+
+    #[inline]
+    fn dmg_lcdc_for_bg_fetch_t(&self, t: u16) -> u8 {
+        let mut current = self.mode3_lcdc_base;
+        for (i, ev) in self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+            .iter()
+            .enumerate()
+        {
+            let mut event_t = ev.t;
+            if !self.cgb && i == 0 && ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
+                // Writes that land while the fetcher is in PUSH with a mostly
+                // full FIFO do not affect the immediate next fetched BG tile.
+                event_t = event_t.saturating_add(8);
+            }
+            if t < event_t {
+                break;
+            }
+            current = ev.val;
+        }
+        current
+    }
+
+    #[inline]
+    fn dmg_bg_en_for_pixel(&self, x: usize) -> bool {
+        let x = x.min(SCREEN_WIDTH - 1);
+        let mut raw_threshold = dmg_bg_en_left_raw_threshold().clamp(0, SCREEN_WIDTH as i16);
+        if !self.cgb && self.sprite_count > 0 {
+            raw_threshold = raw_threshold.max(self.line_sprites[0].x.max(0) + 1);
+        }
+        if !self.cgb && (x as i16) < raw_threshold {
+            let mut shift = dmg_bg_en_left_raw_sample_shift();
+            if self.sprite_count > 0 {
+                let first_x = self.line_sprites[0].x;
+                if !(0..=8).contains(&first_x) {
+                    shift = 0;
+                }
+            }
+            let sample_x = (x as i16 + shift).clamp(0, (SCREEN_WIDTH - 1) as i16) as usize;
+            return (self.dmg_line_lcdc_at_pixel[sample_x] & 0x01) != 0;
+        }
+        let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+        let mut bias = dmg_bg_en_sample_t_bias();
+        if !self.cgb && self.ly == 0 && self.mode3_lcdc_event_count > 0 {
+            bias += dmg_bg_en_line0_sample_t_bias();
+        }
+        if !self.cgb
+            && self.sprite_count > 0
+            && (x as i16) < dmg_bg_en_left_x_threshold().clamp(0, SCREEN_WIDTH as i16)
+        {
+            bias += dmg_bg_en_left_extra_bias();
+        }
+        let sample_t = (self.dmg_line_mode3_t_at_pixel[x] as i16 + bias).clamp(0, max_t) as u16;
+        (self.dmg_lcdc_for_bg_en_mode3_t(sample_t) & 0x01) != 0
     }
 
     #[inline]
@@ -1609,6 +2070,7 @@ impl Ppu {
                     if out_x < SCREEN_WIDTH {
                         self.dmg_line_bgp_at_pixel[out_x] = self.bgp;
                         self.dmg_line_lcdc_at_pixel[out_x] = self.lcdc;
+                        self.dmg_line_mode3_t_at_pixel[out_x] = self.mode_clock;
                     }
                 }
             }
@@ -3207,8 +3669,7 @@ impl Ppu {
             } else {
                 // draw background
                 for x in 0..SCREEN_WIDTH as u16 {
-                    let lcdc_px = self.dmg_line_lcdc_at_pixel[x as usize];
-                    if (lcdc_px & 0x01) == 0 {
+                    if !self.dmg_bg_en_for_pixel(x as usize) {
                         continue;
                     }
                     let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_pixel(x as usize);
@@ -3260,8 +3721,7 @@ impl Ppu {
                     let start_x = wx_reg.saturating_sub(7) as u16;
                     let window_y = self.win_line_counter as usize;
                     for x in start_x..SCREEN_WIDTH as u16 {
-                        let lcdc_px = self.dmg_line_lcdc_at_pixel[x as usize];
-                        if (lcdc_px & 0x01) == 0 {
+                        if !self.dmg_bg_en_for_pixel(x as usize) {
                             continue;
                         }
                         let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_pixel(x as usize);
@@ -3345,8 +3805,8 @@ impl Ppu {
                     .enumerate()
                 {
                     eprintln!(
-                        "  OBJDBG_EVT i={} t={} x={} val={:02X}",
-                        i, ev.t, ev.x, ev.val
+                        "  OBJDBG_EVT i={} t={} x={} val={:02X} fetcher_state={} bg_fifo={}",
+                        i, ev.t, ev.x, ev.val, ev.fetcher_state, ev.bg_fifo
                     );
                 }
                 for (i, ev) in self.dmg_bgp_events[..self.dmg_bgp_event_count]
@@ -3391,9 +3851,6 @@ impl Ppu {
                     }
                     bgp_runs.push((bgp_start, SCREEN_WIDTH - 1, bgp_cur));
                     for (a, b, v) in bgp_runs {
-                        if b < 130 {
-                            continue;
-                        }
                         eprintln!("  OBJDBG_BGP_RUN x={}..{} bgp={:02X}", a, b, v);
                     }
                 }
@@ -3524,8 +3981,7 @@ impl Ppu {
 
                     let bg_zero = if !bg_enabled {
                         true
-                    } else if !cgb_render && (self.dmg_line_lcdc_at_pixel[sx as usize] & 0x01) == 0
-                    {
+                    } else if !cgb_render && !self.dmg_bg_en_for_pixel(sx as usize) {
                         true
                     } else {
                         self.line_color_zero[sx as usize]
