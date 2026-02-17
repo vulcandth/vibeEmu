@@ -20,7 +20,29 @@ fn dmg_mode3_lcdc_event_t_bias() -> i16 {
         std::env::var("VIBEEMU_DMG_MODE3_LCDC_EVENT_T_BIAS")
             .ok()
             .and_then(|v| v.trim().parse::<i16>().ok())
-            .unwrap_or(0)
+            .unwrap_or(-1)
+    })
+}
+
+fn dmg_mode3_lcdc_fetch_bits_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_LCDC_FETCH_BITS_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-2)
+    })
+}
+
+fn dmg_mode3_lcdc_win_en_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_LCDC_WIN_EN_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(2)
     })
 }
 
@@ -43,6 +65,28 @@ fn dmg_bgp_tail_pixels() -> i16 {
             .ok()
             .and_then(|v| v.trim().parse::<i16>().ok())
             .unwrap_or(5)
+    })
+}
+
+fn dmg_bgp_fetcher_sample_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_FETCHER_SAMPLE_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-1)
+    })
+}
+
+fn dmg_bgp_fetcher_wx0_extra_t() -> i16 {
+    use std::sync::OnceLock;
+    static EXTRA: OnceLock<i16> = OnceLock::new();
+    *EXTRA.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BGP_FETCHER_WX0_EXTRA_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(8)
     })
 }
 
@@ -75,7 +119,7 @@ fn dmg_bg_en_sample_t_bias() -> i16 {
         std::env::var("VIBEEMU_DMG_BG_EN_SAMPLE_T_BIAS")
             .ok()
             .and_then(|v| v.trim().parse::<i16>().ok())
-            .unwrap_or(-2)
+            .unwrap_or(-3)
     })
 }
 
@@ -120,6 +164,17 @@ fn dmg_bg_en_first_event_t_adjust() -> i16 {
             .ok()
             .and_then(|v| v.trim().parse::<i16>().ok())
             .unwrap_or(0)
+    })
+}
+
+fn dmg_bg_fetch_first_event_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_BG_FETCH_FIRST_EVENT_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(8)
     })
 }
 
@@ -562,6 +617,9 @@ pub struct Ppu {
     dmg_line_bgp_at_pixel: [u8; SCREEN_WIDTH],
     dmg_bgp_event_count: usize,
     dmg_bgp_events: [DmgBgpEvent; DMG_BGP_EVENTS_MAX],
+    dmg_line_obp0_base: u8,
+    dmg_obp0_event_count: usize,
+    dmg_obp0_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
     dmg_hblank_render_pending: bool,
 
     // --- Mode3 LCDC timing quirks ---
@@ -572,7 +630,111 @@ pub struct Ppu {
     mode3_lcdc_base: u8,
     mode3_lcdc_event_count: usize,
     mode3_lcdc_events: [Mode3LcdcEvent; MODE3_LCDC_EVENTS_MAX],
+    mode3_scx_base: u8,
+    mode3_scx_event_count: usize,
+    mode3_scx_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
+    mode3_scy_base: u8,
+    mode3_scy_event_count: usize,
+    mode3_scy_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
+    mode3_wx_base: u8,
+    mode3_wx_event_count: usize,
+    mode3_wx_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
+    mode3_wy_base: u8,
+    mode3_wy_event_count: usize,
+    mode3_wy_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
+    mode3_pop_event_count: usize,
+    mode3_pop_events: [Mode3PopEvent; MODE3_POP_EVENTS_MAX],
     pending_lcdc_write: Option<(u8, u8)>,
+}
+
+fn dmg_obp0_sample_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_OBP0_SAMPLE_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-1)
+    })
+}
+
+fn dmg_mode3_scx_event_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCX_EVENT_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-7)
+    })
+}
+
+fn dmg_mode3_scx_event_t_obj_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCX_EVENT_T_OBJ_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-3)
+    })
+}
+
+fn dmg_mode3_scy_event_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-14)
+    })
+}
+
+fn dmg_mode3_wx_event_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_WX_EVENT_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(3)
+    })
+}
+
+fn dmg_mode3_wy_event_t_bias() -> i16 {
+    use std::sync::OnceLock;
+    static BIAS: OnceLock<i16> = OnceLock::new();
+    *BIAS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_WY_EVENT_T_BIAS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_wx_activate_on_pos6() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_WX_ACTIVATE_ON_POS6")
+            .ok()
+            .is_none_or(|v| {
+                let s = v.trim();
+                !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
+            })
+    })
+}
+
+fn dmg_wx_previsible_phase_max() -> i16 {
+    use std::sync::OnceLock;
+    static MAX: OnceLock<i16> = OnceLock::new();
+    *MAX.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_WX_PREVISIBLE_PHASE_MAX")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
 }
 
 #[derive(Copy, Clone, Default)]
@@ -585,6 +747,8 @@ struct DmgBgpEvent {
 const DMG_BGP_EVENTS_MAX: usize = 64;
 
 const MODE3_LCDC_EVENTS_MAX: usize = 64;
+const MODE3_REG_EVENTS_MAX: usize = 64;
+const MODE3_POP_EVENTS_MAX: usize = 256;
 
 const DMG_OBJ_SIZE_CAPTURE_BIAS_DEFAULT: i16 = 2;
 const DMG_OBJ_SIZE_CAPTURE_PHASE_WEIGHT_DEFAULT: i16 = 0;
@@ -814,6 +978,18 @@ struct Mode3LcdcEvent {
     fetcher_state: u8,
 }
 
+#[derive(Copy, Clone, Default)]
+struct Mode3RegEvent {
+    t: u16,
+    val: u8,
+}
+
+#[derive(Copy, Clone, Default)]
+struct Mode3PopEvent {
+    t: u16,
+    position_in_line: i16,
+}
+
 /// Default DMG palette colors in 0x00RRGGBB order for the `pixels` crate.
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
@@ -912,11 +1088,28 @@ impl Ppu {
             dmg_line_bgp_at_pixel: [0; SCREEN_WIDTH],
             dmg_bgp_event_count: 0,
             dmg_bgp_events: [DmgBgpEvent::default(); DMG_BGP_EVENTS_MAX],
+            dmg_line_obp0_base: 0,
+            dmg_obp0_event_count: 0,
+            dmg_obp0_events: [Mode3RegEvent::default(); MODE3_REG_EVENTS_MAX],
             dmg_hblank_render_pending: false,
 
             mode3_lcdc_base: 0,
             mode3_lcdc_event_count: 0,
             mode3_lcdc_events: [Mode3LcdcEvent::default(); MODE3_LCDC_EVENTS_MAX],
+            mode3_scx_base: 0,
+            mode3_scx_event_count: 0,
+            mode3_scx_events: [Mode3RegEvent::default(); MODE3_REG_EVENTS_MAX],
+            mode3_scy_base: 0,
+            mode3_scy_event_count: 0,
+            mode3_scy_events: [Mode3RegEvent::default(); MODE3_REG_EVENTS_MAX],
+            mode3_wx_base: 0,
+            mode3_wx_event_count: 0,
+            mode3_wx_events: [Mode3RegEvent::default(); MODE3_REG_EVENTS_MAX],
+            mode3_wy_base: 0,
+            mode3_wy_event_count: 0,
+            mode3_wy_events: [Mode3RegEvent::default(); MODE3_REG_EVENTS_MAX],
+            mode3_pop_event_count: 0,
+            mode3_pop_events: [Mode3PopEvent::default(); MODE3_POP_EVENTS_MAX],
             pending_lcdc_write: None,
             #[cfg(feature = "ppu-trace")]
             debug_lcd_enable_timer: None,
@@ -996,11 +1189,22 @@ impl Ppu {
         self.dmg_line_bgp_base = self.bgp;
         self.dmg_line_bgp_at_pixel.fill(self.bgp);
         self.dmg_bgp_event_count = 0;
+        self.dmg_line_obp0_base = self.obp0;
+        self.dmg_obp0_event_count = 0;
     }
 
     fn begin_mode3_line(&mut self) {
         self.mode3_lcdc_base = self.lcdc;
         self.mode3_lcdc_event_count = 0;
+        self.mode3_scx_base = self.scx;
+        self.mode3_scx_event_count = 0;
+        self.mode3_scy_base = self.scy;
+        self.mode3_scy_event_count = 0;
+        self.mode3_wx_base = self.wx;
+        self.mode3_wx_event_count = 0;
+        self.mode3_wy_base = self.wy;
+        self.mode3_wy_event_count = 0;
+        self.mode3_pop_event_count = 0;
         self.dmg_line_lcdc_at_pixel.fill(self.mode3_lcdc_base);
         self.dmg_line_mode3_t_at_pixel.fill(0);
         self.dmg_line_obj_size_16.fill((self.lcdc & 0x04) != 0);
@@ -1025,13 +1229,24 @@ impl Ppu {
 
     fn record_mode3_lcdc_event(&mut self, mode3_t: u16, val: u8) {
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        let t = ((mode3_t as i16)
-            + if !self.cgb {
-                dmg_mode3_lcdc_event_t_bias()
-            } else {
-                0
-            })
-        .clamp(0, max_t) as u16;
+        let mut bias = if !self.cgb {
+            dmg_mode3_lcdc_event_t_bias()
+        } else {
+            0
+        };
+        if !self.cgb {
+            let changed = self.lcdc ^ val;
+            // Fetch-control LCDC bits (tile data select + window map select)
+            // are sampled by the BG/window fetcher and skew slightly earlier
+            // than BG-enable/object-size timing on DMG.
+            if (changed & 0x50) != 0 {
+                bias += dmg_mode3_lcdc_fetch_bits_t_bias();
+            }
+            if (changed & 0x20) != 0 {
+                bias += dmg_mode3_lcdc_win_en_t_bias();
+            }
+        }
+        let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
         let x = if !self.cgb && (self.lcdc & 0x02) != 0 {
             // On DMG, use the live mode-3 pixel position so LCDC writes track
             // sprite-stall timing similarly to mid-line BGP writes.
@@ -1062,6 +1277,14 @@ impl Ppu {
         } else {
             t.min((SCREEN_WIDTH - 1) as u16) as u8
         };
+        let prev_val = if self.mode3_lcdc_event_count > 0 {
+            self.mode3_lcdc_events[self.mode3_lcdc_event_count - 1].val
+        } else {
+            self.mode3_lcdc_base
+        };
+        if prev_val == val {
+            return;
+        }
         if self.mode3_lcdc_event_count >= MODE3_LCDC_EVENTS_MAX {
             self.mode3_lcdc_events[MODE3_LCDC_EVENTS_MAX - 1] = Mode3LcdcEvent {
                 t,
@@ -1080,6 +1303,141 @@ impl Ppu {
             fetcher_state: self.mode3_fetcher_state,
         };
         self.mode3_lcdc_event_count += 1;
+    }
+
+    fn clamp_mode3_t_for_events(&self, mode3_t: u16) -> u16 {
+        let max_t = self.mode3_target_cycles.saturating_sub(1);
+        mode3_t.min(max_t)
+    }
+
+    fn push_mode3_reg_event(
+        events: &mut [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
+        count: &mut usize,
+        t: u16,
+        val: u8,
+    ) {
+        if *count >= MODE3_REG_EVENTS_MAX {
+            events[MODE3_REG_EVENTS_MAX - 1] = Mode3RegEvent { t, val };
+            return;
+        }
+        events[*count] = Mode3RegEvent { t, val };
+        *count += 1;
+    }
+
+    fn record_mode3_scx_event(&mut self, mode3_t: u16, val: u8) {
+        let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+        let mut bias = dmg_mode3_scx_event_t_bias();
+        if !self.cgb && self.sprite_count > 0 {
+            bias += dmg_mode3_scx_event_t_obj_bias();
+        }
+        let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
+        Self::push_mode3_reg_event(
+            &mut self.mode3_scx_events,
+            &mut self.mode3_scx_event_count,
+            t,
+            val,
+        );
+    }
+
+    fn record_mode3_scy_event(&mut self, mode3_t: u16, val: u8) {
+        let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+        let t = (mode3_t as i16 + dmg_mode3_scy_event_t_bias()).clamp(0, max_t) as u16;
+        Self::push_mode3_reg_event(
+            &mut self.mode3_scy_events,
+            &mut self.mode3_scy_event_count,
+            t,
+            val,
+        );
+    }
+
+    fn record_mode3_wx_event(&mut self, mode3_t: u16, val: u8) {
+        let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+        let t = (mode3_t as i16 + dmg_mode3_wx_event_t_bias()).clamp(0, max_t) as u16;
+        Self::push_mode3_reg_event(
+            &mut self.mode3_wx_events,
+            &mut self.mode3_wx_event_count,
+            t,
+            val,
+        );
+    }
+
+    fn record_mode3_wy_event(&mut self, mode3_t: u16, val: u8) {
+        let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+        let t = (mode3_t as i16 + dmg_mode3_wy_event_t_bias()).clamp(0, max_t) as u16;
+        Self::push_mode3_reg_event(
+            &mut self.mode3_wy_events,
+            &mut self.mode3_wy_event_count,
+            t,
+            val,
+        );
+    }
+
+    fn record_mode3_pop_event(&mut self, mode3_t: u16, position_in_line: i16) {
+        let t = self.clamp_mode3_t_for_events(mode3_t);
+        if self.mode3_pop_event_count >= MODE3_POP_EVENTS_MAX {
+            self.mode3_pop_events[MODE3_POP_EVENTS_MAX - 1] = Mode3PopEvent {
+                t,
+                position_in_line,
+            };
+            return;
+        }
+        self.mode3_pop_events[self.mode3_pop_event_count] = Mode3PopEvent {
+            t,
+            position_in_line,
+        };
+        self.mode3_pop_event_count += 1;
+    }
+
+    fn mode3_reg_value_at_t(
+        base: u8,
+        events: &[Mode3RegEvent; MODE3_REG_EVENTS_MAX],
+        count: usize,
+        t: u16,
+    ) -> u8 {
+        let mut current = base;
+        for ev in events[..count].iter() {
+            if ev.t > t {
+                break;
+            }
+            current = ev.val;
+        }
+        current
+    }
+
+    fn dmg_scx_for_mode3_t(&self, t: u16) -> u8 {
+        Self::mode3_reg_value_at_t(
+            self.mode3_scx_base,
+            &self.mode3_scx_events,
+            self.mode3_scx_event_count,
+            t,
+        )
+    }
+
+    fn dmg_scy_for_mode3_t(&self, t: u16) -> u8 {
+        Self::mode3_reg_value_at_t(
+            self.mode3_scy_base,
+            &self.mode3_scy_events,
+            self.mode3_scy_event_count,
+            t,
+        )
+    }
+
+    fn dmg_wx_for_mode3_t(&self, t: u16) -> u8 {
+        Self::mode3_reg_value_at_t(
+            self.mode3_wx_base,
+            &self.mode3_wx_events,
+            self.mode3_wx_event_count,
+            t,
+        )
+    }
+
+    fn dmg_wy_for_mode3_t(&self, t: u16) -> u8 {
+        Self::mode3_reg_value_at_t(
+            self.mode3_wy_base,
+            &self.mode3_wy_events,
+            self.mode3_wy_event_count,
+            t,
+        )
     }
 
     fn record_dmg_bgp_event(&mut self, mode3_t: u16, val: u8) {
@@ -1361,6 +1719,19 @@ impl Ppu {
                     sample_x = (sample_x + 2).min(SCREEN_WIDTH - 1);
                 }
             }
+            if read_trace_bool_env("VIBEEMU_TRACE_BGP_SAMPLE")
+                && (self.ly == 64 || self.ly == 120)
+                && x <= 16
+            {
+                eprintln!(
+                    "BGP_SAMPLE ly={} x={} first_x={} sample_x={} v={:02X}",
+                    self.ly,
+                    x,
+                    self.line_sprites[0].x,
+                    sample_x,
+                    self.dmg_line_bgp_at_pixel[sample_x]
+                );
+            }
             return self.dmg_line_bgp_at_pixel[sample_x];
         }
         // DMG output samples BGP slightly later than FIFO pop; tail pixels can
@@ -1389,6 +1760,26 @@ impl Ppu {
             return self.bgp;
         }
         self.dmg_line_bgp_at_pixel[x.min(SCREEN_WIDTH - 1)]
+    }
+
+    #[inline]
+    fn dmg_obp0_for_mode3_t(&self, t: u16) -> u8 {
+        let mut current = self.dmg_line_obp0_base;
+        for ev in self.dmg_obp0_events[..self.dmg_obp0_event_count].iter() {
+            if t < ev.t {
+                break;
+            }
+            current = ev.val;
+        }
+        current
+    }
+
+    fn dmg_obp0_for_pixel(&self, x: usize) -> u8 {
+        let x = x.min(SCREEN_WIDTH - 1);
+        let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+        let bias = dmg_obp0_sample_t_bias();
+        let sample_t = (self.dmg_line_mode3_t_at_pixel[x] as i16 + bias).clamp(0, max_t) as u16;
+        self.dmg_obp0_for_mode3_t(sample_t)
     }
 
     #[inline]
@@ -1512,7 +1903,12 @@ impl Ppu {
             if !self.cgb && i == 0 && ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
                 // Writes that land while the fetcher is in PUSH with a mostly
                 // full FIFO do not affect the immediate next fetched BG tile.
-                event_t = event_t.saturating_add(8);
+                let adj = dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32);
+                if adj < 0 {
+                    event_t = event_t.saturating_sub((-adj) as u16);
+                } else if adj > 0 {
+                    event_t = event_t.saturating_add(adj as u16);
+                }
             }
             if t < event_t {
                 break;
@@ -2065,6 +2461,7 @@ impl Ppu {
                     &mut self.mode3_bg_fifo,
                     &mut self.mode3_fetcher_state,
                 );
+                self.record_mode3_pop_event(self.mode_clock, self.mode3_position_in_line);
                 if self.mode3_lcd_x > prev_lcd_x {
                     let out_x = self.mode3_lcd_x.saturating_sub(1) as usize;
                     if out_x < SCREEN_WIDTH {
@@ -3525,8 +3922,26 @@ impl Ppu {
                 }
             }
             0xFF41 => self.stat = (self.stat & 0x07) | (val & 0xF8),
-            0xFF42 => self.scy = val,
-            0xFF43 => self.scx = val,
+            0xFF42 => {
+                if self.mode == MODE_TRANSFER
+                    && self.ly < SCREEN_HEIGHT as u8
+                    && (self.lcdc & 0x80) != 0
+                    && self.mode_clock <= self.mode3_target_cycles
+                {
+                    self.record_mode3_scy_event(self.mode_clock, val);
+                }
+                self.scy = val;
+            }
+            0xFF43 => {
+                if self.mode == MODE_TRANSFER
+                    && self.ly < SCREEN_HEIGHT as u8
+                    && (self.lcdc & 0x80) != 0
+                    && self.mode_clock <= self.mode3_target_cycles
+                {
+                    self.record_mode3_scx_event(self.mode_clock, val);
+                }
+                self.scx = val;
+            }
             0xFF44 => {}
             0xFF45 => {
                 self.lyc = val;
@@ -3561,10 +3976,62 @@ impl Ppu {
                 }
                 self.bgp = val;
             }
-            0xFF48 => self.obp0 = val,
+            0xFF48 => {
+                if (!self.cgb || self.dmg_compat)
+                    && self.mode == MODE_TRANSFER
+                    && self.ly < SCREEN_HEIGHT as u8
+                    && (self.lcdc & 0x80) != 0
+                {
+                    let t = self.clamp_mode3_t_for_events(self.mode_clock);
+                    if !self.cgb {
+                        // DMG palette registers exhibit a short transitional
+                        // value window during mode-3 contention.
+                        let transitional = self.obp0 | val;
+                        Self::push_mode3_reg_event(
+                            &mut self.dmg_obp0_events,
+                            &mut self.dmg_obp0_event_count,
+                            t,
+                            transitional,
+                        );
+                        let t_final = self.clamp_mode3_t_for_events(t.saturating_add(1));
+                        Self::push_mode3_reg_event(
+                            &mut self.dmg_obp0_events,
+                            &mut self.dmg_obp0_event_count,
+                            t_final,
+                            val,
+                        );
+                    } else {
+                        Self::push_mode3_reg_event(
+                            &mut self.dmg_obp0_events,
+                            &mut self.dmg_obp0_event_count,
+                            t,
+                            val,
+                        );
+                    }
+                }
+                self.obp0 = val;
+            }
             0xFF49 => self.obp1 = val,
-            0xFF4A => self.wy = val,
-            0xFF4B => self.wx = val,
+            0xFF4A => {
+                if self.mode == MODE_TRANSFER
+                    && self.ly < SCREEN_HEIGHT as u8
+                    && (self.lcdc & 0x80) != 0
+                    && self.mode_clock <= self.mode3_target_cycles
+                {
+                    self.record_mode3_wy_event(self.mode_clock, val);
+                }
+                self.wy = val;
+            }
+            0xFF4B => {
+                if self.mode == MODE_TRANSFER
+                    && self.ly < SCREEN_HEIGHT as u8
+                    && (self.lcdc & 0x80) != 0
+                    && self.mode_clock <= self.mode3_target_cycles
+                {
+                    self.record_mode3_wx_event(self.mode_clock, val);
+                }
+                self.wx = val;
+            }
             0xFF68 => {
                 if self.cgb {
                     self.bgpi = Self::sanitize_palette_index(val);
@@ -3667,108 +4134,37 @@ impl Ppu {
             if cgb_render {
                 self.render_cgb_bg_window_scanline_with_mode3_lcdc();
             } else {
-                // draw background
-                for x in 0..SCREEN_WIDTH as u16 {
-                    if !self.dmg_bg_en_for_pixel(x as usize) {
-                        continue;
-                    }
-                    let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_pixel(x as usize);
-                    let tile_map_base = if (lcdc_fetch & 0x08) != 0 {
-                        BG_MAP_1_BASE
+                let window_line_active = (self.mode3_lcdc_base & 0x20) != 0
+                    && self.ly >= self.mode3_wy_base
+                    && self.mode3_wx_base <= WINDOW_X_MAX;
+                let use_fetcher = self.mode3_scx_event_count > 0
+                    || self.mode3_scy_event_count > 0
+                    || self.mode3_wx_event_count > 0
+                    || self.mode3_wy_event_count > 0
+                    || window_line_active;
+                if read_trace_bool_env("VIBEEMU_TRACE_BG_FETCHER") {
+                    let (scx_t0, scx_v0) = if self.mode3_scx_event_count > 0 {
+                        (self.mode3_scx_events[0].t, self.mode3_scx_events[0].val)
                     } else {
-                        BG_MAP_0_BASE
+                        (u16::MAX, 0)
                     };
-                    let tile_data_base = if (lcdc_fetch & 0x10) != 0 {
-                        TILE_DATA_0_BASE
-                    } else {
-                        TILE_DATA_1_BASE
-                    };
-                    let scx = self.scx as u16;
-                    let px = x.wrapping_add(scx) & 0xFF;
-                    let tile_col = (px / 8) as usize;
-                    let tile_row = (((self.ly as u16 + self.scy as u16) & 0xFF) / 8) as usize;
-                    let tile_y = (((self.ly as u16 + self.scy as u16) & 0xFF) % 8) as usize;
-
-                    let tile_index =
-                        self.vram_read_for_render(0, tile_map_base + tile_row * 32 + tile_col);
-                    let addr = if (lcdc_fetch & 0x10) != 0 {
-                        tile_data_base + tile_index as usize * 16
-                    } else {
-                        tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
-                    };
-                    let bit = 7 - (px % 8) as usize;
-                    let lo = self.vram_read_for_render(0, addr + tile_y * 2);
-                    let hi = self.vram_read_for_render(0, addr + tile_y * 2 + 1);
-                    let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                    let bgp = self.dmg_bgp_for_pixel(x as usize);
-                    let idx = Self::dmg_shade(bgp, color_id);
-                    let color = if self.dmg_compat {
-                        let off = (idx as usize) * 2;
-                        Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
-                    } else {
-                        self.dmg_palette[idx as usize]
-                    };
-                    let idx_fb = self.ly as usize * SCREEN_WIDTH + x as usize;
-                    self.framebuffer[idx_fb] = color;
-                    self.line_color_zero[x as usize] = idx == 0;
+                    eprintln!(
+                        "BGFETCH ly={} use_fetcher={} window_line_active={} scx_ev={} scx_t0={} scx_v0={:02X} scy_ev={} wx_ev={} wy_ev={}",
+                        self.ly,
+                        use_fetcher,
+                        window_line_active,
+                        self.mode3_scx_event_count,
+                        scx_t0,
+                        scx_v0,
+                        self.mode3_scy_event_count,
+                        self.mode3_wx_event_count,
+                        self.mode3_wy_event_count
+                    );
                 }
-
-                // window
-                let mut window_drawn = false;
-                if self.lcdc & 0x20 != 0 && self.ly >= self.wy && self.wx <= WINDOW_X_MAX {
-                    let wx_reg = self.wx;
-                    let window_origin_x = wx_reg as i16 - 7;
-                    let start_x = wx_reg.saturating_sub(7) as u16;
-                    let window_y = self.win_line_counter as usize;
-                    for x in start_x..SCREEN_WIDTH as u16 {
-                        if !self.dmg_bg_en_for_pixel(x as usize) {
-                            continue;
-                        }
-                        let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_pixel(x as usize);
-                        let window_map_base = if (lcdc_fetch & 0x40) != 0 {
-                            BG_MAP_1_BASE
-                        } else {
-                            BG_MAP_0_BASE
-                        };
-                        let tile_data_base = if (lcdc_fetch & 0x10) != 0 {
-                            TILE_DATA_0_BASE
-                        } else {
-                            TILE_DATA_1_BASE
-                        };
-                        let window_x = (x as i16 - window_origin_x) as usize;
-                        let tile_col = window_x / 8;
-                        let tile_row = window_y / 8;
-                        let tile_y = window_y % 8;
-                        let tile_x = window_x % 8;
-                        let tile_index = self
-                            .vram_read_for_render(0, window_map_base + tile_row * 32 + tile_col);
-                        let addr = if (lcdc_fetch & 0x10) != 0 {
-                            tile_data_base + tile_index as usize * 16
-                        } else {
-                            tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
-                        };
-                        let bit = 7 - tile_x;
-                        let lo = self.vram_read_for_render(0, addr + tile_y * 2);
-                        let hi = self.vram_read_for_render(0, addr + tile_y * 2 + 1);
-                        let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                        let bgp = self.dmg_bgp_for_pixel(x as usize);
-                        let idx = Self::dmg_shade(bgp, color_id);
-                        let color = if self.dmg_compat {
-                            let off = (idx as usize) * 2;
-                            Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
-                        } else {
-                            self.dmg_palette[idx as usize]
-                        };
-                        let idx_fb = self.ly as usize * SCREEN_WIDTH + x as usize;
-                        self.framebuffer[idx_fb] = color;
-                        if (x as usize) < SCREEN_WIDTH {
-                            self.line_color_zero[x as usize] = idx == 0;
-                        }
-                    }
-                    window_drawn = true;
-                }
-                if window_drawn {
-                    self.win_line_counter = self.win_line_counter.wrapping_add(1);
+                if use_fetcher {
+                    self.render_dmg_bg_window_scanline_with_mode3_fetcher();
+                } else {
+                    self.render_dmg_bg_window_scanline_simple();
                 }
             }
         }
@@ -3816,6 +4212,43 @@ impl Ppu {
                     eprintln!(
                         "  OBJDBG_BGP i={} t={} x={} val={:02X}",
                         i, ev.t, ev.x, ev.val
+                    );
+                }
+                for (i, ev) in self.mode3_scx_events[..self.mode3_scx_event_count]
+                    .iter()
+                    .enumerate()
+                {
+                    eprintln!("  OBJDBG_SCX i={} t={} val={:02X}", i, ev.t, ev.val);
+                }
+                for (i, ev) in self.mode3_scy_events[..self.mode3_scy_event_count]
+                    .iter()
+                    .enumerate()
+                {
+                    eprintln!("  OBJDBG_SCY i={} t={} val={:02X}", i, ev.t, ev.val);
+                }
+                for (i, ev) in self.mode3_wx_events[..self.mode3_wx_event_count]
+                    .iter()
+                    .enumerate()
+                {
+                    eprintln!("  OBJDBG_WX i={} t={} val={:02X}", i, ev.t, ev.val);
+                }
+                for (i, ev) in self.mode3_wy_events[..self.mode3_wy_event_count]
+                    .iter()
+                    .enumerate()
+                {
+                    eprintln!("  OBJDBG_WY i={} t={} val={:02X}", i, ev.t, ev.val);
+                }
+                if self.mode3_pop_event_count > 0 {
+                    let visible = self.mode3_pop_events[..self.mode3_pop_event_count]
+                        .iter()
+                        .filter(|ev| (0..SCREEN_WIDTH as i16).contains(&ev.position_in_line))
+                        .count();
+                    let has_159 = self.mode3_pop_events[..self.mode3_pop_event_count]
+                        .iter()
+                        .any(|ev| ev.position_in_line == (SCREEN_WIDTH - 1) as i16);
+                    eprintln!(
+                        "  OBJDBG_POP count={} visible={} has_x159={}",
+                        self.mode3_pop_event_count, visible, has_159
                     );
                 }
                 if !cgb_render {
@@ -4003,7 +4436,7 @@ impl Ppu {
                         let (pal_reg, pal_idx) = if s.flags & 0x10 != 0 {
                             (self.obp1, 1usize)
                         } else {
-                            (self.obp0, 0usize)
+                            (self.dmg_obp0_for_pixel(sx as usize), 0usize)
                         };
                         let shade = Self::dmg_shade(pal_reg, color_id) as usize;
                         if self.dmg_compat {
@@ -4274,6 +4707,531 @@ impl Ppu {
             self.update_stat_irq(if_reg);
         }
         hblank_triggered
+    }
+
+    fn render_dmg_bg_window_scanline_simple(&mut self) {
+        // draw background
+        for x in 0..SCREEN_WIDTH as u16 {
+            if !self.dmg_bg_en_for_pixel(x as usize) {
+                continue;
+            }
+            let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_pixel(x as usize);
+            let tile_map_base = if (lcdc_fetch & 0x08) != 0 {
+                BG_MAP_1_BASE
+            } else {
+                BG_MAP_0_BASE
+            };
+            let tile_data_base = if (lcdc_fetch & 0x10) != 0 {
+                TILE_DATA_0_BASE
+            } else {
+                TILE_DATA_1_BASE
+            };
+            let scx = self.scx as u16;
+            let px = x.wrapping_add(scx) & 0xFF;
+            let tile_col = (px / 8) as usize;
+            let tile_row = (((self.ly as u16 + self.scy as u16) & 0xFF) / 8) as usize;
+            let tile_y = (((self.ly as u16 + self.scy as u16) & 0xFF) % 8) as usize;
+
+            let tile_index = self.vram_read_for_render(0, tile_map_base + tile_row * 32 + tile_col);
+            let addr = if (lcdc_fetch & 0x10) != 0 {
+                tile_data_base + tile_index as usize * 16
+            } else {
+                tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
+            };
+            let bit = 7 - (px % 8) as usize;
+            let lo = self.vram_read_for_render(0, addr + tile_y * 2);
+            let hi = self.vram_read_for_render(0, addr + tile_y * 2 + 1);
+            let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+            let bgp = self.dmg_bgp_for_pixel(x as usize);
+            let idx = Self::dmg_shade(bgp, color_id);
+            let color = if self.dmg_compat {
+                let off = (idx as usize) * 2;
+                Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+            } else {
+                self.dmg_palette[idx as usize]
+            };
+            let idx_fb = self.ly as usize * SCREEN_WIDTH + x as usize;
+            self.framebuffer[idx_fb] = color;
+            self.line_color_zero[x as usize] = idx == 0;
+        }
+
+        // window
+        let mut window_drawn = false;
+        if self.lcdc & 0x20 != 0 && self.ly >= self.wy && self.wx <= WINDOW_X_MAX {
+            let wx_reg = self.wx;
+            let window_origin_x = wx_reg as i16 - 7;
+            let start_x = wx_reg.saturating_sub(7) as u16;
+            let window_y = self.win_line_counter as usize;
+            for x in start_x..SCREEN_WIDTH as u16 {
+                if !self.dmg_bg_en_for_pixel(x as usize) {
+                    continue;
+                }
+                let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_pixel(x as usize);
+                let window_map_base = if (lcdc_fetch & 0x40) != 0 {
+                    BG_MAP_1_BASE
+                } else {
+                    BG_MAP_0_BASE
+                };
+                let tile_data_base = if (lcdc_fetch & 0x10) != 0 {
+                    TILE_DATA_0_BASE
+                } else {
+                    TILE_DATA_1_BASE
+                };
+                let window_x = (x as i16 - window_origin_x) as usize;
+                let tile_col = window_x / 8;
+                let tile_row = window_y / 8;
+                let tile_y = window_y % 8;
+                let tile_x = window_x % 8;
+                let tile_index =
+                    self.vram_read_for_render(0, window_map_base + tile_row * 32 + tile_col);
+                let addr = if (lcdc_fetch & 0x10) != 0 {
+                    tile_data_base + tile_index as usize * 16
+                } else {
+                    tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
+                };
+                let bit = 7 - tile_x;
+                let lo = self.vram_read_for_render(0, addr + tile_y * 2);
+                let hi = self.vram_read_for_render(0, addr + tile_y * 2 + 1);
+                let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                let bgp = self.dmg_bgp_for_pixel(x as usize);
+                let idx = Self::dmg_shade(bgp, color_id);
+                let color = if self.dmg_compat {
+                    let off = (idx as usize) * 2;
+                    Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+                } else {
+                    self.dmg_palette[idx as usize]
+                };
+                let idx_fb = self.ly as usize * SCREEN_WIDTH + x as usize;
+                self.framebuffer[idx_fb] = color;
+                if (x as usize) < SCREEN_WIDTH {
+                    self.line_color_zero[x as usize] = idx == 0;
+                }
+            }
+            window_drawn = true;
+        }
+        if window_drawn {
+            self.win_line_counter = self.win_line_counter.wrapping_add(1);
+        }
+    }
+
+    fn render_dmg_bg_window_scanline_with_mode3_fetcher(&mut self) {
+        use std::collections::VecDeque;
+        const FETCH_GET_TILE_T1: u8 = 0;
+        const FETCH_GET_TILE_T2: u8 = 1;
+        const FETCH_GET_LO_T1: u8 = 2;
+        const FETCH_GET_LO_T2: u8 = 3;
+        const FETCH_GET_HI_T1: u8 = 4;
+        const FETCH_GET_HI_T2: u8 = 5;
+        const FETCH_PUSH: u8 = 6;
+
+        let use_pop_schedule = false;
+
+        let mut t_schedule = [0u16; SCREEN_WIDTH];
+        let mut use_t_schedule = true;
+        if !use_pop_schedule {
+            let mut prev_t = 0u16;
+            for (x, dst) in t_schedule.iter_mut().enumerate() {
+                let t = self.dmg_line_mode3_t_at_pixel[x];
+                if x > 0 && t < prev_t {
+                    use_t_schedule = false;
+                    break;
+                }
+                *dst = t;
+                prev_t = t;
+            }
+            if prev_t == 0 {
+                use_t_schedule = false;
+            }
+        }
+        let has_window_activity = self.mode3_wx_event_count > 0
+            || self.mode3_wy_event_count > 0
+            || (self.mode3_lcdc_base & 0x20) != 0
+            || self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+                .iter()
+                .any(|ev| (ev.val & 0x20) != 0);
+        if has_window_activity {
+            use_t_schedule = false;
+        }
+
+        let mut max_t = self
+            .mode3_target_cycles
+            .max(MODE3_CYCLES)
+            .saturating_add(256);
+        if use_pop_schedule {
+            max_t = max_t.max(
+                self.mode3_pop_events[self.mode3_pop_event_count - 1]
+                    .t
+                    .saturating_add(64),
+            );
+        } else if use_t_schedule {
+            max_t = max_t.max(t_schedule[SCREEN_WIDTH - 1].saturating_add(64));
+        }
+
+        let mut bg_fifo: VecDeque<u8> = VecDeque::with_capacity(32);
+        for _ in 0..8 {
+            bg_fifo.push_back(0);
+        }
+
+        let mut lcdc_cur = self.mode3_lcdc_base;
+        let mut scx_cur = self.mode3_scx_base;
+        let mut scy_cur = self.mode3_scy_base;
+        let mut wx_cur = self.mode3_wx_base;
+        let mut wy_cur = self.mode3_wy_base;
+
+        let mut lcdc_event_idx = 0usize;
+        let mut scx_event_idx = 0usize;
+        let mut scy_event_idx = 0usize;
+        let mut wx_event_idx = 0usize;
+        let mut wy_event_idx = 0usize;
+
+        let mut fetcher_state = FETCH_GET_TILE_T1;
+        let mut position_in_line: i16 = -16;
+        let mut lcd_x: i16 = 0;
+        let mut next_out_x = 0usize;
+        let mut pop_event_idx = 0usize;
+        let mut visible_written = 0usize;
+
+        let mut current_tile = 0u8;
+        let mut current_lo = 0u8;
+        let mut current_hi = 0u8;
+        let mut tile_index_addr = 0usize;
+        let mut tile_lo_addr = 0usize;
+        let mut tile_hi_addr = 0usize;
+
+        let mut wx_triggered = false;
+        let mut window_is_being_fetched = false;
+        let mut disable_window_pixel_insertion_glitch = false;
+        let mut window_tile_x = 0u8;
+        let mut window_line = self.win_line_counter;
+        let mut window_activations = 0u8;
+        let pop_before_fetch = has_window_activity;
+
+        macro_rules! pop_one_dot {
+            ($t:expr) => {{
+                let should_pop = if use_pop_schedule {
+                    pop_event_idx < self.mode3_pop_event_count
+                        && self.mode3_pop_events[pop_event_idx].t == $t
+                } else if bg_fifo.is_empty() {
+                    false
+                } else if position_in_line < 0 {
+                    true
+                } else if use_t_schedule {
+                    next_out_x < SCREEN_WIDTH && t_schedule[next_out_x] == $t
+                } else {
+                    true
+                };
+
+                if should_pop {
+                    let color_id_raw = if bg_fifo.is_empty() {
+                        0
+                    } else {
+                        bg_fifo.pop_front().unwrap_or(0)
+                    };
+
+                    if use_pop_schedule {
+                        position_in_line = self.mode3_pop_events[pop_event_idx].position_in_line;
+                        pop_event_idx += 1;
+                    } else {
+                        // Left-edge window start cases (WX<=5) are sensitive to how
+                        // pre-visible dots interact with SCX fine-scroll on DMG.
+                        if (wx_cur as i16) <= dmg_wx_previsible_phase_max()
+                            && (position_in_line + 16) < 8
+                        {
+                            if position_in_line == -17 {
+                                position_in_line = -16;
+                            } else if (position_in_line & 7) == (scx_cur as i16 & 7) {
+                                position_in_line = -8;
+                            } else if window_is_being_fetched
+                                && (position_in_line & 7) == 6
+                                && (scx_cur & 7) == 7
+                            {
+                                position_in_line = -8;
+                            } else if position_in_line == -9 {
+                                position_in_line = -16;
+                                window_is_being_fetched = false;
+                                continue;
+                            }
+                        }
+                    }
+
+                    window_is_being_fetched = false;
+
+                    if position_in_line >= 0 && position_in_line < SCREEN_WIDTH as i16 {
+                        let out_x = if use_pop_schedule {
+                            position_in_line as usize
+                        } else if use_t_schedule {
+                            next_out_x.min(SCREEN_WIDTH - 1)
+                        } else {
+                            lcd_x.clamp(0, (SCREEN_WIDTH - 1) as i16) as usize
+                        };
+                        if out_x < SCREEN_WIDTH {
+                            let color_id = if self.dmg_bg_en_for_pixel(out_x) {
+                                color_id_raw
+                            } else {
+                                0
+                            };
+                            let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+                            let mut sample_t = $t as i16 + dmg_bgp_fetcher_sample_t_bias();
+                            if wx_triggered && wx_cur == 0 {
+                                sample_t += dmg_bgp_fetcher_wx0_extra_t();
+                            }
+                            let sample_t = sample_t.clamp(0, max_t) as u16;
+                            let bgp = self.dmg_bgp_for_mode3_t(sample_t);
+                            let shade = Self::dmg_shade(bgp, color_id);
+                            let color = if self.dmg_compat {
+                                let off = (shade as usize) * 2;
+                                Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+                            } else {
+                                self.dmg_palette[shade as usize]
+                            };
+                            let idx_fb = self.ly as usize * SCREEN_WIDTH + out_x;
+                            self.framebuffer[idx_fb] = color;
+                            self.line_color_zero[out_x] = shade == 0;
+                            self.dmg_line_lcdc_at_pixel[out_x] = lcdc_cur;
+                            visible_written += 1;
+                        }
+                        if !use_pop_schedule && use_t_schedule && next_out_x < SCREEN_WIDTH {
+                            next_out_x += 1;
+                        }
+                        if !use_pop_schedule && !use_t_schedule {
+                            lcd_x += 1;
+                        }
+                    }
+
+                    if !use_pop_schedule {
+                        position_in_line += 1;
+                    }
+                }
+            }};
+        }
+
+        for t in 0..max_t {
+            let mut wx_just_changed = false;
+            let mut activated_on_pos6 = false;
+
+            while lcdc_event_idx < self.mode3_lcdc_event_count
+                && self.mode3_lcdc_events[lcdc_event_idx].t == t
+            {
+                let prev_lcdc = lcdc_cur;
+                lcdc_cur = self.mode3_lcdc_events[lcdc_event_idx].val;
+                if !self.cgb
+                    && (prev_lcdc & 0x20) != 0
+                    && (lcdc_cur & 0x20) == 0
+                    && window_is_being_fetched
+                {
+                    disable_window_pixel_insertion_glitch = true;
+                }
+                lcdc_event_idx += 1;
+            }
+            while scx_event_idx < self.mode3_scx_event_count
+                && self.mode3_scx_events[scx_event_idx].t == t
+            {
+                scx_cur = self.mode3_scx_events[scx_event_idx].val;
+                scx_event_idx += 1;
+            }
+            while scy_event_idx < self.mode3_scy_event_count
+                && self.mode3_scy_events[scy_event_idx].t == t
+            {
+                scy_cur = self.mode3_scy_events[scy_event_idx].val;
+                scy_event_idx += 1;
+            }
+            while wx_event_idx < self.mode3_wx_event_count
+                && self.mode3_wx_events[wx_event_idx].t == t
+            {
+                wx_cur = self.mode3_wx_events[wx_event_idx].val;
+                wx_event_idx += 1;
+                wx_just_changed = true;
+            }
+            while wy_event_idx < self.mode3_wy_event_count
+                && self.mode3_wy_events[wy_event_idx].t == t
+            {
+                wy_cur = self.mode3_wy_events[wy_event_idx].val;
+                wy_event_idx += 1;
+            }
+
+            let wy_triggered = self.ly >= wy_cur;
+
+            if !wx_triggered && wy_triggered && (lcdc_cur & 0x20) != 0 {
+                let mut should_activate_window = false;
+                if wx_cur == 0 {
+                    if position_in_line == -7
+                        || (position_in_line == -16 && (scx_cur & 0x07) != 0)
+                        || (-15..=-8).contains(&position_in_line)
+                    {
+                        should_activate_window = true;
+                    }
+                } else if wx_cur < 166 {
+                    let pos7 = position_in_line + 7;
+                    let pos6 = position_in_line + 6;
+                    if (0..=255).contains(&pos7) && wx_cur == pos7 as u8 {
+                        should_activate_window = true;
+                    } else if (0..=255).contains(&pos6)
+                        && wx_cur == pos6 as u8
+                        && dmg_wx_activate_on_pos6()
+                        && !wx_just_changed
+                    {
+                        should_activate_window = true;
+                        activated_on_pos6 = true;
+                    }
+                }
+
+                if should_activate_window {
+                    window_tile_x = 0;
+                    bg_fifo.clear();
+                    wx_triggered = true;
+                    window_is_being_fetched = true;
+                    fetcher_state = FETCH_GET_TILE_T1;
+                    if activated_on_pos6 && !self.cgb && lcd_x > 0 {
+                        lcd_x -= 1;
+                    }
+                    if window_activations == 0 {
+                        window_line = self.win_line_counter;
+                    } else {
+                        window_line = window_line.wrapping_add(1);
+                    }
+                    window_activations = window_activations.wrapping_add(1);
+                }
+            }
+
+            if wx_triggered
+                && !window_is_being_fetched
+                && fetcher_state == FETCH_GET_TILE_T1
+                && bg_fifo.len() == 8
+            {
+                let logical_position = position_in_line + 7;
+                if (0..=255).contains(&logical_position)
+                    && wx_cur == logical_position as u8
+                    && (!self.cgb || wx_cur == 0)
+                {
+                    bg_fifo.push_front(0);
+                    while bg_fifo.len() > 8 {
+                        bg_fifo.pop_back();
+                    }
+                }
+            }
+
+            if pop_before_fetch {
+                pop_one_dot!(t);
+            }
+
+            let fetcher_y = if wx_triggered {
+                window_line
+            } else {
+                self.ly.wrapping_add(scy_cur)
+            };
+
+            match fetcher_state {
+                FETCH_GET_TILE_T1 => {
+                    if (lcdc_cur & 0x20) == 0 {
+                        wx_triggered = false;
+                    }
+                    let map_base = if wx_triggered {
+                        if (lcdc_cur & 0x40) != 0 {
+                            BG_MAP_1_BASE
+                        } else {
+                            BG_MAP_0_BASE
+                        }
+                    } else if (lcdc_cur & 0x08) != 0 {
+                        BG_MAP_1_BASE
+                    } else {
+                        BG_MAP_0_BASE
+                    };
+
+                    let tile_x = if wx_triggered {
+                        window_tile_x
+                    } else if (position_in_line + 16) < 8 {
+                        scx_cur >> 3
+                    } else {
+                        (((scx_cur as i16 + position_in_line + 8) >> 3) & 0x1F) as u8
+                    };
+
+                    tile_index_addr = map_base
+                        + ((fetcher_y as usize >> 3) & 0x1F) * 32
+                        + (tile_x as usize & 0x1F);
+                    fetcher_state = FETCH_GET_TILE_T2;
+                }
+                FETCH_GET_TILE_T2 => {
+                    current_tile = self.vram_read_for_render(0, tile_index_addr);
+                    fetcher_state = FETCH_GET_LO_T1;
+                }
+                FETCH_GET_LO_T1 => {
+                    let tile_base = if (lcdc_cur & 0x10) != 0 {
+                        TILE_DATA_0_BASE + current_tile as usize * 16
+                    } else {
+                        TILE_DATA_1_BASE + ((current_tile as i8 as i16 + 128) as usize) * 16
+                    };
+                    tile_lo_addr = tile_base + ((fetcher_y as usize & 0x07) * 2);
+                    fetcher_state = FETCH_GET_LO_T2;
+                }
+                FETCH_GET_LO_T2 => {
+                    current_lo = self.vram_read_for_render(0, tile_lo_addr);
+                    fetcher_state = FETCH_GET_HI_T1;
+                }
+                FETCH_GET_HI_T1 => {
+                    let tile_base = if (lcdc_cur & 0x10) != 0 {
+                        TILE_DATA_0_BASE + current_tile as usize * 16
+                    } else {
+                        TILE_DATA_1_BASE + ((current_tile as i8 as i16 + 128) as usize) * 16
+                    };
+                    tile_hi_addr = tile_base + ((fetcher_y as usize & 0x07) * 2) + 1;
+                    fetcher_state = FETCH_GET_HI_T2;
+                }
+                FETCH_GET_HI_T2 => {
+                    current_hi = self.vram_read_for_render(0, tile_hi_addr);
+                    if wx_triggered {
+                        window_tile_x = window_tile_x.wrapping_add(1) & 0x1F;
+                    }
+                    fetcher_state = FETCH_PUSH;
+                }
+                _ => {
+                    if bg_fifo.is_empty() {
+                        if !self.cgb
+                            && wy_triggered
+                            && (lcdc_cur & 0x20) == 0
+                            && !disable_window_pixel_insertion_glitch
+                        {
+                            // DMG quirk: disabling WIN_EN during mode 3 can still
+                            // inject a single color-0 window pixel at WX alignment.
+                            let mut logical_pos = ((position_in_line + 7) & 0xFF) as u8;
+                            if logical_pos > 167 {
+                                logical_pos = 0;
+                            }
+                            if wx_cur == logical_pos {
+                                bg_fifo.push_back(0);
+                                continue;
+                            }
+                        }
+                        for i in 0..8u8 {
+                            let bit = 7 - i;
+                            let color_id =
+                                (((current_hi >> bit) & 1) << 1) | ((current_lo >> bit) & 1);
+                            bg_fifo.push_back(color_id);
+                        }
+                        fetcher_state = FETCH_GET_TILE_T1;
+                    }
+                }
+            }
+
+            if !pop_before_fetch {
+                pop_one_dot!(t);
+            }
+
+            if use_pop_schedule {
+                if visible_written >= SCREEN_WIDTH {
+                    break;
+                }
+            } else if use_t_schedule {
+                if next_out_x >= SCREEN_WIDTH {
+                    break;
+                }
+            } else if lcd_x >= SCREEN_WIDTH as i16 {
+                break;
+            }
+        }
+
+        if window_activations > 0 {
+            self.win_line_counter = self.win_line_counter.wrapping_add(window_activations);
+        }
     }
 
     fn render_cgb_bg_window_scanline_with_mode3_lcdc(&mut self) {

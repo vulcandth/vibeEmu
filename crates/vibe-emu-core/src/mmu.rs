@@ -871,10 +871,10 @@ impl Mmu {
                         val
                     );
                 }
-                if !self.cgb_mode && lcd_was_on && self.ppu.mode == 3 && ((old ^ val) & 0x03) != 0 {
-                    // DMG LCDC writes during mode 3 are conflict-prone: a
-                    // transitional value appears first, then the final value
-                    // is observed one dot later.
+                if !self.cgb_mode && lcd_was_on && self.ppu.mode == 3 {
+                    // DMG LCDC writes during mode 3 are conflict-prone: the
+                    // bus first exposes a transitional value, then the target
+                    // value is observed one dot later.
                     let mut transitional = (old & !0x01) | (val & 0x01);
                     if (old & 0x02) != 0
                         && (val & 0x02) == 0
@@ -886,7 +886,9 @@ impl Mmu {
                         transitional &= !0x02;
                     }
                     self.ppu.write_reg(addr, transitional);
-                    self.ppu.queue_lcdc_write(val, 1);
+                    if val != transitional {
+                        self.ppu.queue_lcdc_write(val, 1);
+                    }
                 } else {
                     self.ppu.write_reg(addr, val);
                 }
