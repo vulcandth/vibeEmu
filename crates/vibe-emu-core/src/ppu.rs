@@ -644,7 +644,8 @@ pub struct Ppu {
     mode3_wy_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
     mode3_pop_event_count: usize,
     mode3_pop_events: [Mode3PopEvent; MODE3_POP_EVENTS_MAX],
-    pending_lcdc_write: Option<(u8, u8)>,
+    pending_reg_write_count: usize,
+    pending_reg_writes: [PendingRegWrite; PENDING_REG_WRITES_MAX],
 }
 
 fn dmg_obp0_sample_t_bias() -> i16 {
@@ -749,6 +750,14 @@ const DMG_BGP_EVENTS_MAX: usize = 64;
 const MODE3_LCDC_EVENTS_MAX: usize = 64;
 const MODE3_REG_EVENTS_MAX: usize = 64;
 const MODE3_POP_EVENTS_MAX: usize = 256;
+const PENDING_REG_WRITES_MAX: usize = 8;
+
+#[derive(Copy, Clone, Default)]
+struct PendingRegWrite {
+    addr: u16,
+    val: u8,
+    delay: u8,
+}
 
 const DMG_OBJ_SIZE_CAPTURE_BIAS_DEFAULT: i16 = 2;
 const DMG_OBJ_SIZE_CAPTURE_PHASE_WEIGHT_DEFAULT: i16 = 0;
@@ -1110,7 +1119,8 @@ impl Ppu {
             mode3_wy_events: [Mode3RegEvent::default(); MODE3_REG_EVENTS_MAX],
             mode3_pop_event_count: 0,
             mode3_pop_events: [Mode3PopEvent::default(); MODE3_POP_EVENTS_MAX],
-            pending_lcdc_write: None,
+            pending_reg_write_count: 0,
+            pending_reg_writes: [PendingRegWrite::default(); PENDING_REG_WRITES_MAX],
             #[cfg(feature = "ppu-trace")]
             debug_lcd_enable_timer: None,
             #[cfg(feature = "ppu-trace")]
@@ -1842,7 +1852,7 @@ impl Ppu {
     }
 
     #[inline]
-    fn dmg_lcdc_for_bg_fetch_pixel(&self, x: usize) -> u8 {
+    fn dmg_bg_fetch_base_t_for_pixel(&self, x: usize) -> u16 {
         // BG map/tile-data control bits are sampled by the fetcher before the
         // corresponding tile pixels are popped. Use the recorded mode-3 dot of
         // tile output and sample LCDC at a configurable dot backshift.
@@ -1852,8 +1862,7 @@ impl Ppu {
             let offset = dmg_bg_fetch_sample_px_in_tile().clamp(0, 7) as usize;
             (tile_x + offset).min(SCREEN_WIDTH - 1)
         };
-        let sample_t = self.dmg_line_mode3_t_at_pixel[sample_px].saturating_sub(backshift_t);
-        self.dmg_lcdc_for_bg_fetch_t(sample_t)
+        self.dmg_line_mode3_t_at_pixel[sample_px].saturating_sub(backshift_t)
     }
 
     #[inline]
@@ -2051,8 +2060,26 @@ impl Ppu {
         self.dmg_palette = pal;
     }
 
+    pub fn queue_reg_write(&mut self, addr: u16, value: u8, delay_dots: u8) {
+        let delay = delay_dots.max(1);
+        if self.pending_reg_write_count >= PENDING_REG_WRITES_MAX {
+            self.pending_reg_writes[PENDING_REG_WRITES_MAX - 1] = PendingRegWrite {
+                addr,
+                val: value,
+                delay,
+            };
+            return;
+        }
+        self.pending_reg_writes[self.pending_reg_write_count] = PendingRegWrite {
+            addr,
+            val: value,
+            delay,
+        };
+        self.pending_reg_write_count += 1;
+    }
+
     pub fn queue_lcdc_write(&mut self, value: u8, delay_dots: u8) {
-        self.pending_lcdc_write = Some((value, delay_dots.max(1)));
+        self.queue_reg_write(0xFF40, value, delay_dots);
     }
 
     #[inline]
@@ -2087,15 +2114,22 @@ impl Ppu {
         self.mode3_obj_fetch_stage = 0;
     }
 
-    fn tick_pending_lcdc_write(&mut self) {
-        let Some((value, delay)) = self.pending_lcdc_write else {
-            return;
-        };
-        if delay <= 1 {
-            self.pending_lcdc_write = None;
-            self.write_reg(0xFF40, value);
-        } else {
-            self.pending_lcdc_write = Some((value, delay - 1));
+    fn tick_pending_reg_writes(&mut self) {
+        let mut i = 0usize;
+        while i < self.pending_reg_write_count {
+            let delay = self.pending_reg_writes[i].delay;
+            if delay <= 1 {
+                let addr = self.pending_reg_writes[i].addr;
+                let val = self.pending_reg_writes[i].val;
+                for j in (i + 1)..self.pending_reg_write_count {
+                    self.pending_reg_writes[j - 1] = self.pending_reg_writes[j];
+                }
+                self.pending_reg_write_count -= 1;
+                self.write_reg(addr, val);
+                continue;
+            }
+            self.pending_reg_writes[i].delay = delay - 1;
+            i += 1;
         }
     }
 
@@ -4520,7 +4554,7 @@ impl Ppu {
             self.update_lyc_compare();
 
             self.mode_clock += increment;
-            self.tick_pending_lcdc_write();
+            self.tick_pending_reg_writes();
 
             match self.mode {
                 MODE_HBLANK => {
@@ -4715,16 +4749,14 @@ impl Ppu {
             if !self.dmg_bg_en_for_pixel(x as usize) {
                 continue;
             }
-            let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_pixel(x as usize);
-            let tile_map_base = if (lcdc_fetch & 0x08) != 0 {
+            let fetch_t = self.dmg_bg_fetch_base_t_for_pixel(x as usize);
+            let lcdc_b = self.dmg_lcdc_for_bg_fetch_t(fetch_t);
+            let lcdc_lo = self.dmg_lcdc_for_bg_fetch_t(fetch_t);
+            let lcdc_hi = self.dmg_lcdc_for_bg_fetch_t(fetch_t.saturating_add(2));
+            let tile_map_base = if (lcdc_b & 0x08) != 0 {
                 BG_MAP_1_BASE
             } else {
                 BG_MAP_0_BASE
-            };
-            let tile_data_base = if (lcdc_fetch & 0x10) != 0 {
-                TILE_DATA_0_BASE
-            } else {
-                TILE_DATA_1_BASE
             };
             let scx = self.scx as u16;
             let px = x.wrapping_add(scx) & 0xFF;
@@ -4733,14 +4765,19 @@ impl Ppu {
             let tile_y = (((self.ly as u16 + self.scy as u16) & 0xFF) % 8) as usize;
 
             let tile_index = self.vram_read_for_render(0, tile_map_base + tile_row * 32 + tile_col);
-            let addr = if (lcdc_fetch & 0x10) != 0 {
-                tile_data_base + tile_index as usize * 16
+            let addr_lo = if (lcdc_lo & 0x10) != 0 {
+                TILE_DATA_0_BASE + tile_index as usize * 16 + tile_y * 2
             } else {
-                tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
+                TILE_DATA_1_BASE + ((tile_index as i8 as i16 + 128) as usize) * 16 + tile_y * 2
+            };
+            let addr_hi = if (lcdc_hi & 0x10) != 0 {
+                TILE_DATA_0_BASE + tile_index as usize * 16 + tile_y * 2 + 1
+            } else {
+                TILE_DATA_1_BASE + ((tile_index as i8 as i16 + 128) as usize) * 16 + tile_y * 2 + 1
             };
             let bit = 7 - (px % 8) as usize;
-            let lo = self.vram_read_for_render(0, addr + tile_y * 2);
-            let hi = self.vram_read_for_render(0, addr + tile_y * 2 + 1);
+            let lo = self.vram_read_for_render(0, addr_lo);
+            let hi = self.vram_read_for_render(0, addr_hi);
             let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
             let bgp = self.dmg_bgp_for_pixel(x as usize);
             let idx = Self::dmg_shade(bgp, color_id);
@@ -4766,16 +4803,14 @@ impl Ppu {
                 if !self.dmg_bg_en_for_pixel(x as usize) {
                     continue;
                 }
-                let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_pixel(x as usize);
-                let window_map_base = if (lcdc_fetch & 0x40) != 0 {
+                let fetch_t = self.dmg_bg_fetch_base_t_for_pixel(x as usize);
+                let lcdc_b = self.dmg_lcdc_for_bg_fetch_t(fetch_t);
+                let lcdc_lo = self.dmg_lcdc_for_bg_fetch_t(fetch_t);
+                let lcdc_hi = self.dmg_lcdc_for_bg_fetch_t(fetch_t.saturating_add(2));
+                let window_map_base = if (lcdc_b & 0x40) != 0 {
                     BG_MAP_1_BASE
                 } else {
                     BG_MAP_0_BASE
-                };
-                let tile_data_base = if (lcdc_fetch & 0x10) != 0 {
-                    TILE_DATA_0_BASE
-                } else {
-                    TILE_DATA_1_BASE
                 };
                 let window_x = (x as i16 - window_origin_x) as usize;
                 let tile_col = window_x / 8;
@@ -4784,14 +4819,22 @@ impl Ppu {
                 let tile_x = window_x % 8;
                 let tile_index =
                     self.vram_read_for_render(0, window_map_base + tile_row * 32 + tile_col);
-                let addr = if (lcdc_fetch & 0x10) != 0 {
-                    tile_data_base + tile_index as usize * 16
+                let addr_lo = if (lcdc_lo & 0x10) != 0 {
+                    TILE_DATA_0_BASE + tile_index as usize * 16 + tile_y * 2
                 } else {
-                    tile_data_base + ((tile_index as i8 as i16 + 128) as usize) * 16
+                    TILE_DATA_1_BASE + ((tile_index as i8 as i16 + 128) as usize) * 16 + tile_y * 2
+                };
+                let addr_hi = if (lcdc_hi & 0x10) != 0 {
+                    TILE_DATA_0_BASE + tile_index as usize * 16 + tile_y * 2 + 1
+                } else {
+                    TILE_DATA_1_BASE
+                        + ((tile_index as i8 as i16 + 128) as usize) * 16
+                        + tile_y * 2
+                        + 1
                 };
                 let bit = 7 - tile_x;
-                let lo = self.vram_read_for_render(0, addr + tile_y * 2);
-                let hi = self.vram_read_for_render(0, addr + tile_y * 2 + 1);
+                let lo = self.vram_read_for_render(0, addr_lo);
+                let hi = self.vram_read_for_render(0, addr_hi);
                 let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
                 let bgp = self.dmg_bgp_for_pixel(x as usize);
                 let idx = Self::dmg_shade(bgp, color_id);
@@ -4849,6 +4892,9 @@ impl Ppu {
             || self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
                 .iter()
                 .any(|ev| (ev.val & 0x20) != 0);
+        let has_win_en_toggle = self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+            .iter()
+            .any(|ev| ((self.mode3_lcdc_base ^ ev.val) & 0x20) != 0);
         if has_window_activity {
             use_t_schedule = false;
         }
@@ -4904,7 +4950,16 @@ impl Ppu {
         let mut window_tile_x = 0u8;
         let mut window_line = self.win_line_counter;
         let mut window_activations = 0u8;
-        let pop_before_fetch = has_window_activity;
+        let default_pop_before_fetch = if has_window_activity
+            && self.dmg_bgp_event_count > 0
+            && self.mode3_scx_event_count == 0
+            && !has_win_en_toggle
+        {
+            false
+        } else {
+            has_window_activity
+        };
+        let pop_before_fetch = default_pop_before_fetch;
 
         macro_rules! pop_one_dot {
             ($t:expr) => {{
@@ -4986,7 +5041,9 @@ impl Ppu {
                             };
                             let idx_fb = self.ly as usize * SCREEN_WIDTH + out_x;
                             self.framebuffer[idx_fb] = color;
-                            self.line_color_zero[out_x] = shade == 0;
+                            // Sprite priority compares against the raw BG color ID
+                            // (color-0 test), not the post-BGP mapped shade.
+                            self.line_color_zero[out_x] = color_id == 0;
                             self.dmg_line_lcdc_at_pixel[out_x] = lcdc_cur;
                             visible_written += 1;
                         }
@@ -5104,9 +5161,6 @@ impl Ppu {
                     && (!self.cgb || wx_cur == 0)
                 {
                     bg_fifo.push_front(0);
-                    while bg_fifo.len() > 8 {
-                        bg_fifo.pop_back();
-                    }
                 }
             }
 
@@ -5114,24 +5168,24 @@ impl Ppu {
                 pop_one_dot!(t);
             }
 
-            let fetcher_y = if wx_triggered {
-                window_line
-            } else {
-                self.ly.wrapping_add(scy_cur)
-            };
-
             match fetcher_state {
                 FETCH_GET_TILE_T1 => {
                     if (lcdc_cur & 0x20) == 0 {
                         wx_triggered = false;
                     }
+                    let fetcher_y = if wx_triggered {
+                        window_line
+                    } else {
+                        self.ly.wrapping_add(scy_cur)
+                    };
+                    let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_t(t);
                     let map_base = if wx_triggered {
-                        if (lcdc_cur & 0x40) != 0 {
+                        if (lcdc_fetch & 0x40) != 0 {
                             BG_MAP_1_BASE
                         } else {
                             BG_MAP_0_BASE
                         }
-                    } else if (lcdc_cur & 0x08) != 0 {
+                    } else if (lcdc_fetch & 0x08) != 0 {
                         BG_MAP_1_BASE
                     } else {
                         BG_MAP_0_BASE
@@ -5155,7 +5209,13 @@ impl Ppu {
                     fetcher_state = FETCH_GET_LO_T1;
                 }
                 FETCH_GET_LO_T1 => {
-                    let tile_base = if (lcdc_cur & 0x10) != 0 {
+                    let fetcher_y = if wx_triggered {
+                        window_line
+                    } else {
+                        self.ly.wrapping_add(scy_cur)
+                    };
+                    let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_t(t);
+                    let tile_base = if (lcdc_fetch & 0x10) != 0 {
                         TILE_DATA_0_BASE + current_tile as usize * 16
                     } else {
                         TILE_DATA_1_BASE + ((current_tile as i8 as i16 + 128) as usize) * 16
@@ -5168,7 +5228,13 @@ impl Ppu {
                     fetcher_state = FETCH_GET_HI_T1;
                 }
                 FETCH_GET_HI_T1 => {
-                    let tile_base = if (lcdc_cur & 0x10) != 0 {
+                    let fetcher_y = if wx_triggered {
+                        window_line
+                    } else {
+                        self.ly.wrapping_add(scy_cur)
+                    };
+                    let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_t(t);
+                    let tile_base = if (lcdc_fetch & 0x10) != 0 {
                         TILE_DATA_0_BASE + current_tile as usize * 16
                     } else {
                         TILE_DATA_1_BASE + ((current_tile as i8 as i16 + 128) as usize) * 16

@@ -43,14 +43,19 @@ fn frame_to_rgb(frame: &[u32]) -> Vec<u8> {
     out
 }
 
-fn expected_rgb_to_frame_color(rgb: [u8; 3]) -> u32 {
+fn expected_rgb_to_frame_color(rgb: [u8; 3], cgb: bool) -> u32 {
+    if cgb {
+        // CGB expectations use literal RGB values, including grayscale shades.
+        let [r, g, b] = rgb;
+        return ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+    }
+
     match rgb {
         // Mealybug DMG expectations use exact grayscale shades: 00/55/AA/FF.
         [0x00, 0x00, 0x00] => DMG_PALETTE[3],
         [0x55, 0x55, 0x55] => DMG_PALETTE[2],
         [0xAA, 0xAA, 0xAA] => DMG_PALETTE[1],
         [0xFF, 0xFF, 0xFF] => DMG_PALETTE[0],
-        // CGB expectations are full RGB; compare directly.
         [r, g, b] => ((r as u32) << 16) | ((g as u32) << 8) | (b as u32),
     }
 }
@@ -97,7 +102,7 @@ fn run_until_ld_b_b(
     panic!("mealybug tearoom: timeout");
 }
 
-fn assert_png_match(gb: &GameBoy, expected_png: &std::path::Path, debug_stem: &str) {
+fn assert_png_match(gb: &GameBoy, expected_png: &std::path::Path, debug_stem: &str, cgb: bool) {
     let (w, h, expected) = common::load_png_rgb(expected_png);
     assert_eq!(w, SCREEN_W);
     assert_eq!(h, SCREEN_H);
@@ -105,7 +110,7 @@ fn assert_png_match(gb: &GameBoy, expected_png: &std::path::Path, debug_stem: &s
     let expected_frame: Vec<u32> = expected
         .iter()
         .copied()
-        .map(expected_rgb_to_frame_color)
+        .map(|rgb| expected_rgb_to_frame_color(rgb, cgb))
         .collect();
 
     let frame = gb.mmu.ppu.framebuffer();
@@ -199,9 +204,16 @@ fn run_mealybug_case(
 ) {
     let rom_path = common::rom_path(rom_rel);
     let expected_path = common::rom_path(expected_rel);
+    if !expected_path.exists() {
+        eprintln!(
+            "skipping {debug_stem}: missing reference screenshot {}",
+            expected_path.display()
+        );
+        return;
+    }
 
     let gb = run_until_ld_b_b(&rom_path, cgb, dmg_revision, cgb_revision, max_cycles);
-    assert_png_match(&gb, &expected_path, debug_stem);
+    assert_png_match(&gb, &expected_path, debug_stem, cgb);
 }
 
 macro_rules! mealybug_test {
