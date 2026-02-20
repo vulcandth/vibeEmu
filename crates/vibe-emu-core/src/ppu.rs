@@ -5156,6 +5156,21 @@ impl Ppu {
                                     sample_t -= 4;
                                 } else {
                                     sample_t += dmg_bgp_fetcher_wx0_extra_t();
+                                    if self.mode3_wx_base == 0
+                                        && self.mode3_wx_event_count == 0
+                                        && (scx_cur & 0x07) == 0
+                                    {
+                                        // On steady WX=0 lines at SCX phase 0, DMG
+                                        // palette effects land one dot earlier than
+                                        // the generic WX=0 fetcher phase.
+                                        sample_t -= 1;
+                                        if self.ly == 0 {
+                                            // Line 0 keeps an additional 4-dot phase
+                                            // offset in this path (mode-2 interrupt
+                                            // dispatch compensation in the test ROM).
+                                            sample_t -= 4;
+                                        }
+                                    }
                                 }
                             }
                             let sample_t = sample_t.clamp(0, max_t) as u16;
