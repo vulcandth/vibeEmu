@@ -5062,6 +5062,14 @@ impl Ppu {
         let mut window_tile_x = 0u8;
         let mut window_line = self.win_line_counter;
         let mut window_activations = 0u8;
+        let suppress_wx0_previsible_shortcuts = self.mode3_wx_base == 0
+            && self.mode3_wx_event_count > 0
+            && self.mode3_wx_events[0].val != 0
+            && self.mode3_wx_events[0].t <= 8;
+        let wx_zero_armed_by_mode3_write = self.mode3_wx_base != 0
+            && self.mode3_wx_event_count > 0
+            && self.mode3_wx_events[0].val == 0
+            && self.mode3_wx_events[0].t <= 8;
         let default_pop_before_fetch = if has_window_activity
             && self.dmg_bgp_event_count > 0
             && self.mode3_scx_event_count == 0
@@ -5101,7 +5109,8 @@ impl Ppu {
                     } else {
                         // Left-edge window start cases (WX<=5) are sensitive to how
                         // pre-visible dots interact with SCX fine-scroll on DMG.
-                        if (wx_cur as i16) <= dmg_wx_previsible_phase_max()
+                        if !suppress_wx0_previsible_shortcuts
+                            && (wx_cur as i16) <= dmg_wx_previsible_phase_max()
                             && (position_in_line + 16) < 8
                         {
                             if position_in_line == -17 {
@@ -5140,7 +5149,14 @@ impl Ppu {
                             let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
                             let mut sample_t = $t as i16 + dmg_bgp_fetcher_sample_t_bias();
                             if wx_triggered && wx_cur == 0 {
-                                sample_t += dmg_bgp_fetcher_wx0_extra_t();
+                                if wx_zero_armed_by_mode3_write {
+                                    // If WX is forced to 0 during early mode 3, the
+                                    // first visible window pixels align to an earlier
+                                    // palette sample phase than steady-state WX=0 lines.
+                                    sample_t -= 4;
+                                } else {
+                                    sample_t += dmg_bgp_fetcher_wx0_extra_t();
+                                }
                             }
                             let sample_t = sample_t.clamp(0, max_t) as u16;
                             let bgp = self.dmg_bgp_for_mode3_t(sample_t);
