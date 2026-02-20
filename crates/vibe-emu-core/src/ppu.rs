@@ -527,6 +527,7 @@ pub struct Ppu {
     cgb: bool,
     /// True when running a DMG cartridge on CGB hardware (DMG compatibility mode).
     dmg_compat: bool,
+    dmg_revision: DmgRevision,
 
     lcdc: u8,
     stat: u8,
@@ -681,6 +682,28 @@ fn dmg_mode3_scx_event_t_obj_bias() -> i16 {
     })
 }
 
+fn dmg_mode3_scx_event_push_state_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCX_EVENT_PUSH_STATE_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-8)
+    })
+}
+
+fn dmg_mode3_scx_event_first_x_ge8_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCX_EVENT_FIRST_X_GE8_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(4)
+    })
+}
+
 fn dmg_mode3_scy_event_t_bias() -> i16 {
     use std::sync::OnceLock;
     static BIAS: OnceLock<i16> = OnceLock::new();
@@ -689,6 +712,39 @@ fn dmg_mode3_scy_event_t_bias() -> i16 {
             .ok()
             .and_then(|v| v.trim().parse::<i16>().ok())
             .unwrap_or(-14)
+    })
+}
+
+fn dmg_mode3_scy_event_early_threshold_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_THRESHOLD_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(24)
+    })
+}
+
+fn dmg_mode3_scy_event_early_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(7)
+    })
+}
+
+fn dmg_mode3_scy_event_push_state_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_STATE_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-3)
     })
 }
 
@@ -1030,6 +1086,7 @@ impl Ppu {
             render_vram_blocked: false,
             cgb,
             dmg_compat: false,
+            dmg_revision: DmgRevision::default(),
             lcdc: 0,
             stat: 0,
             scy: 0,
@@ -1326,6 +1383,13 @@ impl Ppu {
         t: u16,
         val: u8,
     ) {
+        // Preserve write ordering when timing bias/clamping collapses multiple
+        // mode-3 writes onto the same dot.
+        let t = if *count > 0 {
+            t.max(events[*count - 1].t.saturating_add(1))
+        } else {
+            t
+        };
         if *count >= MODE3_REG_EVENTS_MAX {
             events[MODE3_REG_EVENTS_MAX - 1] = Mode3RegEvent { t, val };
             return;
@@ -1339,6 +1403,14 @@ impl Ppu {
         let mut bias = dmg_mode3_scx_event_t_bias();
         if !self.cgb && self.sprite_count > 0 {
             bias += dmg_mode3_scx_event_t_obj_bias();
+            if self.line_sprites[0].x >= 8 {
+                bias += dmg_mode3_scx_event_first_x_ge8_t_adjust();
+            }
+        }
+        // Writes that land while the DMG fetcher is in PUSH affect SCX map
+        // selection slightly earlier than in other phases.
+        if !self.cgb && self.mode3_fetcher_state == 6 {
+            bias += dmg_mode3_scx_event_push_state_t_adjust();
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
         Self::push_mode3_reg_event(
@@ -1351,7 +1423,16 @@ impl Ppu {
 
     fn record_mode3_scy_event(&mut self, mode3_t: u16, val: u8) {
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        let t = (mode3_t as i16 + dmg_mode3_scy_event_t_bias()).clamp(0, max_t) as u16;
+        let mut bias = dmg_mode3_scy_event_t_bias();
+        if mode3_t <= dmg_mode3_scy_event_early_threshold_t() {
+            bias += dmg_mode3_scy_event_early_t_adjust();
+        }
+        // Similar to SCX, SCY writes sampled during PUSH on DMG land slightly
+        // earlier in the effective fetch timeline.
+        if !self.cgb && self.mode3_fetcher_state == 6 {
+            bias += dmg_mode3_scy_event_push_state_t_adjust();
+        }
+        let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
         Self::push_mode3_reg_event(
             &mut self.mode3_scy_events,
             &mut self.mode3_scy_event_count,
@@ -1909,10 +1990,28 @@ impl Ppu {
             .enumerate()
         {
             let mut event_t = ev.t;
-            if !self.cgb && i == 0 && ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
-                // Writes that land while the fetcher is in PUSH with a mostly
-                // full FIFO do not affect the immediate next fetched BG tile.
-                let adj = dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32);
+            if !self.cgb && i == 0 {
+                let mut adj = 0i16;
+                if ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
+                    // Writes that land while the fetcher is in PUSH with a mostly
+                    // full FIFO do not affect the immediate next fetched BG tile.
+                    adj = dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32);
+                } else if ev.fetcher_state == 6 && ((self.mode3_lcdc_base ^ ev.val) & 0x50) != 0 {
+                    // With a partially drained FIFO, the first transition still
+                    // lags fetch control, but by fewer dots than the full-FIFO
+                    // PUSH case above.
+                    adj = ((dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) * 5) / 8)
+                        .clamp(-16, 16);
+                } else if ev.fetcher_state == 0
+                    && ev.bg_fifo == 8
+                    && ((self.mode3_lcdc_base ^ ev.val) & 0x50) != 0
+                    && (self.mode3_lcdc_base & 0x20) != 0
+                {
+                    // If the write lands right as a new fetch cycle starts, the
+                    // first affected tile still trails by a small amount on
+                    // window-enabled lines.
+                    adj = (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                }
                 if adj < 0 {
                     event_t = event_t.saturating_sub((-adj) as u16);
                 } else if adj > 0 {
@@ -1947,6 +2046,11 @@ impl Ppu {
         }
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
         let mut bias = dmg_bg_en_sample_t_bias();
+        if !self.cgb && matches!(self.dmg_revision, DmgRevision::RevB) {
+            // DMG-CPU B samples BG enable transitions one dot later than the
+            // default DMG profile used by the blob screenshots.
+            bias += 1;
+        }
         if !self.cgb && self.ly == 0 && self.mode3_lcdc_event_count > 0 {
             bias += dmg_bg_en_line0_sample_t_bias();
         }
@@ -2987,6 +3091,7 @@ impl Ppu {
     /// Initialize registers to the state expected after the boot ROM
     /// has finished executing.
     pub fn apply_boot_state(&mut self, dmg_revision: Option<DmgRevision>) {
+        self.dmg_revision = dmg_revision.unwrap_or_default();
         self.lcdc = 0x91;
         self.dma = 0xFF;
         self.bgp = 0xFC;
@@ -4344,6 +4449,7 @@ impl Ppu {
             let mut drawn = [false; SCREEN_WIDTH];
             for s in &self.line_sprites[..self.sprite_count] {
                 let line_offset = (self.ly as i16 - s.y).max(0) as usize;
+                let mut first_nonzero_obj_pixel = true;
                 let bank = if cgb_render {
                     ((s.flags >> 3) & 0x01) as usize
                 } else {
@@ -4470,8 +4576,14 @@ impl Ppu {
                         let (pal_reg, pal_idx) = if s.flags & 0x10 != 0 {
                             (self.obp1, 1usize)
                         } else {
-                            (self.dmg_obp0_for_pixel(sx as usize), 0usize)
+                            let sample_x = if first_nonzero_obj_pixel && sx >= 7 {
+                                (sx + 1).min((SCREEN_WIDTH - 1) as i16) as usize
+                            } else {
+                                sx as usize
+                            };
+                            (self.dmg_obp0_for_pixel(sample_x), 0usize)
                         };
+                        first_nonzero_obj_pixel = false;
                         let shade = Self::dmg_shade(pal_reg, color_id) as usize;
                         if self.dmg_compat {
                             let off = pal_idx * 8 + shade * 2;
@@ -5113,7 +5225,7 @@ impl Ppu {
                 if wx_cur == 0 {
                     if position_in_line == -7
                         || (position_in_line == -16 && (scx_cur & 0x07) != 0)
-                        || (-15..=-8).contains(&position_in_line)
+                        || (-15..=-9).contains(&position_in_line)
                     {
                         should_activate_window = true;
                     }

@@ -35,6 +35,18 @@ fn env_flag_enabled(var: &str) -> bool {
     cache.get(var).copied().unwrap_or(false)
 }
 
+fn dmg_mode3_lcdc_delay_dots() -> u8 {
+    use std::sync::OnceLock;
+    static DELAY: OnceLock<u8> = OnceLock::new();
+    *DELAY.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_LCDC_DELAY")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .map(|v| v.clamp(0, 8) as u8)
+            .unwrap_or(1)
+    })
+}
+
 const WRAM_BANK_SIZE: usize = 0x1000;
 
 fn power_on_wram_seed(cgb: bool, dmg_revision: DmgRevision, cgb_revision: CgbRevision) -> u32 {
@@ -887,7 +899,12 @@ impl Mmu {
                     }
                     self.ppu.write_reg(addr, transitional);
                     if val != transitional {
-                        self.ppu.queue_lcdc_write(val, 1);
+                        let delay = dmg_mode3_lcdc_delay_dots();
+                        if delay == 0 {
+                            self.ppu.write_reg(addr, val);
+                        } else {
+                            self.ppu.queue_lcdc_write(val, delay);
+                        }
                     }
                 } else {
                     self.ppu.write_reg(addr, val);
