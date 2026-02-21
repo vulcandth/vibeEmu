@@ -5042,6 +5042,13 @@ impl Ppu {
         let mut wx_event_idx = 0usize;
         let mut wy_event_idx = 0usize;
 
+        if has_win_en_toggle && self.mode3_wx_event_count > 0 && self.mode3_wx_events[0].t <= 7 {
+            // WIN_EN toggle sequences that write WX early in mode 3 effectively
+            // use the new WX value before the first visible output pixels.
+            wx_cur = self.mode3_wx_events[0].val;
+            wx_event_idx = 1;
+        }
+
         let mut fetcher_state = FETCH_GET_TILE_T1;
         let mut position_in_line: i16 = -16;
         let mut lcd_x: i16 = 0;
@@ -5208,12 +5215,16 @@ impl Ppu {
         for t in 0..max_t {
             let mut wx_just_changed = false;
             let mut activated_on_pos6 = false;
+            let mut win_en_just_enabled = false;
 
             while lcdc_event_idx < self.mode3_lcdc_event_count
                 && self.mode3_lcdc_events[lcdc_event_idx].t == t
             {
                 let prev_lcdc = lcdc_cur;
                 lcdc_cur = self.mode3_lcdc_events[lcdc_event_idx].val;
+                if !self.cgb && (prev_lcdc & 0x20) == 0 && (lcdc_cur & 0x20) != 0 {
+                    win_en_just_enabled = true;
+                }
                 if !self.cgb
                     && (prev_lcdc & 0x20) != 0
                     && (lcdc_cur & 0x20) == 0
@@ -5261,9 +5272,25 @@ impl Ppu {
                         should_activate_window = true;
                     }
                 } else if wx_cur < 166 {
+                    let mut win_en_will_disable_next_t = false;
+                    if !self.cgb {
+                        let mut next_idx = lcdc_event_idx;
+                        while next_idx < self.mode3_lcdc_event_count
+                            && self.mode3_lcdc_events[next_idx].t == t.saturating_add(1)
+                        {
+                            if (self.mode3_lcdc_events[next_idx].val & 0x20) == 0 {
+                                win_en_will_disable_next_t = true;
+                                break;
+                            }
+                            next_idx += 1;
+                        }
+                    }
                     let pos7 = position_in_line + 7;
                     let pos6 = position_in_line + 6;
-                    if (0..=255).contains(&pos7) && wx_cur == pos7 as u8 {
+                    if (0..=255).contains(&pos7)
+                        && wx_cur == pos7 as u8
+                        && !win_en_will_disable_next_t
+                    {
                         should_activate_window = true;
                     } else if (0..=255).contains(&pos6)
                         && wx_cur == pos6 as u8
@@ -5281,7 +5308,7 @@ impl Ppu {
                     wx_triggered = true;
                     window_is_being_fetched = true;
                     fetcher_state = FETCH_GET_TILE_T1;
-                    if activated_on_pos6 && !self.cgb && lcd_x > 0 {
+                    if activated_on_pos6 && !self.cgb && !win_en_just_enabled && lcd_x > 0 {
                         lcd_x -= 1;
                     }
                     if window_activations == 0 {
