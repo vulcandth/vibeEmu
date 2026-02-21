@@ -3322,6 +3322,8 @@ impl Ppu {
 
         // Sorted by X ascending already (DMG priority path). Ensure it here for safety.
         sprite_xs[..sprite_len].sort_unstable();
+        let apply_attr_prefetch_dots =
+            sprite_len == MAX_SPRITES_PER_LINE && sprite_xs[0] >= 32;
 
         let scx_fine = (self.scx & 7) as u16;
         let mut cycles: u16 = 0;
@@ -3529,6 +3531,23 @@ impl Ppu {
                 }
 
                 sprite_idx += 1;
+                if apply_attr_prefetch_dots {
+                    // In fully-saturated right-shifted sprite lines, the
+                    // simplified model underestimates prefetch overhead and
+                    // can terminate mode 3 before the last sprite row completes.
+                    tick_no_render(
+                        &mut cycles,
+                        &mut render_delay,
+                        &mut bg_fifo,
+                        &mut fetcher_state,
+                    );
+                    tick_no_render(
+                        &mut cycles,
+                        &mut render_delay,
+                        &mut bg_fifo,
+                        &mut fetcher_state,
+                    );
+                }
 
                 // Back-to-back sprites at the same X incur additional delay.
                 if sprite_idx < sprite_len && sprite_xs[sprite_idx] == match_x {
