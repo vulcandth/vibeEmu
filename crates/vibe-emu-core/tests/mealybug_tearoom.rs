@@ -261,110 +261,110 @@ mealybug_test!(
 mealybug_test!(ignore ppu_m2_win_en_toggle_cgb_c, "mealybug-tearoom-tests/ppu/m2_win_en_toggle.gb", "mealybug-tearoom-tests/ppu/m2_win_en_toggle_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m2_win_en_toggle_cgb_d, "mealybug-tearoom-tests/ppu/m2_win_en_toggle.gb", "mealybug-tearoom-tests/ppu/m2_win_en_toggle_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_bgp_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_bgp_change.gb", "mealybug-tearoom-tests/ppu/m3_bgp_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_bgp_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_bgp_change.gb", "mealybug-tearoom-tests/ppu/m3_bgp_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_bgp_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_bgp_change.gb", "mealybug-tearoom-tests/ppu/m3_bgp_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_bgp_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_bgp_change.gb", "mealybug-tearoom-tests/ppu/m3_bgp_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_bgp_change_sprites_dmg_blob, "mealybug-tearoom-tests/ppu/m3_bgp_change_sprites.gb", "mealybug-tearoom-tests/ppu/m3_bgp_change_sprites_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_bgp_change_sprites_dmg_blob, "mealybug-tearoom-tests/ppu/m3_bgp_change_sprites.gb", "mealybug-tearoom-tests/ppu/m3_bgp_change_sprites_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_bgp_change_sprites_cgb_c, "mealybug-tearoom-tests/ppu/m3_bgp_change_sprites.gb", "mealybug-tearoom-tests/ppu/m3_bgp_change_sprites_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_bgp_change_sprites_cgb_d, "mealybug-tearoom-tests/ppu/m3_bgp_change_sprites.gb", "mealybug-tearoom-tests/ppu/m3_bgp_change_sprites_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_lcdc_bg_en_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_lcdc_bg_en_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_lcdc_bg_en_change_dmg_b, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change_dmg_b.png", false, DmgRevision::RevB, CgbRevision::default());
-mealybug_test!(ignore ppu_m3_lcdc_bg_en_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
-mealybug_test!(ignore ppu_m3_lcdc_bg_en_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
+mealybug_test!(ppu_m3_lcdc_bg_en_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
+mealybug_test!(ppu_m3_lcdc_bg_en_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
 mealybug_test!(ignore ppu_m3_lcdc_bg_en_change2_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change2.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_en_change2_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 
-mealybug_test!(ignore ppu_m3_lcdc_bg_map_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_map_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_map_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_lcdc_bg_map_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_map_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_map_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_lcdc_bg_map_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_map_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_map_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_lcdc_bg_map_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_map_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_map_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
 mealybug_test!(ignore ppu_m3_lcdc_bg_map_change2_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_bg_map_change2.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_bg_map_change2_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 
-mealybug_test!(ignore ppu_m3_lcdc_obj_en_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_lcdc_obj_en_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_lcdc_obj_en_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_lcdc_obj_en_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_lcdc_obj_en_change_variant_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_variant.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_variant_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_lcdc_obj_en_change_variant_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_variant.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_variant_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_lcdc_obj_en_change_variant_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_variant.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_variant_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_lcdc_obj_en_change_variant_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_variant.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_en_change_variant_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_lcdc_obj_size_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
-mealybug_test!(ignore ppu_m3_lcdc_obj_size_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
-mealybug_test!(ignore ppu_m3_lcdc_obj_size_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
+mealybug_test!(ppu_m3_lcdc_obj_size_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_lcdc_obj_size_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
+mealybug_test!(ppu_m3_lcdc_obj_size_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_lcdc_obj_size_change_scx_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_scx.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_scx_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_lcdc_obj_size_change_scx_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_scx.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_scx_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_lcdc_obj_size_change_scx_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_scx.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_scx_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_lcdc_obj_size_change_scx_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_scx.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_obj_size_change_scx_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_lcdc_tile_sel_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_lcdc_tile_sel_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_lcdc_tile_sel_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_lcdc_tile_sel_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
 mealybug_test!(ignore ppu_m3_lcdc_tile_sel_change2_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_change2.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_change2_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 
-mealybug_test!(ignore ppu_m3_lcdc_tile_sel_win_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_win_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_win_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_lcdc_tile_sel_win_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_win_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_win_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_lcdc_tile_sel_win_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_win_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_win_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_lcdc_tile_sel_win_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_win_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_win_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
 mealybug_test!(ignore ppu_m3_lcdc_tile_sel_win_change2_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_win_change2.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_tile_sel_win_change2_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 
-mealybug_test!(ignore ppu_m3_lcdc_win_en_change_multiple_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
-mealybug_test!(ignore ppu_m3_lcdc_win_en_change_multiple_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
-mealybug_test!(ignore ppu_m3_lcdc_win_en_change_multiple_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
+mealybug_test!(ppu_m3_lcdc_win_en_change_multiple_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_lcdc_win_en_change_multiple_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
+mealybug_test!(ppu_m3_lcdc_win_en_change_multiple_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_lcdc_win_en_change_multiple_wx_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_wx.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_wx_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_lcdc_win_en_change_multiple_wx_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_wx.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_wx_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_lcdc_win_en_change_multiple_wx_dmg_b, "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_wx.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_en_change_multiple_wx_dmg_b.png", false, DmgRevision::RevB, CgbRevision::default());
 
-mealybug_test!(ignore ppu_m3_lcdc_win_map_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_win_map_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_map_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_lcdc_win_map_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_lcdc_win_map_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_map_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_lcdc_win_map_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_win_map_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_map_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_lcdc_win_map_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_lcdc_win_map_change.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_map_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
 mealybug_test!(ignore ppu_m3_lcdc_win_map_change2_cgb_c, "mealybug-tearoom-tests/ppu/m3_lcdc_win_map_change2.gb", "mealybug-tearoom-tests/ppu/m3_lcdc_win_map_change2_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 
-mealybug_test!(ignore ppu_m3_obp0_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_obp0_change.gb", "mealybug-tearoom-tests/ppu/m3_obp0_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_obp0_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_obp0_change.gb", "mealybug-tearoom-tests/ppu/m3_obp0_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_obp0_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_obp0_change.gb", "mealybug-tearoom-tests/ppu/m3_obp0_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_obp0_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_obp0_change.gb", "mealybug-tearoom-tests/ppu/m3_obp0_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_scx_high_5_bits_dmg_blob, "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits.gb", "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
-mealybug_test!(ignore ppu_m3_scx_high_5_bits_cgb_c, "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits.gb", "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
-mealybug_test!(ignore ppu_m3_scx_high_5_bits_cgb_d, "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits.gb", "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
+mealybug_test!(ppu_m3_scx_high_5_bits_dmg_blob, "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits.gb", "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_scx_high_5_bits_cgb_c, "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits.gb", "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
+mealybug_test!(ppu_m3_scx_high_5_bits_cgb_d, "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits.gb", "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
 mealybug_test!(ignore ppu_m3_scx_high_5_bits_change2_cgb_c, "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits_change2.gb", "mealybug-tearoom-tests/ppu/m3_scx_high_5_bits_change2_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 
-mealybug_test!(ignore ppu_m3_scx_low_3_bits_dmg_blob, "mealybug-tearoom-tests/ppu/m3_scx_low_3_bits.gb", "mealybug-tearoom-tests/ppu/m3_scx_low_3_bits_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_scx_low_3_bits_dmg_blob, "mealybug-tearoom-tests/ppu/m3_scx_low_3_bits.gb", "mealybug-tearoom-tests/ppu/m3_scx_low_3_bits_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_scx_low_3_bits_cgb_c, "mealybug-tearoom-tests/ppu/m3_scx_low_3_bits.gb", "mealybug-tearoom-tests/ppu/m3_scx_low_3_bits_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_scx_low_3_bits_cgb_d, "mealybug-tearoom-tests/ppu/m3_scx_low_3_bits.gb", "mealybug-tearoom-tests/ppu/m3_scx_low_3_bits_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_scy_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_scy_change.gb", "mealybug-tearoom-tests/ppu/m3_scy_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_scy_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_scy_change.gb", "mealybug-tearoom-tests/ppu/m3_scy_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_scy_change_cgb_c, "mealybug-tearoom-tests/ppu/m3_scy_change.gb", "mealybug-tearoom-tests/ppu/m3_scy_change_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 mealybug_test!(ignore ppu_m3_scy_change_cgb_d, "mealybug-tearoom-tests/ppu/m3_scy_change.gb", "mealybug-tearoom-tests/ppu/m3_scy_change_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
 mealybug_test!(ignore ppu_m3_scy_change2_cgb_c, "mealybug-tearoom-tests/ppu/m3_scy_change2.gb", "mealybug-tearoom-tests/ppu/m3_scy_change2_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
 
-mealybug_test!(ignore ppu_m3_window_timing_dmg_blob, "mealybug-tearoom-tests/ppu/m3_window_timing.gb", "mealybug-tearoom-tests/ppu/m3_window_timing_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_window_timing_dmg_blob, "mealybug-tearoom-tests/ppu/m3_window_timing.gb", "mealybug-tearoom-tests/ppu/m3_window_timing_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_window_timing_cgb_c, "mealybug-tearoom-tests/ppu/m3_window_timing.gb", "mealybug-tearoom-tests/ppu/m3_window_timing_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
-mealybug_test!(ignore ppu_m3_window_timing_cgb_d, "mealybug-tearoom-tests/ppu/m3_window_timing.gb", "mealybug-tearoom-tests/ppu/m3_window_timing_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
+mealybug_test!(ppu_m3_window_timing_cgb_d, "mealybug-tearoom-tests/ppu/m3_window_timing.gb", "mealybug-tearoom-tests/ppu/m3_window_timing_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_window_timing_wx_0_dmg_blob, "mealybug-tearoom-tests/ppu/m3_window_timing_wx_0.gb", "mealybug-tearoom-tests/ppu/m3_window_timing_wx_0_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_window_timing_wx_0_dmg_blob, "mealybug-tearoom-tests/ppu/m3_window_timing_wx_0.gb", "mealybug-tearoom-tests/ppu/m3_window_timing_wx_0_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 mealybug_test!(ignore ppu_m3_window_timing_wx_0_cgb_c, "mealybug-tearoom-tests/ppu/m3_window_timing_wx_0.gb", "mealybug-tearoom-tests/ppu/m3_window_timing_wx_0_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
-mealybug_test!(ignore ppu_m3_window_timing_wx_0_cgb_d, "mealybug-tearoom-tests/ppu/m3_window_timing_wx_0.gb", "mealybug-tearoom-tests/ppu/m3_window_timing_wx_0_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
+mealybug_test!(ppu_m3_window_timing_wx_0_cgb_d, "mealybug-tearoom-tests/ppu/m3_window_timing_wx_0.gb", "mealybug-tearoom-tests/ppu/m3_window_timing_wx_0_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_wx_4_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_wx_4_change.gb", "mealybug-tearoom-tests/ppu/m3_wx_4_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_wx_4_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_wx_4_change.gb", "mealybug-tearoom-tests/ppu/m3_wx_4_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 
-mealybug_test!(ignore ppu_m3_wx_4_change_sprites_dmg_blob, "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites.gb", "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
-mealybug_test!(ignore ppu_m3_wx_4_change_sprites_cgb_c, "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites.gb", "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
-mealybug_test!(ignore ppu_m3_wx_4_change_sprites_cgb_d, "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites.gb", "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
+mealybug_test!(ppu_m3_wx_4_change_sprites_dmg_blob, "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites.gb", "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_wx_4_change_sprites_cgb_c, "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites.gb", "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites_cgb_c.png", true, DmgRevision::default(), CgbRevision::RevC);
+mealybug_test!(ppu_m3_wx_4_change_sprites_cgb_d, "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites.gb", "mealybug-tearoom-tests/ppu/m3_wx_4_change_sprites_cgb_d.png", true, DmgRevision::default(), CgbRevision::RevD);
 
-mealybug_test!(ignore ppu_m3_wx_5_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_wx_5_change.gb", "mealybug-tearoom-tests/ppu/m3_wx_5_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
-mealybug_test!(ignore ppu_m3_wx_6_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_wx_6_change.gb", "mealybug-tearoom-tests/ppu/m3_wx_6_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_wx_5_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_wx_5_change.gb", "mealybug-tearoom-tests/ppu/m3_wx_5_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_m3_wx_6_change_dmg_blob, "mealybug-tearoom-tests/ppu/m3_wx_6_change.gb", "mealybug-tearoom-tests/ppu/m3_wx_6_change_dmg_blob.png", false, DmgRevision::default(), CgbRevision::default());
 
 // This ROM is part of the suite, but the bundle doesn't ship reference screenshots.
 // Keep it present in the harness but ignored until a reference is available.
-mealybug_test!(ignore ppu_win_without_bg, "mealybug-tearoom-tests/ppu/win_without_bg.gb", "mealybug-tearoom-tests/ppu/win_without_bg.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(ppu_win_without_bg, "mealybug-tearoom-tests/ppu/win_without_bg.gb", "mealybug-tearoom-tests/ppu/win_without_bg.png", false, DmgRevision::default(), CgbRevision::default());
 
 // --- DMA/MBC subdirs (ROMs included but no reference screenshots in the bundle) ---
-mealybug_test!(ignore dma_hdma_during_halt_c, "mealybug-tearoom-tests/dma/hdma_during_halt-C.gb", "mealybug-tearoom-tests/dma/hdma_during_halt-C.png", true, DmgRevision::default(), CgbRevision::default());
-mealybug_test!(ignore dma_hdma_timing_c, "mealybug-tearoom-tests/dma/hdma_timing-C.gb", "mealybug-tearoom-tests/dma/hdma_timing-C.png", true, DmgRevision::default(), CgbRevision::default());
-mealybug_test!(ignore mbc_mbc3_rtc, "mealybug-tearoom-tests/mbc/mbc3_rtc.gb", "mealybug-tearoom-tests/mbc/mbc3_rtc.png", false, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(dma_hdma_during_halt_c, "mealybug-tearoom-tests/dma/hdma_during_halt-C.gb", "mealybug-tearoom-tests/dma/hdma_during_halt-C.png", true, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(dma_hdma_timing_c, "mealybug-tearoom-tests/dma/hdma_timing-C.gb", "mealybug-tearoom-tests/dma/hdma_timing-C.png", true, DmgRevision::default(), CgbRevision::default());
+mealybug_test!(mbc_mbc3_rtc, "mealybug-tearoom-tests/mbc/mbc3_rtc.gb", "mealybug-tearoom-tests/mbc/mbc3_rtc.png", false, DmgRevision::default(), CgbRevision::default());

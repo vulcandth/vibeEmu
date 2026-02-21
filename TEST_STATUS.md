@@ -45,10 +45,10 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 1791 | 1953 | 0 | 0 | 3744 | 47.8% |
+| ROM Test Suites | 1820 | 1924 | 0 | 0 | 3744 | 48.6% |
 | Integration Tests | 153 | 2 | 0 | 0 | 155 | 98.7% |
 | Unit Tests | 50 | 0 | 0 | 0 | 50 | 100.0% |
-| **Overall** | 1994 | 1955 | 0 | 0 | 3949 | 50.5% |
+| **Overall** | 2023 | 1926 | 0 | 0 | 3949 | 51.2% |
 
 ## Detailed Results
 
@@ -150,7 +150,7 @@ Combined exit code: 101
 | `dmg_sound_11_regs_after_power` | ✅ Pass |
 | `dmg_sound_12_wave_write_while_on` | ✅ Pass |
 
-#### gambatte (1534/3429 passing, 44.7%)
+#### gambatte (1553/3429 passing, 45.3%)
 
 | Test | Result |
 | --- | --- |
@@ -1033,6 +1033,25 @@ Combined exit code: 101
 | `oamdma/oamdma_srcF000_busyread0000_2_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `oamdma/oamdma_srcFE00_busyreadA000_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `oamdma/oamdma_srcFF00_busyreadFF4B_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0060c0/scx_during_m3_ds_1.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0060c0/scx_during_m3_ds_4.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0060c0/scx_during_m3_ds_5.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0060c0/scx_during_m3_ds_8.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0063c0/scx_during_m3_ds_1.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0063c0/scx_during_m3_ds_4.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0063c0/scx_during_m3_ds_5.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0063c0/scx_during_m3_ds_8.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0360c0/scx_during_m3_ds_1.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0360c0/scx_during_m3_ds_5.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0360c0/scx_during_m3_ds_8.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0363c0/scx_during_m3_ds_1.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0363c0/scx_during_m3_ds_4.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0363c0/scx_during_m3_ds_5.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0363c0/scx_during_m3_ds_8.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0367c0/scx_during_m3_ds_1.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0367c0/scx_during_m3_ds_5.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0367c0/scx_during_m3_ds_8.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0761c0/scx_during_m3_ds_8.gbc` | ✅ Pass |
 | `scx_during_m3/scx_m3_extend_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `scx_during_m3/scx_m3_extend_ds_2_cgb04c_out0.gbc` | ✅ Pass |
 | `serial/nopx1_start83_wait_read_if_2_dmg08_outE0_cgb04c_outE8.gbc` | ✅ Pass |
@@ -2787,70 +2806,52 @@ Combined exit code: 101
 | `scx_during_m3/scx_0060c0/scx_during_m3_4.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0060c0/scx_during_m3_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0060c0/scx_during_m3_6.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0060c0/scx_during_m3_ds_1.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0060c0/scx_during_m3_ds_2.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0060c0/scx_during_m3_ds_3.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0060c0/scx_during_m3_ds_4.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0060c0/scx_during_m3_ds_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0060c0/scx_during_m3_ds_6.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0060c0/scx_during_m3_ds_7.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0060c0/scx_during_m3_ds_8.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_1.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_2.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_3.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_4.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_6.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0063c0/scx_during_m3_ds_1.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_ds_2.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_ds_3.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0063c0/scx_during_m3_ds_4.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0063c0/scx_during_m3_ds_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_ds_6.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_ds_7.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0063c0/scx_during_m3_ds_8.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_1.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_2.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_3.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_4.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_6.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0360c0/scx_during_m3_ds_1.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_ds_2.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_ds_3.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_ds_4.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0360c0/scx_during_m3_ds_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_ds_6.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_ds_7.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0360c0/scx_during_m3_ds_8.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0363c0/scx_during_m3_1.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0363c0/scx_during_m3_2.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0363c0/scx_during_m3_3.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0363c0/scx_during_m3_4.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0363c0/scx_during_m3_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0363c0/scx_during_m3_6.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0363c0/scx_during_m3_ds_1.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0363c0/scx_during_m3_ds_2.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0363c0/scx_during_m3_ds_3.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0363c0/scx_during_m3_ds_4.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0363c0/scx_during_m3_ds_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0363c0/scx_during_m3_ds_6.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0363c0/scx_during_m3_ds_7.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0363c0/scx_during_m3_ds_8.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0367c0/scx_during_m3_1.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0367c0/scx_during_m3_2.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0367c0/scx_during_m3_3.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0367c0/scx_during_m3_4.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0367c0/scx_during_m3_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0367c0/scx_during_m3_6.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0367c0/scx_during_m3_ds_1.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0367c0/scx_during_m3_ds_2.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0367c0/scx_during_m3_ds_3.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0367c0/scx_during_m3_ds_4.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0367c0/scx_during_m3_ds_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0367c0/scx_during_m3_ds_6.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0367c0/scx_during_m3_ds_7.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0367c0/scx_during_m3_ds_8.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0761c0/scx_during_m3_1.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0761c0/scx_during_m3_2.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0761c0/scx_during_m3_3.gbc` | ❌ Fail |
@@ -2864,7 +2865,6 @@ Combined exit code: 101
 | `scx_during_m3/scx_0761c0/scx_during_m3_ds_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0761c0/scx_during_m3_ds_6.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0761c0/scx_during_m3_ds_7.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0761c0/scx_during_m3_ds_8.gbc` | ❌ Fail |
 | `scx_during_m3/scx_attrib_during_m3_spx1_ds.gbc` | ❌ Fail |
 | `scx_during_m3/scx_attrib_during_m3_spx2_ds.gbc` | ❌ Fail |
 | `scx_during_m3/scx_during_m3_spx0.gbc` | ❌ Fail |
@@ -3609,7 +3609,7 @@ Combined exit code: 101
 | --- | --- |
 | `latch_rtc_png` | ✅ Pass |
 
-#### mealybug_tearoom (30/77 passing, 39.0%)
+#### mealybug_tearoom (40/77 passing, 51.9%)
 
 | Test | Result |
 | --- | --- |
@@ -3619,18 +3619,26 @@ Combined exit code: 101
 | `ppu_m2_win_en_toggle_dmg_blob` | ✅ Pass |
 | `ppu_m3_bgp_change_dmg_blob` | ✅ Pass |
 | `ppu_m3_bgp_change_sprites_dmg_blob` | ✅ Pass |
+| `ppu_m3_lcdc_bg_en_change_cgb_c` | ✅ Pass |
+| `ppu_m3_lcdc_bg_en_change_cgb_d` | ✅ Pass |
 | `ppu_m3_lcdc_bg_en_change_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_bg_map_change_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_obj_en_change_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_obj_en_change_variant_dmg_blob` | ✅ Pass |
+| `ppu_m3_lcdc_obj_size_change_cgb_c` | ✅ Pass |
+| `ppu_m3_lcdc_obj_size_change_cgb_d` | ✅ Pass |
 | `ppu_m3_lcdc_obj_size_change_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_obj_size_change_scx_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_tile_sel_change_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_tile_sel_win_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_lcdc_win_en_change_multiple_cgb_c` | ✅ Pass |
+| `ppu_m3_lcdc_win_en_change_multiple_cgb_d` | ✅ Pass |
 | `ppu_m3_lcdc_win_en_change_multiple_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_win_en_change_multiple_wx_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_win_map_change_dmg_blob` | ✅ Pass |
 | `ppu_m3_obp0_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_scx_high_5_bits_cgb_c` | ✅ Pass |
+| `ppu_m3_scx_high_5_bits_cgb_d` | ✅ Pass |
 | `ppu_m3_scx_high_5_bits_dmg_blob` | ✅ Pass |
 | `ppu_m3_scx_low_3_bits_dmg_blob` | ✅ Pass |
 | `ppu_m3_scy_change_dmg_blob` | ✅ Pass |
@@ -3639,6 +3647,8 @@ Combined exit code: 101
 | `ppu_m3_window_timing_wx_0_cgb_d` | ✅ Pass |
 | `ppu_m3_window_timing_wx_0_dmg_blob` | ✅ Pass |
 | `ppu_m3_wx_4_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_wx_4_change_sprites_cgb_c` | ✅ Pass |
+| `ppu_m3_wx_4_change_sprites_cgb_d` | ✅ Pass |
 | `ppu_m3_wx_4_change_sprites_dmg_blob` | ✅ Pass |
 | `ppu_m3_wx_5_change_dmg_blob` | ✅ Pass |
 | `ppu_m3_wx_6_change_dmg_blob` | ✅ Pass |
@@ -3650,8 +3660,6 @@ Combined exit code: 101
 | `ppu_m3_bgp_change_sprites_cgb_c` | ❌ Fail |
 | `ppu_m3_bgp_change_sprites_cgb_d` | ❌ Fail |
 | `ppu_m3_lcdc_bg_en_change2_cgb_c` | ❌ Fail |
-| `ppu_m3_lcdc_bg_en_change_cgb_c` | ❌ Fail |
-| `ppu_m3_lcdc_bg_en_change_cgb_d` | ❌ Fail |
 | `ppu_m3_lcdc_bg_en_change_dmg_b` | ❌ Fail |
 | `ppu_m3_lcdc_bg_map_change2_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_bg_map_change_cgb_c` | ❌ Fail |
@@ -3660,8 +3668,6 @@ Combined exit code: 101
 | `ppu_m3_lcdc_obj_en_change_cgb_d` | ❌ Fail |
 | `ppu_m3_lcdc_obj_en_change_variant_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_obj_en_change_variant_cgb_d` | ❌ Fail |
-| `ppu_m3_lcdc_obj_size_change_cgb_c` | ❌ Fail |
-| `ppu_m3_lcdc_obj_size_change_cgb_d` | ❌ Fail |
 | `ppu_m3_lcdc_obj_size_change_scx_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_obj_size_change_scx_cgb_d` | ❌ Fail |
 | `ppu_m3_lcdc_tile_sel_change2_cgb_c` | ❌ Fail |
@@ -3670,16 +3676,12 @@ Combined exit code: 101
 | `ppu_m3_lcdc_tile_sel_win_change2_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_tile_sel_win_change_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_tile_sel_win_change_cgb_d` | ❌ Fail |
-| `ppu_m3_lcdc_win_en_change_multiple_cgb_c` | ❌ Fail |
-| `ppu_m3_lcdc_win_en_change_multiple_cgb_d` | ❌ Fail |
 | `ppu_m3_lcdc_win_en_change_multiple_wx_dmg_b` | ❌ Fail |
 | `ppu_m3_lcdc_win_map_change2_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_win_map_change_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_win_map_change_cgb_d` | ❌ Fail |
 | `ppu_m3_obp0_change_cgb_c` | ❌ Fail |
 | `ppu_m3_obp0_change_cgb_d` | ❌ Fail |
-| `ppu_m3_scx_high_5_bits_cgb_c` | ❌ Fail |
-| `ppu_m3_scx_high_5_bits_cgb_d` | ❌ Fail |
 | `ppu_m3_scx_high_5_bits_change2_cgb_c` | ❌ Fail |
 | `ppu_m3_scx_low_3_bits_cgb_c` | ❌ Fail |
 | `ppu_m3_scx_low_3_bits_cgb_d` | ❌ Fail |
@@ -3688,8 +3690,6 @@ Combined exit code: 101
 | `ppu_m3_scy_change_cgb_d` | ❌ Fail |
 | `ppu_m3_window_timing_cgb_c` | ❌ Fail |
 | `ppu_m3_window_timing_wx_0_cgb_c` | ❌ Fail |
-| `ppu_m3_wx_4_change_sprites_cgb_c` | ❌ Fail |
-| `ppu_m3_wx_4_change_sprites_cgb_d` | ❌ Fail |
 
 #### mem_timing_rom (3/3 passing, 100.0%)
 
