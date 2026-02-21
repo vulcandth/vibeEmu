@@ -45,10 +45,10 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 1759 | 1985 | 0 | 0 | 3744 | 47.0% |
+| ROM Test Suites | 1791 | 1953 | 0 | 0 | 3744 | 47.8% |
 | Integration Tests | 153 | 2 | 0 | 0 | 155 | 98.7% |
 | Unit Tests | 50 | 0 | 0 | 0 | 50 | 100.0% |
-| **Overall** | 1962 | 1987 | 0 | 0 | 3949 | 49.7% |
+| **Overall** | 1994 | 1955 | 0 | 0 | 3949 | 50.5% |
 
 ## Detailed Results
 
@@ -114,24 +114,24 @@ Combined exit code: 101
 | `cpu_instrs_10_bit_ops` | ✅ Pass |
 | `cpu_instrs_11_op_a_hl` | ✅ Pass |
 
-#### daid (7/8 passing, 87.5%)
+#### daid (8/8 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
 | `daid_ppu_scanline_bgp_dmg` | ✅ Pass |
+| `daid_ppu_scanline_bgp_gbc` | ✅ Pass |
 | `daid_speed_switch_timing_div` | ✅ Pass |
 | `daid_speed_switch_timing_ly` | ✅ Pass |
 | `daid_speed_switch_timing_stat` | ✅ Pass |
 | `daid_stop_instr_cgb` | ✅ Pass |
 | `daid_stop_instr_cgb_mode3` | ✅ Pass |
 | `daid_stop_instr_dmg` | ✅ Pass |
-| `daid_ppu_scanline_bgp_gbc` | ❌ Fail |
 
-#### dmg_acid2_rom (0/1 passing, 0.0%)
+#### dmg_acid2_rom (1/1 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
-| `dmg_acid2_rom` | ❌ Fail |
+| `dmg_acid2_rom` | ✅ Pass |
 
 #### dmg_sound_roms (12/12 passing, 100.0%)
 
@@ -150,7 +150,7 @@ Combined exit code: 101
 | `dmg_sound_11_regs_after_power` | ✅ Pass |
 | `dmg_sound_12_wave_write_while_on` | ✅ Pass |
 
-#### gambatte (1529/3429 passing, 44.6%)
+#### gambatte (1534/3429 passing, 44.7%)
 
 | Test | Result |
 | --- | --- |
@@ -930,10 +930,15 @@ Combined exit code: 101
 | `oam_access/prewrite_ds_lcdoffset1_1_cgb04c_out1.gbc` | ✅ Pass |
 | `oam_access/prewrite_lcdoffset1_1_cgb04c_out1.gbc` | ✅ Pass |
 | `oam_access/prewrite_lcdoffset1_2_cgb04c_out0.gbc` | ✅ Pass |
+| `oamdma/late_sp00x_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `oamdma/late_sp00x_ds_1_cgb04c_out0.gbc` | ✅ Pass |
 | `oamdma/late_sp00y_ds_2_cgb04c_out0.gbc` | ✅ Pass |
+| `oamdma/late_sp01x_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `oamdma/late_sp01x_ds_1_cgb04c_out0.gbc` | ✅ Pass |
+| `oamdma/late_sp01y_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `oamdma/late_sp01y_ds_2_cgb04c_out0.gbc` | ✅ Pass |
+| `oamdma/late_sp02x_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `oamdma/late_sp39x_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `oamdma/late_sp39x_3_cgb04c_out0.gbc` | ✅ Pass |
 | `oamdma/late_sp39x_ds_1_cgb04c_out0.gbc` | ✅ Pass |
 | `oamdma/late_sp39y_ds_2_cgb04c_out0.gbc` | ✅ Pass |
@@ -2455,23 +2460,18 @@ Combined exit code: 101
 | `oam_access/preread_ds_lcdoffset1_2_cgb04c_out3.gbc` | ❌ Fail |
 | `oam_access/prewrite_2_dmg08_out1_cgb04c_out0.gbc` | ❌ Fail |
 | `oam_access/prewrite_ds_lcdoffset1_2_cgb04c_out0.gbc` | ❌ Fail |
-| `oamdma/late_sp00x_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `oamdma/late_sp00x_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `oamdma/late_sp00x_ds_2_cgb04c_out3.gbc` | ❌ Fail |
 | `oamdma/late_sp00y_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `oamdma/late_sp00y_2_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `oamdma/late_sp00y_ds_1_cgb04c_out3.gbc` | ❌ Fail |
-| `oamdma/late_sp01x_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `oamdma/late_sp01x_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `oamdma/late_sp01x_ds_2_cgb04c_out3.gbc` | ❌ Fail |
 | `oamdma/late_sp01y_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `oamdma/late_sp01y_2_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `oamdma/late_sp01y_ds_1_cgb04c_out3.gbc` | ❌ Fail |
-| `oamdma/late_sp02x_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `oamdma/late_sp02x_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `oamdma/late_sp02y_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `oamdma/late_sp02y_2_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `oamdma/late_sp39x_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `oamdma/late_sp39x_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `oamdma/late_sp39x_4_cgb04c_out3.gbc` | ❌ Fail |
 | `oamdma/late_sp39x_ds_2_cgb04c_out3.gbc` | ❌ Fail |
@@ -3609,35 +3609,53 @@ Combined exit code: 101
 | --- | --- |
 | `latch_rtc_png` | ✅ Pass |
 
-#### mealybug_tearoom (6/77 passing, 7.8%)
+#### mealybug_tearoom (30/77 passing, 39.0%)
 
 | Test | Result |
 | --- | --- |
+| `dma_hdma_during_halt_c` | ✅ Pass |
+| `dma_hdma_timing_c` | ✅ Pass |
+| `mbc_mbc3_rtc` | ✅ Pass |
 | `ppu_m2_win_en_toggle_dmg_blob` | ✅ Pass |
 | `ppu_m3_bgp_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_bgp_change_sprites_dmg_blob` | ✅ Pass |
+| `ppu_m3_lcdc_bg_en_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_lcdc_bg_map_change_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_obj_en_change_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_obj_en_change_variant_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_obj_size_change_dmg_blob` | ✅ Pass |
 | `ppu_m3_lcdc_obj_size_change_scx_dmg_blob` | ✅ Pass |
-| `dma_hdma_during_halt_c` | ❌ Fail |
-| `dma_hdma_timing_c` | ❌ Fail |
-| `mbc_mbc3_rtc` | ❌ Fail |
+| `ppu_m3_lcdc_tile_sel_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_lcdc_tile_sel_win_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_lcdc_win_en_change_multiple_dmg_blob` | ✅ Pass |
+| `ppu_m3_lcdc_win_en_change_multiple_wx_dmg_blob` | ✅ Pass |
+| `ppu_m3_lcdc_win_map_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_obp0_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_scx_high_5_bits_dmg_blob` | ✅ Pass |
+| `ppu_m3_scx_low_3_bits_dmg_blob` | ✅ Pass |
+| `ppu_m3_scy_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_window_timing_cgb_d` | ✅ Pass |
+| `ppu_m3_window_timing_dmg_blob` | ✅ Pass |
+| `ppu_m3_window_timing_wx_0_cgb_d` | ✅ Pass |
+| `ppu_m3_window_timing_wx_0_dmg_blob` | ✅ Pass |
+| `ppu_m3_wx_4_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_wx_4_change_sprites_dmg_blob` | ✅ Pass |
+| `ppu_m3_wx_5_change_dmg_blob` | ✅ Pass |
+| `ppu_m3_wx_6_change_dmg_blob` | ✅ Pass |
+| `ppu_win_without_bg` | ✅ Pass |
 | `ppu_m2_win_en_toggle_cgb_c` | ❌ Fail |
 | `ppu_m2_win_en_toggle_cgb_d` | ❌ Fail |
 | `ppu_m3_bgp_change_cgb_c` | ❌ Fail |
 | `ppu_m3_bgp_change_cgb_d` | ❌ Fail |
 | `ppu_m3_bgp_change_sprites_cgb_c` | ❌ Fail |
 | `ppu_m3_bgp_change_sprites_cgb_d` | ❌ Fail |
-| `ppu_m3_bgp_change_sprites_dmg_blob` | ❌ Fail |
 | `ppu_m3_lcdc_bg_en_change2_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_bg_en_change_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_bg_en_change_cgb_d` | ❌ Fail |
 | `ppu_m3_lcdc_bg_en_change_dmg_b` | ❌ Fail |
-| `ppu_m3_lcdc_bg_en_change_dmg_blob` | ❌ Fail |
 | `ppu_m3_lcdc_bg_map_change2_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_bg_map_change_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_bg_map_change_cgb_d` | ❌ Fail |
-| `ppu_m3_lcdc_bg_map_change_dmg_blob` | ❌ Fail |
 | `ppu_m3_lcdc_obj_en_change_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_obj_en_change_cgb_d` | ❌ Fail |
 | `ppu_m3_lcdc_obj_en_change_variant_cgb_c` | ❌ Fail |
@@ -3649,47 +3667,29 @@ Combined exit code: 101
 | `ppu_m3_lcdc_tile_sel_change2_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_tile_sel_change_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_tile_sel_change_cgb_d` | ❌ Fail |
-| `ppu_m3_lcdc_tile_sel_change_dmg_blob` | ❌ Fail |
 | `ppu_m3_lcdc_tile_sel_win_change2_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_tile_sel_win_change_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_tile_sel_win_change_cgb_d` | ❌ Fail |
-| `ppu_m3_lcdc_tile_sel_win_change_dmg_blob` | ❌ Fail |
 | `ppu_m3_lcdc_win_en_change_multiple_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_win_en_change_multiple_cgb_d` | ❌ Fail |
-| `ppu_m3_lcdc_win_en_change_multiple_dmg_blob` | ❌ Fail |
 | `ppu_m3_lcdc_win_en_change_multiple_wx_dmg_b` | ❌ Fail |
-| `ppu_m3_lcdc_win_en_change_multiple_wx_dmg_blob` | ❌ Fail |
 | `ppu_m3_lcdc_win_map_change2_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_win_map_change_cgb_c` | ❌ Fail |
 | `ppu_m3_lcdc_win_map_change_cgb_d` | ❌ Fail |
-| `ppu_m3_lcdc_win_map_change_dmg_blob` | ❌ Fail |
 | `ppu_m3_obp0_change_cgb_c` | ❌ Fail |
 | `ppu_m3_obp0_change_cgb_d` | ❌ Fail |
-| `ppu_m3_obp0_change_dmg_blob` | ❌ Fail |
 | `ppu_m3_scx_high_5_bits_cgb_c` | ❌ Fail |
 | `ppu_m3_scx_high_5_bits_cgb_d` | ❌ Fail |
 | `ppu_m3_scx_high_5_bits_change2_cgb_c` | ❌ Fail |
-| `ppu_m3_scx_high_5_bits_dmg_blob` | ❌ Fail |
 | `ppu_m3_scx_low_3_bits_cgb_c` | ❌ Fail |
 | `ppu_m3_scx_low_3_bits_cgb_d` | ❌ Fail |
-| `ppu_m3_scx_low_3_bits_dmg_blob` | ❌ Fail |
 | `ppu_m3_scy_change2_cgb_c` | ❌ Fail |
 | `ppu_m3_scy_change_cgb_c` | ❌ Fail |
 | `ppu_m3_scy_change_cgb_d` | ❌ Fail |
-| `ppu_m3_scy_change_dmg_blob` | ❌ Fail |
 | `ppu_m3_window_timing_cgb_c` | ❌ Fail |
-| `ppu_m3_window_timing_cgb_d` | ❌ Fail |
-| `ppu_m3_window_timing_dmg_blob` | ❌ Fail |
 | `ppu_m3_window_timing_wx_0_cgb_c` | ❌ Fail |
-| `ppu_m3_window_timing_wx_0_cgb_d` | ❌ Fail |
-| `ppu_m3_window_timing_wx_0_dmg_blob` | ❌ Fail |
-| `ppu_m3_wx_4_change_dmg_blob` | ❌ Fail |
 | `ppu_m3_wx_4_change_sprites_cgb_c` | ❌ Fail |
 | `ppu_m3_wx_4_change_sprites_cgb_d` | ❌ Fail |
-| `ppu_m3_wx_4_change_sprites_dmg_blob` | ❌ Fail |
-| `ppu_m3_wx_5_change_dmg_blob` | ❌ Fail |
-| `ppu_m3_wx_6_change_dmg_blob` | ❌ Fail |
-| `ppu_win_without_bg` | ❌ Fail |
 
 #### mem_timing_rom (3/3 passing, 100.0%)
 
@@ -3902,11 +3902,11 @@ Combined exit code: 101
 | `same_suite__sgb__command_mlt_req_1_incrementing_gb` | ❌ Fail |
 | `same_suite__sgb__command_mlt_req_gb` | ❌ Fail |
 
-#### strikethrough (0/1 passing, 0.0%)
+#### strikethrough (1/1 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
-| `strikethrough_hacktix_png` | ❌ Fail |
+| `strikethrough_hacktix_png` | ✅ Pass |
 
 
 ### Integration Tests
