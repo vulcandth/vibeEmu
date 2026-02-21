@@ -711,7 +711,7 @@ fn dmg_mode3_scy_event_t_bias() -> i16 {
         std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_T_BIAS")
             .ok()
             .and_then(|v| v.trim().parse::<i16>().ok())
-            .unwrap_or(-14)
+            .unwrap_or(-13)
     })
 }
 
@@ -722,7 +722,7 @@ fn dmg_mode3_scy_event_early_threshold_t() -> u16 {
         std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_THRESHOLD_T")
             .ok()
             .and_then(|v| v.trim().parse::<u16>().ok())
-            .unwrap_or(24)
+            .unwrap_or(25)
     })
 }
 
@@ -733,7 +733,7 @@ fn dmg_mode3_scy_event_early_t_adjust() -> i16 {
         std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_T_ADJUST")
             .ok()
             .and_then(|v| v.trim().parse::<i16>().ok())
-            .unwrap_or(7)
+            .unwrap_or(8)
     })
 }
 
@@ -744,7 +744,339 @@ fn dmg_mode3_scy_event_push_state_t_adjust() -> i16 {
         std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_STATE_T_ADJUST")
             .ok()
             .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-2)
+    })
+}
+
+fn dmg_mode3_scy_event_push_state_min_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_STATE_MIN_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(1)
+    })
+}
+
+fn dmg_mode3_scy_event_push_previsible_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_PREVISIBLE_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-2)
+    })
+}
+
+fn dmg_mode3_scy_event_push_visible_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_VISIBLE_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
             .unwrap_or(-3)
+    })
+}
+
+fn dmg_mode3_scy_event_lo_t1_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_LO_T1_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(2)
+    })
+}
+
+fn dmg_mode3_scy_event_tile_t1_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T1_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(6)
+    })
+}
+
+fn dmg_mode3_scy_event_tile_t1_threshold_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T1_THRESHOLD_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(3)
+    })
+}
+
+fn dmg_mode3_scy_event_tile_t2_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T2_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(5)
+    })
+}
+
+fn dmg_mode3_scy_event_tile_t2_threshold_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T2_THRESHOLD_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(13)
+    })
+}
+
+fn dmg_mode3_scy_event_hi_t2_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_HI_T2_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-3)
+    })
+}
+
+fn dmg_mode3_scy_event_hi_t2_threshold_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_HI_T2_THRESHOLD_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(210)
+    })
+}
+
+fn dmg_mode3_scy_event_lo_t1_threshold_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_LO_T1_THRESHOLD_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(208)
+    })
+}
+
+fn dmg_mode3_scy_use_stage_sample_t() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_USE_STAGE_SAMPLE_T")
+            .ok()
+            .is_some_and(|v| {
+                let s = v.trim();
+                !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
+            })
+    })
+}
+
+fn dmg_mode3_scy_sample_tile_t_offset() -> i16 {
+    use std::sync::OnceLock;
+    static OFFSET: OnceLock<i16> = OnceLock::new();
+    *OFFSET.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_SAMPLE_TILE_T_OFFSET")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_mode3_scy_sample_lo_t_offset() -> i16 {
+    use std::sync::OnceLock;
+    static OFFSET: OnceLock<i16> = OnceLock::new();
+    *OFFSET.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_SAMPLE_LO_T_OFFSET")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_mode3_scy_sample_hi_t_offset() -> i16 {
+    use std::sync::OnceLock;
+    static OFFSET: OnceLock<i16> = OnceLock::new();
+    *OFFSET.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_SAMPLE_HI_T_OFFSET")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_mode3_scy_event_left_regime_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-8)
+    })
+}
+
+fn dmg_mode3_scy_event_left_edge_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_mode3_scy_event_left_edge_min_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_MIN_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_mode3_scy_event_left_edge_max_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_MAX_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn dmg_mode3_scy_event_left_regime_min_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_MIN_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(19)
+    })
+}
+
+fn dmg_mode3_scy_event_left_regime_max_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_MAX_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(26)
+    })
+}
+
+fn dmg_mode3_scy_event_right_regime_t_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_T_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-14)
+    })
+}
+
+fn dmg_mode3_scy_event_right_regime_min_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_MIN_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(36)
+    })
+}
+
+fn dmg_mode3_scy_event_right_regime_max_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_MAX_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(43)
+    })
+}
+
+fn dmg_mode3_scy_event_startup_threshold_t() -> u16 {
+    use std::sync::OnceLock;
+    static THRESH: OnceLock<u16> = OnceLock::new();
+    *THRESH.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_THRESHOLD_T")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .unwrap_or(15)
+    })
+}
+
+fn dmg_mode3_scy_event_startup_tile_t1_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(-8)
+    })
+}
+
+fn dmg_mode3_scy_event_startup_lo_t1_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_LO_T1_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(7)
+    })
+}
+
+fn dmg_mode3_scy_event_startup_tile_t2_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T2_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(9)
+    })
+}
+
+fn dmg_mode3_scy_event_startup_hi_t2_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_HI_T2_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(6)
+    })
+}
+
+fn dmg_mode3_scy_event_startup_push_adjust() -> i16 {
+    use std::sync::OnceLock;
+    static ADJ: OnceLock<i16> = OnceLock::new();
+    *ADJ.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_PUSH_ADJUST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .unwrap_or(2)
     })
 }
 
@@ -1423,16 +1755,128 @@ impl Ppu {
 
     fn record_mode3_scy_event(&mut self, mode3_t: u16, val: u8) {
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        let mut bias = dmg_mode3_scy_event_t_bias();
-        if mode3_t <= dmg_mode3_scy_event_early_threshold_t() {
-            bias += dmg_mode3_scy_event_early_t_adjust();
+        if !self.cgb && dmg_mode3_scy_use_stage_sample_t() {
+            let t = (mode3_t as i16 + dmg_mode3_scy_event_t_bias()).clamp(0, max_t) as u16;
+            Self::push_mode3_reg_event(
+                &mut self.mode3_scy_events,
+                &mut self.mode3_scy_event_count,
+                t,
+                val,
+            );
+            return;
         }
-        // Similar to SCX, SCY writes sampled during PUSH on DMG land slightly
-        // earlier in the effective fetch timeline.
-        if !self.cgb && self.mode3_fetcher_state == 6 {
+        // Keep CGB SCY event baseline stable while allowing DMG-tuned timing.
+        let mut bias = if self.cgb {
+            -14
+        } else {
+            dmg_mode3_scy_event_t_bias()
+        };
+        let (early_threshold, early_adjust) = if self.cgb {
+            (28, 5)
+        } else {
+            (
+                dmg_mode3_scy_event_early_threshold_t(),
+                dmg_mode3_scy_event_early_t_adjust(),
+            )
+        };
+        if mode3_t <= early_threshold {
+            bias += early_adjust;
+        }
+        // Similar to SCX, some SCY writes sampled while the fetcher is in PUSH
+        // land slightly earlier in the effective fetch timeline.
+        if !self.cgb
+            && self.mode3_fetcher_state == 6
+            && mode3_t >= dmg_mode3_scy_event_push_state_min_t()
+        {
             bias += dmg_mode3_scy_event_push_state_t_adjust();
+            if self.mode3_position_in_line < 0 {
+                bias += dmg_mode3_scy_event_push_previsible_t_adjust();
+            } else {
+                bias += dmg_mode3_scy_event_push_visible_t_adjust();
+            }
+        }
+        // Early writes that hit GET_LO_T1 on DMG can be sampled slightly
+        // earlier in the tile-row path than pure dot-time mapping suggests.
+        if !self.cgb
+            && self.mode3_fetcher_state == 2
+            && mode3_t <= dmg_mode3_scy_event_lo_t1_threshold_t()
+        {
+            bias += dmg_mode3_scy_event_lo_t1_t_adjust();
+        }
+        if !self.cgb
+            && self.mode3_fetcher_state == 0
+            && mode3_t <= dmg_mode3_scy_event_tile_t1_threshold_t()
+        {
+            bias += dmg_mode3_scy_event_tile_t1_t_adjust();
+        }
+        if !self.cgb
+            && self.mode3_fetcher_state == 1
+            && mode3_t <= dmg_mode3_scy_event_tile_t2_threshold_t()
+        {
+            bias += dmg_mode3_scy_event_tile_t2_t_adjust();
+        }
+        if !self.cgb
+            && self.mode3_fetcher_state == 5
+            && mode3_t <= dmg_mode3_scy_event_hi_t2_threshold_t()
+        {
+            bias += dmg_mode3_scy_event_hi_t2_t_adjust();
+        }
+        if !self.cgb && self.sprite_count > 0 {
+            let first_x = self.line_sprites[0].x;
+            if first_x <= -6
+                && mode3_t >= dmg_mode3_scy_event_left_edge_min_t()
+                && mode3_t <= dmg_mode3_scy_event_left_edge_max_t()
+            {
+                bias += dmg_mode3_scy_event_left_edge_t_adjust();
+            }
+            if first_x < 0
+                && mode3_t >= dmg_mode3_scy_event_left_regime_min_t()
+                && mode3_t <= dmg_mode3_scy_event_left_regime_max_t()
+            {
+                bias += dmg_mode3_scy_event_left_regime_t_adjust();
+            }
+            if first_x >= 8
+                && mode3_t >= dmg_mode3_scy_event_right_regime_min_t()
+                && mode3_t <= dmg_mode3_scy_event_right_regime_max_t()
+            {
+                bias += dmg_mode3_scy_event_right_regime_t_adjust();
+            }
+        }
+        if !self.cgb && mode3_t <= dmg_mode3_scy_event_startup_threshold_t() {
+            // During fetcher startup, SCY sampling phase differs from steady state.
+            // Model this explicitly per stage instead of stretching global bias.
+            match self.mode3_fetcher_state {
+                0 => bias += dmg_mode3_scy_event_startup_tile_t1_adjust(),
+                1 => bias += dmg_mode3_scy_event_startup_tile_t2_adjust(),
+                2 => bias += dmg_mode3_scy_event_startup_lo_t1_adjust(),
+                5 => bias += dmg_mode3_scy_event_startup_hi_t2_adjust(),
+                6 => bias += dmg_mode3_scy_event_startup_push_adjust(),
+                _ => {}
+            }
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
+        if read_trace_bool_env("VIBEEMU_TRACE_SCY_EVENTS") && trace_obj_debug_line_enabled(self.ly)
+        {
+            let first_x = if self.sprite_count > 0 {
+                self.line_sprites[0].x
+            } else {
+                -128
+            };
+            eprintln!(
+                "SCYDBG ly={} mode3_t={} t={} bias={} val={:02X} first_x={} fetcher_state={} bg_fifo={} pos={} lcd_x={} render_delay={}",
+                self.ly,
+                mode3_t,
+                t,
+                bias,
+                val,
+                first_x,
+                self.mode3_fetcher_state,
+                self.mode3_bg_fifo,
+                self.mode3_position_in_line,
+                self.mode3_lcd_x,
+                self.mode3_render_delay
+            );
+        }
         Self::push_mode3_reg_event(
             &mut self.mode3_scy_events,
             &mut self.mode3_scy_event_count,
@@ -5220,6 +5664,8 @@ impl Ppu {
         let mut scy_event_idx = 0usize;
         let mut wx_event_idx = 0usize;
         let mut wy_event_idx = 0usize;
+        let use_stage_scy_sampling = !self.cgb && dmg_mode3_scy_use_stage_sample_t();
+        let max_mode3_t_i16 = self.mode3_target_cycles.saturating_sub(1) as i16;
 
         if has_win_en_toggle && self.mode3_wx_event_count > 0 && self.mode3_wx_events[0].t <= 7 {
             // WIN_EN toggle sequences that write WX early in mode 3 effectively
@@ -5438,6 +5884,21 @@ impl Ppu {
             while scy_event_idx < self.mode3_scy_event_count
                 && self.mode3_scy_events[scy_event_idx].t == t
             {
+                if read_trace_bool_env("VIBEEMU_TRACE_SCY_RENDER")
+                    && trace_obj_debug_line_enabled(self.ly)
+                {
+                    eprintln!(
+                        "SCYREN ly={} t={} i={} val={:02X} state={} pos={} fifo={} wx_trig={}",
+                        self.ly,
+                        t,
+                        scy_event_idx,
+                        self.mode3_scy_events[scy_event_idx].val,
+                        fetcher_state,
+                        position_in_line,
+                        bg_fifo.len(),
+                        wx_triggered
+                    );
+                }
                 scy_cur = self.mode3_scy_events[scy_event_idx].val;
                 scy_event_idx += 1;
             }
@@ -5552,6 +6013,11 @@ impl Ppu {
                     }
                     let fetcher_y = if wx_triggered {
                         window_line
+                    } else if use_stage_scy_sampling {
+                        let sample_t = (t as i16 + dmg_mode3_scy_sample_tile_t_offset())
+                            .clamp(0, max_mode3_t_i16)
+                            as u16;
+                        self.ly.wrapping_add(self.dmg_scy_for_mode3_t(sample_t))
                     } else {
                         self.ly.wrapping_add(scy_cur)
                     };
@@ -5629,6 +6095,11 @@ impl Ppu {
                 FETCH_GET_LO_T1 => {
                     let fetcher_y = if wx_triggered {
                         window_line
+                    } else if use_stage_scy_sampling {
+                        let sample_t = (t as i16 + dmg_mode3_scy_sample_lo_t_offset())
+                            .clamp(0, max_mode3_t_i16)
+                            as u16;
+                        self.ly.wrapping_add(self.dmg_scy_for_mode3_t(sample_t))
                     } else {
                         self.ly.wrapping_add(scy_cur)
                     };
@@ -5653,6 +6124,11 @@ impl Ppu {
                 FETCH_GET_HI_T1 => {
                     let fetcher_y = if wx_triggered {
                         window_line
+                    } else if use_stage_scy_sampling {
+                        let sample_t = (t as i16 + dmg_mode3_scy_sample_hi_t_offset())
+                            .clamp(0, max_mode3_t_i16)
+                            as u16;
+                        self.ly.wrapping_add(self.dmg_scy_for_mode3_t(sample_t))
                     } else {
                         self.ly.wrapping_add(scy_cur)
                     };
