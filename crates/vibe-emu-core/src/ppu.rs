@@ -2158,7 +2158,11 @@ impl Ppu {
             }
             return current;
         }
-        let use_event_map = dmg_bgp_use_event_map() || (!self.cgb && self.sprite_count == 0);
+        // CGB running a DMG title observes mid-scanline BGP writes closer to
+        // the mode-3 write timestamp map than to the DMG line-latch fallback.
+        let use_event_map = dmg_bgp_use_event_map()
+            || (!self.cgb && self.sprite_count == 0)
+            || (self.cgb && self.dmg_compat);
         if use_event_map {
             let mut current = self.dmg_line_bgp_base;
             let x = x as u8;
