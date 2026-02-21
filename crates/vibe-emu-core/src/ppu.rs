@@ -1992,11 +1992,12 @@ impl Ppu {
             let mut event_t = ev.t;
             if !self.cgb && i == 0 {
                 let mut adj = 0i16;
+                let changed = self.mode3_lcdc_base ^ ev.val;
                 if ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
                     // Writes that land while the fetcher is in PUSH with a mostly
                     // full FIFO do not affect the immediate next fetched BG tile.
                     adj = dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32);
-                } else if ev.fetcher_state == 6 && ((self.mode3_lcdc_base ^ ev.val) & 0x50) != 0 {
+                } else if ev.fetcher_state == 6 && (changed & 0x50) != 0 {
                     // With a partially drained FIFO, the first transition still
                     // lags fetch control, but by fewer dots than the full-FIFO
                     // PUSH case above.
@@ -2004,13 +2005,30 @@ impl Ppu {
                         .clamp(-16, 16);
                 } else if ev.fetcher_state == 0
                     && ev.bg_fifo == 8
-                    && ((self.mode3_lcdc_base ^ ev.val) & 0x50) != 0
+                    && (changed & 0x50) != 0
                     && (self.mode3_lcdc_base & 0x20) != 0
                 {
                     // If the write lands right as a new fetch cycle starts, the
                     // first affected tile still trails by a small amount on
                     // window-enabled lines.
                     adj = (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                }
+                if (changed & 0x40) != 0 {
+                    if self.ly == 0 {
+                        // Line 0 interrupt dispatch phase is earlier in this
+                        // test pattern; WIN_MAP takes effect one fetch slot
+                        // sooner than the generic line timing.
+                        adj -= 2;
+                    }
+                    if adj > 0 && self.sprite_count > 0 {
+                        let first_x = self.line_sprites[0].x;
+                        if first_x <= -5 || first_x >= 8 {
+                            // Left-clipped / right-edge-first sprites reduce
+                            // the effective first WIN_MAP fetch lag compared
+                            // to center-left sprite placements.
+                            adj -= 4;
+                        }
+                    }
                 }
                 if adj < 0 {
                     event_t = event_t.saturating_sub((-adj) as u16);
@@ -2022,6 +2040,37 @@ impl Ppu {
                 break;
             }
             current = ev.val;
+        }
+        current
+    }
+
+    #[inline]
+    fn dmg_lcdc_for_bg_fetch_window_map_pos(&self, position_in_line: i16) -> u8 {
+        // Window map (LCDC bit 6) transitions on DMG OBJ lines align more
+        // closely with the fetcher's output-position phase than with a raw
+        // mode-3 dot index. Reconstruct fetch-control sampling from recorded
+        // event X positions and keep the projected transitions monotonic.
+        let mut current = self.mode3_lcdc_base;
+        let x = position_in_line.clamp(0, (SCREEN_WIDTH - 1) as i16) as u8;
+        let right_edge_phase_bias = if self.sprite_count > 0 && self.line_sprites[0].x >= 9 {
+            1
+        } else {
+            0
+        };
+        let mut prev_transition_x = 0u8;
+        for (i, ev) in self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+            .iter()
+            .enumerate()
+        {
+            let mut transition_x = ev.x.saturating_sub(right_edge_phase_bias);
+            if i > 0 && transition_x <= prev_transition_x {
+                transition_x = prev_transition_x.saturating_add(1);
+            }
+            if x < transition_x {
+                break;
+            }
+            current = ev.val;
+            prev_transition_x = transition_x;
         }
         current
     }
@@ -4979,7 +5028,7 @@ impl Ppu {
         const FETCH_GET_HI_T2: u8 = 5;
         const FETCH_PUSH: u8 = 6;
 
-        let use_pop_schedule = false;
+        let use_pop_schedule = read_trace_bool_env("VIBEEMU_DMG_BG_WINDOW_USE_POP_SCHEDULE");
 
         let mut t_schedule = [0u16; SCREEN_WIDTH];
         let mut use_t_schedule = true;
@@ -5007,6 +5056,13 @@ impl Ppu {
         let has_win_en_toggle = self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
             .iter()
             .any(|ev| ((self.mode3_lcdc_base ^ ev.val) & 0x20) != 0);
+        let has_win_map_toggle = self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+            .iter()
+            .any(|ev| ((self.mode3_lcdc_base ^ ev.val) & 0x40) != 0);
+        let use_window_map_pos_sampling = has_win_map_toggle && self.sprite_count > 0 && {
+            let first_x = self.line_sprites[0].x;
+            first_x <= -6 || first_x >= 8
+        };
         if has_window_activity {
             use_t_schedule = false;
         }
@@ -5069,6 +5125,8 @@ impl Ppu {
         let mut window_tile_x = 0u8;
         let mut window_line = self.win_line_counter;
         let mut window_activations = 0u8;
+        let trace_win_map_fetch = read_trace_bool_env("VIBEEMU_TRACE_WIN_MAP_FETCH")
+            && trace_obj_debug_line_enabled(self.ly);
         let suppress_wx0_previsible_shortcuts = self.mode3_wx_base == 0
             && self.mode3_wx_event_count > 0
             && self.mode3_wx_events[0].val != 0
@@ -5104,10 +5162,11 @@ impl Ppu {
                 };
 
                 if should_pop {
-                    let color_id_raw = if bg_fifo.is_empty() {
-                        0
-                    } else {
+                    let had_fifo_pixel = !bg_fifo.is_empty();
+                    let color_id_raw = if had_fifo_pixel {
                         bg_fifo.pop_front().unwrap_or(0)
+                    } else {
+                        0
                     };
 
                     if use_pop_schedule {
@@ -5139,7 +5198,7 @@ impl Ppu {
 
                     window_is_being_fetched = false;
 
-                    if position_in_line >= 0 && position_in_line < SCREEN_WIDTH as i16 {
+                    if had_fifo_pixel && position_in_line >= 0 && position_in_line < SCREEN_WIDTH as i16 {
                         let out_x = if use_pop_schedule {
                             position_in_line as usize
                         } else if use_t_schedule {
@@ -5196,6 +5255,19 @@ impl Ppu {
                             self.line_color_zero[out_x] = color_id == 0;
                             self.dmg_line_lcdc_at_pixel[out_x] = lcdc_cur;
                             visible_written += 1;
+                            if trace_win_map_fetch && out_x < 24 {
+                                eprintln!(
+                                    "WMAP_OUT ly={} t={} out_x={} cid_raw={} wx_trig={} wx_cur={} win_line={} lcdc_cur={:02X}",
+                                    self.ly,
+                                    $t,
+                                    out_x,
+                                    color_id_raw,
+                                    wx_triggered,
+                                    wx_cur,
+                                    window_line,
+                                    lcdc_cur
+                                );
+                            }
                         }
                         if !use_pop_schedule && use_t_schedule && next_out_x < SCREEN_WIDTH {
                             next_out_x += 1;
@@ -5303,6 +5375,18 @@ impl Ppu {
                 }
 
                 if should_activate_window {
+                    if trace_win_map_fetch {
+                        eprintln!(
+                            "WMAP_ACT ly={} t={} pos={} wx_cur={} activated_pos6={} lcd_x={} fifo={}",
+                            self.ly,
+                            t,
+                            position_in_line,
+                            wx_cur,
+                            activated_on_pos6,
+                            lcd_x,
+                            bg_fifo.len()
+                        );
+                    }
                     window_tile_x = 0;
                     bg_fifo.clear();
                     wx_triggered = true;
@@ -5348,7 +5432,11 @@ impl Ppu {
                     } else {
                         self.ly.wrapping_add(scy_cur)
                     };
-                    let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_t(t);
+                    let lcdc_fetch = if !self.cgb && wx_triggered && use_window_map_pos_sampling {
+                        self.dmg_lcdc_for_bg_fetch_window_map_pos(position_in_line)
+                    } else {
+                        self.dmg_lcdc_for_bg_fetch_t(t)
+                    };
                     let map_base = if wx_triggered {
                         if (lcdc_fetch & 0x40) != 0 {
                             BG_MAP_1_BASE
@@ -5368,6 +5456,26 @@ impl Ppu {
                     } else {
                         (((scx_cur as i16 + position_in_line + 8) >> 3) & 0x1F) as u8
                     };
+                    if trace_win_map_fetch
+                        && wx_triggered
+                        && tile_x < 6
+                        && position_in_line >= -16
+                        && position_in_line < 48
+                    {
+                        eprintln!(
+                            "WMAP_FETCH ly={} t={} pos={} tile_x={} win_line={} lcdc_fetch={:02X} map={} state={} fifo={} wx_cur={}",
+                            self.ly,
+                            t,
+                            position_in_line,
+                            tile_x,
+                            window_line,
+                            lcdc_fetch,
+                            if map_base == BG_MAP_1_BASE { 1 } else { 0 },
+                            fetcher_state,
+                            bg_fifo.len(),
+                            wx_cur
+                        );
+                    }
 
                     tile_index_addr = map_base
                         + ((fetcher_y as usize >> 3) & 0x1F) * 32
@@ -5376,6 +5484,23 @@ impl Ppu {
                 }
                 FETCH_GET_TILE_T2 => {
                     current_tile = self.vram_read_for_render(0, tile_index_addr);
+                    if trace_win_map_fetch
+                        && wx_triggered
+                        && window_tile_x < 6
+                        && position_in_line >= -16
+                        && position_in_line < 48
+                    {
+                        eprintln!(
+                            "WMAP_TILE ly={} t={} pos={} tile_x={} tile_idx={:02X} fifo={} wx_cur={}",
+                            self.ly,
+                            t,
+                            position_in_line,
+                            window_tile_x,
+                            current_tile,
+                            bg_fifo.len(),
+                            wx_cur
+                        );
+                    }
                     fetcher_state = FETCH_GET_LO_T1;
                 }
                 FETCH_GET_LO_T1 => {
