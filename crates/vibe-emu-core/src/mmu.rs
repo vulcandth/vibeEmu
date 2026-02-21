@@ -214,7 +214,7 @@ impl Mmu {
 
         let dot_div = timer.div;
 
-        let mut ppu = Ppu::new_with_mode(cgb);
+        let mut ppu = Ppu::new_with_revisions(cgb, dmg_revision, cgb_revision);
         ppu.apply_boot_state(if cgb { None } else { Some(dmg_revision) });
 
         Self {
@@ -292,7 +292,7 @@ impl Mmu {
 
         let dot_div = timer.div;
 
-        let ppu = Ppu::new_with_mode(cgb);
+        let ppu = Ppu::new_with_revisions(cgb, dmg_revision, cgb_revision);
 
         let wram = init_power_on_wram(power_on_wram_seed(cgb, dmg_revision, cgb_revision));
 
