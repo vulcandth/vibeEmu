@@ -577,6 +577,8 @@ pub struct Ppu {
     oam_scan_index: usize,
     oam_scan_dot: u16,
     oam_scan_phase: u8,
+    mode2_y_bus: u8,
+    mode2_x_bus: u8,
     oam_scan_entry_y: i16,
     oam_scan_entry_visible: bool,
     mode3_sprite_latch_index: usize,
@@ -590,7 +592,7 @@ pub struct Ppu {
     mode3_render_delay: u16,
     mode3_last_match_x: u8,
     mode3_same_x_toggle: bool,
-    pub(crate) oam_dma_write: Option<(u8, u8)>,
+    pub(crate) oam_dma_current_dest: u8,
     /// Indicates a completed frame is available in `framebuffer`
     frame_ready: bool,
     stat_irq_line: bool,
@@ -1458,6 +1460,8 @@ impl Ppu {
             oam_scan_index: 0,
             oam_scan_dot: 0,
             oam_scan_phase: 0,
+            mode2_y_bus: 0,
+            mode2_x_bus: 0,
             oam_scan_entry_y: 0,
             oam_scan_entry_visible: false,
             mode3_sprite_latch_index: 0,
@@ -1471,7 +1475,7 @@ impl Ppu {
             mode3_render_delay: 0,
             mode3_last_match_x: 0,
             mode3_same_x_toggle: false,
-            oam_dma_write: None,
+            oam_dma_current_dest: 0xA1,
             frame_ready: false,
             stat_irq_line: false,
             dmg_mode2_vblank_irq_pending: false,
@@ -2831,6 +2835,24 @@ impl Ppu {
         }
     }
 
+    #[inline]
+    fn oam_read_for_ppu(&self, addr: usize) -> u8 {
+        let addr = addr.min(0x9F);
+        // DMG models expose OAM DMA word-level contention on the PPU OAM read
+        // path during active transfers.
+        if self.dmg_oam_dma_contention_active() {
+            let dest = self.oam_dma_current_dest;
+            let mux = ((dest & !1) | ((addr as u8) & 1)).min(0x9F);
+            return self.oam[mux as usize];
+        }
+        self.oam[addr]
+    }
+
+    #[inline]
+    fn dmg_oam_dma_contention_active(&self) -> bool {
+        !self.cgb && (1..=0xA0).contains(&self.oam_dma_current_dest)
+    }
+
     fn mode3_latch_sprite_attributes(&mut self) {
         // Use the same simplified DMG pipeline model as
         // `dmg_compute_mode3_cycles_for_line` to decide *when* an object match
@@ -2883,8 +2905,8 @@ impl Ppu {
                 }
 
                 let base = sprite.oam_index * 4;
-                self.line_sprites[idx].tile = self.oam[base + 2];
-                self.line_sprites[idx].flags = self.oam[base + 3];
+                self.line_sprites[idx].tile = self.oam_read_for_ppu(base + 2);
+                self.line_sprites[idx].flags = self.oam_read_for_ppu(base + 3);
                 self.line_sprites[idx].fetched = true;
                 self.line_sprites[idx].obj_data_valid = false;
                 self.line_sprites[idx].fetch_t_valid = false;
@@ -2971,9 +2993,8 @@ impl Ppu {
                         MODE3_OBJ_FETCH_STAGE_ATTR_0 => {
                             let sprite = self.line_sprites[idx];
                             let base = sprite.oam_index * 4;
-                            let dma_val = self.oam_dma_write.map(|(_, val)| val);
-                            let tile = dma_val.unwrap_or(self.oam[base + 2]);
-                            let flags = dma_val.unwrap_or(self.oam[base + 3]);
+                            let tile = self.oam_read_for_ppu(base + 2);
+                            let flags = self.oam_read_for_ppu(base + 3);
                             self.line_sprites[idx].tile = tile;
                             self.line_sprites[idx].flags = flags;
                             self.line_sprites[idx].fetched = true;
@@ -3093,8 +3114,8 @@ impl Ppu {
                         break;
                     }
                     let base = sprite.oam_index * 4;
-                    self.line_sprites[idx].tile = self.oam[base + 2];
-                    self.line_sprites[idx].flags = self.oam[base + 3];
+                    self.line_sprites[idx].tile = self.oam_read_for_ppu(base + 2);
+                    self.line_sprites[idx].flags = self.oam_read_for_ppu(base + 3);
                     self.line_sprites[idx].fetched = false;
                     self.line_sprites[idx].obj_data_valid = false;
                     self.line_sprites[idx].obj_row_valid = false;
@@ -3218,8 +3239,10 @@ impl Ppu {
                 }
                 let sprite = self.line_sprites[self.mode3_sprite_latch_index];
                 let base = sprite.oam_index * 4;
-                self.line_sprites[self.mode3_sprite_latch_index].tile = self.oam[base + 2];
-                self.line_sprites[self.mode3_sprite_latch_index].flags = self.oam[base + 3];
+                self.line_sprites[self.mode3_sprite_latch_index].tile =
+                    self.oam_read_for_ppu(base + 2);
+                self.line_sprites[self.mode3_sprite_latch_index].flags =
+                    self.oam_read_for_ppu(base + 3);
                 self.line_sprites[self.mode3_sprite_latch_index].obj_data_valid = false;
                 self.line_sprites[self.mode3_sprite_latch_index].fetch_t_valid = false;
                 if obj_size_tuning.use_fetch_latch {
@@ -3255,14 +3278,18 @@ impl Ppu {
             let base = self.oam_scan_index * 4;
             match self.oam_scan_phase {
                 0 => {
-                    let y = self.oam[base] as i16 - 16;
+                    if !self.dmg_oam_dma_contention_active() {
+                        self.mode2_y_bus = self.oam_read_for_ppu(base);
+                        self.mode2_x_bus = self.oam_read_for_ppu(base + 1);
+                    }
+                    let y = self.mode2_y_bus as i16 - 16;
                     let visible = self.ly as i16 >= y && (self.ly as i16) < y + sprite_height;
                     self.oam_scan_entry_y = y;
                     self.oam_scan_entry_visible = visible;
                     self.oam_scan_phase = 1;
                 }
                 _ => {
-                    let x = self.oam[base + 1] as i16 - 8;
+                    let x = self.mode2_x_bus as i16 - 8;
                     if self.oam_scan_entry_visible && self.sprite_count < MAX_SPRITES_PER_LINE {
                         self.line_sprites[self.sprite_count] = Sprite {
                             x,
@@ -3322,8 +3349,7 @@ impl Ppu {
 
         // Sorted by X ascending already (DMG priority path). Ensure it here for safety.
         sprite_xs[..sprite_len].sort_unstable();
-        let apply_attr_prefetch_dots =
-            sprite_len == MAX_SPRITES_PER_LINE && sprite_xs[0] >= 32;
+        let apply_attr_prefetch_dots = sprite_len == MAX_SPRITES_PER_LINE && sprite_xs[0] >= 32;
 
         let scx_fine = (self.scx & 7) as u16;
         let mut cycles: u16 = 0;
