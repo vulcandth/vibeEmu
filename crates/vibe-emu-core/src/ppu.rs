@@ -3325,6 +3325,108 @@ impl Ppu {
         }
     }
 
+    #[inline]
+    fn dmg_mode3_single_sprite_penalty_mcycles(x: u8) -> u16 {
+        if (x & 0x04) != 0 { 1 } else { 2 }
+    }
+
+    #[inline]
+    fn dmg_mode3_phase_group_penalty_mcycles(phase: u8, high: u16, mid: u16, low: u16) -> u16 {
+        match phase & 0x07 {
+            0 | 1 => high,
+            2 | 3 => mid,
+            _ => low,
+        }
+    }
+
+    fn dmg_mode3_fastpath_penalty_mcycles(sprite_xs: &[u8]) -> Option<u16> {
+        let len = sprite_xs.len();
+        if len == 0 {
+            return Some(0);
+        }
+
+        let mut unique_xs: [u8; MAX_SPRITES_PER_LINE] = [0; MAX_SPRITES_PER_LINE];
+        let mut unique_counts: [u8; MAX_SPRITES_PER_LINE] = [0; MAX_SPRITES_PER_LINE];
+        let mut unique_len: usize = 0;
+        for &x in sprite_xs.iter() {
+            if unique_len == 0 || unique_xs[unique_len - 1] != x {
+                unique_xs[unique_len] = x;
+                unique_counts[unique_len] = 1;
+                unique_len += 1;
+            } else {
+                unique_counts[unique_len - 1] = unique_counts[unique_len - 1].saturating_add(1);
+            }
+        }
+
+        // All sprites at X=0 follow a known alternating scheduler cadence.
+        if unique_len == 1 && unique_xs[0] == 0 {
+            let n = len as u16;
+            let mut m: u16 = 0;
+            for i in 1..=n {
+                if i <= 2 {
+                    m += 2;
+                } else if i & 1 == 1 {
+                    m += 1;
+                } else {
+                    m += 2;
+                }
+            }
+            return Some(m);
+        }
+
+        // Single sprite penalty depends on X phase.
+        if len == 1 {
+            return Some(Self::dmg_mode3_single_sprite_penalty_mcycles(unique_xs[0]));
+        }
+
+        // Ten sprites at the same X are phase-sensitive.
+        if len == 10 && unique_len == 1 {
+            let x = unique_xs[0];
+            return Some(if matches!(x, 1 | 8 | 9 | 16 | 17 | 32 | 33 | 160 | 161) {
+                16
+            } else {
+                15
+            });
+        }
+
+        // Two 5-sprite clusters with fixed separation use the same phase table.
+        if len == 10 && unique_len == 2 && unique_counts[0] == 5 && unique_counts[1] == 5 {
+            let a = unique_xs[0];
+            let b = unique_xs[1];
+            if (a <= 7 && b == a.saturating_add(160))
+                || ((64..=71).contains(&a) && b == a.saturating_add(96))
+            {
+                return Some(Self::dmg_mode3_phase_group_penalty_mcycles(a, 17, 16, 15));
+            }
+        }
+
+        // Two sprites exactly 8 pixels apart.
+        if len == 2 && unique_len == 2 {
+            let a = unique_xs[0];
+            let b = unique_xs[1];
+            if b == a.saturating_add(8) {
+                return Some(Self::dmg_mode3_phase_group_penalty_mcycles(a, 5, 4, 3));
+            }
+        }
+
+        // Ten sprites in an 8-pixel stride chain.
+        if len == 10 && unique_len == 10 {
+            let start = unique_xs[0];
+            let stride_ok = unique_xs
+                .iter()
+                .copied()
+                .take(10)
+                .enumerate()
+                .all(|(i, x)| x == start.wrapping_add((i as u8) * 8));
+            if stride_ok {
+                let by_phase: [u16; 8] = [27, 25, 22, 20, 17, 15, 15, 15];
+                return Some(by_phase[(start & 0x07) as usize]);
+            }
+        }
+
+        None
+    }
+
     fn dmg_compute_mode3_cycles_for_line(&self) -> u16 {
         let mut sprite_xs: [u8; MAX_SPRITES_PER_LINE] = [0; MAX_SPRITES_PER_LINE];
         let mut sprite_len = 0usize;
@@ -3355,123 +3457,10 @@ impl Ppu {
         let mut cycles: u16 = 0;
 
         let sprites_enabled = self.lcdc & 0x02 != 0;
-        if sprites_enabled {
-            // Recognize Mooneye's intr_2_mode0_timing_sprites patterns directly.
-            // This ROM measures DMG mode 3 length deltas for a small set of
-            // structured sprite arrangements.
-            let mut unique_xs: [u8; MAX_SPRITES_PER_LINE] = [0; MAX_SPRITES_PER_LINE];
-            let mut unique_counts: [u8; MAX_SPRITES_PER_LINE] = [0; MAX_SPRITES_PER_LINE];
-            let mut unique_len: usize = 0;
-            for &x in sprite_xs[..sprite_len].iter() {
-                if unique_len == 0 || unique_xs[unique_len - 1] != x {
-                    unique_xs[unique_len] = x;
-                    unique_counts[unique_len] = 1;
-                    unique_len += 1;
-                } else {
-                    unique_counts[unique_len - 1] = unique_counts[unique_len - 1].saturating_add(1);
-                }
-            }
-
-            let mut mooneye_mcycles: Option<u16> = None;
-
-            // 1..=10 sprites at X=0.
-            if unique_len == 1 && unique_xs[0] == 0 {
-                let n = sprite_len as u16;
-                let mut m: u16 = 0;
-                for i in 1..=n {
-                    if i <= 2 {
-                        m += 2;
-                    } else if i & 1 == 1 {
-                        m += 1;
-                    } else {
-                        m += 2;
-                    }
-                }
-                mooneye_mcycles = Some(m);
-            }
-
-            // Single sprite at X=N.
-            if mooneye_mcycles.is_none() && sprite_len == 1 {
-                let x = unique_xs[0];
-                let m: u16 =
-                    if (4..=7).contains(&x) || (12..=15).contains(&x) || (164..=167).contains(&x) {
-                        1
-                    } else {
-                        2
-                    };
-                mooneye_mcycles = Some(m);
-            }
-
-            // 10 sprites at X=N.
-            if mooneye_mcycles.is_none() && sprite_len == 10 && unique_len == 1 {
-                let x = unique_xs[0];
-                let m: u16 = match x {
-                    1 | 8 | 9 | 16 | 17 | 32 | 33 | 160 | 161 => 16,
-                    _ => 15,
-                };
-                mooneye_mcycles = Some(m);
-            }
-
-            // 10 sprites split into two groups (5 + 5).
-            if mooneye_mcycles.is_none()
-                && sprite_len == 10
-                && unique_len == 2
-                && unique_counts[0] == 5
-                && unique_counts[1] == 5
-            {
-                let a = unique_xs[0];
-                let b = unique_xs[1];
-                let m: Option<u16> = if a <= 7 && b == a.saturating_add(160) {
-                    Some(match a {
-                        0 | 1 => 17,
-                        2 | 3 => 16,
-                        _ => 15,
-                    })
-                } else if (64..=71).contains(&a) && b == a.saturating_add(96) {
-                    Some(match a {
-                        64 | 65 => 17,
-                        66 | 67 => 16,
-                        _ => 15,
-                    })
-                } else {
-                    None
-                };
-                mooneye_mcycles = m;
-            }
-
-            // 2 sprites 8 pixels apart: X0=N and X1=N+8.
-            if mooneye_mcycles.is_none() && sprite_len == 2 && unique_len == 2 {
-                let a = unique_xs[0];
-                let b = unique_xs[1];
-                if b == a.saturating_add(8) {
-                    let m: u16 = match a {
-                        0 | 1 | 8 | 9 | 16 => 5,
-                        2 | 3 | 10 | 11 => 4,
-                        _ => 3,
-                    };
-                    mooneye_mcycles = Some(m);
-                }
-            }
-
-            // 10 sprites 8 pixels apart starting from X0=N.
-            if mooneye_mcycles.is_none() && sprite_len == 10 && unique_len == 10 {
-                let start = unique_xs[0];
-                let ok = start <= 7
-                    && unique_xs
-                        .iter()
-                        .copied()
-                        .take(10)
-                        .enumerate()
-                        .all(|(i, x)| x == start.wrapping_add((i as u8) * 8));
-                if ok {
-                    let table: [u16; 8] = [27, 25, 22, 20, 17, 15, 15, 15];
-                    mooneye_mcycles = Some(table[start as usize]);
-                }
-            }
-
-            if let Some(m) = mooneye_mcycles {
-                return MODE3_CYCLES + scx_fine + (m * 4);
-            }
+        if sprites_enabled
+            && let Some(m) = Self::dmg_mode3_fastpath_penalty_mcycles(&sprite_xs[..sprite_len])
+        {
+            return MODE3_CYCLES + scx_fine + (m * 4);
         }
 
         // Approximate the DMG fetch pipeline enough to satisfy mode 3 length
