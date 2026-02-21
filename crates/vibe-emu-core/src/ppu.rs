@@ -2055,6 +2055,36 @@ impl Ppu {
     }
 
     #[inline]
+    fn dmg_lcdc_for_bg_fetch_tile_sel_simple_t(&self, t: u16) -> u8 {
+        // For bit-4-only LCDC toggles on DMG simple BG lines, the effective
+        // fetch-control transition depends on FIFO depth and fetcher stage at
+        // the write dot. This mirrors the left-clipped/edge-sprite behavior
+        // seen in mealybug TILE_SEL timing without affecting other LCDC bits.
+        let mut current = self.mode3_lcdc_base;
+        let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
+        for ev in self.mode3_lcdc_events[..self.mode3_lcdc_event_count].iter() {
+            let mut event_t = ev.t as i16;
+            let changed = current ^ ev.val;
+            if !self.cgb && (changed & 0x10) != 0 && (changed & !0x10) == 0 {
+                let delay = if ev.fetcher_state == 6 {
+                    (ev.bg_fifo.min(8)) as i16
+                } else if ev.fetcher_state <= 1 && ev.bg_fifo >= 7 {
+                    7
+                } else {
+                    0
+                };
+                event_t += delay;
+            }
+            let event_t = event_t.clamp(0, max_t) as u16;
+            if t < event_t {
+                break;
+            }
+            current = ev.val;
+        }
+        current
+    }
+
+    #[inline]
     fn dmg_lcdc_for_bg_fetch_window_map_pos(&self, position_in_line: i16) -> u8 {
         // Window map (LCDC bit 6) transitions on DMG OBJ lines align more
         // closely with the fetcher's output-position phase than with a raw
@@ -4972,6 +5002,17 @@ impl Ppu {
     }
 
     fn render_dmg_bg_window_scanline_simple(&mut self) {
+        let simple_tile_sel_only_line = !self.cgb
+            && self.sprite_count > 0
+            && self.mode3_lcdc_event_count > 0
+            && {
+                let first_x = self.line_sprites[0].x;
+                first_x <= -6 || first_x >= 8
+            }
+            && self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+                .iter()
+                .all(|ev| ((self.mode3_lcdc_base ^ ev.val) & !0x10) == 0);
+
         // draw background
         for x in 0..SCREEN_WIDTH as u16 {
             if !self.dmg_bg_en_for_pixel(x as usize) {
@@ -4979,8 +5020,16 @@ impl Ppu {
             }
             let fetch_t = self.dmg_bg_fetch_base_t_for_pixel(x as usize);
             let lcdc_b = self.dmg_lcdc_for_bg_fetch_t(fetch_t);
-            let lcdc_lo = self.dmg_lcdc_for_bg_fetch_t(fetch_t);
-            let lcdc_hi = self.dmg_lcdc_for_bg_fetch_t(fetch_t.saturating_add(2));
+            let lcdc_lo = if simple_tile_sel_only_line {
+                self.dmg_lcdc_for_bg_fetch_tile_sel_simple_t(fetch_t)
+            } else {
+                self.dmg_lcdc_for_bg_fetch_t(fetch_t)
+            };
+            let lcdc_hi = if simple_tile_sel_only_line {
+                self.dmg_lcdc_for_bg_fetch_tile_sel_simple_t(fetch_t.saturating_add(2))
+            } else {
+                self.dmg_lcdc_for_bg_fetch_t(fetch_t.saturating_add(2))
+            };
             let tile_map_base = if (lcdc_b & 0x08) != 0 {
                 BG_MAP_1_BASE
             } else {
