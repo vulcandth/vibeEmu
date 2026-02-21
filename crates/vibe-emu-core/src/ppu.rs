@@ -1993,10 +1993,20 @@ impl Ppu {
             if !self.cgb && i == 0 {
                 let mut adj = 0i16;
                 let changed = self.mode3_lcdc_base ^ ev.val;
+                let tile_sel_only = (changed & 0x10) != 0
+                    && (changed & 0x40) == 0
+                    && (self.mode3_lcdc_base & 0x20) != 0;
                 if ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
                     // Writes that land while the fetcher is in PUSH with a mostly
                     // full FIFO do not affect the immediate next fetched BG tile.
-                    adj = dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32);
+                    if tile_sel_only {
+                        // TILE_SEL is sampled on tile-data stages and lags less
+                        // than map-control bits in this PUSH/full-FIFO case.
+                        adj = ((dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) * 5) / 8)
+                            .clamp(-16, 16);
+                    } else {
+                        adj = dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32);
+                    }
                 } else if ev.fetcher_state == 6 && (changed & 0x50) != 0 {
                     // With a partially drained FIFO, the first transition still
                     // lags fetch control, but by fewer dots than the full-FIFO
@@ -2065,6 +2075,63 @@ impl Ppu {
             let mut transition_x = ev.x.saturating_sub(right_edge_phase_bias);
             if i > 0 && transition_x <= prev_transition_x {
                 transition_x = prev_transition_x.saturating_add(1);
+            }
+            if x < transition_x {
+                break;
+            }
+            current = ev.val;
+            prev_transition_x = transition_x;
+        }
+        current
+    }
+
+    #[inline]
+    fn dmg_lcdc_for_bg_fetch_window_tile_sel_pos(
+        &self,
+        position_in_line: i16,
+        hi_phase: bool,
+    ) -> u8 {
+        // TILE_SEL (LCDC bit 4) uses the same fetch-control path as window-map
+        // selection but is sampled during tile-data fetch phases. On DMG OBJ
+        // lines this aligns better with fetch-position than mode-3 dot time.
+        let mut current = self.mode3_lcdc_base;
+        let x = position_in_line.clamp(0, (SCREEN_WIDTH - 1) as i16) as u8;
+        let mut prev_transition_x = 0u8;
+        let first_x = if self.sprite_count > 0 {
+            self.line_sprites[0].x
+        } else {
+            0
+        };
+        let left_sprite_regime = first_x < 0;
+        let right_sprite_regime = first_x >= 8;
+        for (i, ev) in self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+            .iter()
+            .enumerate()
+        {
+            let mut transition_x = ev.x;
+            if hi_phase && i == 0 {
+                if left_sprite_regime && ev.fetcher_state == 2 {
+                    // On left-clipped sprite lines, a TILE_SEL write landing
+                    // during LO setup is observed by the subsequent HI phase
+                    // one dot earlier than LO.
+                    transition_x = transition_x.saturating_sub(1);
+                } else if right_sprite_regime && ev.fetcher_state == 0 {
+                    // Right-edge-first lines keep the first TILE_SEL edge
+                    // slightly earlier on HI than LO.
+                    let hi_early = if first_x >= 9 { 5 } else { 4 };
+                    transition_x = transition_x.saturating_sub(hi_early);
+                }
+            }
+            if i == 0 && left_sprite_regime && ev.fetcher_state <= 1 {
+                // Left-clipped lines where the first write lands in an early
+                // fetch phase sample the first TILE_SEL edge slightly sooner.
+                transition_x = transition_x.saturating_sub(1);
+            }
+            if i > 0 && transition_x <= prev_transition_x {
+                // Right-edge-first lines use a wider effective spacing between
+                // successive TILE_SEL transition positions.
+                let step = if right_sprite_regime { 3 } else { 1 };
+                transition_x = prev_transition_x.saturating_add(step);
             }
             if x < transition_x {
                 break;
@@ -5059,9 +5126,16 @@ impl Ppu {
         let has_win_map_toggle = self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
             .iter()
             .any(|ev| ((self.mode3_lcdc_base ^ ev.val) & 0x40) != 0);
+        let has_tile_sel_toggle = self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+            .iter()
+            .any(|ev| ((self.mode3_lcdc_base ^ ev.val) & 0x10) != 0);
         let use_window_map_pos_sampling = has_win_map_toggle && self.sprite_count > 0 && {
             let first_x = self.line_sprites[0].x;
             first_x <= -6 || first_x >= 8
+        };
+        let use_window_tile_sel_pos_sampling = has_tile_sel_toggle && self.sprite_count > 0 && {
+            let first_x = self.line_sprites[0].x;
+            first_x <= -1 || first_x >= 8
         };
         if has_window_activity {
             use_t_schedule = false;
@@ -5509,7 +5583,12 @@ impl Ppu {
                     } else {
                         self.ly.wrapping_add(scy_cur)
                     };
-                    let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_t(t);
+                    let lcdc_fetch =
+                        if !self.cgb && wx_triggered && use_window_tile_sel_pos_sampling {
+                            self.dmg_lcdc_for_bg_fetch_window_tile_sel_pos(position_in_line, false)
+                        } else {
+                            self.dmg_lcdc_for_bg_fetch_t(t)
+                        };
                     let tile_base = if (lcdc_fetch & 0x10) != 0 {
                         TILE_DATA_0_BASE + current_tile as usize * 16
                     } else {
@@ -5528,7 +5607,12 @@ impl Ppu {
                     } else {
                         self.ly.wrapping_add(scy_cur)
                     };
-                    let lcdc_fetch = self.dmg_lcdc_for_bg_fetch_t(t);
+                    let lcdc_fetch =
+                        if !self.cgb && wx_triggered && use_window_tile_sel_pos_sampling {
+                            self.dmg_lcdc_for_bg_fetch_window_tile_sel_pos(position_in_line, true)
+                        } else {
+                            self.dmg_lcdc_for_bg_fetch_t(t)
+                        };
                     let tile_base = if (lcdc_fetch & 0x10) != 0 {
                         TILE_DATA_0_BASE + current_tile as usize * 16
                     } else {
