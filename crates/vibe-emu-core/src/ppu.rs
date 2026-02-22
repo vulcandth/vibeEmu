@@ -433,6 +433,9 @@ const MODE0_CYCLES: u16 = 204; // HBlank
 const MODE1_CYCLES: u16 = 456; // One line during VBlank
 const MODE2_CYCLES: u16 = 80; // OAM scan
 const MODE3_CYCLES: u16 = 172; // Pixel transfer
+// DMG mode 3 peaks around 289 dots on hardware; higher estimates distort
+// HBlank timing and split effects.
+const DMG_MODE3_MAX_CYCLES: u16 = 284;
 const DMG_HBLANK_RENDER_DELAY: u16 = 8;
 
 // Total number of T-cycles per scanline.
@@ -650,6 +653,8 @@ pub struct Ppu {
     mode3_pop_events: [Mode3PopEvent; MODE3_POP_EVENTS_MAX],
     pending_reg_write_count: usize,
     pending_reg_writes: [PendingRegWrite; PENDING_REG_WRITES_MAX],
+    dmg_prev_line_window_active: bool,
+    dmg_prev2_line_window_active: bool,
 }
 
 fn dmg_obp0_sample_t_bias() -> i16 {
@@ -1218,6 +1223,18 @@ fn read_obj_size_bool_env(key: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
+fn dmg_mode3_obj_fetch_sim_dots() -> u16 {
+    use std::sync::OnceLock;
+    static DOTS: OnceLock<u16> = OnceLock::new();
+    *DOTS.get_or_init(|| {
+        std::env::var("VIBEEMU_DMG_MODE3_OBJ_FETCH_SIM_DOTS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i16>().ok())
+            .map(|v| v.clamp(0, 16) as u16)
+            .unwrap_or(10)
+    })
+}
+
 fn dmg_obj_size_tuning() -> &'static DmgObjSizeTuning {
     use std::sync::OnceLock;
     static TUNING: OnceLock<DmgObjSizeTuning> = OnceLock::new();
@@ -1362,6 +1379,161 @@ fn trace_obj_debug_line_enabled(ly: u8) -> bool {
     static LINES: OnceLock<[bool; SCREEN_HEIGHT]> = OnceLock::new();
     let set = LINES.get_or_init(|| {
         std::env::var("VIBEEMU_TRACE_OBJ_DEBUG_LINES")
+            .ok()
+            .map(|v| parse_trace_line_set(&v))
+            .unwrap_or([true; SCREEN_HEIGHT])
+    });
+    set[ly as usize]
+}
+
+fn read_trace_u64_env(key: &str) -> Option<u64> {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+}
+
+fn trace_scx_writes_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| read_trace_bool_env("VIBEEMU_TRACE_SCX_WRITES_ALL"))
+}
+
+fn trace_lcd_reg_writes_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| read_trace_bool_env("VIBEEMU_TRACE_LCD_REG_WRITES_ALL"))
+}
+
+fn trace_scx_write_line_enabled(ly: u8) -> bool {
+    if ly as usize >= SCREEN_HEIGHT {
+        return false;
+    }
+
+    use std::sync::OnceLock;
+    static LINES: OnceLock<[bool; SCREEN_HEIGHT]> = OnceLock::new();
+    static HAS_FILTER: OnceLock<bool> = OnceLock::new();
+
+    let has_filter =
+        *HAS_FILTER.get_or_init(|| std::env::var_os("VIBEEMU_TRACE_SCX_WRITES_LINES").is_some());
+    if !has_filter {
+        return true;
+    }
+    let set = LINES.get_or_init(|| {
+        std::env::var("VIBEEMU_TRACE_SCX_WRITES_LINES")
+            .ok()
+            .map(|v| parse_trace_line_set(&v))
+            .unwrap_or([true; SCREEN_HEIGHT])
+    });
+    set[ly as usize]
+}
+
+fn trace_scx_write_frame_enabled(frame: u64) -> bool {
+    use std::sync::OnceLock;
+    static FRAME_MIN: OnceLock<Option<u64>> = OnceLock::new();
+    static FRAME_MAX: OnceLock<Option<u64>> = OnceLock::new();
+
+    let min = *FRAME_MIN.get_or_init(|| read_trace_u64_env("VIBEEMU_TRACE_SCX_WRITES_FRAME_MIN"));
+    if let Some(v) = min
+        && frame < v
+    {
+        return false;
+    }
+    let max = *FRAME_MAX.get_or_init(|| read_trace_u64_env("VIBEEMU_TRACE_SCX_WRITES_FRAME_MAX"));
+    if let Some(v) = max
+        && frame > v
+    {
+        return false;
+    }
+    true
+}
+
+fn trace_lcd_reg_write_frame_enabled(frame: u64) -> bool {
+    use std::sync::OnceLock;
+    static FRAME_MIN: OnceLock<Option<u64>> = OnceLock::new();
+    static FRAME_MAX: OnceLock<Option<u64>> = OnceLock::new();
+
+    let min =
+        *FRAME_MIN.get_or_init(|| read_trace_u64_env("VIBEEMU_TRACE_LCD_REG_WRITES_FRAME_MIN"));
+    if let Some(min_frame) = min {
+        if frame < min_frame {
+            return false;
+        }
+    }
+
+    let max =
+        *FRAME_MAX.get_or_init(|| read_trace_u64_env("VIBEEMU_TRACE_LCD_REG_WRITES_FRAME_MAX"));
+    if let Some(max_frame) = max {
+        if frame > max_frame {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn trace_lcd_reg_write_line_enabled(ly: u8) -> bool {
+    use std::sync::OnceLock;
+    static HAS_FILTER: OnceLock<bool> = OnceLock::new();
+    static LINES: OnceLock<Option<Vec<u8>>> = OnceLock::new();
+
+    let has_filter = *HAS_FILTER
+        .get_or_init(|| std::env::var_os("VIBEEMU_TRACE_LCD_REG_WRITES_LINES").is_some());
+    if !has_filter {
+        return true;
+    }
+
+    let lines = LINES.get_or_init(|| {
+        std::env::var("VIBEEMU_TRACE_LCD_REG_WRITES_LINES")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .filter_map(|s| s.trim().parse::<u16>().ok())
+                    .filter(|&n| n <= u8::MAX as u16)
+                    .map(|n| n as u8)
+                    .collect::<Vec<_>>()
+            })
+    });
+
+    lines.as_ref().is_some_and(|vals| vals.contains(&ly))
+}
+
+fn trace_frame_window_enabled(frame: u64) -> bool {
+    use std::sync::OnceLock;
+    static FRAME_MIN: OnceLock<Option<u64>> = OnceLock::new();
+    static FRAME_MAX: OnceLock<Option<u64>> = OnceLock::new();
+
+    let min = *FRAME_MIN.get_or_init(|| read_trace_u64_env("VIBEEMU_TRACE_FRAME_MIN"));
+    if let Some(v) = min
+        && frame < v
+    {
+        return false;
+    }
+    let max = *FRAME_MAX.get_or_init(|| read_trace_u64_env("VIBEEMU_TRACE_FRAME_MAX"));
+    if let Some(v) = max
+        && frame > v
+    {
+        return false;
+    }
+    true
+}
+
+fn trace_bg_output_line_enabled(ly: u8) -> bool {
+    if ly as usize >= SCREEN_HEIGHT {
+        return false;
+    }
+
+    use std::sync::OnceLock;
+    static LINES: OnceLock<[bool; SCREEN_HEIGHT]> = OnceLock::new();
+    static HAS_FILTER: OnceLock<bool> = OnceLock::new();
+
+    let has_filter =
+        *HAS_FILTER.get_or_init(|| std::env::var_os("VIBEEMU_TRACE_DMG_BG_OUTPUT_LINES").is_some());
+    if !has_filter {
+        return true;
+    }
+
+    let set = LINES.get_or_init(|| {
+        std::env::var("VIBEEMU_TRACE_DMG_BG_OUTPUT_LINES")
             .ok()
             .map(|v| parse_trace_line_set(&v))
             .unwrap_or([true; SCREEN_HEIGHT])
@@ -1524,6 +1696,8 @@ impl Ppu {
             mode3_pop_events: [Mode3PopEvent::default(); MODE3_POP_EVENTS_MAX],
             pending_reg_write_count: 0,
             pending_reg_writes: [PendingRegWrite::default(); PENDING_REG_WRITES_MAX],
+            dmg_prev_line_window_active: false,
+            dmg_prev2_line_window_active: false,
             #[cfg(feature = "ppu-trace")]
             debug_lcd_enable_timer: None,
             #[cfg(feature = "ppu-trace")]
@@ -1607,6 +1781,10 @@ impl Ppu {
     }
 
     fn begin_mode3_line(&mut self) {
+        if self.ly == 0 {
+            self.dmg_prev_line_window_active = false;
+            self.dmg_prev2_line_window_active = false;
+        }
         self.mode3_lcdc_base = self.lcdc;
         self.mode3_lcdc_event_count = 0;
         self.mode3_scx_base = self.scx;
@@ -3537,8 +3715,15 @@ impl Ppu {
                 .enumerate()
                 .all(|(i, x)| x == start.wrapping_add((i as u8) * 8));
             if stride_ok {
-                let by_phase: [u16; 8] = [27, 25, 22, 20, 17, 15, 15, 15];
-                return Some(by_phase[(start & 0x07) as usize]);
+                let phase = (start & 0x07) as usize;
+                let base: [u16; 8] = [27, 25, 22, 20, 17, 15, 15, 15];
+                let mut m = base[phase];
+                // Right-shifted saturated chains pay additional prefetch cost
+                // that is not present in low-X mooneye calibration patterns.
+                if start >= 32 && phase >= 4 {
+                    m = m.saturating_add(2);
+                }
+                return Some(m);
             }
         }
 
@@ -3557,8 +3742,11 @@ impl Ppu {
             sprite_len += 1;
         }
 
+        let window_line_possible =
+            (self.lcdc & 0x20) != 0 && self.ly >= self.wy && self.wx <= WINDOW_X_MAX;
+
         // Fast path: keep the baseline model for lines without sprites.
-        if sprite_len == 0 {
+        if sprite_len == 0 && !window_line_possible {
             let scx_delay = match self.scx & 0x07 {
                 0 => 0,
                 1..=4 => 4,
@@ -3575,7 +3763,8 @@ impl Ppu {
         let mut cycles: u16 = 0;
 
         let sprites_enabled = self.lcdc & 0x02 != 0;
-        if sprites_enabled
+        if !window_line_possible
+            && sprites_enabled
             && let Some(m) = Self::dmg_mode3_fastpath_penalty_mcycles(&sprite_xs[..sprite_len])
         {
             return MODE3_CYCLES + scx_fine + (m * 4);
@@ -3588,8 +3777,13 @@ impl Ppu {
         let mut lcd_x: u16 = 0;
         let mut bg_fifo: u8 = 8;
         let mut fetcher_state: u8 = 0;
-        let mut render_delay: u16 = 0;
+        let scx_start_delay =
+            ((self.scx & 0x07) as i16 + dmg_mode3_scx_start_delay_bias()).clamp(0, 160) as u16;
+        let mut render_delay: u16 = scx_start_delay;
         let mut sprite_idx: usize = 0;
+        let mut wx_triggered = false;
+        let scx_low = self.scx & 0x07;
+        let wx = self.wx;
 
         // Empirically, very early sprite X positions (1..3) behave like the
         // X=0 case for Mode 3 length tests, adding a small fixed delay.
@@ -3639,6 +3833,49 @@ impl Ppu {
             };
 
         while lcd_x < SCREEN_WIDTH as u16 || (sprites_enabled && sprite_idx < sprite_len) {
+            // Window activation restarts the BG fetcher and adds the
+            // corresponding mode-3 stall on DMG lines.
+            if !wx_triggered && window_line_possible {
+                let mut should_activate_window = false;
+                let mut activated_on_pos6 = false;
+                if wx == 0 {
+                    if position_in_line == -7
+                        || (position_in_line == -16 && scx_low != 0)
+                        || (-15..=-8).contains(&position_in_line)
+                    {
+                        should_activate_window = true;
+                    }
+                } else if wx < 166 {
+                    let pos7 = position_in_line + 7;
+                    if (0..=255).contains(&pos7) && wx == pos7 as u8 {
+                        should_activate_window = true;
+                    } else {
+                        let pos6 = position_in_line + 6;
+                        if (0..=255).contains(&pos6) && wx == pos6 as u8 {
+                            should_activate_window = true;
+                            activated_on_pos6 = true;
+                        }
+                    }
+                }
+
+                if should_activate_window {
+                    wx_triggered = true;
+                    bg_fifo = 0;
+                    fetcher_state = 0;
+
+                    // DMG-only horizontal desync when activating on pos6.
+                    if activated_on_pos6 && lcd_x > 0 {
+                        lcd_x -= 1;
+                    }
+
+                    // WX=0 with non-zero SCX incurs an additional dot before
+                    // pixels resume after the window restart.
+                    if wx == 0 && scx_low != 0 {
+                        cycles = cycles.wrapping_add(1);
+                    }
+                }
+            }
+
             // Object matching uses an internal X coordinate with special
             // behavior while the renderer is in its negative pre-roll.
             let match_x = if position_in_line < -7 {
@@ -3674,6 +3911,17 @@ impl Ppu {
                         &mut bg_fifo,
                         &mut fetcher_state,
                     );
+                    tick_no_render(
+                        &mut cycles,
+                        &mut render_delay,
+                        &mut bg_fifo,
+                        &mut fetcher_state,
+                    );
+                }
+
+                // Account for the object fetch micro-sequence (attr, low, high)
+                // that stalls visible output while sprite data is latched.
+                for _ in 0..dmg_mode3_obj_fetch_sim_dots() {
                     tick_no_render(
                         &mut cycles,
                         &mut render_delay,
@@ -3741,7 +3989,7 @@ impl Ppu {
         // The simplified simulation above already includes the baseline warmup
         // and SCX fine-scroll adjustment, but can underflow/overflow relative
         // to the original constant model. Keep it bounded to a reasonable range.
-        cycles.clamp(MODE3_CYCLES + scx_fine, 360)
+        cycles.clamp(MODE3_CYCLES + scx_fine, DMG_MODE3_MAX_CYCLES)
     }
 
     fn compute_mode3_cycles_for_line(&self) -> u16 {
@@ -4779,6 +5027,8 @@ impl Ppu {
                     self.dmg_startup_cycle = None;
                     self.dmg_startup_stage = None;
                     self.dmg_post_startup_line2 = false;
+                    self.dmg_prev_line_window_active = false;
+                    self.dmg_prev2_line_window_active = false;
                 }
                 if !was_on && self.lcdc & 0x80 != 0 {
                     ppu_trace!(
@@ -4807,9 +5057,28 @@ impl Ppu {
                 if self.lcdc & 0x80 != 0 {
                     self.update_lyc_compare();
                 }
+                if trace_lcd_reg_writes_enabled()
+                    && trace_frame_window_enabled(self.frame_counter)
+                    && trace_lcd_reg_write_line_enabled(self.ly)
+                    && trace_lcd_reg_write_frame_enabled(self.frame_counter)
+                {
+                    eprintln!(
+                        "LCDWR frame={} ly={} mode={} mode_clock={} reg=FF40 old={:02X} new={:02X} scx={} wx={} wy={}",
+                        self.frame_counter,
+                        self.ly,
+                        self.mode,
+                        self.mode_clock,
+                        old_lcdc,
+                        self.lcdc,
+                        self.scx,
+                        self.wx,
+                        self.wy
+                    );
+                }
             }
             0xFF41 => self.stat = (self.stat & 0x07) | (val & 0xF8),
             0xFF42 => {
+                let old = self.scy;
                 if self.mode == MODE_TRANSFER
                     && self.ly < SCREEN_HEIGHT as u8
                     && (self.lcdc & 0x80) != 0
@@ -4818,6 +5087,25 @@ impl Ppu {
                     self.record_mode3_scy_event(self.mode_clock, val);
                 }
                 self.scy = val;
+                if trace_lcd_reg_writes_enabled()
+                    && trace_frame_window_enabled(self.frame_counter)
+                    && trace_lcd_reg_write_line_enabled(self.ly)
+                    && trace_lcd_reg_write_frame_enabled(self.frame_counter)
+                {
+                    eprintln!(
+                        "LCDWR frame={} ly={} mode={} mode_clock={} reg=FF42 old={:02X} new={:02X} scx={} wx={} wy={} lcdc={:02X}",
+                        self.frame_counter,
+                        self.ly,
+                        self.mode,
+                        self.mode_clock,
+                        old,
+                        self.scy,
+                        self.scx,
+                        self.wx,
+                        self.wy,
+                        self.lcdc
+                    );
+                }
             }
             0xFF43 => {
                 if self.mode == MODE_TRANSFER
@@ -4826,6 +5114,25 @@ impl Ppu {
                     && self.mode_clock <= self.mode3_target_cycles
                 {
                     self.record_mode3_scx_event(self.mode_clock, val);
+                }
+                if trace_scx_writes_enabled()
+                    && trace_frame_window_enabled(self.frame_counter)
+                    && trace_scx_write_line_enabled(self.ly)
+                    && trace_scx_write_frame_enabled(self.frame_counter)
+                {
+                    eprintln!(
+                        "SCXWR frame={} ly={} mode={} mode_clock={} mode3_target={} old={:02X} new={:02X} wx={} wy={} lcdc={:02X}",
+                        self.frame_counter,
+                        self.ly,
+                        self.mode,
+                        self.mode_clock,
+                        self.mode3_target_cycles,
+                        self.scx,
+                        val,
+                        self.wx,
+                        self.wy,
+                        self.lcdc
+                    );
                 }
                 self.scx = val;
             }
@@ -4900,6 +5207,7 @@ impl Ppu {
             }
             0xFF49 => self.obp1 = val,
             0xFF4A => {
+                let old = self.wy;
                 if self.mode == MODE_TRANSFER
                     && self.ly < SCREEN_HEIGHT as u8
                     && (self.lcdc & 0x80) != 0
@@ -4908,8 +5216,27 @@ impl Ppu {
                     self.record_mode3_wy_event(self.mode_clock, val);
                 }
                 self.wy = val;
+                if trace_lcd_reg_writes_enabled()
+                    && trace_frame_window_enabled(self.frame_counter)
+                    && trace_lcd_reg_write_line_enabled(self.ly)
+                    && trace_lcd_reg_write_frame_enabled(self.frame_counter)
+                {
+                    eprintln!(
+                        "LCDWR frame={} ly={} mode={} mode_clock={} reg=FF4A old={:02X} new={:02X} scx={} wx={} lcdc={:02X}",
+                        self.frame_counter,
+                        self.ly,
+                        self.mode,
+                        self.mode_clock,
+                        old,
+                        self.wy,
+                        self.scx,
+                        self.wx,
+                        self.lcdc
+                    );
+                }
             }
             0xFF4B => {
+                let old = self.wx;
                 if self.mode == MODE_TRANSFER
                     && self.ly < SCREEN_HEIGHT as u8
                     && (self.lcdc & 0x80) != 0
@@ -4918,6 +5245,24 @@ impl Ppu {
                     self.record_mode3_wx_event(self.mode_clock, val);
                 }
                 self.wx = val;
+                if trace_lcd_reg_writes_enabled()
+                    && trace_frame_window_enabled(self.frame_counter)
+                    && trace_lcd_reg_write_line_enabled(self.ly)
+                    && trace_lcd_reg_write_frame_enabled(self.frame_counter)
+                {
+                    eprintln!(
+                        "LCDWR frame={} ly={} mode={} mode_clock={} reg=FF4B old={:02X} new={:02X} scx={} wy={} lcdc={:02X}",
+                        self.frame_counter,
+                        self.ly,
+                        self.mode,
+                        self.mode_clock,
+                        old,
+                        self.wx,
+                        self.scx,
+                        self.wy,
+                        self.lcdc
+                    );
+                }
             }
             0xFF68 => {
                 if self.cgb {
@@ -4969,8 +5314,70 @@ impl Ppu {
         self.mode0_target_cycles
     }
 
+    fn mode3_window_activation_possible_this_line(&self) -> bool {
+        let mut lcdc = self.mode3_lcdc_base;
+        let mut wx = self.mode3_wx_base;
+        let mut wy = self.mode3_wy_base;
+        let mut scx = self.mode3_scx_base;
+
+        let mut lcdc_idx = 0usize;
+        let mut wx_idx = 0usize;
+        let mut wy_idx = 0usize;
+        let mut scx_idx = 0usize;
+
+        // Approximate fetcher activation timing to reject late WX/WY writes
+        // that can no longer trigger a visible window start.
+        let max_t = self.mode3_target_cycles.saturating_sub(1);
+        for t in 0..=max_t {
+            while lcdc_idx < self.mode3_lcdc_event_count && self.mode3_lcdc_events[lcdc_idx].t == t
+            {
+                lcdc = self.mode3_lcdc_events[lcdc_idx].val;
+                lcdc_idx += 1;
+            }
+            while wx_idx < self.mode3_wx_event_count && self.mode3_wx_events[wx_idx].t == t {
+                wx = self.mode3_wx_events[wx_idx].val;
+                wx_idx += 1;
+            }
+            while wy_idx < self.mode3_wy_event_count && self.mode3_wy_events[wy_idx].t == t {
+                wy = self.mode3_wy_events[wy_idx].val;
+                wy_idx += 1;
+            }
+            while scx_idx < self.mode3_scx_event_count && self.mode3_scx_events[scx_idx].t == t {
+                scx = self.mode3_scx_events[scx_idx].val;
+                scx_idx += 1;
+            }
+
+            if (lcdc & 0x20) == 0 || self.ly < wy {
+                continue;
+            }
+
+            let position_in_line = t as i16 - 16;
+            if wx == 0 {
+                if position_in_line == -7
+                    || (position_in_line == -16 && (scx & 0x07) != 0)
+                    || (-15..=-9).contains(&position_in_line)
+                {
+                    return true;
+                }
+            } else if wx < 166 {
+                let pos7 = position_in_line + 7;
+                let pos6 = position_in_line + 6;
+                if (0..=255).contains(&pos7) && wx == pos7 as u8 {
+                    return true;
+                }
+                if (0..=255).contains(&pos6) && wx == pos6 as u8 && dmg_wx_activate_on_pos6() {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     fn render_scanline(&mut self) {
         if self.lcdc & 0x80 == 0 || self.ly as usize >= SCREEN_HEIGHT {
+            self.dmg_prev_line_window_active = false;
+            self.dmg_prev2_line_window_active = false;
             return;
         }
 
@@ -5017,25 +5424,88 @@ impl Ppu {
             }
         }
 
+        let mut window_line_active_for_continuity = false;
+        let prev1_window_active = self.dmg_prev_line_window_active;
         if bg_enabled {
             let window_line_active = (self.mode3_lcdc_base & 0x20) != 0
                 && self.ly >= self.mode3_wy_base
                 && self.mode3_wx_base <= WINDOW_X_MAX;
+            window_line_active_for_continuity = window_line_active;
+            // Keep static left-edge continuity to the immediately previous
+            // line. Two-line continuity is reserved for dynamic WX/WY
+            // transition handling below.
+            let prev_static_window_active = prev1_window_active;
+            let prev_dynamic_window_active =
+                prev1_window_active || self.dmg_prev2_line_window_active;
+            // SCX/SCY writes can affect BG fetch timing regardless of window
+            // state. WX/WY writes only matter when the window can actually
+            // activate on this line.
+            let window_event_activity =
+                self.mode3_wx_event_count > 0 || self.mode3_wy_event_count > 0;
+            let window_possible_this_line = if window_event_activity {
+                self.mode3_window_activation_possible_this_line()
+            } else {
+                false
+            };
+            let has_mode3_reg_events = self.mode3_scx_event_count > 0
+                || self.mode3_scy_event_count > 0
+                || (window_event_activity && window_possible_this_line);
+            let cgb_has_mode3_reg_events = self.mode3_scx_event_count > 0
+                || self.mode3_scy_event_count > 0
+                || (window_event_activity && window_line_active);
             let use_fetcher = if cgb_render {
                 // CGB scanline rendering handles static lines well, but WX/WY
                 // mid-line writes need the dot fetcher to model re-activation
                 // color-0 window pixels correctly.
-                self.mode3_scx_event_count > 0
-                    || self.mode3_scy_event_count > 0
-                    || self.mode3_wx_event_count > 0
-                    || self.mode3_wy_event_count > 0
+                cgb_has_mode3_reg_events
             } else {
-                self.mode3_scx_event_count > 0
-                    || self.mode3_scy_event_count > 0
-                    || self.mode3_wx_event_count > 0
-                    || self.mode3_wy_event_count > 0
-                    || window_line_active
+                has_mode3_reg_events
+                    || (window_line_active && self.mode3_wx_base <= 7)
+                    || (prev_static_window_active && self.mode3_wx_base <= 7)
+                    || (prev_dynamic_window_active && self.mode3_wx_event_count > 0)
+                    || (prev_dynamic_window_active
+                        && window_possible_this_line
+                        && self.mode3_wy_event_count > 0)
             };
+            if read_trace_bool_env("VIBEEMU_TRACE_WINDOW_EVENT_GATE")
+                && window_event_activity
+                && !window_line_active
+            {
+                eprintln!(
+                    "WINGATE frame={} ly={} cgb_render={} use_fetcher={} win_possible={} wx_base={} wy_base={} lcdc_base={:02X} scx_ev={} scy_ev={} wx_ev={} wy_ev={} target={}",
+                    self.frame_counter,
+                    self.ly,
+                    if cgb_render { 1 } else { 0 },
+                    if use_fetcher { 1 } else { 0 },
+                    if window_possible_this_line { 1 } else { 0 },
+                    self.mode3_wx_base,
+                    self.mode3_wy_base,
+                    self.mode3_lcdc_base,
+                    self.mode3_scx_event_count,
+                    self.mode3_scy_event_count,
+                    self.mode3_wx_event_count,
+                    self.mode3_wy_event_count,
+                    self.mode3_target_cycles
+                );
+                for (i, ev) in self.mode3_wx_events[..self.mode3_wx_event_count]
+                    .iter()
+                    .enumerate()
+                {
+                    eprintln!("  WINGATE_WX i={} t={} val={:02X}", i, ev.t, ev.val);
+                }
+                for (i, ev) in self.mode3_wy_events[..self.mode3_wy_event_count]
+                    .iter()
+                    .enumerate()
+                {
+                    eprintln!("  WINGATE_WY i={} t={} val={:02X}", i, ev.t, ev.val);
+                }
+                for (i, ev) in self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+                    .iter()
+                    .enumerate()
+                {
+                    eprintln!("  WINGATE_LCDC i={} t={} val={:02X}", i, ev.t, ev.val);
+                }
+            }
             if read_trace_bool_env("VIBEEMU_TRACE_BG_FETCHER") {
                 let (scx_t0, scx_v0) = if self.mode3_scx_event_count > 0 {
                     (self.mode3_scx_events[0].t, self.mode3_scx_events[0].val)
@@ -5063,6 +5533,16 @@ impl Ppu {
                 self.render_dmg_bg_window_scanline_simple();
             }
         }
+        self.dmg_prev2_line_window_active = if cgb_render {
+            false
+        } else {
+            prev1_window_active
+        };
+        self.dmg_prev_line_window_active = if cgb_render {
+            false
+        } else {
+            window_line_active_for_continuity
+        };
 
         // sprites
         let any_obj_enabled = if cgb_render {
@@ -5075,6 +5555,57 @@ impl Ppu {
         };
 
         if any_obj_enabled {
+            if !cgb_render && read_trace_bool_env("VIBEEMU_TRACE_DMG_RIGHT_OBJ") {
+                let right_invalid = self.line_sprites[..self.sprite_count]
+                    .iter()
+                    .filter(|s| (120..=159).contains(&s.x) && !s.obj_data_valid)
+                    .count();
+                if right_invalid > 0 {
+                    let mut sprite_xs: [u8; MAX_SPRITES_PER_LINE] = [0; MAX_SPRITES_PER_LINE];
+                    let mut sprite_len = 0usize;
+                    for s in self.line_sprites[..self.sprite_count].iter() {
+                        let raw_x = s.x + 8;
+                        if !(0..168).contains(&raw_x) {
+                            continue;
+                        }
+                        sprite_xs[sprite_len] = raw_x as u8;
+                        sprite_len += 1;
+                    }
+                    sprite_xs[..sprite_len].sort_unstable();
+                    let window_line_possible = (self.mode3_lcdc_base & 0x20) != 0
+                        && self.ly >= self.wy
+                        && self.wx <= WINDOW_X_MAX;
+                    let sprites_enabled = (self.mode3_lcdc_base & 0x02) != 0;
+                    let fast_m = if !window_line_possible && sprites_enabled {
+                        Self::dmg_mode3_fastpath_penalty_mcycles(&sprite_xs[..sprite_len])
+                    } else {
+                        None
+                    };
+                    let first_raw_x = if sprite_len > 0 {
+                        sprite_xs[0] as i16
+                    } else {
+                        -1
+                    };
+                    eprintln!(
+                        "DMG_RIGHT_OBJ frame={} ly={} sprites={} right_invalid={} mode3_target={} mode_clock={} scx={} scx_base={} wx={} wy={} lcdc={:02X} fast_m={} first_raw_x={} sprite_len={} window_line={}",
+                        self.frame_counter,
+                        self.ly,
+                        self.sprite_count,
+                        right_invalid,
+                        self.mode3_target_cycles,
+                        self.mode_clock,
+                        self.scx,
+                        self.mode3_scx_base,
+                        self.wx,
+                        self.wy,
+                        self.lcdc,
+                        fast_m.map(|v| v as i16).unwrap_or(-1),
+                        first_raw_x,
+                        sprite_len,
+                        if window_line_possible { 1 } else { 0 }
+                    );
+                }
+            }
             let trace_obj_line = !cgb_render && trace_obj_debug_line_enabled(self.ly);
             if trace_obj_line {
                 eprintln!(
@@ -5648,11 +6179,13 @@ impl Ppu {
             } else {
                 BG_MAP_0_BASE
             };
-            let scx = self.scx as u16;
+            let scx = self.dmg_scx_for_mode3_t(fetch_t) as u16;
+            let scy = self.dmg_scy_for_mode3_t(fetch_t) as u16;
             let px = x.wrapping_add(scx) & 0xFF;
+            let py = (self.ly as u16).wrapping_add(scy) & 0xFF;
             let tile_col = (px / 8) as usize;
-            let tile_row = (((self.ly as u16 + self.scy as u16) & 0xFF) / 8) as usize;
-            let tile_y = (((self.ly as u16 + self.scy as u16) & 0xFF) % 8) as usize;
+            let tile_row = (py / 8) as usize;
+            let tile_y = (py % 8) as usize;
 
             let tile_index = self.vram_read_for_render(0, tile_map_base + tile_row * 32 + tile_col);
             let addr_lo = if (lcdc_lo & 0x10) != 0 {
@@ -5684,8 +6217,11 @@ impl Ppu {
 
         // window
         let mut window_drawn = false;
-        if self.lcdc & 0x20 != 0 && self.ly >= self.wy && self.wx <= WINDOW_X_MAX {
-            let wx_reg = self.wx;
+        if (self.mode3_lcdc_base & 0x20) != 0
+            && self.ly >= self.mode3_wy_base
+            && self.mode3_wx_base <= WINDOW_X_MAX
+        {
+            let wx_reg = self.mode3_wx_base;
             let window_origin_x = wx_reg as i16 - 7;
             let start_x = wx_reg.saturating_sub(7) as u16;
             let window_y = self.win_line_counter as usize;
@@ -5776,15 +6312,17 @@ impl Ppu {
                 use_t_schedule = false;
             }
         }
-        let has_window_activity = self.mode3_wx_event_count > 0
-            || self.mode3_wy_event_count > 0
-            || (self.mode3_lcdc_base & 0x20) != 0
-            || self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
-                .iter()
-                .any(|ev| (ev.val & 0x20) != 0);
+        let use_t_schedule_initial = use_t_schedule;
         let has_win_en_toggle = self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
             .iter()
             .any(|ev| ((self.mode3_lcdc_base ^ ev.val) & 0x20) != 0);
+        let base_window_line_active = (self.mode3_lcdc_base & 0x20) != 0
+            && self.ly >= self.mode3_wy_base
+            && self.mode3_wx_base <= WINDOW_X_MAX;
+        let has_window_activity = self.mode3_wx_event_count > 0
+            || self.mode3_wy_event_count > 0
+            || has_win_en_toggle
+            || base_window_line_active;
         let has_win_map_toggle = self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
             .iter()
             .any(|ev| ((self.mode3_lcdc_base ^ ev.val) & 0x40) != 0);
@@ -6373,6 +6911,34 @@ impl Ppu {
 
         if window_activations > 0 {
             self.win_line_counter = self.win_line_counter.wrapping_add(window_activations);
+        }
+
+        if read_trace_bool_env("VIBEEMU_TRACE_DMG_BG_OUTPUT")
+            && trace_frame_window_enabled(self.frame_counter)
+            && trace_bg_output_line_enabled(self.ly)
+        {
+            eprintln!(
+                "BGOUT frame={} ly={} visible={} use_pop={} use_t={} use_t_init={} has_win_act={} pop_bf={} scx_ev={} wx_ev={} wy_ev={} next_out_x={} lcd_x={} pos={} fifo={} wx_trig={} win_acts={} win_en_toggle={} mode3_target={}",
+                self.frame_counter,
+                self.ly,
+                visible_written,
+                if use_pop_schedule { 1 } else { 0 },
+                if use_t_schedule { 1 } else { 0 },
+                if use_t_schedule_initial { 1 } else { 0 },
+                if has_window_activity { 1 } else { 0 },
+                if pop_before_fetch { 1 } else { 0 },
+                self.mode3_scx_event_count,
+                self.mode3_wx_event_count,
+                self.mode3_wy_event_count,
+                next_out_x,
+                lcd_x,
+                position_in_line,
+                bg_fifo.len(),
+                if wx_triggered { 1 } else { 0 },
+                window_activations,
+                if has_win_en_toggle { 1 } else { 0 },
+                self.mode3_target_cycles
+            );
         }
     }
 
