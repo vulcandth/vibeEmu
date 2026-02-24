@@ -1903,18 +1903,18 @@ fn trace_lcd_reg_write_frame_enabled(frame: u64) -> bool {
 
     let min =
         *FRAME_MIN.get_or_init(|| read_trace_u64_env("VIBEEMU_TRACE_LCD_REG_WRITES_FRAME_MIN"));
-    if let Some(min_frame) = min {
-        if frame < min_frame {
-            return false;
-        }
+    if let Some(min_frame) = min
+        && frame < min_frame
+    {
+        return false;
     }
 
     let max =
         *FRAME_MAX.get_or_init(|| read_trace_u64_env("VIBEEMU_TRACE_LCD_REG_WRITES_FRAME_MAX"));
-    if let Some(max_frame) = max {
-        if frame > max_frame {
-            return false;
-        }
+    if let Some(max_frame) = max
+        && frame > max_frame
+    {
+        return false;
     }
 
     true
@@ -3142,12 +3142,11 @@ impl Ppu {
             {
                 let first_x = self.line_sprites[0].x;
                 let mag = dmg_bgp_t_sample_first_x_phase_corr_mag().clamp(1, 24);
-                if first_x >= 0 && (x as i16) == first_x {
-                    if first_x <= 4 {
-                        sample_t = (sample_t + mag).min(max_t);
-                    } else if first_x >= 8 {
-                        sample_t = (sample_t + mag).min(max_t);
-                    }
+                if first_x >= 0
+                    && (x as i16) == first_x
+                    && (first_x <= 4 || first_x >= 8)
+                {
+                    sample_t = (sample_t + mag).min(max_t);
                 }
             }
             let sample_t = sample_t as u16;
@@ -3191,12 +3190,11 @@ impl Ppu {
             }
             let first_x = self.line_sprites[0].x;
             let ly_phase = self.ly & 0x07;
-            if (ly_phase <= 1 || ly_phase >= 6) && sample_x as i16 == first_x {
-                if (0..=4).contains(&first_x) {
-                    sample_x = (sample_x + 1).min(SCREEN_WIDTH - 1);
-                } else if first_x >= 8 {
-                    sample_x = (sample_x + 1).min(SCREEN_WIDTH - 1);
-                }
+            if (ly_phase <= 1 || ly_phase >= 6)
+                && sample_x as i16 == first_x
+                && ((0..=4).contains(&first_x) || first_x >= 8)
+            {
+                sample_x = (sample_x + 1).min(SCREEN_WIDTH - 1);
             }
             return self.dmg_line_bgp_at_pixel[sample_x];
         }
@@ -3273,13 +3271,13 @@ impl Ppu {
                 dmg_bgp_sprite_lag_pixels().clamp(0, 16) as usize
             };
             let mut sample_x = x.saturating_sub(lag);
-            if self.ly == 0 && dmg_bgp_line0_edge_backstep() {
-                if self.dmg_bgp_events[..self.dmg_bgp_event_count]
+            if self.ly == 0
+                && dmg_bgp_line0_edge_backstep()
+                && self.dmg_bgp_events[..self.dmg_bgp_event_count]
                     .iter()
                     .any(|ev| ev.x as usize == sample_x)
-                {
-                    sample_x = sample_x.saturating_sub(1);
-                }
+            {
+                sample_x = sample_x.saturating_sub(1);
             }
             if sample_x + 1 < SCREEN_WIDTH {
                 let cur = self.dmg_line_bgp_at_pixel[sample_x];
@@ -3294,9 +3292,9 @@ impl Ppu {
             let first_x = self.line_sprites[0].x;
             if first_x >= 0 {
                 let fx = first_x as usize;
-                if first_x <= 4 && x == fx {
-                    sample_x = (sample_x + 2).min(SCREEN_WIDTH - 1);
-                } else if first_x >= 8 && ((x as i16) == first_x || (x as i16) == first_x + 1) {
+                if (first_x <= 4 && x == fx)
+                    || (first_x >= 8 && ((x as i16) == first_x || (x as i16) == first_x + 1))
+                {
                     sample_x = (sample_x + 2).min(SCREEN_WIDTH - 1);
                 }
             }
@@ -4475,13 +4473,11 @@ impl Ppu {
 
             // If we've already produced the full visible line, keep advancing the
             // internal fetcher timing so late sprite fetches can still occur.
-            if self.mode3_lcd_x >= SCREEN_WIDTH as u16 {
-                tick_no_render(
-                    &mut self.mode3_render_delay,
-                    &mut self.mode3_bg_fifo,
-                    &mut self.mode3_fetcher_state,
-                );
-            } else if x0_pending || self.mode3_render_delay > 0 || self.mode3_bg_fifo == 0 {
+            if self.mode3_lcd_x >= SCREEN_WIDTH as u16
+                || x0_pending
+                || self.mode3_render_delay > 0
+                || self.mode3_bg_fifo == 0
+            {
                 tick_no_render(
                     &mut self.mode3_render_delay,
                     &mut self.mode3_bg_fifo,
@@ -6877,13 +6873,9 @@ impl Ppu {
                         continue;
                     }
 
-                    let bg_zero = if !bg_enabled {
-                        true
-                    } else if !cgb_render && !self.dmg_bg_en_for_pixel(sx as usize) {
-                        true
-                    } else {
-                        self.line_color_zero[sx as usize]
-                    };
+                    let bg_zero = !bg_enabled
+                        || (!cgb_render && !self.dmg_bg_en_for_pixel(sx as usize))
+                        || self.line_color_zero[sx as usize];
                     if master_priority {
                         if cgb_render && self.line_priority[sx as usize] && !bg_zero {
                             continue;
@@ -7800,8 +7792,7 @@ impl Ppu {
                     if trace_win_map_fetch
                         && wx_triggered
                         && tile_x < 6
-                        && position_in_line >= -16
-                        && position_in_line < 48
+                        && (-16..48).contains(&position_in_line)
                     {
                         eprintln!(
                             "WMAP_FETCH ly={} t={} pos={} tile_x={} win_line={} lcdc_fetch={:02X} map={} state={} fifo={} wx_cur={}",
@@ -7828,8 +7819,7 @@ impl Ppu {
                     if trace_win_map_fetch
                         && wx_triggered
                         && window_tile_x < 6
-                        && position_in_line >= -16
-                        && position_in_line < 48
+                        && (-16..48).contains(&position_in_line)
                     {
                         eprintln!(
                             "WMAP_TILE ly={} t={} pos={} tile_x={} tile_idx={:02X} fifo={} wx_cur={}",
@@ -7901,8 +7891,7 @@ impl Ppu {
                     if trace_win_map_fetch
                         && wx_triggered
                         && window_tile_x < 6
-                        && position_in_line >= -16
-                        && position_in_line < 48
+                        && (-16..48).contains(&position_in_line)
                     {
                         eprintln!(
                             "WMAP_LO ly={} t={} pos={} tile_x={} lcdc_fetch={:02X} tile_base={:04X} tile_idx={:02X} y={} fifo={} wx_cur={}",
@@ -7983,8 +7972,7 @@ impl Ppu {
                     if trace_win_map_fetch
                         && wx_triggered
                         && window_tile_x < 6
-                        && position_in_line >= -16
-                        && position_in_line < 48
+                        && (-16..48).contains(&position_in_line)
                     {
                         eprintln!(
                             "WMAP_HI ly={} t={} pos={} tile_x={} lcdc_fetch={:02X} tile_base={:04X} tile_idx={:02X} y={} fifo={} wx_cur={}",
