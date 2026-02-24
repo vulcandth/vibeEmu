@@ -5111,6 +5111,13 @@ impl Ppu {
             self.vram[0][DMG_BOOT_TRADEMARK_VRAM_BASE + i * 2] = b;
         }
 
+        // The DMG boot ROM explicitly primes map entries around $9910/$992F.
+        // Keep that map initialization DMG-only; CGB post-boot DMG-compat
+        // palette mode does not rely on this DMG tilemap priming.
+        if self.cgb {
+            return;
+        }
+
         // Match the DMG boot ROM tile-map setup around $9900/$9920.
         self.vram[0][DMG_BOOT_LOGO_MAP_9910] = 0x19;
         let mut a: u8 = 0x19;

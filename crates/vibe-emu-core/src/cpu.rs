@@ -846,9 +846,9 @@ impl Cpu {
                     self.speed_switch_stall(mmu);
                 } else {
                     if mmu.is_cgb() {
-                        // If STOP happens during pixel transfer (mode 3), the PPU is already
-                        // actively fetching from VRAM and the display stays stable.
-                        // Otherwise, treat VRAM as inaccessible while stopped.
+                        // If STOP begins in mode 3, the already-in-flight pixel
+                        // transfer can keep using VRAM while stopped; otherwise
+                        // VRAM reads are blocked for rendering.
                         self.stop_vram_blocked = mmu.ppu.mode != 3;
                     }
                     self.stopped = true;
