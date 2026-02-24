@@ -352,7 +352,7 @@ impl Mmu {
 
     pub fn load_cart(&mut self, cart: Cartridge) {
         let is_dmg = !cart.cgb;
-        if self.post_boot_state && !self.cgb_mode {
+        if self.post_boot_state && is_dmg {
             let logo = cart.rom.get(0x0104..0x0134).unwrap_or(&[]);
             self.ppu.apply_dmg_post_boot_vram(logo);
         }
