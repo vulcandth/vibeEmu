@@ -2184,7 +2184,7 @@ impl Ppu {
         // In CGB mode, the STAT mode bits can lag very slightly behind the
         // internal mode transition at the end of HBlank. Daid's
         // speed_switch_timing_stat test expects this behavior.
-        if self.cgb && !self.dmg_compat {
+        if self.is_cgb_native_mode() {
             // CGB STAT mode bits can lag very slightly behind internal mode
             // transitions (as exercised by Daid's speed_switch_timing_stat).
             if old_mode == MODE_HBLANK && new_mode == MODE_OAM {
@@ -2277,10 +2277,28 @@ impl Ppu {
         !self.cgb || self.dmg_compat
     }
 
+    #[inline]
+    fn is_cgb_native_mode(&self) -> bool {
+        self.cgb && !self.dmg_compat
+    }
+
+    #[inline]
+    fn is_cgb_dmg_compat_mode(&self) -> bool {
+        self.cgb && self.dmg_compat
+    }
+
+    #[inline]
+    fn should_record_mode3_reg_event(&self) -> bool {
+        self.mode == MODE_TRANSFER
+            && self.ly < SCREEN_HEIGHT as u8
+            && (self.lcdc & 0x80) != 0
+            && self.mode_clock <= self.mode3_target_cycles
+    }
+
     fn record_mode3_lcdc_event(&mut self, mode3_t: u16, val: u8) {
         let dmg_mode = self.is_dmg_mode();
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        let mut bias = if self.cgb && self.dmg_compat {
+        let mut bias = if self.is_cgb_dmg_compat_mode() {
             // CGB running in DMG-compat mode samples most mode-3 LCDC writes
             // closer to the nominal dot than DMG-CPU revisions.
             0
@@ -2295,7 +2313,7 @@ impl Ppu {
             // are sampled by the BG/window fetcher and skew slightly earlier
             // than BG-enable/object-size timing on DMG.
             if (changed & 0x50) != 0 {
-                if self.cgb && self.dmg_compat {
+                if self.is_cgb_dmg_compat_mode() {
                     // CGB DMG-compat keeps a smaller fetch-control skew than
                     // DMG overall, but WIN_MAP writes (bit 6) land one dot
                     // earlier than TILE_SEL-only writes.
@@ -2324,8 +2342,7 @@ impl Ppu {
             let lag = if self.ly == 0 { 2 } else { 6 };
             let mut x = raw.saturating_sub(lag);
             if self.dmg_compat || self.cgb {
-                if self.cgb
-                    && self.dmg_compat
+                if self.is_cgb_dmg_compat_mode()
                     && self.mode3_lcdc_event_count == 0
                     && self.sprite_count > 0
                 {
@@ -4136,7 +4153,7 @@ impl Ppu {
             self.dmg_line_obj_size_16[cap_x] = (self.lcdc & 0x04) != 0;
         }
 
-        if self.cgb && !self.dmg_compat {
+        if self.is_cgb_native_mode() {
             // CGB mode has different timing/behavior expectations (and this
             // scanline renderer doesn't model the FIFO). Keep sprite attribute
             // latching simple here to avoid DMG-specific DMA corruption quirks.
@@ -4583,7 +4600,7 @@ impl Ppu {
     }
 
     fn oam_scan_finalize(&mut self) {
-        if self.cgb && !self.dmg_compat && self.opri & 0x01 == 0 {
+        if self.is_cgb_native_mode() && self.opri & 0x01 == 0 {
             self.line_sprites[..self.sprite_count].sort_by_key(|s| s.oam_index);
         } else {
             self.line_sprites[..self.sprite_count].sort_by_key(|s| (s.x, s.oam_index));
@@ -4962,7 +4979,7 @@ impl Ppu {
     }
 
     fn compute_mode3_cycles_for_line(&self) -> u16 {
-        if self.cgb && !self.dmg_compat {
+        if self.is_cgb_native_mode() {
             // CGB mode 3 duration is not constant; sprite fetches can stall the
             // background pipeline. We model a minimal subset that is required
             // for mid-scanline timing tests (e.g. cgb-acid-hell).
@@ -5246,6 +5263,58 @@ impl Ppu {
         };
         let auto = current & PAL_AUTO_INCREMENT_BIT;
         *index = auto | PAL_UNUSED_BIT | next_idx;
+    }
+
+    #[inline]
+    fn read_palette_data_port(data: &[u8; 64], index: &mut u8) -> u8 {
+        let val = data[Self::palette_ram_index(*index)];
+        Self::step_palette_index(index);
+        val
+    }
+
+    #[inline]
+    fn write_palette_data_port(data: &mut [u8; 64], index: &mut u8, val: u8) {
+        let idx = Self::palette_ram_index(*index);
+        data[idx] = val;
+        Self::step_palette_index(index);
+    }
+
+    #[inline]
+    fn cgb_bg_color_from_color_id(&self, palette: u8, color_id: u8) -> u32 {
+        let off = palette as usize * 8 + color_id as usize * 2;
+        Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+    }
+
+    #[inline]
+    fn dmg_bg_color_for_pixel(&self, x: usize, color_id: u8) -> u32 {
+        let bgp = self.dmg_bgp_for_pixel(x);
+        let shade = Self::dmg_shade(bgp, color_id);
+        if self.dmg_compat {
+            self.cgb_bg_color_from_color_id(0, shade)
+        } else {
+            self.dmg_palette[shade as usize]
+        }
+    }
+
+    #[inline]
+    fn bg_tile_row_base_addr(tile_index: u8, lcdc_tile_data_unsigned: bool) -> usize {
+        if lcdc_tile_data_unsigned {
+            TILE_DATA_0_BASE + tile_index as usize * 16
+        } else {
+            TILE_DATA_1_BASE + ((tile_index as i8 as i16 + 128) as usize) * 16
+        }
+    }
+
+    #[inline]
+    fn bg_tile_row_plane_addr(
+        tile_index: u8,
+        tile_y: usize,
+        lcdc_tile_data_unsigned: bool,
+        high_plane: bool,
+    ) -> usize {
+        Self::bg_tile_row_base_addr(tile_index, lcdc_tile_data_unsigned)
+            + tile_y * 2
+            + usize::from(high_plane)
     }
 
     fn update_lyc_compare(&mut self) {
@@ -5905,9 +5974,7 @@ impl Ppu {
             }
             0xFF69 => {
                 if self.cgb {
-                    let val = self.bgpd[Self::palette_ram_index(self.bgpi)];
-                    Self::step_palette_index(&mut self.bgpi);
-                    val
+                    Self::read_palette_data_port(&self.bgpd, &mut self.bgpi)
                 } else {
                     0xFF
                 }
@@ -5921,9 +5988,7 @@ impl Ppu {
             }
             0xFF6B => {
                 if self.cgb {
-                    let val = self.obpd[Self::palette_ram_index(self.obpi)];
-                    Self::step_palette_index(&mut self.obpi);
-                    val
+                    Self::read_palette_data_port(&self.obpd, &mut self.obpi)
                 } else {
                     0xFF
                 }
@@ -6051,11 +6116,7 @@ impl Ppu {
             0xFF41 => self.stat = (self.stat & 0x07) | (val & 0xF8),
             0xFF42 => {
                 let old = self.scy;
-                if self.mode == MODE_TRANSFER
-                    && self.ly < SCREEN_HEIGHT as u8
-                    && (self.lcdc & 0x80) != 0
-                    && self.mode_clock <= self.mode3_target_cycles
-                {
+                if self.should_record_mode3_reg_event() {
                     self.record_mode3_scy_event(self.mode_clock, val);
                 }
                 self.scy = val;
@@ -6080,11 +6141,7 @@ impl Ppu {
                 }
             }
             0xFF43 => {
-                if self.mode == MODE_TRANSFER
-                    && self.ly < SCREEN_HEIGHT as u8
-                    && (self.lcdc & 0x80) != 0
-                    && self.mode_clock <= self.mode3_target_cycles
-                {
+                if self.should_record_mode3_reg_event() {
                     self.record_mode3_scx_event(self.mode_clock, val);
                 }
                 if trace_scx_writes_enabled()
@@ -6115,10 +6172,7 @@ impl Ppu {
             }
             0xFF46 => self.dma = val,
             0xFF47 => {
-                if (!self.cgb || self.dmg_compat)
-                    && self.ly < SCREEN_HEIGHT as u8
-                    && self.lcdc & 0x80 != 0
-                {
+                if self.is_dmg_mode() && self.ly < SCREEN_HEIGHT as u8 && self.lcdc & 0x80 != 0 {
                     // Capture BGP changes during MODE3 for mid-scanline effects.
                     // Also include very-early HBlank writes: with 4-dot CPU
                     // granularity, the final mode-3 write can spill into the
@@ -6143,7 +6197,7 @@ impl Ppu {
                 self.bgp = val;
             }
             0xFF48 => {
-                if (!self.cgb || self.dmg_compat)
+                if self.is_dmg_mode()
                     && self.mode == MODE_TRANSFER
                     && self.ly < SCREEN_HEIGHT as u8
                     && (self.lcdc & 0x80) != 0
@@ -6180,11 +6234,7 @@ impl Ppu {
             0xFF49 => self.obp1 = val,
             0xFF4A => {
                 let old = self.wy;
-                if self.mode == MODE_TRANSFER
-                    && self.ly < SCREEN_HEIGHT as u8
-                    && (self.lcdc & 0x80) != 0
-                    && self.mode_clock <= self.mode3_target_cycles
-                {
+                if self.should_record_mode3_reg_event() {
                     self.record_mode3_wy_event(self.mode_clock, val);
                 }
                 self.wy = val;
@@ -6209,11 +6259,7 @@ impl Ppu {
             }
             0xFF4B => {
                 let old = self.wx;
-                if self.mode == MODE_TRANSFER
-                    && self.ly < SCREEN_HEIGHT as u8
-                    && (self.lcdc & 0x80) != 0
-                    && self.mode_clock <= self.mode3_target_cycles
-                {
+                if self.should_record_mode3_reg_event() {
                     self.record_mode3_wx_event(self.mode_clock, val);
                 }
                 self.wx = val;
@@ -6243,9 +6289,7 @@ impl Ppu {
             }
             0xFF69 => {
                 if self.cgb {
-                    let idx = Self::palette_ram_index(self.bgpi);
-                    self.bgpd[idx] = val;
-                    Self::step_palette_index(&mut self.bgpi);
+                    Self::write_palette_data_port(&mut self.bgpd, &mut self.bgpi, val);
                 }
             }
             0xFF6A => {
@@ -6255,9 +6299,7 @@ impl Ppu {
             }
             0xFF6B => {
                 if self.cgb {
-                    let idx = Self::palette_ram_index(self.obpi);
-                    self.obpd[idx] = val;
-                    Self::step_palette_index(&mut self.obpi);
+                    Self::write_palette_data_port(&mut self.obpd, &mut self.obpi, val);
                 }
             }
             0xFF6C => {
@@ -6357,7 +6399,7 @@ impl Ppu {
         self.line_color_zero.fill(false);
         self.cgb_line_obj_enabled.fill(self.lcdc & 0x02 != 0);
 
-        let cgb_render = self.cgb && !self.dmg_compat;
+        let cgb_render = self.is_cgb_native_mode();
 
         let bg_enabled = if cgb_render {
             true
@@ -7181,28 +7223,15 @@ impl Ppu {
             let tile_y = (py % 8) as usize;
 
             let tile_index = self.vram_read_for_render(0, tile_map_base + tile_row * 32 + tile_col);
-            let addr_lo = if (lcdc_lo & 0x10) != 0 {
-                TILE_DATA_0_BASE + tile_index as usize * 16 + tile_y * 2
-            } else {
-                TILE_DATA_1_BASE + ((tile_index as i8 as i16 + 128) as usize) * 16 + tile_y * 2
-            };
-            let addr_hi = if (lcdc_hi & 0x10) != 0 {
-                TILE_DATA_0_BASE + tile_index as usize * 16 + tile_y * 2 + 1
-            } else {
-                TILE_DATA_1_BASE + ((tile_index as i8 as i16 + 128) as usize) * 16 + tile_y * 2 + 1
-            };
+            let addr_lo =
+                Self::bg_tile_row_plane_addr(tile_index, tile_y, (lcdc_lo & 0x10) != 0, false);
+            let addr_hi =
+                Self::bg_tile_row_plane_addr(tile_index, tile_y, (lcdc_hi & 0x10) != 0, true);
             let bit = 7 - (px % 8) as usize;
             let lo = self.vram_read_for_render(0, addr_lo);
             let hi = self.vram_read_for_render(0, addr_hi);
             let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-            let bgp = self.dmg_bgp_for_pixel(x as usize);
-            let idx = Self::dmg_shade(bgp, color_id);
-            let color = if self.dmg_compat {
-                let off = (idx as usize) * 2;
-                Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
-            } else {
-                self.dmg_palette[idx as usize]
-            };
+            let color = self.dmg_bg_color_for_pixel(x as usize, color_id);
             let idx_fb = self.ly as usize * SCREEN_WIDTH + x as usize;
             self.framebuffer[idx_fb] = color;
             // OBJ priority compares against raw BG color ID zero, not BGP-mapped shade.
@@ -7239,31 +7268,15 @@ impl Ppu {
                 let tile_x = window_x % 8;
                 let tile_index =
                     self.vram_read_for_render(0, window_map_base + tile_row * 32 + tile_col);
-                let addr_lo = if (lcdc_lo & 0x10) != 0 {
-                    TILE_DATA_0_BASE + tile_index as usize * 16 + tile_y * 2
-                } else {
-                    TILE_DATA_1_BASE + ((tile_index as i8 as i16 + 128) as usize) * 16 + tile_y * 2
-                };
-                let addr_hi = if (lcdc_hi & 0x10) != 0 {
-                    TILE_DATA_0_BASE + tile_index as usize * 16 + tile_y * 2 + 1
-                } else {
-                    TILE_DATA_1_BASE
-                        + ((tile_index as i8 as i16 + 128) as usize) * 16
-                        + tile_y * 2
-                        + 1
-                };
+                let addr_lo =
+                    Self::bg_tile_row_plane_addr(tile_index, tile_y, (lcdc_lo & 0x10) != 0, false);
+                let addr_hi =
+                    Self::bg_tile_row_plane_addr(tile_index, tile_y, (lcdc_hi & 0x10) != 0, true);
                 let bit = 7 - tile_x;
                 let lo = self.vram_read_for_render(0, addr_lo);
                 let hi = self.vram_read_for_render(0, addr_hi);
                 let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                let bgp = self.dmg_bgp_for_pixel(x as usize);
-                let idx = Self::dmg_shade(bgp, color_id);
-                let color = if self.dmg_compat {
-                    let off = (idx as usize) * 2;
-                    Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
-                } else {
-                    self.dmg_palette[idx as usize]
-                };
+                let color = self.dmg_bg_color_for_pixel(x as usize, color_id);
                 let idx_fb = self.ly as usize * SCREEN_WIDTH + x as usize;
                 self.framebuffer[idx_fb] = color;
                 if (x as usize) < SCREEN_WIDTH {
@@ -7513,7 +7526,7 @@ impl Ppu {
                                 }
                             }
                             let sample_t = sample_t.clamp(0, max_t) as u16;
-                            let color = if self.cgb && !self.dmg_compat {
+                            let color = if self.is_cgb_native_mode() {
                                 let off = (color_id as usize) * 2;
                                 Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
                             } else {
@@ -8236,18 +8249,13 @@ impl Ppu {
                             } else {
                                 tile_y_raw
                             };
-                            let tile_data_base = if lcdc_cur & 0x10 != 0 {
-                                TILE_DATA_0_BASE
-                            } else {
-                                TILE_DATA_1_BASE
-                            };
-                            let base_addr = if lcdc_cur & 0x10 != 0 {
-                                tile_data_base + cur_tile as usize * 16
-                            } else {
-                                tile_data_base + ((cur_tile as i8 as i16 + 128) as usize) * 16
-                            };
                             let bank = if (cur_attr & 0x08) != 0 { 1 } else { 0 };
-                            let addr = base_addr + tile_y * 2;
+                            let addr = Self::bg_tile_row_plane_addr(
+                                cur_tile,
+                                tile_y,
+                                (lcdc_cur & 0x10) != 0,
+                                false,
+                            );
                             cur_lo = self.vram_read_for_render(bank, addr);
                         }
                         2 => {
@@ -8261,18 +8269,13 @@ impl Ppu {
                             } else {
                                 tile_y_raw
                             };
-                            let tile_data_base = if lcdc_cur & 0x10 != 0 {
-                                TILE_DATA_0_BASE
-                            } else {
-                                TILE_DATA_1_BASE
-                            };
-                            let base_addr = if lcdc_cur & 0x10 != 0 {
-                                tile_data_base + cur_tile as usize * 16
-                            } else {
-                                tile_data_base + ((cur_tile as i8 as i16 + 128) as usize) * 16
-                            };
                             let bank = if (cur_attr & 0x08) != 0 { 1 } else { 0 };
-                            let addr = base_addr + tile_y * 2 + 1;
+                            let addr = Self::bg_tile_row_plane_addr(
+                                cur_tile,
+                                tile_y,
+                                (lcdc_cur & 0x10) != 0,
+                                true,
+                            );
                             cur_hi = if hi_glitch {
                                 cur_tile
                             } else {
@@ -8310,8 +8313,7 @@ impl Ppu {
                     discard -= 1;
                 } else if out_x < SCREEN_WIDTH {
                     self.cgb_line_obj_enabled[out_x] = (lcdc_cur & 0x02) != 0;
-                    let off = pix.palette as usize * 8 + pix.color_id as usize * 2;
-                    let color = Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1]);
+                    let color = self.cgb_bg_color_from_color_id(pix.palette, pix.color_id);
                     let idx_fb = ly as usize * SCREEN_WIDTH + out_x;
                     self.framebuffer[idx_fb] = color;
                     self.line_priority[out_x] = pix.priority;
@@ -8507,7 +8509,7 @@ impl Ppu {
             MODE_OAM => self.stat & 0x20 != 0,
             _ => false,
         };
-        let glitch_pending = if self.cgb && !self.dmg_compat {
+        let glitch_pending = if self.is_cgb_native_mode() {
             false
         } else {
             self.dmg_mode2_vblank_irq_pending
