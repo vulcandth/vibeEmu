@@ -259,6 +259,15 @@ impl Serial {
     }
 
     pub fn step(&mut self, prev_div: u16, curr_div: u16, double_speed: bool, if_reg: &mut u8) {
+        self.step_steps(
+            prev_div,
+            curr_div.wrapping_sub(prev_div),
+            double_speed,
+            if_reg,
+        );
+    }
+
+    pub fn step_steps(&mut self, prev_div: u16, steps: u16, double_speed: bool, if_reg: &mut u8) {
         if self.transfer.is_none() {
             return;
         }
@@ -289,7 +298,6 @@ impl Serial {
         {
             let state = self.transfer.as_mut().unwrap();
             let mut div = prev_div;
-            let steps = curr_div.wrapping_sub(prev_div);
             let mut prev_clock = ((div.wrapping_sub(phase) >> clock_bit) & 1) != 0;
 
             for _ in 0..steps {

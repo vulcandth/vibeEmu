@@ -339,6 +339,7 @@ impl SquareChannel {
         self.timer -= cycles;
     }
 
+    #[inline]
     fn compute_output(&mut self) -> u8 {
         if !self.enabled || !self.dac_enabled {
             return 0;
@@ -394,6 +395,7 @@ impl SquareChannel {
         self.out_stage2
     }
 
+    #[inline]
     fn peek_sample(&self) -> u8 {
         // The PCM read path is not gated by the channel's internal `pending_reset` flag.
         // Visibility is controlled only by DAC/enabled state and `sample_surpressed`.
@@ -528,6 +530,7 @@ impl WaveChannel {
         ((sample_length ^ 0x07FF) as i32) + 1
     }
 
+    #[inline]
     fn compute_output(&self) -> u8 {
         if !self.enabled || !self.dac_enabled || self.sample_suppressed.get() {
             return 0;
@@ -668,6 +671,7 @@ impl WaveChannel {
         self.compute_output()
     }
 
+    #[inline]
     fn peek_sample(&self) -> u8 {
         self.compute_output()
     }
@@ -734,6 +738,7 @@ impl NoiseChannel {
         self.current_lfsr_sample = self.lfsr & 1 != 0;
     }
 
+    #[inline]
     fn compute_output(&self) -> u8 {
         if !self.enabled || !self.dac_enabled || self.sample_suppressed {
             return 0;
@@ -786,6 +791,7 @@ impl NoiseChannel {
         self.compute_output()
     }
 
+    #[inline]
     fn peek_sample(&self) -> u8 {
         self.compute_output()
     }
@@ -1621,16 +1627,15 @@ impl Apu {
     /// CGB speed switching, where DIV/TIMA can be frozen while the APU's dot
     /// clock continues.
     pub fn tick_frame_sequencer(&mut self, div_prev: u16, div_now: u16, double_speed: bool) {
-        if self.nr52 & 0x80 == 0 {
+        self.tick_frame_sequencer_steps(div_prev, div_now.wrapping_sub(div_prev), double_speed);
+    }
+
+    pub fn tick_frame_sequencer_steps(&mut self, div_prev: u16, steps: u16, double_speed: bool) {
+        if self.nr52 & 0x80 == 0 || steps == 0 {
             return;
         }
 
         let bit = if double_speed { 13 } else { 12 };
-        let steps = div_now.wrapping_sub(div_prev);
-        if steps == 0 {
-            return;
-        }
-
         let mut div = div_prev;
         for _ in 0..steps {
             let prev_bit = (div >> bit) & 1;
@@ -2556,13 +2561,14 @@ impl Apu {
     /// This advances the 1 MHz staging pipeline and PCM registers. The
     /// frame sequencer is clocked separately via `tick_frame_sequencer`.
     pub fn tick(&mut self, div_prev: u16, div_now: u16, double_speed: bool) {
+        self.tick_steps(div_prev, div_now.wrapping_sub(div_prev), double_speed);
+    }
+
+    pub fn tick_steps(&mut self, _div_prev: u16, ticks: u16, double_speed: bool) {
         let speed_changed = self.double_speed != double_speed;
         // Store the current CPU speed so trigger_square can select the
         // correct initial delay when a channel is triggered.
         self.double_speed = double_speed;
-        // Derive how many dot cycles elapsed in this step from the divider.
-        // This lets callers tick the APU in larger chunks or single-dot stalls.
-        let ticks = div_now.wrapping_sub(div_prev);
         if ticks == 0 {
             return;
         }
@@ -3177,6 +3183,41 @@ impl Apu {
         let freq = self.ch1.frequency;
         self.regs[0x03] = (freq & 0xFF) as u8;
         self.regs[0x04] = (self.regs[0x04] & !0x07) | ((freq >> 8) as u8 & 0x07);
+    }
+
+    #[inline]
+    pub fn run_cpu_tick(
+        &mut self,
+        dot_cycles: u16,
+        prev_cpu_div: u16,
+        curr_cpu_div: u16,
+        prev_dot_div: u16,
+        curr_dot_div: u16,
+        double_speed: bool,
+    ) {
+        self.run_cpu_tick_steps(
+            dot_cycles,
+            prev_cpu_div,
+            curr_cpu_div.wrapping_sub(prev_cpu_div),
+            prev_dot_div,
+            curr_dot_div.wrapping_sub(prev_dot_div),
+            double_speed,
+        );
+    }
+
+    #[inline]
+    pub fn run_cpu_tick_steps(
+        &mut self,
+        dot_cycles: u16,
+        prev_cpu_div: u16,
+        cpu_div_steps: u16,
+        prev_dot_div: u16,
+        dot_div_steps: u16,
+        double_speed: bool,
+    ) {
+        self.step(dot_cycles);
+        self.tick_frame_sequencer_steps(prev_cpu_div, cpu_div_steps, double_speed);
+        self.tick_steps(prev_dot_div, dot_div_steps, double_speed);
     }
 
     pub fn step(&mut self, cycles: u16) {

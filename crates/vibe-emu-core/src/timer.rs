@@ -91,6 +91,18 @@ impl Timer {
     /// Advance the timer by `cycles` CPU cycles and update IF when TIMA
     /// overflows.
     pub fn step(&mut self, cycles: u16, if_reg: &mut u8) {
+        if cycles == 0 {
+            return;
+        }
+
+        // Common fast path: with timer disabled and no pending reload/write
+        // timing effects, only DIV advances.
+        if self.tac & 0x04 == 0 && self.pending_reload.is_none() && self.tma_latch.is_none() {
+            self.div = self.div.wrapping_add(cycles);
+            self.last_signal = false;
+            return;
+        }
+
         for _ in 0..cycles {
             self.reloading = false;
             if let Some(val) = self.pending_reload {
@@ -158,6 +170,7 @@ impl Timer {
         }
     }
 
+    #[inline]
     fn timer_bit_with(div: u16, tac: u8) -> u8 {
         match tac & 0x03 {
             0x00 => ((div >> 9) & 1) as u8,
@@ -168,6 +181,7 @@ impl Timer {
         }
     }
 
+    #[inline]
     fn signal(&self) -> bool {
         if self.tac & 0x04 == 0 {
             false
@@ -176,6 +190,7 @@ impl Timer {
         }
     }
 
+    #[inline]
     fn signal_with(div: u16, tac: u8) -> bool {
         if tac & 0x04 == 0 {
             false

@@ -409,7 +409,7 @@ hot per-cycle overhead in non-trace builds.
 
 ## CPU — Instruction Dispatch & Tick Fan-out (~6 %)
 
-### 11. Reduce `Cpu::tick` fan-out cost
+### 11. Reduce `Cpu::tick` fan-out cost ✅
 
 Every M-cycle, `Cpu::tick` calls into: cartridge RTC, timer, APU (step + tick_frame_sequencer
 + tick), serial, PPU, DMA. The function at [cpu.rs L260](crates/vibe-emu-core/src/cpu.rs#L260)
@@ -425,14 +425,61 @@ calls `tick(mmu, 1)` — using larger batches where safe would reduce call overh
 writes that interact with PPU/timer state). Only batch "internal" M-cycles that don't
 touch the bus.
 
-### 12. Instruction dispatch — computed goto / jump table
+Completed in [cpu.rs](crates/vibe-emu-core/src/cpu.rs) and
+[apu.rs](crates/vibe-emu-core/src/apu.rs):
 
-The CPU `step` function likely uses `match` on opcodes. Rust compiles `match` on dense
-integer ranges into jump tables automatically, so this is likely already optimal. Verify
-with `cargo asm` that the main opcode dispatcher compiles to a jump table rather than a
-chain of comparisons.
+- Added a consolidated APU entrypoint (`Apu::run_cpu_tick`) that executes the
+  existing per-tick APU sequence in-order: `step` → `tick_frame_sequencer` →
+  `tick`.
+- Updated `Cpu::tick` to call that single APU entrypoint, reducing fan-out call
+  overhead in the central scheduling path while preserving timing/order.
 
-### 13. Avoid redundant DIV snapshots
+Instruction-level audit for internal M-cycle batching:
+
+- Existing batched internal-cycle cases are retained (`INT` acknowledge path uses
+  `tick(..., 3)`, `ADD SP, e8` uses `tick(..., 2)`).
+- Most remaining `tick(..., 1)` sites are separated by bus-visible operations
+  (`fetch8/fetch16/read8/write8/push_stack/pop_stack`) or interrupt-sensitive
+  state changes, so merging them would change externally observable timing.
+- Conclusion: there are no additional low-risk instruction-level multi-cycle
+  batches available in the current dispatcher without a larger execution-model
+  refactor.
+
+Behavior remains unchanged: this is a call-graph simplification only, with the
+same inputs and execution order for all APU subdomains per CPU tick.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 12. Instruction dispatch — computed goto / jump table ✅
+
+The CPU `step` function uses `match` on opcodes. Rust typically lowers dense matches
+to jump tables, so this was verified directly from release assembly output.
+
+Completed via assembly verification:
+
+- Built assembly with `cargo rustc -p vibe-emu-core --release --lib -- --emit=asm`.
+- Inspected `target/release/deps/vibe_emu_core-*.s` and confirmed `Cpu::step` contains
+  jump-table sections (`.LJTI50_*`) and indirect dispatch jumps (`jmpq *...`) for opcode
+  dispatch paths.
+
+Conclusion: dispatch is already jump-table-based in release builds; no source refactor is
+needed for this optimization item.
+
+**Verification:**
+
+- `cargo rustc -p vibe-emu-core --release --lib -- --emit=asm`
+- Confirmed `Cpu::step` jump-table labels in emitted assembly
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 13. Avoid redundant DIV snapshots ✅
 
 `Cpu::tick` captures `prev_dot_div` and `curr_dot_div` for the APU, plus `prev_cpu_div`
 and `curr_cpu_div` for the timer. Both pairs are computed from simple wrapping adds. This
@@ -440,11 +487,32 @@ is lightweight, but the pattern of passing (prev, curr) to every subsystem means
 subsystem re-derives the delta. Consider passing the delta directly when subsystems only
 need the tick count.
 
+Completed in [cpu.rs](crates/vibe-emu-core/src/cpu.rs),
+[apu.rs](crates/vibe-emu-core/src/apu.rs), and
+[serial.rs](crates/vibe-emu-core/src/serial.rs):
+
+- Added delta-based APU/serial tick entrypoints (`run_cpu_tick_steps`,
+  `tick_frame_sequencer_steps`, `tick_steps`, `step_steps`) and kept existing
+  `(prev, curr)` wrappers for compatibility.
+- Updated `Cpu::tick` and speed-switch stall ticking to pass known divider deltas
+  directly (`cpu_cycles` and `dot_cycles`) instead of re-deriving them via
+  `curr.wrapping_sub(prev)` in each subsystem.
+
+Behavior remains unchanged: divider start phase and elapsed step counts are
+identical to the previous implementation; this is a call-interface simplification.
+
+**Verification:**
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
 ---
 
 ## MMU — Memory-Mapped I/O (~3–5 %)
 
-### 14. Fast-path common address ranges
+### 14. Fast-path common address ranges ✅
 
 `read_byte_inner` uses a large `match` on `addr`. The most common reads in a Game Boy
 program are:
@@ -470,7 +538,21 @@ However, Rust's match on `u16` ranges already compiles to efficient binary searc
 dispatch. Profile before implementing — the marginal gain may be small given the existing
 match structure.
 
-### 15. Inline DMA-active check
+Completed in [mmu.rs](crates/vibe-emu-core/src/mmu.rs):
+
+- Added early-return fast paths in `read_byte_inner` for common hot ranges:
+  ROM (`0x0000..=0x7FFF`, preserving boot ROM overlay behavior),
+  HRAM (`0xFF80..=0xFFFE`), and WRAM/ECHO (`0xC000..=0xFDFF`).
+- Kept existing match-based behavior for all other address regions unchanged.
+
+**Verification:**
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 15. Inline DMA-active check ✅
 
 The DMA check at the top of `read_byte_inner` runs on every single read:
 
@@ -482,7 +564,24 @@ This is a well-predicted branch (DMA is active for only ~640 cycles per transfer
 with `#[cold]` on the DMA conflict path or use `unlikely()` hints via `core::intrinsics`
 (nightly) or the `likely_stable` crate.
 
-### 16. Reduce env flag checks in I/O paths
+Completed in [mmu.rs](crates/vibe-emu-core/src/mmu.rs):
+
+- Split DMA-blocked read handling into a dedicated `#[cold]` helper
+  (`read_byte_dma_blocked_value`).
+- `read_byte_inner` now uses a compact fast branch and only enters the cold path
+  when an active OAM DMA read conflict must be resolved.
+
+Behavior remains unchanged: the same blocked-access and ROM bus-conflict
+results are returned for each address class.
+
+**Verification:**
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 16. Reduce env flag checks in I/O paths ✅
 
 `env_flag_enabled` in [mmu.rs](crates/vibe-emu-core/src/mmu.rs) uses `OnceLock` +
 `HashMap` lookup on every call. While the `OnceLock` initialization is one-time, the
@@ -500,11 +599,27 @@ fn vibeemu_trace_oambug() -> bool {
 Or, preferably, gate these behind `#[cfg(feature = "trace")]` so they don't exist in
 release builds at all.
 
+Completed in [mmu.rs](crates/vibe-emu-core/src/mmu.rs):
+
+- Replaced generic `OnceLock<HashMap<...>>` env-flag cache lookup with dedicated
+  per-flag `OnceLock<bool>` helpers (`trace_oambug_enabled`,
+  `trace_lcdc_enabled`).
+- Updated all MMU trace call sites to use these direct boolean helpers.
+
+This removes per-call hash lookups while preserving one-time env parsing semantics.
+
+**Verification:**
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
 ---
 
 ## Timer (~3 %)
 
-### 17. Timer fast-path for common TAC configurations
+### 17. Timer fast-path for common TAC configurations ✅
 
 `Timer::step` loops per CPU cycle. For TAC modes with slow tick rates (mode 0: DIV bit 9,
 triggers every 1024 CPU cycles), hundreds of loop iterations pass without a falling edge.
@@ -520,11 +635,28 @@ remaining -= skip;
 **Caveat:** Must handle the reload delay state machine correctly. When `pending_reload` is
 `None` and TAC is disabled, the skip is trivially `cycles` (just advance DIV).
 
+Completed in [timer.rs](crates/vibe-emu-core/src/timer.rs):
+
+- Added a conservative fast path in `Timer::step` for the common case where TAC is
+  disabled and there are no pending reload/TMA-latch timing side effects.
+- In that state, the timer now advances DIV in one wrapping add and exits early,
+  avoiding the per-cycle loop.
+
+Behavior remains unchanged for active timer modes and reload windows; those paths
+continue to use cycle-accurate stepping.
+
+**Verification:**
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
 ---
 
 ## General — Cross-cutting Optimizations
 
-### 18. Dirty flags for derived state
+### 18. Dirty flags for derived state ✅
 
 Several computed values are recomputed every time they're accessed:
 
@@ -535,14 +667,46 @@ Several computed values are recomputed every time they're accessed:
 - **STAT IRQ line:** `update_stat_irq` is called on every dot. Use a dirty flag set by
   mode/LYC changes and only recompute when dirty.
 
-### 19. Avoid `VecDeque` allocation in dot-fetcher path
+Completed in [ppu.rs](crates/vibe-emu-core/src/ppu.rs):
+
+- Added `stat_irq_dirty` tracking and a guarded updater
+  (`refresh_stat_irq_if_dirty`) so STAT IRQ recomputation only runs when mode/LYC
+  or STAT-enable state changes (plus the DMG mode-2→VBlank one-shot path).
+- Marked STAT state dirty at mode transitions (`set_mode`), LYC compare changes,
+  and `FF41` writes.
+
+Behavior remains unchanged: IRQ assertion still follows the same coincidence/mode
+rules and DMG glitch handling, while avoiding redundant recomputation in steady-state dots.
+
+**Verification:**
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 19. Avoid `VecDeque` allocation in dot-fetcher path ✅
 
 `render_dmg_bg_window_scanline_with_mode3_fetcher` at [ppu.rs L6449](crates/vibe-emu-core/src/ppu.rs#L6449)
 uses `std::collections::VecDeque`. If this is allocated per call (per scanline), it causes
 heap allocation in a hot path. Use a fixed-size ring buffer (e.g., `[u8; 16]` with head/
 tail indices) stored as a field in `Ppu` to avoid allocation entirely.
 
-### 20. Profile-guided optimization (PGO)
+Completed in [ppu.rs](crates/vibe-emu-core/src/ppu.rs):
+
+- Replaced the DMG mode-3 fetcher local `VecDeque<u8>` with a fixed-size stack
+  ring buffer (`BgFifo`) using `[u8; 32]` plus head/length indices.
+- Kept existing FIFO operations/ordering (`push_back`, `push_front`, `pop_front`,
+  `clear`, `len`) to preserve fetcher behavior while removing per-scanline heap work.
+
+**Verification:**
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 20. Profile-guided optimization (PGO) ✅
 
 Rust/LLVM supports PGO, which can improve branch prediction layout and inlining decisions
 based on actual execution profiles. For an emulator with highly predictable hot paths,
@@ -559,7 +723,27 @@ llvm-profdata merge -o /tmp/pgo-data/merged.profdata /tmp/pgo-data/
 RUSTFLAGS="-Cprofile-use=/tmp/pgo-data/merged.profdata" cargo build --release
 ```
 
-### 21. Link-time optimization (LTO)
+Completed with a verified local PGO pipeline run (Windows/PowerShell):
+
+- Confirmed `llvm-profdata` tool availability.
+- Built instrumented release binary with `-Cprofile-generate`.
+- Ran representative headless workload with an in-repo ROM
+  (`polishedcrystal-debug-3.2.1.gbc`) for 1200 frames.
+- Merged generated `*.profraw` into `target/pgo-data/merged.profdata`.
+- Built release binary with `-Cprofile-use` (using an absolute profile path).
+
+Note: a relative `profile-use` path initially failed for dependency crate build
+contexts; using an absolute profile path resolved this.
+
+**Verification:**
+
+- `Get-Command llvm-profdata`
+- `cargo build --release -p vibe-emu-ui` with `RUSTFLAGS=-Cprofile-generate=...`
+- `target/release/vibe-emu-ui.exe --headless --frames 1200 polishedcrystal-debug-3.2.1.gbc`
+- `llvm-profdata merge -o target/pgo-data/merged.profdata target/pgo-data/*.profraw`
+- `cargo build --release -p vibe-emu-ui` with `RUSTFLAGS=-Cprofile-use=<absolute path>`
+
+### 21. Link-time optimization (LTO) ✅
 
 Ensure `Cargo.toml` enables thin or fat LTO for release builds. Cross-crate inlining is
 critical when `Cpu::tick` calls into `Ppu::step`, `Apu::tick`, etc. — all in`vibe-emu-core`
@@ -571,19 +755,76 @@ lto = "thin"    # or "fat" for maximum optimization
 codegen-units = 1
 ```
 
-### 22. `#[inline]` / `#[inline(always)]` on critical micro-functions
+Completed in [Cargo.toml](Cargo.toml):
+
+- Added workspace release profile settings:
+  - `lto = "thin"`
+  - `codegen-units = 1`
+
+These settings apply to release workspace builds and improve cross-crate inlining
+and final link-time optimization quality.
+
+**Verification:**
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 22. `#[inline]` / `#[inline(always)]` on critical micro-functions ✅
 
 Small functions like `peek_sample`, `compute_output`, `dmg_shade`, `decode_cgb_color`,
 `bg_tile_row_plane_addr`, and `signal_with` should be `#[inline]` (many already are).
 Verify that the compiler is actually inlining them in the release build — function call
 overhead in a per-pixel or per-dot loop is significant.
 
-### 23. Conditional compilation for trace/debug code
+Completed in [ppu.rs](crates/vibe-emu-core/src/ppu.rs),
+[apu.rs](crates/vibe-emu-core/src/apu.rs), and
+[timer.rs](crates/vibe-emu-core/src/timer.rs):
+
+- Added targeted `#[inline]` attributes where missing on hot micro-functions,
+  including `decode_cgb_color`, channel `compute_output`/`peek_sample`, and
+  timer `signal_with` helpers.
+- Kept existing `#[inline(always)]` usage (e.g., `dmg_shade`) unchanged.
+
+Release assembly was emitted and spot-checked for targeted symbol mentions as an
+inline sanity check.
+
+**Verification:**
+
+- `cargo rustc -p vibe-emu-core --release --lib -- --emit=asm`
+- spot-check `target/release/deps/vibe_emu_core-*.s`
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 23. Conditional compilation for trace/debug code ✅
 
 All `VIBEEMU_TRACE_*` blocks should be behind `#[cfg(feature = "ppu-trace")]` or similar
 feature flags. Even with `OnceLock`-cached env checks, the generated code includes the
 branch, the formatting machinery, and prevents certain loop optimizations. When compiled
 out, LLVM can vectorize/unroll inner loops more aggressively.
+
+Completed in [ppu.rs](crates/vibe-emu-core/src/ppu.rs) and
+[mmu.rs](crates/vibe-emu-core/src/mmu.rs):
+
+- Added feature-gated trace helper definitions for PPU/MMU trace flags so
+  non-`ppu-trace` builds compile those checks to constant `false`.
+- Added feature-gated fallback implementations for trace line/frame filters
+  and object-debug line checks (`true` for filters, `false` for trace enables)
+  so non-trace builds avoid trace env parsing/filter code.
+- Kept trace behavior unchanged when the `ppu-trace` feature is enabled.
+
+This compiles trace/debug gating out of non-trace builds while preserving
+existing trace workflows behind the feature flag.
+
+**Verification:**
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
 
 ---
 
@@ -596,11 +837,11 @@ out, LLVM can vectorize/unroll inner loops more aggressively.
 | 3 | PPU | ✅ Batch-skip HBLANK/VBLANK dots in `Ppu::step` (#2) | ~10–15 % (removes ~70 % of dot iterations) |
 | 4 | APU | ✅ Batch 1 MHz ticks (#8) + sweep tick countdown (#9) + sample generation batching (#10) | ~5–8 % |
 | 5 | PPU | ✅ Precomputed palette color tables (#3) | ~3–5 % |
-| 6 | General | Compile out trace code in release (#23) | ~2–4 % |
-| 7 | Timer | Fast-path timer step (#17) | ~2–3 % |
-| 8 | PPU | VecDeque → fixed ring buffer (#19) | ~1–2 % |
-| 9 | General | PGO + LTO (#20, #21) | ~10–20 % overall |
-| 10 | MMU | Inline DMA check + env flag cleanup (#15, #16) | ~1 % |
+| 6 | General | ✅ Compile out trace code in release (#23) | ~2–4 % |
+| 7 | Timer | ✅ Fast-path timer step (#17) | ~2–3 % |
+| 8 | PPU | ✅ VecDeque → fixed ring buffer (#19) | ~1–2 % |
+| 9 | General | ✅ PGO + LTO (#20, #21) | ~10–20 % overall |
+| 10 | MMU | ✅ Inline DMA check + env flag cleanup (#15, #16) | ~1 % |
 
 ---
 

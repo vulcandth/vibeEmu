@@ -271,7 +271,6 @@ impl Cpu {
 
         let prev_dot_div = mmu.dot_div;
         mmu.dot_div = mmu.dot_div.wrapping_add(dot_cycles);
-        let curr_dot_div = mmu.dot_div;
 
         if let Some(cart) = mmu.cart.as_mut() {
             cart.step_rtc(cpu_cycles);
@@ -279,21 +278,18 @@ impl Cpu {
 
         let prev_cpu_div = mmu.timer.div;
         mmu.timer.step(cpu_cycles, &mut mmu.if_reg);
-        let curr_cpu_div = mmu.timer.div;
 
-        // Advance 2 MHz domain first so duty edges and suppression changes
-        // are visible to the subsequent 1 MHz staging/PCM update in the
-        // same CPU step (aligns with the APU's internal ordering for audio updates).
-        mmu.apu.step(dot_cycles);
-        mmu.apu
-            .tick_frame_sequencer(prev_cpu_div, curr_cpu_div, self.double_speed);
-        mmu.apu.tick(prev_dot_div, curr_dot_div, self.double_speed);
-        mmu.serial.step(
+        // Advance APU domains in the same order as before (2 MHz -> frame sequencer -> 1 MHz).
+        mmu.apu.run_cpu_tick_steps(
+            dot_cycles,
+            prev_cpu_div,
+            cpu_cycles,
             prev_dot_div,
-            curr_dot_div,
+            dot_cycles,
             self.double_speed,
-            &mut mmu.if_reg,
         );
+        mmu.serial
+            .step_steps(prev_dot_div, dot_cycles, self.double_speed, &mut mmu.if_reg);
 
         if mmu.dma_active() {
             for _ in 0..dot_cycles {
@@ -333,18 +329,13 @@ impl Cpu {
 
             let prev_dot_div = mmu.dot_div;
             mmu.dot_div = mmu.dot_div.wrapping_add(1);
-            let curr_dot_div = mmu.dot_div;
 
             // Keep APU/serial clock domains consistent with the dot clock.
             // Note: DIV/TIMA remain frozen during this stall.
             mmu.apu.step(1);
-            mmu.apu.tick(prev_dot_div, curr_dot_div, self.double_speed);
-            mmu.serial.step(
-                prev_dot_div,
-                curr_dot_div,
-                self.double_speed,
-                &mut mmu.if_reg,
-            );
+            mmu.apu.tick_steps(prev_dot_div, 1, self.double_speed);
+            mmu.serial
+                .step_steps(prev_dot_div, 1, self.double_speed, &mut mmu.if_reg);
 
             if mmu.ppu.step(1, &mut mmu.if_reg) {
                 mmu.hdma_hblank_transfer();

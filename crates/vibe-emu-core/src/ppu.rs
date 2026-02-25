@@ -70,16 +70,6 @@ macro_rules! define_env_bool_false {
     };
 }
 
-macro_rules! define_env_os_bool_false {
-    ($func:ident, $key:literal) => {
-        fn $func() -> bool {
-            use std::sync::OnceLock;
-            static VALUE: OnceLock<bool> = OnceLock::new();
-            *VALUE.get_or_init(|| env_os_bool_or_false($key))
-        }
-    };
-}
-
 macro_rules! define_env_bool_true {
     ($func:ident, $key:literal) => {
         fn $func() -> bool {
@@ -90,7 +80,41 @@ macro_rules! define_env_bool_true {
     };
 }
 
-define_env_os_bool_false!(oam_bug_trace_enabled, "VIBEEMU_TRACE_OAMBUG");
+macro_rules! define_trace_env_bool_false {
+    ($func:ident, $key:literal) => {
+        #[cfg(feature = "ppu-trace")]
+        fn $func() -> bool {
+            use std::sync::OnceLock;
+            static VALUE: OnceLock<bool> = OnceLock::new();
+            *VALUE.get_or_init(|| env_bool_or_false($key))
+        }
+
+        #[cfg(not(feature = "ppu-trace"))]
+        #[inline]
+        fn $func() -> bool {
+            false
+        }
+    };
+}
+
+macro_rules! define_trace_env_os_bool_false {
+    ($func:ident, $key:literal) => {
+        #[cfg(feature = "ppu-trace")]
+        fn $func() -> bool {
+            use std::sync::OnceLock;
+            static VALUE: OnceLock<bool> = OnceLock::new();
+            *VALUE.get_or_init(|| env_os_bool_or_false($key))
+        }
+
+        #[cfg(not(feature = "ppu-trace"))]
+        #[inline]
+        fn $func() -> bool {
+            false
+        }
+    };
+}
+
+define_trace_env_os_bool_false!(oam_bug_trace_enabled, "VIBEEMU_TRACE_OAMBUG");
 define_env_i16!(
     dmg_mode3_lcdc_event_t_bias,
     "VIBEEMU_DMG_MODE3_LCDC_EVENT_T_BIAS",
@@ -430,6 +454,7 @@ pub struct Ppu {
     /// Indicates a completed frame is available in `framebuffer`
     frame_ready: bool,
     stat_irq_line: bool,
+    stat_irq_dirty: bool,
     // One-shot pulse used for the mode-2-on-entering-VBlank STAT quirk.
     // Used on DMG and on CGB when running in DMG-compat mode.
     dmg_mode2_vblank_irq_pending: bool,
@@ -1059,6 +1084,7 @@ fn dmg_obj_size_tuning() -> &'static DmgObjSizeTuning {
     })
 }
 
+#[cfg(feature = "ppu-trace")]
 fn parse_trace_line_set(spec: &str) -> [bool; SCREEN_HEIGHT] {
     let mut set = [false; SCREEN_HEIGHT];
     for token in spec.split(',') {
@@ -1089,6 +1115,7 @@ fn parse_trace_line_set(spec: &str) -> [bool; SCREEN_HEIGHT] {
     set
 }
 
+#[cfg(feature = "ppu-trace")]
 fn trace_obj_debug_line_enabled(ly: u8) -> bool {
     if !trace_obj_debug_enabled() {
         return false;
@@ -1104,37 +1131,45 @@ fn trace_obj_debug_line_enabled(ly: u8) -> bool {
     set[ly as usize]
 }
 
+#[cfg(not(feature = "ppu-trace"))]
+#[inline]
+fn trace_obj_debug_line_enabled(_ly: u8) -> bool {
+    false
+}
+
+#[cfg(feature = "ppu-trace")]
 fn read_trace_u64_env(key: &str) -> Option<u64> {
     std::env::var(key)
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
 }
 
-define_env_bool_false!(trace_scx_writes_enabled, "VIBEEMU_TRACE_SCX_WRITES_ALL");
-define_env_bool_false!(
+define_trace_env_bool_false!(trace_scx_writes_enabled, "VIBEEMU_TRACE_SCX_WRITES_ALL");
+define_trace_env_bool_false!(
     trace_lcd_reg_writes_enabled,
     "VIBEEMU_TRACE_LCD_REG_WRITES_ALL"
 );
-define_env_bool_false!(trace_obj_debug_enabled, "VIBEEMU_TRACE_OBJ_DEBUG");
-define_env_bool_false!(trace_scx_events_enabled, "VIBEEMU_TRACE_SCX_EVENTS");
-define_env_bool_false!(trace_scy_events_enabled, "VIBEEMU_TRACE_SCY_EVENTS");
-define_env_bool_false!(trace_bgp_sample_enabled, "VIBEEMU_TRACE_BGP_SAMPLE");
-define_env_bool_false!(
+define_trace_env_bool_false!(trace_obj_debug_enabled, "VIBEEMU_TRACE_OBJ_DEBUG");
+define_trace_env_bool_false!(trace_scx_events_enabled, "VIBEEMU_TRACE_SCX_EVENTS");
+define_trace_env_bool_false!(trace_scy_events_enabled, "VIBEEMU_TRACE_SCY_EVENTS");
+define_trace_env_bool_false!(trace_bgp_sample_enabled, "VIBEEMU_TRACE_BGP_SAMPLE");
+define_trace_env_bool_false!(
     trace_window_event_gate_enabled,
     "VIBEEMU_TRACE_WINDOW_EVENT_GATE"
 );
-define_env_bool_false!(trace_bg_fetcher_enabled, "VIBEEMU_TRACE_BG_FETCHER");
-define_env_bool_false!(trace_dmg_right_obj_enabled, "VIBEEMU_TRACE_DMG_RIGHT_OBJ");
+define_trace_env_bool_false!(trace_bg_fetcher_enabled, "VIBEEMU_TRACE_BG_FETCHER");
+define_trace_env_bool_false!(trace_dmg_right_obj_enabled, "VIBEEMU_TRACE_DMG_RIGHT_OBJ");
 define_env_bool_false!(
     dmg_bg_window_use_pop_schedule_enabled,
     "VIBEEMU_DMG_BG_WINDOW_USE_POP_SCHEDULE"
 );
-define_env_bool_false!(trace_win_map_fetch_enabled, "VIBEEMU_TRACE_WIN_MAP_FETCH");
-define_env_bool_false!(trace_scy_render_enabled, "VIBEEMU_TRACE_SCY_RENDER");
-define_env_bool_false!(trace_dmg_bg_output_enabled, "VIBEEMU_TRACE_DMG_BG_OUTPUT");
+define_trace_env_bool_false!(trace_win_map_fetch_enabled, "VIBEEMU_TRACE_WIN_MAP_FETCH");
+define_trace_env_bool_false!(trace_scy_render_enabled, "VIBEEMU_TRACE_SCY_RENDER");
+define_trace_env_bool_false!(trace_dmg_bg_output_enabled, "VIBEEMU_TRACE_DMG_BG_OUTPUT");
 
 macro_rules! define_trace_line_filter {
     ($func:ident, $key:literal) => {
+        #[cfg(feature = "ppu-trace")]
         fn $func(ly: u8) -> bool {
             if ly as usize >= SCREEN_HEIGHT {
                 return false;
@@ -1154,6 +1189,12 @@ macro_rules! define_trace_line_filter {
             });
             set[ly as usize]
         }
+
+        #[cfg(not(feature = "ppu-trace"))]
+        #[inline]
+        fn $func(_ly: u8) -> bool {
+            true
+        }
     };
 }
 
@@ -1168,6 +1209,7 @@ define_trace_line_filter!(
 
 macro_rules! define_trace_frame_filter {
     ($func:ident, $min_key:literal, $max_key:literal) => {
+        #[cfg(feature = "ppu-trace")]
         fn $func(frame: u64) -> bool {
             use std::sync::OnceLock;
             static FRAME_MIN: OnceLock<Option<u64>> = OnceLock::new();
@@ -1185,6 +1227,12 @@ macro_rules! define_trace_frame_filter {
             {
                 return false;
             }
+            true
+        }
+
+        #[cfg(not(feature = "ppu-trace"))]
+        #[inline]
+        fn $func(_frame: u64) -> bool {
             true
         }
     };
@@ -1346,6 +1394,7 @@ impl Ppu {
             oam_dma_current_dest: 0xA1,
             frame_ready: false,
             stat_irq_line: false,
+            stat_irq_dirty: true,
             dmg_mode2_vblank_irq_pending: false,
             cgb_line153_ly0_triggered: false,
             frame_counter: 0,
@@ -1462,6 +1511,7 @@ impl Ppu {
     fn set_mode(&mut self, new_mode: u8) {
         let old_mode = self.mode;
         self.mode = new_mode;
+        self.stat_irq_dirty = true;
 
         if new_mode == MODE_OAM {
             self.sprite_count = 0;
@@ -4360,6 +4410,7 @@ impl Ppu {
         self.lcdc & 0x80 != 0
     }
 
+    #[inline]
     fn decode_cgb_color(lo: u8, hi: u8) -> u32 {
         let raw = ((hi as u16) << 8) | lo as u16;
         let r = ((raw & 0x1F) as u8) << 3 | ((raw & 0x1F) as u8 >> 2);
@@ -4637,7 +4688,17 @@ impl Ppu {
             {
                 coincide = false;
             }
-            self.lyc_eq_ly = coincide;
+            if self.lyc_eq_ly != coincide {
+                self.lyc_eq_ly = coincide;
+                self.stat_irq_dirty = true;
+            }
+        }
+    }
+
+    #[inline]
+    fn refresh_stat_irq_if_dirty(&mut self, if_reg: &mut u8) {
+        if self.stat_irq_dirty || self.dmg_mode2_vblank_irq_pending {
+            self.update_stat_irq(if_reg);
         }
     }
 
@@ -5387,7 +5448,10 @@ impl Ppu {
                     );
                 }
             }
-            0xFF41 => self.stat = (self.stat & 0x07) | (val & 0xF8),
+            0xFF41 => {
+                self.stat = (self.stat & 0x07) | (val & 0xF8);
+                self.stat_irq_dirty = true;
+            }
             0xFF42 => {
                 let old = self.scy;
                 if self.should_record_mode3_reg_event() {
@@ -6248,7 +6312,7 @@ impl Ppu {
                 self.mode_clock = 0;
                 self.win_line_counter = 0;
                 self.dmg_mode2_vblank_irq_pending = false;
-                self.update_stat_irq(if_reg);
+                self.refresh_stat_irq_if_dirty(if_reg);
                 continue;
             }
 
@@ -6266,7 +6330,7 @@ impl Ppu {
                     } else {
                         self.dmg_startup_cycle = Some(new_cycle);
                     }
-                    self.update_stat_irq(if_reg);
+                    self.refresh_stat_irq_if_dirty(if_reg);
                     continue;
                 } else {
                     self.dmg_startup_cycle = None;
@@ -6303,6 +6367,7 @@ impl Ppu {
                             self.set_mode(MODE_VBLANK);
                             if self.is_dmg_mode() {
                                 self.dmg_mode2_vblank_irq_pending = true;
+                                self.stat_irq_dirty = true;
                             }
                             *if_reg |= 0x01;
                             #[cfg(feature = "ppu-trace")]
@@ -6461,7 +6526,7 @@ impl Ppu {
                 }
             }
 
-            self.update_stat_irq(if_reg);
+            self.refresh_stat_irq_if_dirty(if_reg);
         }
         hblank_triggered
     }
@@ -6600,7 +6665,69 @@ impl Ppu {
         } else {
             None
         };
-        use std::collections::VecDeque;
+        struct BgFifo {
+            data: [u8; 32],
+            head: usize,
+            len: usize,
+        }
+
+        impl BgFifo {
+            #[inline]
+            fn new() -> Self {
+                Self {
+                    data: [0; 32],
+                    head: 0,
+                    len: 0,
+                }
+            }
+
+            #[inline]
+            fn len(&self) -> usize {
+                self.len
+            }
+
+            #[inline]
+            fn is_empty(&self) -> bool {
+                self.len == 0
+            }
+
+            #[inline]
+            fn clear(&mut self) {
+                self.head = 0;
+                self.len = 0;
+            }
+
+            #[inline]
+            fn push_back(&mut self, value: u8) {
+                if self.len >= self.data.len() {
+                    return;
+                }
+                let tail = (self.head + self.len) % self.data.len();
+                self.data[tail] = value;
+                self.len += 1;
+            }
+
+            #[inline]
+            fn push_front(&mut self, value: u8) {
+                if self.len >= self.data.len() {
+                    return;
+                }
+                self.head = (self.head + self.data.len() - 1) % self.data.len();
+                self.data[self.head] = value;
+                self.len += 1;
+            }
+
+            #[inline]
+            fn pop_front(&mut self) -> Option<u8> {
+                if self.len == 0 {
+                    return None;
+                }
+                let value = self.data[self.head];
+                self.head = (self.head + 1) % self.data.len();
+                self.len -= 1;
+                Some(value)
+            }
+        }
         const FETCH_GET_TILE_T1: u8 = 0;
         const FETCH_GET_TILE_T2: u8 = 1;
         const FETCH_GET_LO_T1: u8 = 2;
@@ -6671,7 +6798,7 @@ impl Ppu {
             max_t = max_t.max(t_schedule[SCREEN_WIDTH - 1].saturating_add(64));
         }
 
-        let mut bg_fifo: VecDeque<u8> = VecDeque::with_capacity(32);
+        let mut bg_fifo = BgFifo::new();
         for _ in 0..8 {
             bg_fifo.push_back(0);
         }
@@ -7753,6 +7880,7 @@ impl Ppu {
             *if_reg |= 0x02;
         }
         self.stat_irq_line = current || glitch;
+        self.stat_irq_dirty = false;
     }
 }
 
