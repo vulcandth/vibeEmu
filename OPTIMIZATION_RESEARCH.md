@@ -828,7 +828,7 @@ existing trace workflows behind the feature flag.
 
 ---
 
-## Priority-Ranked Summary
+## Priority-Ranked Summary (Tier 1 — Completed)
 
 | Priority | Subsystem | Optimization | Est. Impact |
 |:---:|---|---|---|
@@ -842,6 +842,332 @@ existing trace workflows behind the feature flag.
 | 8 | PPU | ✅ VecDeque → fixed ring buffer (#19) | ~1–2 % |
 | 9 | General | ✅ PGO + LTO (#20, #21) | ~10–20 % overall |
 | 10 | MMU | ✅ Inline DMA check + env flag cleanup (#15, #16) | ~1 % |
+
+---
+
+## Tier 2 — Post-Optimization Hotspot Analysis (2025-02-25)
+
+After all Tier 1 optimizations, the profile was re-measured under
+identical conditions. The top-10 self-time symbols are now:
+
+| Overhead | Symbol |
+|---:|---|
+| 27–38 % | `Ppu::step` |
+| 12–16 % | `Ppu::render_scanline` |
+| 6–9.5 % | `Apu::tick_steps` |
+| 6–7.6 % | `Ppu::dmg_bgp_for_pixel` |
+| 3.7–5 % | `Mmu::dma_step` |
+| 4.4–5.6 % | `SquareChannel::tick_1mhz_batch` |
+| 3.9–5.2 % | `Ppu::dmg_lcdc_for_bg_fetch_t` |
+| 2.3–7.3 % | `Apu::step` |
+| 3.6–3.9 % | `Cpu::tick` |
+| 1.4–3.7 % | `Apu::tick_frame_sequencer_steps` |
+
+The following new optimizations target these remaining hotspots.
+
+---
+
+### 15. Zero-Event BG Scanline Fast Path
+
+**Target functions:** `render_dmg_bg_window_scanline_simple` (within
+`render_scanline` 12–16 %), `dmg_bgp_for_pixel` (6–7.6 %),
+`dmg_lcdc_for_bg_fetch_t` (3.9–5.2 %)
+
+**Estimated impact: HIGH — 8–12 % of total runtime**
+
+In `render_dmg_bg_window_scanline_simple`
+([ppu.rs L6534](crates/vibe-emu-core/src/ppu.rs#L6534)), the per-pixel
+BG loop calls 5+ event-scanning functions per pixel:
+
+- `dmg_bg_fetch_base_t_for_pixel(x)` — timing table + backshift
+- `dmg_lcdc_for_bg_fetch_t(fetch_t)` — called **3 times** per pixel
+  (`lcdc_b`, `lcdc_lo`, `lcdc_hi`)
+- `dmg_scx_for_mode3_t(fetch_t)` — scans SCX event array
+- `dmg_scy_for_mode3_t(fetch_t)` — scans SCY event array
+- `dmg_bg_color_for_pixel(x)` → `dmg_bgp_for_pixel(x)` — scans BGP
+  event array
+
+That is ~1 120 function calls per scanline × 144 visible lines =
+~161 000 per frame, but the vast majority return trivially because
+**all event counts are 0** on most lines.
+
+**Fix:** Add a dedicated fast path at the top of the rendering decision
+for the common case where _all_ mid-scanline event counts are zero:
+
+```rust
+if self.mode3_lcdc_event_count == 0
+    && self.mode3_scx_event_count == 0
+    && self.mode3_scy_event_count == 0
+    && self.dmg_bgp_event_count == 0
+{
+    // Hoist all register values to scalars — they are constant
+    // for this entire line.
+    let lcdc = self.mode3_lcdc_base;
+    let scx  = self.mode3_scx_base as u16;
+    let scy  = self.mode3_scy_base as u16;
+    let tile_map_base = if (lcdc & 0x08) != 0 { BG_MAP_1_BASE } else { BG_MAP_0_BASE };
+    let unsigned = (lcdc & 0x10) != 0;
+    // Tight inner loop: zero per-pixel function calls
+    for x in 0..SCREEN_WIDTH as u16 {
+        // Direct VRAM lookups + color table indexing only.
+        // ...
+    }
+}
+```
+
+When all event counts are zero, no mid-scanline register writes
+occurred during MODE 3. The base register values are correct for the
+entire line. The existing rendering logic already returns these base
+values for the zero-event case — this optimization simply hoists that
+determination out of the per-pixel loop.
+
+**Status:** Not started.
+
+---
+
+### 16. `dma_step` Early Return When DMA Inactive
+
+**Target function:** `Mmu::dma_step` (3.7–5 %)
+
+**Estimated impact: HIGH — 3.5–4.5 % of total runtime**
+
+In `dma_step` ([mmu.rs L1109](crates/vibe-emu-core/src/mmu.rs#L1109)),
+the function loops once per cycle even when no DMA is active:
+
+```rust
+pub fn dma_step(&mut self, cycles: u16) {
+    for _ in 0..cycles {
+        self.ppu.oam_dma_current_dest = 0xA1;   // Always set
+        if self.pending_delay > 0 { /* ... */ }
+        if self.dma_cycles == 0 { continue; }    // Just continues!
+        // actual DMA work...
+    }
+}
+```
+
+When `dma_cycles == 0 && pending_delay == 0` (>99 % of frames), the
+loop body does nothing except set `current_dest = 0xA1` and
+`continue`. OAM DMA is only active for ~640 dots out of ~70 000 per
+frame.
+
+**Fix:** Add an early return:
+
+```rust
+pub fn dma_step(&mut self, cycles: u16) {
+    if self.dma_cycles == 0 && self.pending_delay == 0 {
+        self.ppu.oam_dma_current_dest = 0xA1;
+        return;
+    }
+    // ... existing loop
+}
+```
+
+When `dma_cycles == 0 && pending_delay == 0`, the existing loop body
+only sets `current_dest = 0xA1` and continues. The early return
+produces identical observable state. `pending_dma` is set via `take()`
+only when `pending_delay` transitions to 0, so if it is already 0
+the take is a no-op.
+
+**Status:** Not started.
+
+---
+
+### 17. MODE_OAM Skip-Ahead in `Ppu::step`
+
+**Target function:** `Ppu::step` (27–38 %)
+
+**Estimated impact: HIGH — 2–3.5 % of total runtime**
+
+The existing HBLANK/VBLANK batch-skip logic
+([ppu.rs L6269](crates/vibe-emu-core/src/ppu.rs#L6269)) falls through
+to `_ => {}` for MODE_OAM, meaning OAM scan (80 dots per scanline) is
+processed one dot at a time through the full
+`tick_stat_mode_delay` / `update_lyc_compare` / `tick_pending_reg_writes`
+/ mode dispatch chain.
+
+During MODE_OAM, when `stat_mode_delay == 0 && pending_reg_write_count == 0`:
+
+- `tick_stat_mode_delay()` is a no-op
+- `update_lyc_compare()` is a no-op (LY is constant mid-mode, LYC
+  cannot change without pending reg writes)
+- `tick_pending_reg_writes()` is a no-op
+- `oam_scan_advance()` already handles arbitrary `mode_clock` catch-up
+  via its internal `while self.oam_scan_dot < limit` loop
+
+**Fix:** Extend the batch-skip block:
+
+```rust
+MODE_OAM => {
+    let next_event = MODE2_CYCLES.saturating_sub(self.mode_clock);
+    if next_event > 0 {
+        increment = next_event.min(remaining);
+    }
+}
+```
+
+This reduces 80 loop iterations to 1–2 per scanline (144 scanlines ×
+~78 iterations saved = ~11 200 iterations per frame).
+
+`oam_scan_advance()` is designed to process all pending OAM entries up
+to the current `mode_clock` in a single call. When no register writes
+are pending, no external state change can affect OAM scan results.
+DMA interleaving is handled separately (when `dma_active()`, the code
+already forces per-dot stepping).
+
+**Status:** Not started.
+
+---
+
+### 18. APU Inactive Channel Pipeline Skip
+
+**Target functions:** `Apu::tick_steps` (6–9.5 %),
+`SquareChannel::tick_1mhz_batch` (4.4–5.6 %)
+
+**Estimated impact: HIGH — 2–4 % of total runtime**
+
+In `tick_steps` ([apu.rs L2567](crates/vibe-emu-core/src/apu.rs#L2567)),
+every chunk unconditionally calls `tick_1mhz_batch` on all 4 channels:
+
+```rust
+self.ch1.tick_1mhz_batch(chunk);
+self.ch2.tick_1mhz_batch(chunk);
+self.ch3.tick_1mhz_batch(chunk);
+self.ch4.tick_1mhz_batch(chunk);
+```
+
+Each `tick_1mhz_batch` calls `compute_output()` (duty table lookup +
+multiply), then assigns to 3 pipeline stages. For disabled channels
+where the pipeline is already flushed to 0, this is pure wasted work.
+
+Most games use 1–3 active channels, so 1–3 channels are continuously
+ticked for no effect.
+
+**Fix:** Track a per-channel `pipeline_active` flag. When a channel is
+disabled and all three pipeline stages are 0, skip `tick_1mhz_batch`.
+Clear the flag on channel enable/trigger:
+
+```rust
+if self.ch1.pipeline_active { self.ch1.tick_1mhz_batch(chunk); }
+if self.ch2.pipeline_active { self.ch2.tick_1mhz_batch(chunk); }
+if self.ch3.pipeline_active { self.ch3.tick_1mhz_batch(chunk); }
+if self.ch4.pipeline_active { self.ch4.tick_1mhz_batch(chunk); }
+```
+
+When `!enabled || !dac_enabled`, `compute_output()` always returns 0.
+After `tick_1mhz_batch` is called with `ticks >= 3`, all pipeline
+stages are 0. Subsequent calls are idempotent. The flag is
+conservatively cleared on any enable/trigger event.
+
+**Status:** Not started.
+
+---
+
+### 19. Frame Sequencer: Skip to Next DIV Edge
+
+**Target function:** `Apu::tick_frame_sequencer_steps` (1.4–3.7 %)
+
+**Estimated impact: MEDIUM — 1.5–3 % of total runtime**
+
+`tick_frame_sequencer_steps`
+([apu.rs L1633](crates/vibe-emu-core/src/apu.rs#L1633)) iterates
+per-CPU-cycle checking for falling/rising edges of DIV bit 12 (or 13
+in double speed):
+
+```rust
+for _ in 0..steps {
+    let prev_bit = (div >> bit) & 1;
+    div = div.wrapping_add(1);
+    let curr_bit = (div >> bit) & 1;
+    if prev_bit == 1 && curr_bit == 0 { self.handle_div_event(); }
+    if prev_bit == 0 && curr_bit == 1 { self.handle_div_rising_edge(); }
+}
+```
+
+With edges occurring every 4 096 or 8 192 cycles, the loop runs ~4
+iterations per M-cycle but finds an edge only once every ~1 024
+M-cycles.
+
+**Fix:** Calculate the distance to the next edge arithmetically:
+
+```rust
+let mask = (1u16 << (bit + 1)) - 1;
+let phase = div & mask;
+let half = 1u16 << bit;
+let next_falling = half.wrapping_sub(phase) & mask;
+let next_rising  = /* symmetric calculation */;
+let next_edge = next_falling.min(next_rising);
+if next_edge > steps { return; }
+// advance to edge, handle it, check for more
+```
+
+This is O(1) for the common no-event case and O(edge_count) otherwise.
+Edge positions are fully deterministic from the start value and step
+count.
+
+**Status:** Not started.
+
+---
+
+### 20. Timer Batch When No Edge Imminent
+
+**Target function:** `Timer::step` (~2 %)
+
+**Estimated impact: MEDIUM — 1.5–2.5 % of total runtime**
+
+`Timer::step` ([timer.rs L93](crates/vibe-emu-core/src/timer.rs#L93))
+has a fast path for disabled timer but loops per-cycle when enabled.
+The timer increments TIMA only on falling edges of a selected DIV bit
+(bit 3, 5, 7, or 9). This edge occurs every 8–512 CPU cycles. With
+`cycles` typically 4, most calls iterate 4 times finding no edge.
+
+**Fix:** When `pending_reload.is_none() && tma_latch.is_none()`,
+calculate the distance to the next falling edge arithmetically. If
+`cycles < distance`, advance DIV by `cycles` and update
+`last_signal` in O(1):
+
+```rust
+if self.pending_reload.is_none() && self.tma_latch.is_none() {
+    let tac_bit = [9, 3, 5, 7][(self.tac & 0x03) as usize];
+    let mask = (1u16 << (tac_bit + 1)) - 1;
+    let phase = self.div & mask;
+    let half = 1u16 << tac_bit;
+    let next_falling = if phase < half {
+        half - phase
+    } else {
+        (mask + 1) - phase + half
+    };
+    if next_falling as u16 > cycles {
+        self.div = self.div.wrapping_add(cycles);
+        self.last_signal = self.signal();
+        return;
+    }
+}
+```
+
+When there are no pending reloads or TMA latches, the only side effect
+is TIMA increment on a specific DIV bit edge. The `pending_reload` and
+`tma_latch` guards preserve overflow/reload timing quirks.
+
+**Status:** Not started.
+
+---
+
+### Tier 2 Priority Summary
+
+| Priority | # | Subsystem | Optimization | Est. Savings |
+|:---:|:---:|---|---|---|
+| 1 | 15 | PPU | Zero-event BG scanline fast path | 8–12 % |
+| 2 | 16 | MMU | `dma_step` early return when inactive | 3.5–4.5 % |
+| 3 | 17 | PPU | MODE_OAM skip-ahead in `Ppu::step` | 2–3.5 % |
+| 4 | 18 | APU | Inactive channel pipeline skip | 2–4 % |
+| 5 | 19 | APU | Frame sequencer edge skip | 1.5–3 % |
+| 6 | 20 | Timer | Timer batch when no edge imminent | 1.5–2.5 % |
+
+**Combined estimated savings: 19–30 % of remaining runtime.**
+
+Items 15–18 are all independent and can be implemented in parallel.
+Items 19 and 20 use the same arithmetic pattern (skip ahead to next
+bit edge) and could share a helper function.
 
 ---
 

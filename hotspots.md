@@ -130,8 +130,103 @@ Call graphs include `Ppu::env_bool_or_false -> std::env::_var -> getenv` under r
 3. Remove or cache runtime env lookups from rendering paths.
 4. Revisit `Cpu::tick` fan-out overhead and MMU DMA/read micro-costs.
 
+## Post-Optimization Results (2025-02-25)
+
+All 14 optimizations from `OPTIMIZATION_RESEARCH.md` were applied on the `optimizations` branch.
+All existing tests pass. The same three workloads were re-profiled with identical `perf` parameters.
+
+### Wall-time improvement
+
+| Workload | Baseline samples | Optimized samples | Baseline wall-time | Optimized wall-time | Speedup |
+|---|---:|---:|---:|---:|---:|
+| `cpu_instrs_rom` | 3 534 | 2 408 | 5.80 s | 4.47 s | **~23%** |
+| UI headless | 746 | 514 | — | — | ~31% fewer samples |
+| Mobile headless | 761 | 524 | — | — | ~31% fewer samples |
+
+### `vibe-emu-core` (cpu_instrs_rom) — Before vs After
+
+| Symbol | Before | After | Delta |
+|---|---:|---:|---:|
+| `Ppu::step` | 26.40% | 27.49% | +1.1 pp (flat; others shrank around it) |
+| `Ppu::render_scanline` | 6.54% | 11.79% | +5.3 pp (inlined helpers now attributed here) |
+| `Apu::tick_steps` (was `Apu::tick`) | 6.31% | 9.39% | +3.1 pp (batched tick work consolidated) |
+| `Ppu::dmg_bgp_for_pixel` (was `dmg_bg_color_for_pixel`) | 5.66% | 7.64% | +2.0 pp (cached palette; renamed) |
+| `Apu::step` | 6.31% | 7.31% | +1.0 pp |
+| `Mmu::dma_step` | — | 4.98% | newly visible |
+| `SquareChannel::tick_1mhz_batch` | — | 4.90% | new batched function |
+| `Ppu::dmg_lcdc_for_bg_fetch_t` | — | 3.90% | newly visible |
+| `Apu::tick_frame_sequencer_steps` | — | 3.74% | new batched function |
+| `Cpu::tick` | — | 3.65% | down from ~6% |
+| `Cpu::step` | — | 3.32% | marginal |
+| `Apu::clock_wave_channel_2mhz_inner` | — | 2.53% | newly visible |
+| `Timer::step` | — | 2.08% | stable |
+| `Mmu::read_byte` | — | 1.74% | reduced |
+| **`Apu::refresh_pcm_regs`** | **17.20%** | **<0.5%** | **eliminated as hotspot** |
+| **`Ppu::dmg_bg_en_for_pixel`** | ~4% | **<0.5%** | **eliminated** |
+| **env lookups in render path** | visible | **gone** | **eliminated** |
+
+### `vibe-emu-ui` (headless) — After optimization
+
+| Overhead | Symbol |
+|---:|---|
+| 38.33% | `Ppu::step` |
+| 13.04% | `Ppu::render_scanline` |
+| 9.53% | `Apu::tick_steps` |
+| 6.03% | `Ppu::dmg_bgp_for_pixel` |
+| 5.64% | `SquareChannel::tick_1mhz_batch` |
+| 4.86% | `Ppu::dmg_lcdc_for_bg_fetch_t` |
+| 4.09% | `Cpu::step` |
+| 3.89% | `Cpu::tick` |
+| 3.70% | `Mmu::dma_step` |
+| 2.33% | `Apu::step` |
+
+`refresh_pcm_regs` and `dmg_bg_en_for_pixel` no longer appear. Frontend overhead remains negligible.
+
+### `vibe-emu-mobile` path — After optimization
+
+| Overhead | Symbol |
+|---:|---|
+| 36.26% | `Ppu::step` |
+| 16.41% | `Ppu::render_scanline` |
+| 6.68% | `Ppu::dmg_bgp_for_pixel` |
+| 6.30% | `Apu::tick_steps` |
+| 5.15% | `Ppu::dmg_lcdc_for_bg_fetch_t` |
+| 4.39% | `SquareChannel::tick_1mhz_batch` |
+| 3.82% | `Apu::step` |
+| 3.63% | `Cpu::tick` |
+| 3.63% | `Mmu::dma_step` |
+| 2.67% | `Apu::tick_frame_sequencer_steps` |
+| 2.67% | `Cpu::step` |
+| 2.48% | `Mmu::read_byte` |
+| 2.29% | `Timer::step` |
+
+No `vibe-emu-mobile`-specific hotspot surfaces; the mobile adapter path remains lightweight.
+
+### Key takeaways
+
+1. **`refresh_pcm_regs` eliminated** — the lazy dirty-flag pattern removed the
+   second-largest hotspot entirely (17 % → <0.5 %).
+2. **Environment lookups gone** — cached via `OnceLock`, no longer visible in profiles.
+3. **`dmg_bg_en_for_pixel` fast path** — event_count == 0 shortcut dropped it below
+   measurement noise.
+4. **~23 % wall-time speedup** on the cpu_instrs_rom workload (5.80 s → 4.47 s).
+5. **PPU remains the dominant cost center** — `Ppu::step` + `render_scanline` +
+   pixel helpers still account for ~50 % of self-time across all workloads. Further
+   PPU gains would require structural changes (scanline caching, tile-row rendering).
+6. **APU work is now spread across batched functions** — `tick_steps`,
+   `tick_frame_sequencer_steps`, `SquareChannel::tick_1mhz_batch`, and
+   `clock_wave_channel_2mhz_inner` together total ~20 %, but each is individually
+   smaller than the old monolithic paths.
+7. **Next optimization targets** (if pursued):
+   - `Ppu::step` inner loop (27–38 %) — mode-3 pixel FIFO is the remaining hot path.
+   - `Ppu::render_scanline` (12–16 %) — tile-row caching or SIMD pixel conversion.
+   - APU batched tick functions (~20 % combined) — further coarsening or conditional
+     skip when channels are inactive.
+   - `Timer::step` (2 %) — skip-ahead when timer is disabled (optimize.md Tier 2.3).
+
 ## Confidence and limitations
 
 - Confidence is high for relative user-space hotspots in emulator runtime paths.
 - Confidence is lower for kernel/CPU microarchitectural diagnosis due unavailable hardware counters in this container.
 - Percentages will vary with ROM and mode (DMG/CGB, audio mix, UI vs headless), but hotspot ranking is very consistent across the measured runs.
+- Post-optimization percentages were collected under identical conditions to baseline, enabling direct comparison.
