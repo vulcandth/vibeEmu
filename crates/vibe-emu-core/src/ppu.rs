@@ -383,6 +383,10 @@ pub struct Ppu {
     bgpd: [u8; PAL_RAM_SIZE],
     obpi: u8,
     obpd: [u8; PAL_RAM_SIZE],
+    cgb_bg_color_table: [u32; 32],
+    cgb_obj_color_table: [u32; 32],
+    dmg_bg_color_table: [u32; 1024],
+    dmg_obj_color_table: [[u32; 4]; 2],
     /// Object priority mode register (OPRI)
     opri: u8,
 
@@ -1086,7 +1090,7 @@ fn parse_trace_line_set(spec: &str) -> [bool; SCREEN_HEIGHT] {
 }
 
 fn trace_obj_debug_line_enabled(ly: u8) -> bool {
-    if !env_bool_or_false("VIBEEMU_TRACE_OBJ_DEBUG") {
+    if !trace_obj_debug_enabled() {
         return false;
     }
     use std::sync::OnceLock;
@@ -1111,6 +1115,23 @@ define_env_bool_false!(
     trace_lcd_reg_writes_enabled,
     "VIBEEMU_TRACE_LCD_REG_WRITES_ALL"
 );
+define_env_bool_false!(trace_obj_debug_enabled, "VIBEEMU_TRACE_OBJ_DEBUG");
+define_env_bool_false!(trace_scx_events_enabled, "VIBEEMU_TRACE_SCX_EVENTS");
+define_env_bool_false!(trace_scy_events_enabled, "VIBEEMU_TRACE_SCY_EVENTS");
+define_env_bool_false!(trace_bgp_sample_enabled, "VIBEEMU_TRACE_BGP_SAMPLE");
+define_env_bool_false!(
+    trace_window_event_gate_enabled,
+    "VIBEEMU_TRACE_WINDOW_EVENT_GATE"
+);
+define_env_bool_false!(trace_bg_fetcher_enabled, "VIBEEMU_TRACE_BG_FETCHER");
+define_env_bool_false!(trace_dmg_right_obj_enabled, "VIBEEMU_TRACE_DMG_RIGHT_OBJ");
+define_env_bool_false!(
+    dmg_bg_window_use_pop_schedule_enabled,
+    "VIBEEMU_DMG_BG_WINDOW_USE_POP_SCHEDULE"
+);
+define_env_bool_false!(trace_win_map_fetch_enabled, "VIBEEMU_TRACE_WIN_MAP_FETCH");
+define_env_bool_false!(trace_scy_render_enabled, "VIBEEMU_TRACE_SCY_RENDER");
+define_env_bool_false!(trace_dmg_bg_output_enabled, "VIBEEMU_TRACE_DMG_BG_OUTPUT");
 
 macro_rules! define_trace_line_filter {
     ($func:ident, $key:literal) => {
@@ -1254,7 +1275,7 @@ impl Ppu {
         dmg_revision: DmgRevision,
         cgb_revision: CgbRevision,
     ) -> Self {
-        Self {
+        let mut ppu = Self {
             vram: [[0; VRAM_BANK_SIZE]; 2],
             vram_bank: 0,
             oam: [0; OAM_SIZE],
@@ -1283,6 +1304,10 @@ impl Ppu {
             bgpd: [0; PAL_RAM_SIZE],
             obpi: PAL_UNUSED_BIT,
             obpd: [0; PAL_RAM_SIZE],
+            cgb_bg_color_table: [0; 32],
+            cgb_obj_color_table: [0; 32],
+            dmg_bg_color_table: [0; 1024],
+            dmg_obj_color_table: [[0; 4]; 2],
             opri: 0,
             mode_clock: 0,
             mode: MODE_OAM,
@@ -1366,7 +1391,72 @@ impl Ppu {
             debug_lcd_enable_timer: None,
             #[cfg(feature = "ppu-trace")]
             debug_prev_mode: MODE_OAM,
+        };
+        ppu.refresh_palette_color_tables();
+        ppu
+    }
+
+    fn refresh_cgb_bg_color_table(&mut self) {
+        for palette in 0..8 {
+            for color_id in 0..4 {
+                let ram_off = palette * 8 + color_id * 2;
+                let table_off = palette * 4 + color_id;
+                self.cgb_bg_color_table[table_off] =
+                    Self::decode_cgb_color(self.bgpd[ram_off], self.bgpd[ram_off + 1]);
+            }
         }
+    }
+
+    fn refresh_cgb_obj_color_table(&mut self) {
+        for palette in 0..8 {
+            for color_id in 0..4 {
+                let ram_off = palette * 8 + color_id * 2;
+                let table_off = palette * 4 + color_id;
+                self.cgb_obj_color_table[table_off] =
+                    Self::decode_cgb_color(self.obpd[ram_off], self.obpd[ram_off + 1]);
+            }
+        }
+    }
+
+    fn refresh_dmg_bg_color_table(&mut self) {
+        for bgp in u8::MIN..=u8::MAX {
+            for color_id in 0..4u8 {
+                let shade = Self::dmg_shade(bgp, color_id) as usize;
+                let color = if self.dmg_compat {
+                    self.cgb_bg_color_table[shade]
+                } else {
+                    self.dmg_palette[shade]
+                };
+                let off = ((bgp as usize) << 2) | color_id as usize;
+                self.dmg_bg_color_table[off] = color;
+            }
+        }
+    }
+
+    fn refresh_dmg_obj_color_table(&mut self) {
+        for shade in 0..4 {
+            let color = if self.dmg_compat {
+                self.cgb_obj_color_table[shade]
+            } else {
+                self.dmg_palette[shade]
+            };
+            self.dmg_obj_color_table[0][shade] = color;
+        }
+        for shade in 0..4 {
+            let color = if self.dmg_compat {
+                self.cgb_obj_color_table[4 + shade]
+            } else {
+                self.dmg_palette[shade]
+            };
+            self.dmg_obj_color_table[1][shade] = color;
+        }
+    }
+
+    fn refresh_palette_color_tables(&mut self) {
+        self.refresh_cgb_bg_color_table();
+        self.refresh_cgb_obj_color_table();
+        self.refresh_dmg_bg_color_table();
+        self.refresh_dmg_obj_color_table();
     }
 
     fn set_mode(&mut self, new_mode: u8) {
@@ -1763,7 +1853,7 @@ impl Ppu {
             bias += dmg_mode3_scx_event_push_state_t_adjust();
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
-        if env_bool_or_false("VIBEEMU_TRACE_SCX_EVENTS") && trace_obj_debug_line_enabled(self.ly) {
+        if trace_scx_events_enabled() && trace_obj_debug_line_enabled(self.ly) {
             let first_x = if self.sprite_count > 0 {
                 self.line_sprites[0].x
             } else {
@@ -1979,7 +2069,7 @@ impl Ppu {
             }
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
-        if env_bool_or_false("VIBEEMU_TRACE_SCY_EVENTS") && trace_obj_debug_line_enabled(self.ly) {
+        if trace_scy_events_enabled() && trace_obj_debug_line_enabled(self.ly) {
             let first_x = if self.sprite_count > 0 {
                 self.line_sprites[0].x
             } else {
@@ -2529,10 +2619,7 @@ impl Ppu {
                     sample_x = (sample_x + 2).min(SCREEN_WIDTH - 1);
                 }
             }
-            if env_bool_or_false("VIBEEMU_TRACE_BGP_SAMPLE")
-                && (self.ly == 64 || self.ly == 120)
-                && x <= 16
-            {
+            if trace_bgp_sample_enabled() && (self.ly == 64 || self.ly == 120) && x <= 16 {
                 eprintln!(
                     "BGP_SAMPLE ly={} x={} first_x={} sample_x={} v={:02X}",
                     self.ly,
@@ -3081,6 +3168,9 @@ impl Ppu {
 
     #[inline]
     fn dmg_bg_en_for_pixel(&self, x: usize) -> bool {
+        if self.mode3_lcdc_event_count == 0 {
+            return (self.mode3_lcdc_base & 0x01) != 0;
+        }
         let x = x.min(SCREEN_WIDTH - 1);
         let dmg_mode = self.is_dmg_mode();
         let mut raw_threshold = dmg_bg_en_left_raw_threshold().clamp(0, SCREEN_WIDTH as i16);
@@ -3243,6 +3333,8 @@ impl Ppu {
     /// Set a runtime DMG palette. Colors are in 0x00RRGGBB order.
     pub fn set_dmg_palette(&mut self, pal: [u32; 4]) {
         self.dmg_palette = pal;
+        self.refresh_dmg_bg_color_table();
+        self.refresh_dmg_obj_color_table();
     }
 
     pub fn queue_reg_write(&mut self, addr: u16, value: u8, delay_dots: u8) {
@@ -4395,6 +4487,7 @@ impl Ppu {
         self.obp1 = 0xE0;
 
         self.dmg_compat = true;
+        self.refresh_palette_color_tables();
     }
 
     fn write_palette(slice: &mut [u8], pal: [u16; 4]) {
@@ -4437,8 +4530,7 @@ impl Ppu {
 
     /// Get a CGB background palette color as 0x00RRGGBB.
     pub fn bg_palette_color(&self, palette: usize, color_id: usize) -> u32 {
-        let off = palette * 8 + color_id * 2;
-        Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+        self.cgb_bg_color_table[palette * 4 + color_id]
     }
 
     /// Return a 0x00RRGGBB colour from **OBJ** palette RAM.
@@ -4449,8 +4541,7 @@ impl Ppu {
     /// This is identical to `bg_palette_color` but uses the object-palette
     /// data (OBPD) instead of BGPD.
     pub fn ob_palette_color(&self, palette: usize, color_id: usize) -> u32 {
-        let off = palette * 8 + color_id * 2;
-        Self::decode_cgb_color(self.obpd[off], self.obpd[off + 1])
+        self.cgb_obj_color_table[palette * 4 + color_id]
     }
 
     fn sanitize_palette_index(value: u8) -> u8 {
@@ -4489,34 +4580,23 @@ impl Ppu {
 
     #[inline]
     fn cgb_bg_color_from_color_id(&self, palette: u8, color_id: u8) -> u32 {
-        let off = palette as usize * 8 + color_id as usize * 2;
-        Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+        self.cgb_bg_color_table[palette as usize * 4 + color_id as usize]
     }
 
     #[inline]
     fn cgb_obj_color_from_color_id(&self, palette: u8, color_id: u8) -> u32 {
-        let off = palette as usize * 8 + color_id as usize * 2;
-        Self::decode_cgb_color(self.obpd[off], self.obpd[off + 1])
+        self.cgb_obj_color_table[palette as usize * 4 + color_id as usize]
     }
 
     #[inline]
     fn dmg_bg_color_for_pixel(&self, x: usize, color_id: u8) -> u32 {
         let bgp = self.dmg_bgp_for_pixel(x);
-        let shade = Self::dmg_shade(bgp, color_id);
-        if self.dmg_compat {
-            self.cgb_bg_color_from_color_id(0, shade)
-        } else {
-            self.dmg_palette[shade as usize]
-        }
+        self.dmg_bg_color_table[((bgp as usize) << 2) | color_id as usize]
     }
 
     #[inline]
     fn dmg_obj_color_from_shade(&self, palette: usize, shade: usize) -> u32 {
-        if self.dmg_compat {
-            self.ob_palette_color(palette, shade)
-        } else {
-            self.dmg_palette[shade]
-        }
+        self.dmg_obj_color_table[palette][shade]
     }
 
     #[inline]
@@ -5472,6 +5552,10 @@ impl Ppu {
             0xFF69 => {
                 if self.cgb {
                     Self::write_palette_data_port(&mut self.bgpd, &mut self.bgpi, val);
+                    self.refresh_cgb_bg_color_table();
+                    if self.dmg_compat {
+                        self.refresh_dmg_bg_color_table();
+                    }
                 }
             }
             0xFF6A => {
@@ -5482,6 +5566,10 @@ impl Ppu {
             0xFF6B => {
                 if self.cgb {
                     Self::write_palette_data_port(&mut self.obpd, &mut self.obpi, val);
+                    self.refresh_cgb_obj_color_table();
+                    if self.dmg_compat {
+                        self.refresh_dmg_obj_color_table();
+                    }
                 }
             }
             0xFF6C => {
@@ -5702,11 +5790,21 @@ impl Ppu {
             return;
         }
 
-        self.line_priority.fill(false);
-        self.line_color_zero.fill(false);
-        self.cgb_line_obj_enabled.fill(self.lcdc & 0x02 != 0);
+        let row_base = self.ly as usize * SCREEN_WIDTH;
+        let line_has_sprites = self.sprite_count > 0;
+
+        if line_has_sprites {
+            self.line_priority.fill(false);
+            self.line_color_zero.fill(false);
+            self.cgb_line_obj_enabled.fill(self.lcdc & 0x02 != 0);
+        }
 
         let cgb_render = self.is_cgb_native_mode();
+        let dmg_bg_en_const = if !cgb_render && self.mode3_lcdc_event_count == 0 {
+            Some((self.mode3_lcdc_base & 0x01) != 0)
+        } else {
+            None
+        };
 
         let bg_enabled = cgb_render || (self.mode3_lcdc_base & 0x01 != 0);
         let master_priority = !cgb_render || (self.lcdc & 0x01 != 0);
@@ -5717,13 +5815,14 @@ impl Ppu {
         // this color so sprite rendering can overlay on top.
         let cgb_bg_color0 = self.cgb_bg_color_from_color_id(0, 0);
         for x in 0..SCREEN_WIDTH {
-            let idx = self.ly as usize * SCREEN_WIDTH + x;
-            self.framebuffer[idx] = if cgb_render {
+            self.framebuffer[row_base + x] = if cgb_render {
                 cgb_bg_color0
             } else {
                 self.dmg_bg_color_for_pixel(x, 0)
             };
-            self.line_color_zero[x] = true;
+            if line_has_sprites {
+                self.line_color_zero[x] = true;
+            }
         }
 
         let mut window_line_active_for_continuity = false;
@@ -5769,10 +5868,7 @@ impl Ppu {
                         && window_possible_this_line
                         && self.mode3_wy_event_count > 0)
             };
-            if env_bool_or_false("VIBEEMU_TRACE_WINDOW_EVENT_GATE")
-                && window_event_activity
-                && !window_line_active
-            {
+            if trace_window_event_gate_enabled() && window_event_activity && !window_line_active {
                 eprintln!(
                     "WINGATE frame={} ly={} cgb_render={} use_fetcher={} win_possible={} wx_base={} wy_base={} lcdc_base={:02X} scx_ev={} scy_ev={} wx_ev={} wy_ev={} target={}",
                     self.frame_counter,
@@ -5808,7 +5904,7 @@ impl Ppu {
                     eprintln!("  WINGATE_LCDC i={} t={} val={:02X}", i, ev.t, ev.val);
                 }
             }
-            if env_bool_or_false("VIBEEMU_TRACE_BG_FETCHER") {
+            if trace_bg_fetcher_enabled() {
                 let (scx_t0, scx_v0) = if self.mode3_scx_event_count > 0 {
                     (self.mode3_scx_events[0].t, self.mode3_scx_events[0].val)
                 } else {
@@ -5844,7 +5940,9 @@ impl Ppu {
         }
 
         // sprites
-        let any_obj_enabled = if cgb_render {
+        let any_obj_enabled = if self.sprite_count == 0 {
+            false
+        } else if cgb_render {
             self.cgb_line_obj_enabled.iter().any(|&v| v)
         } else {
             (self.mode3_lcdc_base & 0x02) != 0
@@ -5858,7 +5956,7 @@ impl Ppu {
                 .any(|ev| ((self.mode3_lcdc_base ^ ev.val) & 0x02) != 0);
 
         if any_obj_enabled {
-            if !cgb_render && env_bool_or_false("VIBEEMU_TRACE_DMG_RIGHT_OBJ") {
+            if !cgb_render && trace_dmg_right_obj_enabled() {
                 let right_invalid = self.line_sprites[..self.sprite_count]
                     .iter()
                     .filter(|s| (120..=159).contains(&s.x) && !s.obj_data_valid)
@@ -5915,6 +6013,12 @@ impl Ppu {
             }
             let mut drawn = [false; SCREEN_WIDTH];
             for s in &self.line_sprites[..self.sprite_count] {
+                if s.x <= -8 {
+                    continue;
+                }
+                if !cgb_render && s.x >= SCREEN_WIDTH as i16 {
+                    break;
+                }
                 let line_offset = (self.ly as i16 - s.y).max(0) as usize;
                 let mut first_nonzero_obj_pixel = true;
                 let bank = if cgb_render {
@@ -6040,7 +6144,12 @@ impl Ppu {
                     }
 
                     let bg_zero = !bg_enabled
-                        || (!cgb_render && !self.dmg_bg_en_for_pixel(sx as usize))
+                        || (!cgb_render
+                            && !if let Some(v) = dmg_bg_en_const {
+                                v
+                            } else {
+                                self.dmg_bg_en_for_pixel(sx as usize)
+                            })
                         || self.line_color_zero[sx as usize];
                     if master_priority {
                         if cgb_render && self.line_priority[sx as usize] && !bg_zero {
@@ -6069,8 +6178,7 @@ impl Ppu {
                         let shade = Self::dmg_shade(pal_reg, color_id) as usize;
                         self.dmg_obj_color_from_shade(pal_idx, shade)
                     };
-                    let idx = self.ly as usize * SCREEN_WIDTH + sx as usize;
-                    self.framebuffer[idx] = color;
+                    self.framebuffer[row_base + sx as usize] = color;
                     drawn[sx as usize] = true;
                 }
             }
@@ -6090,8 +6198,34 @@ impl Ppu {
 
         let mut hblank_triggered = false;
         while remaining > 0 {
-            let increment = 1;
-            remaining -= 1;
+            let mut increment = 1u16;
+
+            if self.stat_mode_delay == 0 && self.pending_reg_write_count == 0 {
+                match self.mode {
+                    MODE_HBLANK => {
+                        let mut next_event =
+                            self.mode0_target_cycles.saturating_sub(self.mode_clock);
+                        if self.dmg_hblank_render_pending
+                            && self.mode_clock < dmg_hblank_render_delay()
+                        {
+                            let render_in = dmg_hblank_render_delay() - self.mode_clock;
+                            next_event = next_event.min(render_in);
+                        }
+                        if next_event > 0 {
+                            increment = next_event.min(remaining);
+                        }
+                    }
+                    MODE_VBLANK => {
+                        let next_event = MODE1_CYCLES.saturating_sub(self.mode_clock);
+                        if next_event > 0 {
+                            increment = next_event.min(remaining);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            remaining -= increment;
 
             // Apply STAT mode-bit latency (one tick per dot).
             self.tick_stat_mode_delay();
@@ -6333,6 +6467,13 @@ impl Ppu {
     }
 
     fn render_dmg_bg_window_scanline_simple(&mut self) {
+        let row_base = self.ly as usize * SCREEN_WIDTH;
+        let track_bg_zero = self.sprite_count > 0;
+        let bg_en_const = if self.mode3_lcdc_event_count == 0 {
+            Some((self.mode3_lcdc_base & 0x01) != 0)
+        } else {
+            None
+        };
         let simple_tile_sel_only_line = self.is_dmg_mode()
             && self.sprite_count > 0
             && self.mode3_lcdc_event_count > 0
@@ -6346,7 +6487,11 @@ impl Ppu {
 
         // draw background
         for x in 0..SCREEN_WIDTH as u16 {
-            if !self.dmg_bg_en_for_pixel(x as usize) {
+            if !if let Some(v) = bg_en_const {
+                v
+            } else {
+                self.dmg_bg_en_for_pixel(x as usize)
+            } {
                 continue;
             }
             let fetch_t = self.dmg_bg_fetch_base_t_for_pixel(x as usize);
@@ -6384,10 +6529,11 @@ impl Ppu {
             let hi = self.vram_read_for_render(0, addr_hi);
             let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
             let color = self.dmg_bg_color_for_pixel(x as usize, color_id);
-            let idx_fb = self.ly as usize * SCREEN_WIDTH + x as usize;
-            self.framebuffer[idx_fb] = color;
-            // OBJ priority compares against raw BG color ID zero, not BGP-mapped shade.
-            self.line_color_zero[x as usize] = color_id == 0;
+            self.framebuffer[row_base + x as usize] = color;
+            if track_bg_zero {
+                // OBJ priority compares against raw BG color ID zero, not BGP-mapped shade.
+                self.line_color_zero[x as usize] = color_id == 0;
+            }
         }
 
         // window
@@ -6401,7 +6547,11 @@ impl Ppu {
             let start_x = wx_reg.saturating_sub(7) as u16;
             let window_y = self.win_line_counter as usize;
             for x in start_x..SCREEN_WIDTH as u16 {
-                if !self.dmg_bg_en_for_pixel(x as usize) {
+                if !if let Some(v) = bg_en_const {
+                    v
+                } else {
+                    self.dmg_bg_en_for_pixel(x as usize)
+                } {
                     continue;
                 }
                 let fetch_t = self.dmg_bg_fetch_base_t_for_pixel(x as usize);
@@ -6429,9 +6579,8 @@ impl Ppu {
                 let hi = self.vram_read_for_render(0, addr_hi);
                 let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
                 let color = self.dmg_bg_color_for_pixel(x as usize, color_id);
-                let idx_fb = self.ly as usize * SCREEN_WIDTH + x as usize;
-                self.framebuffer[idx_fb] = color;
-                if (x as usize) < SCREEN_WIDTH {
+                self.framebuffer[row_base + x as usize] = color;
+                if track_bg_zero && (x as usize) < SCREEN_WIDTH {
                     // Same rule for window pixels: priority uses raw color ID.
                     self.line_color_zero[x as usize] = color_id == 0;
                 }
@@ -6444,6 +6593,13 @@ impl Ppu {
     }
 
     fn render_dmg_bg_window_scanline_with_mode3_fetcher(&mut self) {
+        let row_base = self.ly as usize * SCREEN_WIDTH;
+        let track_bg_zero = self.sprite_count > 0;
+        let bg_en_const = if self.mode3_lcdc_event_count == 0 {
+            Some((self.mode3_lcdc_base & 0x01) != 0)
+        } else {
+            None
+        };
         use std::collections::VecDeque;
         const FETCH_GET_TILE_T1: u8 = 0;
         const FETCH_GET_TILE_T2: u8 = 1;
@@ -6453,7 +6609,7 @@ impl Ppu {
         const FETCH_GET_HI_T2: u8 = 5;
         const FETCH_PUSH: u8 = 6;
 
-        let use_pop_schedule = env_bool_or_false("VIBEEMU_DMG_BG_WINDOW_USE_POP_SCHEDULE");
+        let use_pop_schedule = dmg_bg_window_use_pop_schedule_enabled();
 
         let mut t_schedule = [0u16; SCREEN_WIDTH];
         let mut use_t_schedule = true;
@@ -6563,8 +6719,8 @@ impl Ppu {
         let mut window_tile_x = 0u8;
         let mut window_line = self.win_line_counter;
         let mut window_activations = 0u8;
-        let trace_win_map_fetch = env_bool_or_false("VIBEEMU_TRACE_WIN_MAP_FETCH")
-            && trace_obj_debug_line_enabled(self.ly);
+        let trace_win_map_fetch =
+            trace_win_map_fetch_enabled() && trace_obj_debug_line_enabled(self.ly);
         let suppress_wx0_previsible_shortcuts = self.mode3_wx_base == 0
             && self.mode3_wx_event_count > 0
             && self.mode3_wx_events[0].val != 0
@@ -6645,7 +6801,12 @@ impl Ppu {
                             lcd_x.clamp(0, (SCREEN_WIDTH - 1) as i16) as usize
                         };
                         if out_x < SCREEN_WIDTH {
-                            let color_id = if self.dmg_bg_en_for_pixel(out_x) {
+                            let bg_en = if let Some(v) = bg_en_const {
+                                v
+                            } else {
+                                self.dmg_bg_en_for_pixel(out_x)
+                            };
+                            let color_id = if bg_en {
                                 color_id_raw
                             } else {
                                 0
@@ -6679,23 +6840,17 @@ impl Ppu {
                             }
                             let sample_t = sample_t.clamp(0, max_t) as u16;
                             let color = if self.is_cgb_native_mode() {
-                                let off = (color_id as usize) * 2;
-                                Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
+                                self.cgb_bg_color_from_color_id(0, color_id)
                             } else {
                                 let bgp = self.dmg_bgp_for_mode3_t(sample_t);
-                                let shade = Self::dmg_shade(bgp, color_id);
-                                if self.dmg_compat {
-                                    let off = (shade as usize) * 2;
-                                    Self::decode_cgb_color(self.bgpd[off], self.bgpd[off + 1])
-                                } else {
-                                    self.dmg_palette[shade as usize]
-                                }
+                                self.dmg_bg_color_table[((bgp as usize) << 2) | color_id as usize]
                             };
-                            let idx_fb = self.ly as usize * SCREEN_WIDTH + out_x;
-                            self.framebuffer[idx_fb] = color;
-                            // Sprite priority compares against the raw BG color ID
-                            // (color-0 test), not the post-BGP mapped shade.
-                            self.line_color_zero[out_x] = color_id == 0;
+                            self.framebuffer[row_base + out_x] = color;
+                            if track_bg_zero {
+                                // Sprite priority compares against the raw BG color ID
+                                // (color-0 test), not the post-BGP mapped shade.
+                                self.line_color_zero[out_x] = color_id == 0;
+                            }
                             self.dmg_line_lcdc_at_pixel[out_x] = lcdc_cur;
                             visible_written += 1;
                             if trace_win_map_fetch && out_x < 24 {
@@ -6758,9 +6913,7 @@ impl Ppu {
             while scy_event_idx < self.mode3_scy_event_count
                 && self.mode3_scy_events[scy_event_idx].t == t
             {
-                if env_bool_or_false("VIBEEMU_TRACE_SCY_RENDER")
-                    && trace_obj_debug_line_enabled(self.ly)
-                {
+                if trace_scy_render_enabled() && trace_obj_debug_line_enabled(self.ly) {
                     eprintln!(
                         "SCYREN ly={} t={} i={} val={:02X} state={} pos={} fifo={} wx_trig={}",
                         self.ly,
@@ -7142,7 +7295,7 @@ impl Ppu {
             self.win_line_counter = self.win_line_counter.wrapping_add(window_activations);
         }
 
-        if env_bool_or_false("VIBEEMU_TRACE_DMG_BG_OUTPUT")
+        if trace_dmg_bg_output_enabled()
             && trace_frame_window_enabled(self.frame_counter)
             && trace_bg_output_line_enabled(self.ly)
         {
@@ -7188,6 +7341,8 @@ impl Ppu {
         let scx = self.scx;
         let scy = self.scy;
         let ly = self.ly;
+        let row_base = ly as usize * SCREEN_WIDTH;
+        let track_sprite_priority = self.sprite_count > 0;
 
         let mut fifo: VecDeque<FifoPixel> = VecDeque::with_capacity(32);
 
@@ -7386,12 +7541,15 @@ impl Ppu {
                 if discard > 0 {
                     discard -= 1;
                 } else if out_x < SCREEN_WIDTH {
-                    self.cgb_line_obj_enabled[out_x] = (lcdc_cur & 0x02) != 0;
+                    if track_sprite_priority {
+                        self.cgb_line_obj_enabled[out_x] = (lcdc_cur & 0x02) != 0;
+                    }
                     let color = self.cgb_bg_color_from_color_id(pix.palette, pix.color_id);
-                    let idx_fb = ly as usize * SCREEN_WIDTH + out_x;
-                    self.framebuffer[idx_fb] = color;
-                    self.line_priority[out_x] = pix.priority;
-                    self.line_color_zero[out_x] = pix.color_id == 0;
+                    self.framebuffer[row_base + out_x] = color;
+                    if track_sprite_priority {
+                        self.line_priority[out_x] = pix.priority;
+                        self.line_color_zero[out_x] = pix.color_id == 0;
+                    }
                     out_x += 1;
 
                     if window_active {

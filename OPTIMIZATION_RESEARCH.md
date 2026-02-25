@@ -10,7 +10,7 @@ hotspot profile from [hotspots.md](hotspots.md) and the current source in `crate
 
 `Ppu::step` + `render_scanline` + pixel helper functions dominate every profiled workload.
 
-### 1. Eliminate per-scanline `std::env::var` calls in render paths
+### ✅ 1. Eliminate per-scanline `std::env::var` calls in render paths
 
 **Impact: HIGH — immediate, zero-risk win.**
 
@@ -38,7 +38,19 @@ function (which uses `OnceLock` and pays the cost exactly once). The codebase al
 pattern — it just isn't applied uniformly. Alternatively, gate the tracing blocks behind
 `#[cfg(feature = "ppu-trace")]` so they compile out entirely in release builds.
 
-### 2. Single-dot `Ppu::step` loop — batch-friendly fast paths
+**Status:** ✅ Completed on `2026-02-24`.
+
+**Implemented in:** `crates/vibe-emu-core/src/ppu.rs`
+
+**Verification:** Accuracy-preserving refactor only (env flag read caching; no timing/model logic
+changed). Validation run:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### ✅ 2. Single-dot `Ppu::step` loop — batch-friendly fast paths
 
 Currently `Ppu::step` receives a `cycles` count but processes dots one at a time (`while
 remaining > 0 { remaining -= 1; … }`). Every single dot goes through:
@@ -79,7 +91,24 @@ This is the single largest potential speedup. HBLANK is ~204 dots per line, VBLA
 frame with zero accuracy loss, because no observable state changes mid-HBLANK/VBLANK except
 at the boundaries already checked (LY increment, mode transition, LYC compare).
 
-### 3. Cache palette lookups / precompute palette tables
+**Status:** ✅ Completed on `2026-02-24`.
+
+**Implemented in:** `crates/vibe-emu-core/src/ppu.rs`
+
+**Implementation notes:** `Ppu::step` now batches dots in `MODE_HBLANK` and `MODE_VBLANK`
+by skipping directly to the next event boundary (`dmg_hblank_render_delay`,
+`mode0_target_cycles`, or `MODE1_CYCLES`) when safe. The fast path is guarded by
+`stat_mode_delay == 0` and `pending_reg_write_count == 0`, and OAM/TRANSFER remain
+single-dot for accuracy.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### ✅ 3. Cache palette lookups / precompute palette tables
 
 `dmg_bg_color_for_pixel` is called once per pixel (160 per scanline, 144 scanlines per frame =
 23,040 calls/frame). Each call chains through `dmg_bgp_for_pixel` → palette register sample →
@@ -101,7 +130,30 @@ let color = self.bgp_color_table[color_id as usize];
 For CGB mode, `cgb_bg_color_from_color_id` does a palette RAM read + 15-bit→32-bit decode per pixel.
 Precomputing `[u32; 32]` (8 palettes × 4 colors) on BGPD/OBPD writes eliminates this entirely.
 
-### 4. Scanline-level rendering vs. dot-level rendering
+**Status:** ✅ Completed on `2026-02-24`.
+
+**Implemented in:** `crates/vibe-emu-core/src/ppu.rs`
+
+**Implementation notes:** Added cached palette tables for CGB BG/OBJ colors and DMG BG/OBJ
+lookup paths. Hot render paths now use table lookups (`cgb_bg_color_table`,
+`cgb_obj_color_table`, `dmg_bg_color_table`, `dmg_obj_color_table`) instead of per-pixel
+palette RAM decode.
+
+**Cache refresh points:**
+
+- PPU construction / initialization (`new_with_revisions`)
+- DMG runtime palette changes (`set_dmg_palette`)
+- DMG-compat palette bootstrap (`apply_dmg_compatibility_palettes`)
+- CGB palette data writes (`FF69` / `FF6B`)
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### ✅ 4. Scanline-level rendering vs. dot-level rendering
 
 vibeEmu already uses scanline-level rendering as a fast path (`render_dmg_bg_window_scanline_simple`)
 and falls back to the dot-accurate fetcher only when mid-scanline register events occurred. This
@@ -124,7 +176,28 @@ is the right architecture. Potential refinements:
   .fill(false)` and `self.line_color_zero.fill(false)` at the start of every scanline are fine,
   but could be avoided when sprite count is zero (no sprites → no priority compositing needed).
 
-### 5. Sprite rendering: early-exit and sorted iteration
+**Status:** ✅ Completed on `2026-02-24`.
+
+**Implemented in:** `crates/vibe-emu-core/src/ppu.rs`
+
+**Implementation notes:**
+
+- Added per-scanline `row_base` indexing in hot render paths to avoid repeated
+  `self.ly as usize * SCREEN_WIDTH + x` recomputation.
+- Gated sprite-priority scratch maintenance (`line_priority`, `line_color_zero`,
+  `cgb_line_obj_enabled`) to lines with sprites (`sprite_count > 0`).
+- Added an early `any_obj_enabled` fast path for `sprite_count == 0`.
+
+These are rendering-pipeline micro-optimizations only; no timing model behavior changed.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### ✅ 5. Sprite rendering: early-exit and sorted iteration
 
 The sprite loop currently iterates all sprites found during OAM scan. Two established
 optimizations:
@@ -135,12 +208,47 @@ optimizations:
 - **X-sorted sprite list with early termination:** Sprites are already sorted by X position for
   priority. Once a sprite's X position exceeds the right screen edge, break.
 
-### 6. `dmg_bg_en_for_pixel` — reduce per-pixel branching
+**Status:** ✅ Completed on `2026-02-24`.
 
-This function at [ppu.rs L3083](crates/vibe-emu-core/src/ppu.rs#L3083) has extensive
-per-pixel branching on DMG revision, sprite state, and clamping logic. When LCDC hasn't changed
-during mode 3 (`mode3_lcdc_event_count == 0`), BG enable is constant for the entire line —
-compute it once and apply uniformly.
+**Implemented in:** `crates/vibe-emu-core/src/ppu.rs`
+
+**Implementation notes:**
+
+- Sprite rendering is skipped entirely when `sprite_count == 0` (via early
+  `any_obj_enabled = false`).
+- In the sprite render loop, fully off-screen-left sprites (`x <= -8`) are skipped.
+- On non-CGB-native lines (where sprites are X-sorted), rendering now early-breaks
+  when `sprite.x >= SCREEN_WIDTH` since remaining sprites are also off-screen-right.
+
+These changes are control-flow optimizations only; pixel/timing behavior is unchanged.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 6. `dmg_bg_en_for_pixel` — reduce per-pixel branching ✅
+
+Completed in [ppu.rs](crates/vibe-emu-core/src/ppu.rs):
+
+- Added an early fast path in `dmg_bg_en_for_pixel` that returns
+  `mode3_lcdc_base.bit0` immediately when `mode3_lcdc_event_count == 0`.
+- Precomputed a per-scanline DMG BG-enable constant in hot render paths and sprite
+  compositing when no mode3 LCDC events are present, avoiding repeated per-pixel
+  branch-heavy evaluation.
+
+Behavior remains unchanged because this optimization is only active under the
+same condition where BG enable is line-constant by construction (no mode3 LCDC
+events).
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
 
 ---
 
@@ -148,7 +256,7 @@ compute it once and apply uniformly.
 
 `Apu::refresh_pcm_regs` alone is 12–17 %, plus `Apu::tick` and `Apu::step`.
 
-### 7. Lazy PCM register refresh
+### 7. Lazy PCM register refresh ✅
 
 `refresh_pcm_regs` is called on every dot tick inside `Apu::tick`, plus again at the end of
 `Apu::step` after the 2 MHz domain. PCM12/PCM34 are CGB-only registers at FF76/FF77 that
@@ -171,11 +279,26 @@ pub fn read_pcm(&mut self, addr: u16) -> u8 {
 }
 ```
 
-Then mark `pcm_dirty = true` wherever channel output could change (duty edge, envelope
-tick, enable/disable). **This alone could recover most of the 12–17 % overhead**, since
-very few ROMs poll FF76/FF77 at high frequency.
+Completed in [apu.rs](crates/vibe-emu-core/src/apu.rs):
 
-### 8. Batch 1 MHz pipeline ticks
+- Added `pcm_dirty` tracking and lazy refresh helpers (`mark_pcm_dirty`,
+  `ensure_pcm_regs_fresh`).
+- Converted hot-path eager recomputes to dirty marking, including per-dot `Apu::tick`
+  and post-2MHz `Apu::step` updates.
+- PCM-visible accessors now refresh lazily on demand (`read_pcm`, `pcm_mask`,
+  `pcm_samples`).
+
+Behavior remains unchanged for externally visible PCM reads: values are recomputed
+before each access, while avoiding repeated recomputation in non-observing paths.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 8. Batch 1 MHz pipeline ticks ✅
 
 Inside `Apu::tick`, the loop `for _ in 0..ticks { ch1.tick_1mhz(); ch2.tick_1mhz(); …;
 refresh_pcm_regs(); }` runs per-dot. The 1 MHz pipeline is a simple 3-stage shift register
@@ -196,11 +319,26 @@ if ticks >= 3 {
 }
 ```
 
-In practice, since `compute_output()` is pure (no side effects within a single M-cycle
-where the duty position doesn't change), all three samples are identical. The pipeline can
-be set to the same value in O(1).
+Completed in [apu.rs](crates/vibe-emu-core/src/apu.rs):
 
-### 9. Sweep tick optimization
+- Added batched 1 MHz pipeline shift helpers for square, wave, and noise channels.
+- Updated `Apu::tick` to process elapsed dots in chunks that end at the next sweep
+  boundary, preserving exact ordering of pipeline shifts vs. sweep events.
+- Within each chunk, pipeline shifting is done in O(1) with equivalent final
+  stage values, instead of per-dot `tick_1mhz()` calls.
+
+Behavior remains unchanged because chunking is bounded by sweep event boundaries,
+and each chunk preserves the same sample source/state ordering as the previous
+per-dot loop.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 9. Sweep tick optimization ✅
 
 Inside the `Apu::tick` dot loop, sweep is conditionally ticked based on `lf_div_counter %
 divisor`. This modulo operation happens every dot. Replace with a countdown:
@@ -213,9 +351,26 @@ if self.sweep_countdown == 0 {
 }
 ```
 
-Or better: compute how many sweep ticks occur in the batch and apply them at once.
+Completed in [apu.rs](crates/vibe-emu-core/src/apu.rs):
 
-### 10. Sample generation — avoid per-CPU-cycle loop
+- Added persistent `sweep_dot_countdown` state to schedule sweep ticks with
+  decrement/reset logic.
+- Updated `Apu::tick` to consume dot chunks by countdown and call `tick_sweep(1)`
+  exactly at countdown boundaries.
+- Kept boundary alignment exact across speed changes by re-synchronizing countdown
+  from `lf_div_counter` when needed.
+
+Behavior remains unchanged: sweep calculations still occur at the same dot-phase
+boundaries as before, but without modulo-based boundary checks in the hot path.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
+
+### 10. Sample generation — avoid per-CPU-cycle loop ✅
 
 `Apu::step` has `for _ in 0..cycles { … sample_timer_accum … }`. When the sample rate is
 ~48 kHz and CPU clock is ~4 MHz, a sample is emitted roughly every 87 cycles. The loop can
@@ -230,7 +385,25 @@ while self.sample_timer_accum >= sample_period {
 }
 ```
 
-This reduces the per-cycle loop to a constant-time operation (0–1 sample emit per step).
+Completed in [apu.rs](crates/vibe-emu-core/src/apu.rs):
+
+- Replaced per-cycle sample timer accumulation in `Apu::step` with batched
+  accumulation: `sample_timer_accum += rate * cycles`.
+- Emission now uses a threshold loop over accumulated time (`while
+  sample_timer_accum >= sample_period`) instead of per-CPU-cycle checks.
+- Preserved behavior-sensitive state updates (`cpu_cycles`) and kept trace output
+  compatibility under `apu-trace`.
+
+Behavior remains unchanged for audio timing: generated sample count and emission
+points are equivalent to the previous per-cycle accumulation logic, while removing
+hot per-cycle overhead in non-trace builds.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
 
 ---
 
@@ -418,11 +591,11 @@ out, LLVM can vectorize/unroll inner loops more aggressively.
 
 | Priority | Subsystem | Optimization | Est. Impact |
 |:---:|---|---|---|
-| 1 | APU | Lazy PCM register refresh (#7) | ~12–17 % recovery |
-| 2 | PPU | Eliminate per-scanline `env_bool_or_false` calls (#1) | ~3–5 % (measured in perf as `getenv`) |
-| 3 | PPU | Batch-skip HBLANK/VBLANK dots in `Ppu::step` (#2) | ~10–15 % (removes ~70 % of dot iterations) |
-| 4 | APU | Batch 1 MHz ticks & sample generation (#8, #10) | ~5–8 % |
-| 5 | PPU | Precomputed palette color tables (#3) | ~3–5 % |
+| 1 | APU | ✅ Lazy PCM register refresh (#7) | ~12–17 % recovery |
+| 2 | PPU | ✅ Eliminate per-scanline `env_bool_or_false` calls (#1) | ~3–5 % (measured in perf as `getenv`) |
+| 3 | PPU | ✅ Batch-skip HBLANK/VBLANK dots in `Ppu::step` (#2) | ~10–15 % (removes ~70 % of dot iterations) |
+| 4 | APU | ✅ Batch 1 MHz ticks (#8) + sweep tick countdown (#9) + sample generation batching (#10) | ~5–8 % |
+| 5 | PPU | ✅ Precomputed palette color tables (#3) | ~3–5 % |
 | 6 | General | Compile out trace code in release (#23) | ~2–4 % |
 | 7 | Timer | Fast-path timer step (#17) | ~2–3 % |
 | 8 | PPU | VecDeque → fixed ring buffer (#19) | ~1–2 % |
