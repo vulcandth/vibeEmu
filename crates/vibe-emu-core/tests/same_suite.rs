@@ -8,6 +8,9 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 const FIB_SEQ: [u8; 6] = [3, 5, 8, 13, 21, 34];
 fn parse_cgb_revision_from_path<P: AsRef<Path>>(rom_path: P) -> Option<CgbRevision> {
     let s = rom_path.as_ref().to_string_lossy().to_ascii_uppercase();
+    if s.ends_with("-A.GB") {
+        return Some(CgbRevision::RevA);
+    }
     if let Some(i) = s.find("CGB") {
         let mut revs = String::new();
         for ch in s[i + 3..].chars() {
