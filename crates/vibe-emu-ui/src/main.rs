@@ -410,12 +410,6 @@ enum OptionsTab {
     Emulation,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum EmulationSubmenu {
-    Mode,
-    SerialPeripheral,
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum VramTab {
     #[default]
@@ -845,10 +839,6 @@ struct VibeEmuApp {
     link_host: String,
     link_port: String,
 
-    // Menu popup state
-    open_emulation_submenu: Option<EmulationSubmenu>,
-    emulation_submenu_anchor: egui::Pos2,
-
     // Status bar state
     last_fps_update: std::time::Instant,
     frame_count_since_update: u64,
@@ -961,8 +951,6 @@ impl VibeEmuApp {
             link_slave_ready: slave_ready,
             link_host: "127.0.0.1".to_string(),
             link_port: "5000".to_string(),
-            open_emulation_submenu: None,
-            emulation_submenu_anchor: egui::Pos2::ZERO,
             last_fps_update: std::time::Instant::now(),
             frame_count_since_update: 0,
             current_fps: 0.0,
@@ -1576,8 +1564,6 @@ impl eframe::App for VibeEmuApp {
         self.poll_frames();
         self.update_texture(ctx);
 
-        let mut emulation_menu_open = false;
-
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
@@ -1598,7 +1584,6 @@ impl eframe::App for VibeEmuApp {
                 });
 
                 ui.menu_button("Emulation", |ui| {
-                    emulation_menu_open = true;
                     let has_rom_loaded = self.current_rom_path.is_some();
                     if ui
                         .add_enabled(
@@ -1635,65 +1620,16 @@ impl eframe::App for VibeEmuApp {
                     }
                     ui.separator();
 
-                    let mode_button = ui.button("Mode  ▶");
-                    ui.separator();
-                    let serial_button = ui.button("Serial Peripheral  ▶");
-
-                    if mode_button.hovered() {
-                        self.open_emulation_submenu = Some(EmulationSubmenu::Mode);
-                        self.emulation_submenu_anchor = mode_button.rect.right_top();
-                    }
-                    if serial_button.hovered() {
-                        self.open_emulation_submenu = Some(EmulationSubmenu::SerialPeripheral);
-                        self.emulation_submenu_anchor = serial_button.rect.right_top();
-                    }
-
-                    if let Some(open) = self.open_emulation_submenu {
-                        let popup_id = match open {
-                            EmulationSubmenu::Mode => ui.make_persistent_id("emu_mode_popup"),
-                            EmulationSubmenu::SerialPeripheral => {
-                                ui.make_persistent_id("emu_serial_popup")
-                            }
-                        };
-
-                        let anchor = self.emulation_submenu_anchor + egui::vec2(1.0, 0.0);
-                        let visuals = ui.style().visuals.clone();
-                        let frame = egui::Frame::default()
-                            .fill(visuals.widgets.noninteractive.bg_fill)
-                            .stroke(visuals.widgets.noninteractive.bg_stroke)
-                            .corner_radius(visuals.widgets.noninteractive.corner_radius)
-                            .inner_margin(egui::Margin::same(6));
-
-                        let popup_area = egui::Area::new(popup_id)
-                            .order(egui::Order::Foreground)
-                            .fixed_pos(anchor)
-                            .show(ctx, |ui| {
-                                frame.show(ui, |ui| match open {
-                                    EmulationSubmenu::Mode => {
-                                        if self.draw_emulation_mode_submenu(ui) {
-                                            self.open_emulation_submenu = None;
-                                        }
-                                    }
-                                    EmulationSubmenu::SerialPeripheral => {
-                                        if self.draw_serial_peripheral_submenu(ui) {
-                                            self.open_emulation_submenu = None;
-                                        }
-                                    }
-                                });
-                            });
-
-                        let submenu_hovered = popup_area.response.hovered();
-                        let keep_open = match open {
-                            EmulationSubmenu::Mode => mode_button.hovered() || submenu_hovered,
-                            EmulationSubmenu::SerialPeripheral => {
-                                serial_button.hovered() || submenu_hovered
-                            }
-                        };
-
-                        if !keep_open {
-                            self.open_emulation_submenu = None;
+                    egui::containers::menu::SubMenuButton::new("Mode").ui(ui, |ui| {
+                        if self.draw_emulation_mode_submenu(ui) {
+                            ui.close();
                         }
-                    }
+                    });
+                    egui::containers::menu::SubMenuButton::new("Serial Peripheral").ui(ui, |ui| {
+                        if self.draw_serial_peripheral_submenu(ui) {
+                            ui.close();
+                        }
+                    });
                 });
 
                 ui.menu_button("Debug", |ui| {
@@ -1715,7 +1651,7 @@ impl eframe::App for VibeEmuApp {
                 });
 
                 ui.menu_button("Options", |ui| {
-                    ui.menu_button("Window Scale", |ui| {
+                    egui::containers::menu::SubMenuButton::new("Window Scale").ui(ui, |ui| {
                         let prev_scale = self.selected_window_scale;
                         for idx in 0..6 {
                             let label = format!("{}x", idx + 1);
@@ -1745,10 +1681,6 @@ impl eframe::App for VibeEmuApp {
                 });
             });
         });
-
-        if !emulation_menu_open {
-            self.open_emulation_submenu = None;
-        }
 
         // Status bar at the bottom
         egui::TopBottomPanel::bottom("status_bar")
