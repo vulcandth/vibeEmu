@@ -13,6 +13,7 @@ pub enum MbcType {
     Mbc3,
     Mbc30,
     Mbc5,
+    Tpp1,
     Unknown(u8),
 }
 
@@ -61,7 +62,26 @@ enum MbcState {
         ram_bank: u8,
         ram_enable: bool,
     },
+    Tpp1 {
+        mr0: u8,
+        mr1: u8,
+        mr2: u8,
+        mapping: Tpp1Mapping,
+        rumble_speed: u8,
+        has_rumble: bool,
+        has_multi_rumble: bool,
+        has_battery: bool,
+        rtc: Option<Tpp1Rtc>,
+    },
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tpp1Mapping {
+    ControlRegisters,
+    SramReadOnly,
+    SramReadWrite,
+    RtcLatched,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -318,6 +338,263 @@ impl Mbc3Rtc {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct Tpp1RtcRegisters {
+    rtcw: u8,
+    rtcdh: u8,
+    rtcm: u8,
+    rtcs: u8,
+}
+
+#[derive(Debug, Clone)]
+struct Tpp1Rtc {
+    regs: Tpp1RtcRegisters,
+    latched: Tpp1RtcRegisters,
+    running: bool,
+    overflow: bool,
+    last_update: SystemTime,
+    subsecond_cycles: u32,
+}
+
+const TPP1_RTC_FILE_MAGIC: &[u8; 4] = b"TPP1";
+const TPP1_RTC_FILE_VERSION: u8 = 1;
+
+impl Tpp1RtcRegisters {
+    fn seconds(&self) -> u8 {
+        self.rtcs & 0x3F
+    }
+
+    fn minutes(&self) -> u8 {
+        self.rtcm & 0x3F
+    }
+
+    fn hours(&self) -> u8 {
+        self.rtcdh & 0x1F
+    }
+
+    fn day_of_week(&self) -> u8 {
+        (self.rtcdh >> 5) & 0x07
+    }
+}
+
+impl Tpp1Rtc {
+    fn new(now: SystemTime) -> Self {
+        Self {
+            regs: Tpp1RtcRegisters::default(),
+            latched: Tpp1RtcRegisters::default(),
+            running: false,
+            overflow: false,
+            last_update: now,
+            subsecond_cycles: 0,
+        }
+    }
+
+    fn latch(&mut self) {
+        self.latched = self.regs;
+    }
+
+    fn set_from_latch(&mut self) {
+        self.regs = self.latched;
+        self.subsecond_cycles = 0;
+    }
+
+    fn read_latched(&self, addr: u16) -> u8 {
+        match addr & 0x03 {
+            0 => self.latched.rtcw,
+            1 => self.latched.rtcdh,
+            2 => self.latched.rtcm,
+            3 => self.latched.rtcs,
+            _ => unreachable!(),
+        }
+    }
+
+    fn write_latched(&mut self, addr: u16, val: u8) {
+        match addr & 0x03 {
+            0 => self.latched.rtcw = val,
+            1 => self.latched.rtcdh = val,
+            2 => self.latched.rtcm = val,
+            3 => self.latched.rtcs = val,
+            _ => unreachable!(),
+        }
+    }
+
+    fn mr4_bits(&self) -> u8 {
+        let mut bits = 0u8;
+        if self.running {
+            bits |= 0x04;
+        }
+        if self.overflow {
+            bits |= 0x08;
+        }
+        bits
+    }
+
+    fn step(&mut self, cpu_cycles: u64) {
+        if !self.running {
+            return;
+        }
+        self.add_cycles(cpu_cycles);
+    }
+
+    fn sync_wall(&mut self, now: SystemTime) {
+        let elapsed = now.duration_since(self.last_update).unwrap_or_default();
+        self.last_update = now;
+        if !self.running {
+            return;
+        }
+
+        let elapsed_cycles = (elapsed.as_secs() as u128)
+            .saturating_mul(RTC_CYCLES_PER_SECOND as u128)
+            .saturating_add(
+                (elapsed.subsec_nanos() as u128).saturating_mul(RTC_CYCLES_PER_SECOND as u128)
+                    / 1_000_000_000u128,
+            );
+        self.add_cycles(elapsed_cycles.min(u64::MAX as u128) as u64);
+    }
+
+    fn mark_persisted(&mut self, now: SystemTime) {
+        self.last_update = now;
+    }
+
+    fn add_cycles(&mut self, cycles: u64) {
+        let mut seconds = cycles / RTC_CYCLES_PER_SECOND as u64;
+        let rem = (cycles % RTC_CYCLES_PER_SECOND as u64) as u32;
+
+        let mut sub = self.subsecond_cycles + rem;
+        if sub >= RTC_CYCLES_PER_SECOND {
+            sub -= RTC_CYCLES_PER_SECOND;
+            seconds += 1;
+        }
+        self.subsecond_cycles = sub;
+
+        if seconds > 0 {
+            self.advance_seconds(seconds);
+        }
+    }
+
+    fn advance_seconds(&mut self, mut seconds: u64) {
+        while seconds > 0 {
+            let current_sec = self.regs.seconds();
+            let until_next = if current_sec < 60 {
+                (60 - current_sec) as u64
+            } else {
+                1
+            };
+
+            if seconds < until_next {
+                self.regs.rtcs = ((current_sec as u64 + seconds) & 0x3F) as u8;
+                return;
+            }
+
+            seconds -= until_next;
+            self.regs.rtcs = 0;
+            self.minute_tick();
+        }
+    }
+
+    fn minute_tick(&mut self) {
+        let min = self.regs.minutes();
+        if min >= 59 {
+            self.regs.rtcm = 0;
+            self.hour_tick();
+        } else {
+            self.regs.rtcm = min + 1;
+        }
+    }
+
+    fn hour_tick(&mut self) {
+        let hour = self.regs.hours();
+        let dow = self.regs.day_of_week();
+        if hour >= 23 {
+            self.regs.rtcdh = dow << 5;
+            self.day_tick();
+        } else {
+            self.regs.rtcdh = (dow << 5) | (hour + 1);
+        }
+    }
+
+    fn day_tick(&mut self) {
+        let dow = self.regs.day_of_week();
+        let hour = self.regs.hours();
+        if dow >= 6 {
+            self.regs.rtcdh = hour;
+            self.week_tick();
+        } else {
+            self.regs.rtcdh = ((dow + 1) << 5) | hour;
+        }
+    }
+
+    fn week_tick(&mut self) {
+        if self.regs.rtcw == 0xFF {
+            self.regs.rtcw = 0;
+            self.overflow = true;
+        } else {
+            self.regs.rtcw += 1;
+        }
+    }
+
+    fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::with_capacity(22);
+        data.extend_from_slice(TPP1_RTC_FILE_MAGIC);
+        data.push(TPP1_RTC_FILE_VERSION);
+
+        let saved_time = self
+            .last_update
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        data.extend_from_slice(&saved_time.to_le_bytes());
+
+        let subsecond_nanos = ((self.subsecond_cycles as u128).saturating_mul(1_000_000_000u128)
+            / (RTC_CYCLES_PER_SECOND as u128))
+            .min(u32::MAX as u128) as u32;
+        data.extend_from_slice(&subsecond_nanos.to_le_bytes());
+
+        data.push(self.regs.rtcw);
+        data.push(self.regs.rtcdh);
+        data.push(self.regs.rtcm);
+        data.push(self.regs.rtcs);
+
+        let mut flags = 0u8;
+        if self.running {
+            flags |= 0x01;
+        }
+        if self.overflow {
+            flags |= 0x02;
+        }
+        data.push(flags);
+
+        data
+    }
+
+    fn load_from_bytes(&mut self, data: &[u8]) -> bool {
+        if data.len() < 22 || &data[..4] != TPP1_RTC_FILE_MAGIC || data[4] != TPP1_RTC_FILE_VERSION
+        {
+            return false;
+        }
+
+        let secs = u64::from_le_bytes(data[5..13].try_into().unwrap());
+        let nanos = u32::from_le_bytes(data[13..17].try_into().unwrap()).min(999_999_999);
+
+        self.last_update = UNIX_EPOCH + Duration::from_secs(secs);
+        self.subsecond_cycles = ((nanos as u128).saturating_mul(RTC_CYCLES_PER_SECOND as u128)
+            / 1_000_000_000u128)
+            .min((RTC_CYCLES_PER_SECOND - 1) as u128) as u32;
+
+        self.regs.rtcw = data[17];
+        self.regs.rtcdh = data[18];
+        self.regs.rtcm = data[19];
+        self.regs.rtcs = data[20];
+
+        let flags = data[21];
+        self.running = flags & 0x01 != 0;
+        self.overflow = flags & 0x02 != 0;
+
+        self.latched = self.regs;
+        true
+    }
+}
+
 impl Cartridge {
     fn bus_read(cart_bus: &Cell<u8>, value: u8) -> u8 {
         cart_bus.set(value);
@@ -344,6 +621,7 @@ impl Cartridge {
             MbcState::Mbc3 { rom_bank, .. } => (*rom_bank).into(),
             MbcState::Mbc30 { rom_bank, .. } => (*rom_bank).into(),
             MbcState::Mbc5 { rom_bank, .. } => *rom_bank,
+            MbcState::Tpp1 { mr0, mr1, .. } => ((*mr1 as u16) << 8) | *mr0 as u16,
             MbcState::Unknown => 1,
         }
     }
@@ -359,6 +637,7 @@ impl Cartridge {
             MbcState::Mbc3 { ram_bank, .. } => *ram_bank,
             MbcState::Mbc30 { ram_bank, .. } => *ram_bank,
             MbcState::Mbc5 { ram_bank, .. } => *ram_bank,
+            MbcState::Tpp1 { mr2, .. } => *mr2,
             MbcState::Unknown => 0,
         }
     }
@@ -374,13 +653,21 @@ impl Cartridge {
             MbcState::Mbc3 { ram_enable, .. } => *ram_enable,
             MbcState::Mbc30 { ram_enable, .. } => *ram_enable,
             MbcState::Mbc5 { ram_enable, .. } => *ram_enable,
+            MbcState::Tpp1 { mapping, .. } => matches!(
+                mapping,
+                Tpp1Mapping::SramReadOnly | Tpp1Mapping::SramReadWrite
+            ),
             MbcState::Unknown => false,
         }
     }
 
     pub fn step_rtc(&mut self, cpu_cycles: u16) {
-        if let Some(rtc) = self.rtc_mut() {
-            rtc.step(cpu_cycles as u64);
+        match &mut self.mbc_state {
+            MbcState::Mbc3 { rtc: Some(rtc), .. } | MbcState::Mbc30 { rtc: Some(rtc), .. } => {
+                rtc.step(cpu_cycles as u64)
+            }
+            MbcState::Tpp1 { rtc: Some(rtc), .. } => rtc.step(cpu_cycles as u64),
+            _ => {}
         }
     }
 
@@ -409,19 +696,36 @@ impl Cartridge {
             let mut rtc_path = PathBuf::from(path.as_ref());
             rtc_path.set_extension("rtc");
             cart.rtc_path = Some(rtc_path.clone());
-            if let Some(rtc) = cart.rtc_mut() {
-                if let Ok(bytes) = fs::read(&rtc_path)
-                    && !rtc.load_from_bytes(&bytes)
-                {
-                    core_warn!(
-                        target: "vibe_emu_core::cartridge",
-                        "Failed to parse RTC data from {}",
-                        rtc_path.display()
-                    );
+            match &mut cart.mbc_state {
+                MbcState::Mbc3 { rtc: Some(rtc), .. } | MbcState::Mbc30 { rtc: Some(rtc), .. } => {
+                    if let Ok(bytes) = fs::read(&rtc_path)
+                        && !rtc.load_from_bytes(&bytes)
+                    {
+                        core_warn!(
+                            target: "vibe_emu_core::cartridge",
+                            "Failed to parse RTC data from {}",
+                            rtc_path.display()
+                        );
+                    }
+                    let now = SystemTime::now();
+                    rtc.sync_wall(now);
+                    rtc.latch();
                 }
-                let now = SystemTime::now();
-                rtc.sync_wall(now);
-                rtc.latch();
+                MbcState::Tpp1 { rtc: Some(rtc), .. } => {
+                    if let Ok(bytes) = fs::read(&rtc_path)
+                        && !rtc.load_from_bytes(&bytes)
+                    {
+                        core_warn!(
+                            target: "vibe_emu_core::cartridge",
+                            "Failed to parse RTC data from {}",
+                            rtc_path.display()
+                        );
+                    }
+                    let now = SystemTime::now();
+                    rtc.sync_wall(now);
+                    rtc.latch();
+                }
+                _ => {}
             }
         }
 
@@ -476,6 +780,20 @@ impl Cartridge {
                 ram_bank: 0,
                 ram_enable: false,
             },
+            MbcType::Tpp1 => {
+                let features = header.tpp1_features();
+                MbcState::Tpp1 {
+                    mr0: 1,
+                    mr1: 0,
+                    mr2: 0,
+                    mapping: Tpp1Mapping::ControlRegisters,
+                    rumble_speed: 0,
+                    has_rumble: features & 0x01 != 0,
+                    has_multi_rumble: features & 0x02 != 0,
+                    has_battery: features & 0x08 != 0,
+                    rtc: has_rtc.then(|| Tpp1Rtc::new(now)),
+                }
+            }
             // Fallback: treat unsupported mappers as ROM-only so homebrew/test
             // harnesses (and some misheadered dumps) still run.
             MbcType::Unknown(_) => MbcState::NoMbc,
@@ -687,6 +1005,61 @@ impl Cartridge {
                     Self::bus_read(cart_bus, self.ram.get(idx).copied().unwrap_or(0xFF))
                 }
             }
+            (MbcState::Tpp1 { .. }, 0x0000..=0x3FFF) => Self::bus_read(
+                cart_bus,
+                self.rom.get(addr as usize).copied().unwrap_or(0xFF),
+            ),
+            (MbcState::Tpp1 { mr0, mr1, .. }, 0x4000..=0x7FFF) => {
+                let bank = ((*mr1 as usize) << 8) | *mr0 as usize;
+                let bank = if rom_bank_count > 0 {
+                    bank % rom_bank_count
+                } else {
+                    0
+                };
+                let offset = bank * 0x4000 + (addr as usize - 0x4000);
+                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
+            }
+            (
+                MbcState::Tpp1 {
+                    mapping,
+                    mr0,
+                    mr1,
+                    mr2,
+                    rumble_speed,
+                    rtc,
+                    ..
+                },
+                0xA000..=0xBFFF,
+            ) => match mapping {
+                Tpp1Mapping::ControlRegisters => {
+                    let val = match addr & 0x03 {
+                        0 => *mr0,
+                        1 => *mr1,
+                        2 => *mr2,
+                        3 => {
+                            let mut mr4 = 0xF0;
+                            mr4 |= *rumble_speed & 0x03;
+                            if let Some(rtc) = rtc.as_ref() {
+                                mr4 |= rtc.mr4_bits();
+                            }
+                            mr4
+                        }
+                        _ => unreachable!(),
+                    };
+                    Self::bus_read(cart_bus, val)
+                }
+                Tpp1Mapping::SramReadOnly | Tpp1Mapping::SramReadWrite => {
+                    let idx = (*mr2 as usize) * 0x2000 + (addr as usize - 0xA000);
+                    Self::bus_read(cart_bus, self.read_ram_wrapped(idx))
+                }
+                Tpp1Mapping::RtcLatched => {
+                    if let Some(rtc) = rtc.as_ref() {
+                        Self::bus_read(cart_bus, rtc.read_latched(addr))
+                    } else {
+                        Self::bus_read(cart_bus, 0xFF)
+                    }
+                }
+            },
             _ => 0xFF,
         }
     }
@@ -876,6 +1249,87 @@ impl Cartridge {
                     }
                 }
             }
+            (
+                MbcState::Tpp1 {
+                    mr0,
+                    mr1,
+                    mr2,
+                    mapping,
+                    rumble_speed,
+                    has_rumble,
+                    has_multi_rumble,
+                    rtc,
+                    ..
+                },
+                0x0000..=0x3FFF,
+            ) => match addr & 0x03 {
+                0 => *mr0 = val,
+                1 => *mr1 = val,
+                2 => *mr2 = val,
+                3 => match val {
+                    0x00 => *mapping = Tpp1Mapping::ControlRegisters,
+                    0x02 => *mapping = Tpp1Mapping::SramReadOnly,
+                    0x03 => *mapping = Tpp1Mapping::SramReadWrite,
+                    0x05 => *mapping = Tpp1Mapping::RtcLatched,
+                    0x10 => {
+                        if let Some(rtc) = rtc.as_mut() {
+                            rtc.latch();
+                        }
+                    }
+                    0x11 => {
+                        if let Some(rtc) = rtc.as_mut() {
+                            rtc.set_from_latch();
+                        }
+                    }
+                    0x14 => {
+                        if let Some(rtc) = rtc.as_mut() {
+                            rtc.overflow = false;
+                        }
+                    }
+                    0x18 => {
+                        if let Some(rtc) = rtc.as_mut() {
+                            rtc.running = false;
+                        }
+                    }
+                    0x19 => {
+                        if let Some(rtc) = rtc.as_mut() {
+                            rtc.running = true;
+                        }
+                    }
+                    0x20 => *rumble_speed = 0,
+                    0x21..=0x23 => {
+                        if !*has_rumble {
+                            *rumble_speed = 0;
+                        } else if !*has_multi_rumble {
+                            *rumble_speed = 1;
+                        } else {
+                            *rumble_speed = val - 0x20;
+                        }
+                    }
+                    _ => {}
+                },
+                _ => unreachable!(),
+            },
+            (
+                MbcState::Tpp1 {
+                    mapping, mr2, rtc, ..
+                },
+                0xA000..=0xBFFF,
+            ) => match mapping {
+                Tpp1Mapping::SramReadWrite => {
+                    let idx = (*mr2 as usize) * 0x2000 + (addr as usize - 0xA000);
+                    if !self.ram.is_empty() {
+                        let wrapped = idx % self.ram.len();
+                        self.ram[wrapped] = val;
+                    }
+                }
+                Tpp1Mapping::RtcLatched => {
+                    if let Some(rtc) = rtc.as_mut() {
+                        rtc.write_latched(addr, val);
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -926,20 +1380,27 @@ impl Cartridge {
             MbcState::Mbc5 { ram_bank, .. } => {
                 (*ram_bank as usize) * 0x2000 + addr as usize - 0xA000
             }
+            MbcState::Tpp1 { mr2, .. } => (*mr2 as usize) * 0x2000 + addr as usize - 0xA000,
             MbcState::Unknown => addr as usize - 0xA000,
         };
         self.wrap_ram_index(idx)
     }
 
     fn has_battery(&self) -> bool {
-        matches!(
-            self.cart_type,
-            0x03 | 0x06 | 0x09 | 0x0F | 0x10 | 0x13 | 0x1B | 0x1E
-        )
+        match &self.mbc_state {
+            MbcState::Tpp1 { has_battery, .. } => *has_battery,
+            _ => matches!(
+                self.cart_type,
+                0x03 | 0x06 | 0x09 | 0x0F | 0x10 | 0x13 | 0x1B | 0x1E
+            ),
+        }
     }
 
     fn has_rtc(&self) -> bool {
-        matches!(self.cart_type, 0x0F | 0x10 | 0x13)
+        match &self.mbc_state {
+            MbcState::Tpp1 { rtc, .. } => rtc.is_some(),
+            _ => matches!(self.cart_type, 0x0F | 0x10 | 0x13),
+        }
     }
 
     fn rtc_mut(&mut self) -> Option<&mut Mbc3Rtc> {
@@ -958,10 +1419,18 @@ impl Cartridge {
             fs::write(path, &self.ram)?;
         }
 
-        let rtc_path = self.rtc_path.clone();
-        if let (Some(path), Some(rtc)) = (rtc_path, self.rtc_mut()) {
-            rtc.mark_persisted(SystemTime::now());
-            fs::write(path, rtc.serialize())?;
+        if let Some(rtc_path) = self.rtc_path.clone() {
+            match &mut self.mbc_state {
+                MbcState::Mbc3 { rtc: Some(rtc), .. } | MbcState::Mbc30 { rtc: Some(rtc), .. } => {
+                    rtc.mark_persisted(SystemTime::now());
+                    fs::write(rtc_path, rtc.serialize())?;
+                }
+                MbcState::Tpp1 { rtc: Some(rtc), .. } => {
+                    rtc.mark_persisted(SystemTime::now());
+                    fs::write(rtc_path, rtc.serialize())?;
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -1016,9 +1485,23 @@ impl<'a> Header<'a> {
         self.data.get(0x0143).copied().unwrap_or(0) & 0x80 != 0
     }
 
+    fn is_tpp1(&self) -> bool {
+        self.data.len() >= 0x154
+            && self.data.get(0x0147).copied() == Some(0xBC)
+            && self.data.get(0x0149).copied() == Some(0xC1)
+            && self.data.get(0x014A).copied() == Some(0x65)
+    }
+
+    fn tpp1_features(&self) -> u8 {
+        self.data.get(0x0153).copied().unwrap_or(0)
+    }
+
     fn mbc_type(&self) -> MbcType {
         if self.data.len() < 0x150 {
             return MbcType::NoMbc;
+        }
+        if self.is_tpp1() {
+            return MbcType::Tpp1;
         }
         let cart = self.data.get(0x0147).copied().unwrap_or(0);
         match cart {
@@ -1046,12 +1529,25 @@ impl<'a> Header<'a> {
     }
 
     fn has_rtc(&self) -> bool {
+        if self.is_tpp1() {
+            return self.tpp1_features() & 0x04 != 0;
+        }
         matches!(self.cart_type(), 0x0F | 0x10 | 0x13)
     }
 
     fn ram_size(&self) -> usize {
         if self.data.len() < 0x150 {
             return 0x2000;
+        }
+
+        if self.is_tpp1() {
+            let val = self.data.get(0x0152).copied().unwrap_or(0);
+            return if val == 0 {
+                0
+            } else {
+                // Shift count: 1..=9 → 1, 2, 4, 8, 16, 32, 64, 128, 256 banks
+                (1usize << (val as u32 - 1)) * 0x2000
+            };
         }
 
         // MBC2 has 512x4-bit internal RAM regardless of header RAM size.
@@ -1187,5 +1683,206 @@ mod tests {
         // Select an out-of-range bank; should wrap to bank 1.
         cart.write(0x2000, 5);
         assert_eq!(cart.read(0x4000), 0x11);
+    }
+
+    fn make_tpp1_rom(ram_shift: u8, features: u8) -> Vec<u8> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0147] = 0xBC;
+        rom[0x0148] = 0x01; // 2 << 1 = 4 banks ROM, but we only have 2 in the vec
+        rom[0x0149] = 0xC1;
+        rom[0x014A] = 0x65;
+        rom[0x0150] = 0x01; // major version
+        rom[0x0151] = 0x00; // minor version
+        rom[0x0152] = ram_shift;
+        rom[0x0153] = features;
+        for b in &mut rom[0x4000..0x8000] {
+            *b = 0xAA;
+        }
+        rom
+    }
+
+    #[test]
+    fn tpp1_header_detected() {
+        let rom = make_tpp1_rom(1, 0x0C);
+        let header = Header::parse(&rom);
+        assert!(header.is_tpp1());
+        assert_eq!(header.mbc_type(), MbcType::Tpp1);
+    }
+
+    #[test]
+    fn tpp1_ram_size_parsing() {
+        let rom0 = make_tpp1_rom(0, 0);
+        let header0 = Header::parse(&rom0);
+        assert_eq!(header0.ram_size(), 0);
+
+        let rom1 = make_tpp1_rom(1, 0);
+        let header1 = Header::parse(&rom1);
+        assert_eq!(header1.ram_size(), 0x2000);
+
+        let rom3 = make_tpp1_rom(3, 0);
+        let header3 = Header::parse(&rom3);
+        assert_eq!(header3.ram_size(), 4 * 0x2000);
+    }
+
+    #[test]
+    fn tpp1_features_battery_and_rtc() {
+        let rom = make_tpp1_rom(1, 0x0C);
+        let cart = Cartridge::load(rom);
+        assert!(cart.has_battery());
+        assert!(cart.has_rtc());
+    }
+
+    #[test]
+    fn tpp1_initial_state() {
+        let rom = make_tpp1_rom(1, 0x08);
+        let mut cart = Cartridge::load(rom);
+        assert_eq!(cart.current_rom_bank(), 1);
+        assert_eq!(cart.current_ram_bank(), 0);
+        // Initial mapping is control registers; reading A000 returns MR0 = 1
+        assert_eq!(cart.read(0xA000), 1);
+        // MR1 = 0
+        assert_eq!(cart.read(0xA001), 0);
+    }
+
+    #[test]
+    fn tpp1_rom_banking() {
+        let rom = make_tpp1_rom(0, 0);
+        let mut cart = Cartridge::load(rom);
+        // Bank 0 home area reads from 0x0000
+        assert_eq!(cart.read(0x0000), 0x00);
+        // Bank 1 initially mapped to 0x4000-0x7FFF
+        assert_eq!(cart.read(0x4000), 0xAA);
+        // Switch to bank 0
+        cart.write(0x0000, 0); // MR0 = 0
+        cart.write(0x0001, 0); // MR1 = 0
+        assert_eq!(cart.read(0x4000), 0x00);
+    }
+
+    #[test]
+    fn tpp1_sram_read_write() {
+        let rom = make_tpp1_rom(1, 0x08);
+        let mut cart = Cartridge::load(rom);
+        // Enable SRAM read/write
+        cart.write(0x0003, 0x03);
+        assert!(cart.ram_enabled());
+        // Write to SRAM
+        cart.write(0xA000, 0x42);
+        assert_eq!(cart.read(0xA000), 0x42);
+        // Switch to read-only; writes should be ignored
+        cart.write(0x0003, 0x02);
+        cart.write(0xA000, 0x99);
+        assert_eq!(cart.read(0xA000), 0x42);
+    }
+
+    #[test]
+    fn tpp1_control_register_readback() {
+        let rom = make_tpp1_rom(1, 0);
+        let mut cart = Cartridge::load(rom);
+        // Map control registers
+        cart.write(0x0003, 0x00);
+        // Write MR0 = 0x05, MR1 = 0x02, MR2 = 0x03
+        cart.write(0x0000, 0x05);
+        cart.write(0x0001, 0x02);
+        cart.write(0x0002, 0x03);
+        // Read them back via A000-BFFF
+        assert_eq!(cart.read(0xA000), 0x05);
+        assert_eq!(cart.read(0xA001), 0x02);
+        assert_eq!(cart.read(0xA002), 0x03);
+        // MR4 should have rumble=0, no RTC bits
+        let mr4 = cart.read(0xA003);
+        assert_eq!(mr4 & 0x0F, 0x00);
+    }
+
+    #[test]
+    fn tpp1_rtc_latch_and_readback() {
+        let rom = make_tpp1_rom(0, 0x04);
+        let mut cart = Cartridge::load(rom);
+        // Start the RTC
+        cart.write(0x0003, 0x19);
+        // Map RTC latched registers
+        cart.write(0x0003, 0x05);
+        // Write latch registers directly
+        cart.write(0xA000, 10); // RTCW = 10
+        cart.write(0xA001, 0x45); // RTCDH = day2 hour5
+        cart.write(0xA002, 30); // RTCM = 30
+        cart.write(0xA003, 15); // RTCS = 15
+        // Set RTC from latch
+        cart.write(0x0003, 0x11);
+        // Latch RTC back
+        cart.write(0x0003, 0x10);
+        // Map RTC and read back
+        cart.write(0x0003, 0x05);
+        assert_eq!(cart.read(0xA000), 10);
+        assert_eq!(cart.read(0xA001), 0x45);
+        assert_eq!(cart.read(0xA002), 30);
+        assert_eq!(cart.read(0xA003), 15);
+    }
+
+    #[test]
+    fn tpp1_rtc_ticks_seconds() {
+        let now = SystemTime::UNIX_EPOCH;
+        let mut rtc = Tpp1Rtc::new(now);
+        rtc.running = true;
+        rtc.regs.rtcs = 58;
+        rtc.regs.rtcm = 0;
+        rtc.advance_seconds(1);
+        assert_eq!(rtc.regs.seconds(), 59);
+        rtc.advance_seconds(1);
+        assert_eq!(rtc.regs.seconds(), 0);
+        assert_eq!(rtc.regs.minutes(), 1);
+    }
+
+    #[test]
+    fn tpp1_rtc_full_rollover() {
+        let now = SystemTime::UNIX_EPOCH;
+        let mut rtc = Tpp1Rtc::new(now);
+        rtc.running = true;
+        rtc.regs.rtcs = 59;
+        rtc.regs.rtcm = 59;
+        // Day 6, hour 23
+        rtc.regs.rtcdh = (6 << 5) | 23;
+        rtc.regs.rtcw = 0xFF;
+        rtc.advance_seconds(1);
+        assert_eq!(rtc.regs.seconds(), 0);
+        assert_eq!(rtc.regs.minutes(), 0);
+        assert_eq!(rtc.regs.hours(), 0);
+        assert_eq!(rtc.regs.day_of_week(), 0);
+        assert_eq!(rtc.regs.rtcw, 0);
+        assert!(rtc.overflow);
+    }
+
+    #[test]
+    fn tpp1_rtc_serialize_roundtrip() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let mut rtc = Tpp1Rtc::new(now);
+        rtc.running = true;
+        rtc.overflow = true;
+        rtc.regs.rtcw = 42;
+        rtc.regs.rtcdh = (3 << 5) | 12;
+        rtc.regs.rtcm = 30;
+        rtc.regs.rtcs = 45;
+        let data = rtc.serialize();
+        let mut rtc2 = Tpp1Rtc::new(SystemTime::UNIX_EPOCH);
+        assert!(rtc2.load_from_bytes(&data));
+        assert_eq!(rtc2.regs.rtcw, 42);
+        assert_eq!(rtc2.regs.rtcdh, (3 << 5) | 12);
+        assert_eq!(rtc2.regs.rtcm, 30);
+        assert_eq!(rtc2.regs.rtcs, 45);
+        assert!(rtc2.running);
+        assert!(rtc2.overflow);
+    }
+
+    #[test]
+    fn tpp1_rumble_speed_clamped() {
+        // has_rumble=true, has_multi_rumble=false
+        let rom = make_tpp1_rom(0, 0x01);
+        let mut cart = Cartridge::load(rom);
+        // Map control registers
+        cart.write(0x0003, 0x00);
+        // Request speed 3
+        cart.write(0x0003, 0x23);
+        // Should clamp to speed 1
+        let mr4 = cart.read(0xA003);
+        assert_eq!(mr4 & 0x03, 1);
     }
 }
