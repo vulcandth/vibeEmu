@@ -21,10 +21,11 @@
 > understanding of the underlying hardware thanks to the effort and expertise
 > from their developers.
 >
-> Although I am limiting myself to vibe coding, I encourage others to open PRs
-> and contribute if they'd like. You may use vibeEmu to play; I just hope you
-> understand the project for what it is, just something fun I did with my spare
-> time.
+> Although I initially limited myself to vibe coding only, I am less strict about 
+> limiting myself to it now. I encourage others to open PRs and contribute if 
+> they'd like. You do **_not_** have to vibe code to contribute! You may use 
+> vibeEmu to play; I just hope you understand the project for what it is, just 
+> something fun I did with my spare time.
 >
 > One final note: the AI did derive some bits of code from other emulators, and
 > I have attributed where I felt it was necessary. If you notice any code that
