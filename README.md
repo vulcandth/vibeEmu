@@ -178,8 +178,8 @@ Right‑click the main window to pause emulation and open a context menu.  From
 here you can load another ROM, reset the Game Boy, choose the active **Serial
 Peripheral**, or open the **Debugger** and **VRAM Viewer** windows. The debugger
 shows CPU registers while the VRAM viewer lets you inspect background maps,
-tiles, OAM and palettes. Hold **Space** to fast‑forward (4× speed) and press
-**Escape** to quit.
+tiles, OAM and palettes. Hold **Space** to fast‑forward (4× speed), press
+**F12** to capture a screenshot, and press **Escape** to quit.
 
 ## Controls
 
@@ -191,10 +191,14 @@ The default controls are:
 - **Shift**: Select
 - **Enter**: Start
 - **Space**: Hold to fast-forward
+- **F12**: Capture screenshot
 - **P**: Pause/unpause emulation
 - **Escape**: Quit the emulator
 
-Use the **top menu bar** to load ROMs, change settings, or open debugging tools.
+Use the **top menu bar** to load ROMs, change settings, capture screenshots, or
+open debugging tools. Screenshot hotkeys are configurable in
+**Options → Settings... → Keybinds**. Captures are saved to a `screenshots/`
+folder next to the loaded ROM.
 
 ## Testing
 

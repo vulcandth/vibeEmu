@@ -30,6 +30,7 @@ pub struct KeyBindings {
     joypad: HashMap<Key, u8>,
     pause: Key,
     fast_forward: Key,
+    screenshot: Key,
     quit: Key,
 }
 
@@ -55,6 +56,7 @@ impl KeyBindings {
             joypad,
             pause: Key::P,
             fast_forward: Key::Space,
+            screenshot: Key::F12,
             quit: Key::Escape,
         }
     }
@@ -131,6 +133,7 @@ impl KeyBindings {
                 }
                 "pause" => bindings.pause = code,
                 "fast_forward" => bindings.fast_forward = code,
+                "screenshot" => bindings.screenshot = code,
                 "quit" => bindings.quit = code,
                 other => warn!(
                     "Ignoring unknown keybind name '{other}' in {}:{}",
@@ -157,6 +160,10 @@ impl KeyBindings {
 
     pub fn quit_key(&self) -> Key {
         self.quit
+    }
+
+    pub fn screenshot_key(&self) -> Key {
+        self.screenshot
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (String, &Key)> {
@@ -198,6 +205,7 @@ impl KeyBindings {
             }
             crate::RebindTarget::Pause => self.pause = key,
             crate::RebindTarget::FastForward => self.fast_forward = key,
+            crate::RebindTarget::Screenshot => self.screenshot = key,
             crate::RebindTarget::Quit => self.quit = key,
         }
     }
@@ -234,6 +242,7 @@ impl KeyBindings {
             "fast_forward = {}",
             key_to_string(self.fast_forward)
         ));
+        lines.push(format!("screenshot = {}", key_to_string(self.screenshot)));
         lines.push(format!("quit = {}", key_to_string(self.quit)));
 
         let content = lines.join("\n");
@@ -290,6 +299,18 @@ fn key_to_string(key: Key) -> String {
         Key::Num7 => "7".to_string(),
         Key::Num8 => "8".to_string(),
         Key::Num9 => "9".to_string(),
+        Key::F1 => "F1".to_string(),
+        Key::F2 => "F2".to_string(),
+        Key::F3 => "F3".to_string(),
+        Key::F4 => "F4".to_string(),
+        Key::F5 => "F5".to_string(),
+        Key::F6 => "F6".to_string(),
+        Key::F7 => "F7".to_string(),
+        Key::F8 => "F8".to_string(),
+        Key::F9 => "F9".to_string(),
+        Key::F10 => "F10".to_string(),
+        Key::F11 => "F11".to_string(),
+        Key::F12 => "F12".to_string(),
         other => format!("{other:?}"),
     }
 }
@@ -307,6 +328,18 @@ fn parse_key(raw: &str) -> Option<Key> {
         "Space" => Some(Key::Space),
         "Tab" => Some(Key::Tab),
         "Backspace" => Some(Key::Backspace),
+        "F1" => Some(Key::F1),
+        "F2" => Some(Key::F2),
+        "F3" => Some(Key::F3),
+        "F4" => Some(Key::F4),
+        "F5" => Some(Key::F5),
+        "F6" => Some(Key::F6),
+        "F7" => Some(Key::F7),
+        "F8" => Some(Key::F8),
+        "F9" => Some(Key::F9),
+        "F10" => Some(Key::F10),
+        "F11" => Some(Key::F11),
+        "F12" => Some(Key::F12),
         _ => {
             if s.len() == 1 {
                 let c = s.chars().next()?;

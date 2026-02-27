@@ -13,7 +13,7 @@ use eframe::{egui, egui_wgpu, wgpu};
 use log::{debug, error, info, warn};
 use rfd::FileDialog;
 use std::collections::HashMap;
-use std::io::Cursor;
+use std::io::{BufWriter, Cursor};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock, mpsc};
@@ -400,6 +400,7 @@ enum RebindTarget {
     Joypad(u8),
     Pause,
     FastForward,
+    Screenshot,
     Quit,
 }
 
@@ -1218,6 +1219,7 @@ impl VibeEmuApp {
 
         let mut new_state = 0xFFu8;
         let mut new_fast_forward = false;
+        let mut capture_screenshot = false;
 
         ctx.input(|i| {
             for (action, key) in self.keybinds.iter() {
@@ -1237,6 +1239,7 @@ impl VibeEmuApp {
             }
 
             new_fast_forward = i.key_down(self.keybinds.fast_forward_key());
+            capture_screenshot = i.key_pressed(self.keybinds.screenshot_key());
         });
 
         #[cfg(not(target_os = "android"))]
@@ -1257,6 +1260,10 @@ impl VibeEmuApp {
                 factor: 1.0,
                 fast: self.fast_forward,
             }));
+        }
+
+        if capture_screenshot {
+            self.capture_screenshot();
         }
     }
 
@@ -1505,6 +1512,91 @@ impl VibeEmuApp {
         }
     }
 
+    fn screenshot_output_dir(&self) -> std::path::PathBuf {
+        if let Some(rom_path) = &self.current_rom_path
+            && let Some(parent) = rom_path.parent()
+        {
+            return parent.join("screenshots");
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(profile) = std::env::var_os("USERPROFILE") {
+                return std::path::PathBuf::from(profile)
+                    .join("Pictures")
+                    .join("vibeemu")
+                    .join("screenshots");
+            }
+        }
+
+        if let Some(home) = std::env::var_os("HOME") {
+            return std::path::PathBuf::from(home)
+                .join("Pictures")
+                .join("vibeemu")
+                .join("screenshots");
+        }
+
+        std::path::PathBuf::from("screenshots")
+    }
+
+    fn screenshot_prefix(&self) -> String {
+        self.current_rom_path
+            .as_ref()
+            .and_then(|path| path.file_stem())
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "vibeemu".to_string())
+    }
+
+    fn save_current_frame_screenshot(&self) -> std::io::Result<std::path::PathBuf> {
+        const WIDTH: usize = 160;
+        const HEIGHT: usize = 144;
+
+        let output_dir = self.screenshot_output_dir();
+        std::fs::create_dir_all(&output_dir)?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let file_name = format!(
+            "{}-{}-{:03}.png",
+            self.screenshot_prefix(),
+            now.as_secs(),
+            now.subsec_millis()
+        );
+        let output_path = output_dir.join(file_name);
+
+        let file = std::fs::File::create(&output_path)?;
+        let writer = BufWriter::new(file);
+        let mut encoder = png::Encoder::new(writer, WIDTH as u32, HEIGHT as u32);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut png_writer = encoder
+            .write_header()
+            .map_err(|e| std::io::Error::other(format!("PNG header write failed: {e}")))?;
+
+        let mut rgb_data = Vec::with_capacity(WIDTH * HEIGHT * 3);
+        for &pixel in &self.framebuffer {
+            rgb_data.push(((pixel >> 16) & 0xFF) as u8);
+            rgb_data.push(((pixel >> 8) & 0xFF) as u8);
+            rgb_data.push((pixel & 0xFF) as u8);
+        }
+
+        png_writer
+            .write_image_data(&rgb_data)
+            .map_err(|e| std::io::Error::other(format!("PNG data write failed: {e}")))?;
+
+        Ok(output_path)
+    }
+
+    fn capture_screenshot(&mut self) {
+        match self.save_current_frame_screenshot() {
+            Ok(path) => info!("Saved screenshot to {}", path.display()),
+            Err(e) => warn!("Failed to save screenshot: {e}"),
+        }
+    }
+
     fn load_rom(&mut self, path: std::path::PathBuf) {
         match Cartridge::from_file(&path) {
             Ok(cart) => {
@@ -1574,6 +1666,19 @@ impl eframe::App for VibeEmuApp {
                         {
                             self.load_rom(path);
                         }
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.current_rom_path.is_some(),
+                            egui::Button::new(format!(
+                                "Capture Screenshot ({:?})",
+                                self.keybinds.screenshot_key()
+                            )),
+                        )
+                        .clicked()
+                    {
+                        self.capture_screenshot();
                         ui.close();
                     }
                     ui.separator();
@@ -1923,6 +2028,13 @@ impl VibeEmuApp {
                         ui.label(format!("{:?}", self.keybinds.fast_forward_key()));
                         if ui.button("Rebind").clicked() {
                             self.rebinding = Some(RebindTarget::FastForward);
+                        }
+                        ui.end_row();
+
+                        ui.label("Screenshot");
+                        ui.label(format!("{:?}", self.keybinds.screenshot_key()));
+                        if ui.button("Rebind").clicked() {
+                            self.rebinding = Some(RebindTarget::Screenshot);
                         }
                         ui.end_row();
                     });
