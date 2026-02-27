@@ -958,7 +958,7 @@ fn double_speed_preserves_lf_div_phase() {
 
 #[test]
 fn pcm_mask_defaults_to_full_on_reve() {
-    let apu = Apu::new_with_config(true, CgbRevision::RevE);
+    let mut apu = Apu::new_with_config(true, CgbRevision::RevE);
     assert_eq!(apu.pcm_mask()[0], 0xFF);
     assert_eq!(apu.pcm_mask()[1], 0xFF);
 }

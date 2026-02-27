@@ -339,6 +339,7 @@ impl SquareChannel {
         self.timer -= cycles;
     }
 
+    #[inline]
     fn compute_output(&mut self) -> u8 {
         if !self.enabled || !self.dac_enabled {
             return 0;
@@ -370,10 +371,38 @@ impl SquareChannel {
         // (third-stage output produced by the pipeline).
     }
 
+    fn tick_1mhz_batch(&mut self, ticks: u16) {
+        if ticks == 0 {
+            return;
+        }
+        let sample = self.compute_output();
+        match ticks {
+            1 => self.tick_1mhz(),
+            2 => {
+                self.out_stage2 = self.out_latched;
+                self.out_stage1 = sample;
+                self.out_latched = sample;
+            }
+            _ => {
+                self.out_stage2 = sample;
+                self.out_stage1 = sample;
+                self.out_latched = sample;
+            }
+        }
+    }
+
+    #[inline]
+    fn can_skip_1mhz_batch(&self) -> bool {
+        let pipeline_flushed =
+            self.out_latched == 0 && self.out_stage1 == 0 && self.out_stage2 == 0;
+        pipeline_flushed && (!self.enabled || !self.dac_enabled || self.sample_surpressed)
+    }
+
     fn current_sample(&self) -> u8 {
         self.out_stage2
     }
 
+    #[inline]
     fn peek_sample(&self) -> u8 {
         // The PCM read path is not gated by the channel's internal `pending_reset` flag.
         // Visibility is controlled only by DAC/enabled state and `sample_surpressed`.
@@ -508,6 +537,7 @@ impl WaveChannel {
         ((sample_length ^ 0x07FF) as i32) + 1
     }
 
+    #[inline]
     fn compute_output(&self) -> u8 {
         if !self.enabled || !self.dac_enabled || self.sample_suppressed.get() {
             return 0;
@@ -529,6 +559,34 @@ impl WaveChannel {
         self.out_stage2 = self.out_stage1;
         self.out_stage1 = self.out_latched;
         self.out_latched = sample;
+    }
+
+    fn tick_1mhz_batch(&mut self, ticks: u16) {
+        if ticks == 0 {
+            return;
+        }
+        let sample = self.compute_output();
+        match ticks {
+            1 => self.tick_1mhz(),
+            2 => {
+                self.out_stage2 = self.out_latched;
+                self.out_stage1 = sample;
+                self.out_latched = sample;
+            }
+            _ => {
+                self.out_stage2 = sample;
+                self.out_stage1 = sample;
+                self.out_latched = sample;
+            }
+        }
+    }
+
+    #[inline]
+    fn can_skip_1mhz_batch(&self) -> bool {
+        if !(self.out_latched == 0 && self.out_stage1 == 0 && self.out_stage2 == 0) {
+            return false;
+        }
+        !self.enabled || !self.dac_enabled || self.sample_suppressed.get() || self.shift >= 4
     }
 
     fn current_sample(&self) -> u8 {
@@ -628,6 +686,7 @@ impl WaveChannel {
         self.compute_output()
     }
 
+    #[inline]
     fn peek_sample(&self) -> u8 {
         self.compute_output()
     }
@@ -694,6 +753,7 @@ impl NoiseChannel {
         self.current_lfsr_sample = self.lfsr & 1 != 0;
     }
 
+    #[inline]
     fn compute_output(&self) -> u8 {
         if !self.enabled || !self.dac_enabled || self.sample_suppressed {
             return 0;
@@ -718,6 +778,34 @@ impl NoiseChannel {
         self.out_latched = sample;
     }
 
+    fn tick_1mhz_batch(&mut self, ticks: u16) {
+        if ticks == 0 {
+            return;
+        }
+        let sample = self.compute_output();
+        match ticks {
+            1 => self.tick_1mhz(),
+            2 => {
+                self.out_stage2 = self.out_latched;
+                self.out_stage1 = sample;
+                self.out_latched = sample;
+            }
+            _ => {
+                self.out_stage2 = sample;
+                self.out_stage1 = sample;
+                self.out_latched = sample;
+            }
+        }
+    }
+
+    #[inline]
+    fn can_skip_1mhz_batch(&self) -> bool {
+        if !(self.out_latched == 0 && self.out_stage1 == 0 && self.out_stage2 == 0) {
+            return false;
+        }
+        !self.enabled || !self.dac_enabled || self.sample_suppressed
+    }
+
     fn current_sample(&self) -> u8 {
         self.out_stage2
     }
@@ -726,6 +814,7 @@ impl NoiseChannel {
         self.compute_output()
     }
 
+    #[inline]
     fn peek_sample(&self) -> u8 {
         self.compute_output()
     }
@@ -782,6 +871,8 @@ pub struct Apu {
     hp_prev_output_right: f32,
     pcm12: u8,
     pcm34: u8,
+    pcm_dirty: bool,
+    pcm12_ch1_glitch_once: bool,
     regs: [u8; 0x30],
     cpu_cycles: u64,
     /// Counts 1 MHz ticks; the low two bits determine the phase of the
@@ -817,6 +908,8 @@ pub struct Apu {
     // ── Sweep state ──
     /// 128Hz sweep countdown (0-7), incremented when (div_divider & 3) == 3
     sweep_countdown: u8,
+    /// Dot countdown until the next `tick_sweep(1)` scheduling point in `tick()`.
+    sweep_dot_countdown: u8,
     /// 1 MHz countdown for delayed sweep calculation
     sweep_calc_countdown: u8,
     /// Reload timer for sweep calculation countdown (handles glitches)
@@ -1043,7 +1136,7 @@ impl Apu {
         self.wave_update_output(byte_index, byte);
         self.ch3.sample_suppressed.set(false);
         self.ch3.bugged_read_countdown = 0;
-        self.refresh_pcm_regs();
+        self.mark_pcm_dirty();
     }
 
     fn advance_bugged_read(&mut self, ticks: u32) {
@@ -1090,7 +1183,7 @@ impl Apu {
         } else {
             let changed = self.flush_wave_shadow();
             if changed {
-                self.refresh_pcm_regs();
+                self.mark_pcm_dirty();
             }
             self.ch3.wave_form_just_read.set(true);
             self.wave_ram[index]
@@ -1119,7 +1212,7 @@ impl Apu {
             self.ch3.wave_shadow[index] = value;
             changed |= self.wave_update_output(index, value);
             if changed {
-                self.refresh_pcm_regs();
+                self.mark_pcm_dirty();
             }
         }
     }
@@ -1166,6 +1259,8 @@ impl Apu {
         self.hp_prev_output_right = 0.0;
         self.pcm12 = 0;
         self.pcm34 = 0;
+        self.pcm_dirty = false;
+        self.pcm12_ch1_glitch_once = false;
         self.ch1_last_env_write_cycle = 0;
         self.apu_enable_tick = 0;
         self.mhz2_residual = 0;
@@ -1177,6 +1272,7 @@ impl Apu {
         self.ch2_env_countdown = 0;
         self.div_divider = 0;
         self.skip_div_event = SkipDivEvent::Inactive;
+        self.sweep_dot_countdown = 1;
     }
 
     /// Update envelope clock state, handling lock conditions.
@@ -1347,6 +1443,8 @@ impl Apu {
             hp_prev_output_right: 0.0,
             pcm12: 0,
             pcm34: 0,
+            pcm_dirty: true,
+            pcm12_ch1_glitch_once: false,
             cpu_cycles: 0,
             lf_div_counter: 0,
             lf_div: 1,
@@ -1367,6 +1465,7 @@ impl Apu {
             skip_div_event: SkipDivEvent::Inactive,
             // Sweep state initialization
             sweep_countdown: 0,
+            sweep_dot_countdown: 1,
             sweep_calc_countdown: 0,
             sweep_calc_reload_timer: 0,
             sweep_shadow_freq: 0,
@@ -1470,22 +1569,32 @@ impl Apu {
         self.regs[idx] | Apu::read_mask(addr)
     }
 
-    pub fn read_pcm(&self, addr: u16) -> u8 {
+    pub fn read_pcm(&mut self, addr: u16) -> u8 {
         if !self.cgb_mode || self.nr52 & 0x80 == 0 {
             return 0xFF;
         }
+        self.ensure_pcm_regs_fresh();
         match addr {
-            0xFF76 => self.pcm12,
+            0xFF76 => {
+                if self.pcm12_ch1_glitch_once {
+                    self.pcm12_ch1_glitch_once = false;
+                    self.pcm12 & 0xF0
+                } else {
+                    self.pcm12
+                }
+            }
             0xFF77 => self.pcm34,
             _ => 0xFF,
         }
     }
 
-    pub fn pcm_mask(&self) -> [u8; 2] {
+    pub fn pcm_mask(&mut self) -> [u8; 2] {
+        self.ensure_pcm_regs_fresh();
         self.pcm_mask
     }
 
-    pub fn pcm_samples(&self) -> [u8; 4] {
+    pub fn pcm_samples(&mut self) -> [u8; 4] {
+        self.ensure_pcm_regs_fresh();
         self.pcm_samples
     }
 
@@ -1551,27 +1660,33 @@ impl Apu {
     /// CGB speed switching, where DIV/TIMA can be frozen while the APU's dot
     /// clock continues.
     pub fn tick_frame_sequencer(&mut self, div_prev: u16, div_now: u16, double_speed: bool) {
-        if self.nr52 & 0x80 == 0 {
+        self.tick_frame_sequencer_steps(div_prev, div_now.wrapping_sub(div_prev), double_speed);
+    }
+
+    pub fn tick_frame_sequencer_steps(&mut self, div_prev: u16, steps: u16, double_speed: bool) {
+        if self.nr52 & 0x80 == 0 || steps == 0 {
             return;
         }
 
         let bit = if double_speed { 13 } else { 12 };
-        let steps = div_now.wrapping_sub(div_prev);
-        if steps == 0 {
-            return;
-        }
-
         let mut div = div_prev;
-        for _ in 0..steps {
-            let prev_bit = (div >> bit) & 1;
-            div = div.wrapping_add(1);
-            let curr_bit = (div >> bit) & 1;
+        let mut remaining = steps;
+        let lower_mask = (1u16 << bit) - 1;
 
-            if prev_bit == 1 && curr_bit == 0 {
-                self.handle_div_event();
+        while remaining > 0 {
+            let low = div & lower_mask;
+            let to_toggle = lower_mask.wrapping_sub(low).wrapping_add(1);
+
+            if to_toggle > remaining {
+                break;
             }
 
-            if prev_bit == 0 && curr_bit == 1 {
+            div = div.wrapping_add(to_toggle);
+            remaining -= to_toggle;
+
+            if ((div >> bit) & 1) == 0 {
+                self.handle_div_event();
+            } else {
                 self.handle_div_rising_edge();
             }
         }
@@ -1663,7 +1778,7 @@ impl Apu {
             0xFF11 => {
                 self.ch1.write_duty(val >> 6);
                 self.ch1.length = 64 - (val & 0x3F);
-                self.refresh_pcm_regs();
+                self.mark_pcm_dirty();
             }
             0xFF12 => {
                 if self.ch1.enabled {
@@ -1690,12 +1805,14 @@ impl Apu {
                     self.ch1_env_clock = EnvelopeClock::default();
                 }
                 self.ch1_last_env_write_cycle = self.cpu_cycles;
-                self.refresh_pcm_regs();
+                self.mark_pcm_dirty();
             }
             0xFF13 => self.ch1.write_frequency_low(val),
             0xFF14 => {
                 let prev = self.ch1.length_enable;
                 let length_enable = val & 0x40 != 0;
+                self.capture_old_cgb_pcm12_glitch_on_ch1_freq_write(old_val, val);
+                self.apply_square_de_freq_change_phase_quirk(1, old_val, val);
                 self.ch1.write_frequency_high(val);
                 let triggered = val & 0x80 != 0;
                 if triggered && !self.cgb_mode {
@@ -1715,7 +1832,7 @@ impl Apu {
             0xFF16 => {
                 self.ch2.write_duty(val >> 6);
                 self.ch2.length = 64 - (val & 0x3F);
-                self.refresh_pcm_regs();
+                self.mark_pcm_dirty();
             }
             0xFF17 => {
                 if self.ch2.enabled {
@@ -1739,12 +1856,13 @@ impl Apu {
                     self.ch2.active = false;
                     self.ch2_env_clock = EnvelopeClock::default();
                 }
-                self.refresh_pcm_regs();
+                self.mark_pcm_dirty();
             }
             0xFF18 => self.ch2.write_frequency_low(val),
             0xFF19 => {
                 let prev = self.ch2.length_enable;
                 let length_enable = val & 0x40 != 0;
+                self.apply_square_de_freq_change_phase_quirk(2, old_val, val);
                 self.ch2.write_frequency_high(val);
                 let triggered = val & 0x80 != 0;
                 if triggered && !self.cgb_mode {
@@ -1769,7 +1887,7 @@ impl Apu {
                     self.ch3.sample_suppressed.set(true);
                     self.ch3.pending_reset = false;
                     self.ch3.set_pipeline_sample(0);
-                    self.refresh_pcm_regs();
+                    self.mark_pcm_dirty();
                 }
             }
             0xFF1B => self.ch3.length = 256 - val as u16,
@@ -1779,7 +1897,7 @@ impl Apu {
                 if self.ch3.enabled && self.ch3.dac_enabled {
                     let sample = self.ch3.compute_output();
                     self.ch3.set_pipeline_sample(sample);
-                    self.refresh_pcm_regs();
+                    self.mark_pcm_dirty();
                 }
             }
             0xFF1D => {
@@ -1811,7 +1929,7 @@ impl Apu {
                     // fires the trigger first, then ticks the new state. Absorb
                     // the post-trigger tick so the fresh countdown isn't shortened.
                     self.wave_prestep_deficit = if self.double_speed { 1 } else { 2 };
-                    self.refresh_pcm_regs();
+                    self.mark_pcm_dirty();
                 } else {
                     let mut effective_prev = prev;
                     if triggered {
@@ -1820,7 +1938,7 @@ impl Apu {
                         }
                         let was_enabled = self.ch3.enabled && self.ch3.dac_enabled;
                         self.trigger_wave(was_enabled, prev, length_enable);
-                        self.refresh_pcm_regs();
+                        self.mark_pcm_dirty();
                     }
                     self.extra_length_clock_wave(effective_prev, length_enable, triggered);
                 }
@@ -1851,7 +1969,7 @@ impl Apu {
                 }
                 #[cfg(feature = "apu-trace")]
                 self.trace_noise_state("NR42", Some(val));
-                self.refresh_pcm_regs();
+                self.mark_pcm_dirty();
             }
             0xFF22 => {
                 let prev_shift = (old_val >> 4) & 0x0F;
@@ -1891,7 +2009,7 @@ impl Apu {
                 if triggered && !self.cgb_mode {
                     self.extra_length_clock_noise(prev, length_enable, false);
                     self.trigger_noise(prev, length_enable);
-                    self.refresh_pcm_regs();
+                    self.mark_pcm_dirty();
                 } else {
                     let mut effective_prev = prev;
                     if triggered {
@@ -1899,7 +2017,7 @@ impl Apu {
                             effective_prev = false;
                         }
                         self.trigger_noise(prev, length_enable);
-                        self.refresh_pcm_regs();
+                        self.mark_pcm_dirty();
                     }
                     self.extra_length_clock_noise(effective_prev, length_enable, triggered);
                 }
@@ -1952,6 +2070,11 @@ impl Apu {
         let reg_idx = if idx == 1 { 0x04 } else { 0x09 };
         let value = self.regs[reg_idx];
         let length_enable = value & 0x40 != 0;
+        let was_active_before_trigger = if idx == 1 {
+            self.ch1.active
+        } else {
+            self.ch2.active
+        };
 
         let freq_updated = false;
         let de_window = self.cgb_mode && self.cgb_revision.supports_de_window();
@@ -2103,7 +2226,7 @@ impl Apu {
         if idx == 1 {
             let nr10 = self.regs[0x00];
             let shift = nr10 & 0x07;
-            let was_active = self.ch1.active;
+            let was_active = was_active_before_trigger;
 
             // Reset sweep state
             self.sweep_instant_calc_done = false;
@@ -2141,14 +2264,32 @@ impl Apu {
                 self.sweep_addend = 0;
             }
 
-            // These are set unconditionally
+            // These are set unconditionally.
+            // In double-speed, ticks_2mhz=1 per step so hold decrements half as
+            // fast; subtract 1 to compensate for the skip adding one effective tick.
             let cgb_not_d = self.cgb_mode && self.cgb_revision != CgbRevision::RevD;
-            self.ch1_restart_hold = 2 - (self.lf_div & 1) + if cgb_not_d { 2 } else { 0 };
-            // In hardware the APU ticks for this M-cycle already ran before
-            // the register write, so the write-before-tick model must skip
-            // the first step() decrement to avoid draining hold too early.
+            let base_hold = 2 - (self.lf_div & 1) + if cgb_not_d { 2 } else { 0 };
+            self.ch1_restart_hold = if self.double_speed {
+                base_hold - 1
+            } else {
+                base_hold
+            };
             self.ch1_restart_hold_skip = true;
             self.sweep_countdown = ((nr10 >> 4) & 7) ^ 7;
+
+            #[cfg(feature = "apu-trace")]
+            eprintln!(
+                "apu-trace: CH1 trigger freq={} sweep_period={} sweep_shift={} sweep_neg={} hold={} lf_div={} ds={} was_active={} cycle={}",
+                self.ch1.sample_length,
+                (nr10 >> 4) & 7,
+                shift,
+                nr10 & 0x08 != 0,
+                self.ch1_restart_hold,
+                self.lf_div,
+                self.double_speed,
+                was_active,
+                self.cpu_cycles
+            );
         }
 
         if idx == 1 && freq_updated {
@@ -2159,7 +2300,7 @@ impl Apu {
         } else {
             self.ch2.length_enable = length_enable;
         }
-        self.refresh_pcm_regs();
+        self.mark_pcm_dirty();
     }
     fn trigger_wave(&mut self, was_enabled: bool, prev_length_enable: bool, length_enable: bool) {
         let prev_sample = self.ch3.compute_output();
@@ -2401,6 +2542,7 @@ impl Apu {
                     .wrapping_add(self.sweep_shadow_freq)
                     .wrapping_add(negate_add);
                 self.ch1.sample_length = new_freq & 0x07FF;
+                self.ch1.frequency = self.ch1.sample_length;
                 // The sweep frequency change runs between the 2 MHz channel
                 // step and the dot-clock tick.  If clock_2mhz just reloaded
                 // sample_countdown from the old sample_length, re-sync it to
@@ -2486,34 +2628,58 @@ impl Apu {
     /// This advances the 1 MHz staging pipeline and PCM registers. The
     /// frame sequencer is clocked separately via `tick_frame_sequencer`.
     pub fn tick(&mut self, div_prev: u16, div_now: u16, double_speed: bool) {
+        self.tick_steps(div_prev, div_now.wrapping_sub(div_prev), double_speed);
+    }
+
+    pub fn tick_steps(&mut self, _div_prev: u16, ticks: u16, double_speed: bool) {
+        let speed_changed = self.double_speed != double_speed;
         // Store the current CPU speed so trigger_square can select the
         // correct initial delay when a channel is triggered.
         self.double_speed = double_speed;
-        // Derive how many dot cycles elapsed in this step from the divider.
-        // This lets callers tick the APU in larger chunks or single-dot stalls.
-        let ticks = div_now.wrapping_sub(div_prev);
         if ticks == 0 {
             return;
         }
-        for _ in 0..ticks {
-            // Advance the 1 MHz sample pipeline for pulse and wave channels.
-            self.ch1.tick_1mhz();
-            self.ch2.tick_1mhz();
-            self.ch3.tick_1mhz();
-            self.ch4.tick_1mhz();
+        // Sweep ticks are tied to dot-phase boundaries. Keep a countdown to
+        // the next boundary and avoid per-chunk modulo/phase calculations.
+        let divisor: u8 = if double_speed { 2 } else { 4 };
+        if speed_changed || self.sweep_dot_countdown == 0 || self.sweep_dot_countdown > divisor {
+            let phase = self.lf_div_counter % u64::from(divisor);
+            self.sweep_dot_countdown = if phase == 0 {
+                1
+            } else {
+                (u64::from(divisor) - phase + 1) as u8
+            };
+        }
+        let mut remaining = ticks;
+        while remaining > 0 {
+            let chunk = remaining.min(self.sweep_dot_countdown as u16);
 
-            // Update PCM12/PCM34 after each dot tick.
-            self.refresh_pcm_regs();
-
-            // Tick sweep calculation countdown at 1 MHz (once per 4 dots in single-speed,
-            // or once per 2 dots in double-speed).
-            let divisor: u64 = if double_speed { 2 } else { 4 };
-            if self.lf_div_counter.is_multiple_of(divisor) {
-                self.tick_sweep(1);
+            // Within each chunk, channel state is constant with respect to 1 MHz
+            // pipeline sampling; only pipeline registers shift.
+            if !self.ch1.can_skip_1mhz_batch() {
+                self.ch1.tick_1mhz_batch(chunk);
+            }
+            if !self.ch2.can_skip_1mhz_batch() {
+                self.ch2.tick_1mhz_batch(chunk);
+            }
+            if !self.ch3.can_skip_1mhz_batch() {
+                self.ch3.tick_1mhz_batch(chunk);
+            }
+            if !self.ch4.can_skip_1mhz_batch() {
+                self.ch4.tick_1mhz_batch(chunk);
             }
 
-            self.lf_div_counter = self.lf_div_counter.wrapping_add(1);
+            self.lf_div_counter = self.lf_div_counter.wrapping_add(chunk as u64);
+            remaining -= chunk;
+
+            if chunk as u8 == self.sweep_dot_countdown {
+                self.tick_sweep(1);
+                self.sweep_dot_countdown = divisor;
+            } else {
+                self.sweep_dot_countdown -= chunk as u8;
+            }
         }
+        self.mark_pcm_dirty();
         // cpu_cycles remains a CPU cycle counter for timers and IRQs.
         self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
     }
@@ -2561,7 +2727,7 @@ impl Apu {
             changed |= self.flush_wave_shadow();
         }
         if changed {
-            self.refresh_pcm_regs();
+            self.mark_pcm_dirty();
         }
         self.advance_bugged_read(ticks);
     }
@@ -2949,7 +3115,7 @@ impl Apu {
             self.ch2.length_enable = new_length_enable;
         }
         if should_clock {
-            self.refresh_pcm_regs();
+            self.mark_pcm_dirty();
         }
     }
 
@@ -2982,7 +3148,7 @@ impl Apu {
         };
         self.ch3.length_enable = new_length_enable;
         if should_clock {
-            self.refresh_pcm_regs();
+            self.mark_pcm_dirty();
         }
     }
 
@@ -3017,7 +3183,76 @@ impl Apu {
         };
         self.ch4.length_enable = new_length_enable;
         if should_clock {
+            self.mark_pcm_dirty();
+        }
+    }
+
+    fn apply_square_de_freq_change_phase_quirk(
+        &mut self,
+        idx: u8,
+        old_reg_value: u8,
+        new_reg_value: u8,
+    ) {
+        if !self.cgb_mode
+            || !matches!(self.cgb_revision, CgbRevision::RevD | CgbRevision::RevE)
+            || !self.double_speed
+            || (new_reg_value & 0x80) != 0
+        {
+            return;
+        }
+
+        let ch = if idx == 1 {
+            &mut self.ch1
+        } else {
+            &mut self.ch2
+        };
+
+        if !ch.active || (old_reg_value & 0x07) != 0x07 || (new_reg_value & 0x07) == 0x07 {
+            return;
+        }
+
+        if ch.did_tick && (ch.sample_countdown >> 1) == ((ch.sample_length ^ 0x07FF) as i32) {
+            ch.duty_pos = ch.duty_pos.wrapping_sub(1) & 7;
+            ch.sample_surpressed = false;
+        }
+    }
+
+    fn capture_old_cgb_pcm12_glitch_on_ch1_freq_write(
+        &mut self,
+        old_reg_value: u8,
+        new_reg_value: u8,
+    ) {
+        if !self.cgb_mode
+            || !matches!(
+                self.cgb_revision,
+                CgbRevision::Rev0 | CgbRevision::RevB | CgbRevision::RevC
+            )
+            || (new_reg_value & 0x80) != 0
+            || (old_reg_value & 0x07) == (new_reg_value & 0x07)
+            || !self.ch1.active
+        {
+            return;
+        }
+
+        let should_mask_immediate_pcm = if self.double_speed {
+            self.ch1.sample_countdown == 1
+        } else {
+            self.ch1.sample_countdown == 3
+        };
+
+        if should_mask_immediate_pcm {
+            self.pcm12_ch1_glitch_once = true;
+        }
+    }
+
+    fn mark_pcm_dirty(&mut self) {
+        self.pcm_dirty = true;
+    }
+
+    fn ensure_pcm_regs_fresh(&mut self) {
+        if self.pcm_dirty {
             self.refresh_pcm_regs();
+            self.pcm_dirty = false;
         }
     }
 
@@ -3083,6 +3318,41 @@ impl Apu {
         self.regs[0x04] = (self.regs[0x04] & !0x07) | ((freq >> 8) as u8 & 0x07);
     }
 
+    #[inline]
+    pub fn run_cpu_tick(
+        &mut self,
+        dot_cycles: u16,
+        prev_cpu_div: u16,
+        curr_cpu_div: u16,
+        prev_dot_div: u16,
+        curr_dot_div: u16,
+        double_speed: bool,
+    ) {
+        self.run_cpu_tick_steps(
+            dot_cycles,
+            prev_cpu_div,
+            curr_cpu_div.wrapping_sub(prev_cpu_div),
+            prev_dot_div,
+            curr_dot_div.wrapping_sub(prev_dot_div),
+            double_speed,
+        );
+    }
+
+    #[inline]
+    pub fn run_cpu_tick_steps(
+        &mut self,
+        dot_cycles: u16,
+        prev_cpu_div: u16,
+        cpu_div_steps: u16,
+        prev_dot_div: u16,
+        dot_div_steps: u16,
+        double_speed: bool,
+    ) {
+        self.step(dot_cycles);
+        self.tick_frame_sequencer_steps(prev_cpu_div, cpu_div_steps, double_speed);
+        self.tick_steps(prev_dot_div, dot_div_steps, double_speed);
+    }
+
     pub fn step(&mut self, cycles: u16) {
         let rate = self.sample_rate as u64;
         let sample_period = CPU_CLOCK_HZ as u64;
@@ -3094,12 +3364,16 @@ impl Apu {
             // Only advance the APU's 2 MHz domain (and lf_div parity) when the APU is enabled (NR52 bit 7 set).
             // This keeps internal clocks effectively gated while the APU is disabled.
             if self.nr52 & 0x80 != 0 {
-                // Decrement ch1_restart_hold at the 2 MHz rate, before frame
-                // sequencer events run. The skip flag compensates for the write-before-tick
-                // model: in hardware the APU ticks for the write M-cycle ran
-                // before the register write, so no hold decrement occurs during
-                // the same step() call that follows trigger_square.
                 if self.ch1_restart_hold_skip {
+                    #[cfg(feature = "apu-trace")]
+                    eprintln!(
+                        "apu-trace: CH1 hold_skip ticks_2mhz={} hold={} lf_div={} ds={} cycle={}",
+                        ticks_2mhz,
+                        self.ch1_restart_hold,
+                        self.lf_div,
+                        self.double_speed,
+                        self.cpu_cycles
+                    );
                     self.ch1_restart_hold_skip = false;
                 } else if self.ch1_restart_hold > 0 {
                     let dec = ticks_2mhz as u8;
@@ -3117,20 +3391,16 @@ impl Apu {
                 self.clock_square_channels_2mhz(ticks_2mhz);
                 self.clock_wave_channel_2mhz(ticks_2mhz);
                 self.clock_noise_channel_2mhz(ticks_2mhz);
-                // Ensure PCM registers reflect any edge/suppression changes from 2 MHz domain
-                self.refresh_pcm_regs();
+                self.mark_pcm_dirty();
             }
         }
-        for _ in 0..cycles {
-            self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
-            #[cfg(feature = "apu-trace")]
-            self.trace_noise_state("step", None);
-            self.sample_timer_accum += rate;
-            if self.sample_timer_accum >= sample_period {
-                self.sample_timer_accum -= sample_period;
-                let (left, right) = self.mix_output();
-                self.push_samples(left, right);
-            }
+        self.cpu_cycles = self.cpu_cycles.wrapping_add(cycles as u64);
+
+        self.sample_timer_accum += rate * cycles as u64;
+        while self.sample_timer_accum >= sample_period {
+            self.sample_timer_accum -= sample_period;
+            let (left, right) = self.mix_output();
+            self.push_samples(left, right);
         }
     }
 
@@ -3383,7 +3653,7 @@ impl Apu {
         let env = &noise.envelope;
         let env_clock = &self.ch4_env_clock;
         apu_trace!(
-            "noise event={} reg={:?} cycle={} enabled={} dac={} length={} length_enable={} envelope{{initial={}, volume={}, timer={}, period={}, add={}}} volume_countdown={} current_volume={} envelope_clock{{clock={}, locked={}, should_lock={}}} clock_shift={} divisor={} narrow={} lfsr=0x{:04X} current_lfsr_sample={} timer={} sample_countdown={} delay={} alignment={} counter={} reload_counter={} counter_countdown={} dmg_delayed_start={} pending_disable={} pending_reset={} sample_suppressed={} current_sample={} lf_div={}",
+            "noise event={} reg={:?} cycle={} enabled={} dac={} length={} length_enable={} envelope{{initial={}, volume={}, timer={}, period={}, add={}}} volume_countdown={} current_volume={} envelope_clock{{clock={}, locked={}, should_lock={}}} clock_shift={} divisor={} narrow={} lfsr=0x{:04X} current_lfsr_sample={} timer={} alignment={} counter={} reload_counter={} counter_countdown={} dmg_delayed_start={} pending_disable={} pending_reset={} sample_suppressed={} current_sample={} lf_div={}",
             event,
             reg_value,
             self.cpu_cycles,
@@ -3407,8 +3677,6 @@ impl Apu {
             noise.lfsr,
             noise.current_lfsr_sample,
             noise.timer,
-            noise.sample_countdown,
-            noise.delay,
             noise.alignment,
             noise.counter,
             noise.reload_counter,

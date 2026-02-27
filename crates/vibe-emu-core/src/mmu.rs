@@ -10,29 +10,39 @@ use crate::{
 
 use crate::ppu::OamBugAccess;
 
-fn env_flag_enabled(var: &str) -> bool {
-    use std::sync::OnceLock;
+fn env_bool_or_false(var: &str) -> bool {
+    std::env::var_os(var)
+        .map(|v| {
+            let s = v.to_string_lossy();
+            !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
+        })
+        .unwrap_or(false)
+}
 
-    static CACHE: OnceLock<std::collections::HashMap<&'static str, bool>> = OnceLock::new();
-    // Cache a small fixed set to avoid repeated env parsing.
-    let cache = CACHE.get_or_init(|| {
-        let mut map = std::collections::HashMap::new();
-        for key in [
-            "VIBEEMU_TRACE_OAMBUG",
-            "VIBEEMU_TRACE_LCDC",
-            "VIBEEMU_DMG_MODE3_LCDC_DELAY",
-        ] {
-            let enabled = std::env::var_os(key)
-                .map(|v| {
-                    let s = v.to_string_lossy();
-                    !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
-                })
-                .unwrap_or(false);
-            map.insert(key, enabled);
-        }
-        map
-    });
-    cache.get(var).copied().unwrap_or(false)
+#[cfg(feature = "ppu-trace")]
+fn trace_oambug_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env_bool_or_false("VIBEEMU_TRACE_OAMBUG"))
+}
+
+#[cfg(not(feature = "ppu-trace"))]
+#[inline]
+fn trace_oambug_enabled() -> bool {
+    false
+}
+
+#[cfg(feature = "ppu-trace")]
+fn trace_lcdc_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env_bool_or_false("VIBEEMU_TRACE_LCDC"))
+}
+
+#[cfg(not(feature = "ppu-trace"))]
+#[inline]
+fn trace_lcdc_enabled() -> bool {
+    false
 }
 
 fn dmg_mode3_lcdc_delay_dots() -> u8 {
@@ -171,6 +181,26 @@ pub struct Mmu {
 }
 
 impl Mmu {
+    #[cold]
+    fn read_byte_dma_blocked_value(&mut self, addr: u16) -> Option<u8> {
+        match addr {
+            // If the DMA engine is sourcing from the ROM bus, CPU reads from ROM can
+            // observe the DMA-transferred byte (bus conflict).
+            0x0000..=0x7FFF => {
+                if self.oam_dma_source_in_rom() {
+                    Some(self.oam_dma_bus_conflict_byte())
+                } else {
+                    None
+                }
+            }
+            // Allow ROM, WRAM/Echo and all I/O/HRAM accesses during the transfer.
+            0xC000..=0xFDFF | 0xFF00..=0xFFFF => None,
+            // OAM/VRAM buses are blocked.
+            0xFE00..=0xFEFF => Some(0xFF),
+            _ => Some(0xFF),
+        }
+    }
+
     pub fn is_cgb(&self) -> bool {
         self.cgb_mode
     }
@@ -376,22 +406,47 @@ impl Mmu {
     }
 
     fn read_byte_inner(&mut self, addr: u16, allow_dma: bool) -> u8 {
-        if !allow_dma && self.dma_cycles > 0 {
-            match addr {
-                // If the DMA engine is sourcing from the ROM bus, CPU reads from ROM can
-                // observe the DMA-transferred byte (bus conflict).
-                0x0000..=0x7FFF => {
-                    if self.oam_dma_source_in_rom() {
-                        return self.oam_dma_bus_conflict_byte();
-                    }
-                }
-                // Allow ROM, WRAM/Echo and all I/O/HRAM accesses during the transfer.
-                0xC000..=0xFDFF | 0xFF00..=0xFFFF => {}
-                // OAM/VRAM buses are blocked.
-                0xFE00..=0xFEFF => return 0xFF,
-                _ => return 0xFF,
-            }
+        if !allow_dma
+            && self.dma_cycles > 0
+            && let Some(value) = self.read_byte_dma_blocked_value(addr)
+        {
+            return value;
         }
+
+        if (0x0000..=0x7FFF).contains(&addr) {
+            if self.boot_mapped
+                && (addr <= 0x00FF || (self.cgb_mode && (0x0200..=0x08FF).contains(&addr)))
+            {
+                return self
+                    .boot_rom
+                    .as_ref()
+                    .and_then(|b| b.get(addr as usize).copied())
+                    .unwrap_or(0xFF);
+            }
+            return self
+                .cart
+                .as_mut()
+                .map(|c| c.read_with_open_bus(addr, self.main_bus))
+                .unwrap_or(0xFF);
+        }
+
+        if (0xFF80..=0xFFFE).contains(&addr) {
+            return self.hram[(addr - 0xFF80) as usize];
+        }
+
+        if (0xC000..=0xCFFF).contains(&addr) {
+            return self.wram[0][(addr - 0xC000) as usize];
+        }
+        if (0xD000..=0xDFFF).contains(&addr) {
+            return self.wram[self.wram_bank][(addr - 0xD000) as usize];
+        }
+        if (0xE000..=0xEFFF).contains(&addr) {
+            return self.wram[0][(addr - 0xE000) as usize];
+        }
+        if (0xF000..=0xFDFF).contains(&addr) {
+            return self.wram[self.wram_bank][(addr - 0xF000) as usize];
+        }
+
         match addr {
             // When the boot ROM is mapped, overlay it on the lower
             // portion of the address space. On DMG this covers
@@ -474,7 +529,7 @@ impl Mmu {
                 if self.ppu.oam_read_accessible() {
                     self.oam_bug_next_access = None;
                     let val = self.ppu.oam[(addr - 0xFE00) as usize];
-                    if env_flag_enabled("VIBEEMU_TRACE_OAMBUG") && self.ppu.lcd_enabled() {
+                    if trace_oambug_enabled() && self.ppu.lcd_enabled() {
                         let pc_str = self
                             .last_cpu_pc
                             .map(|p| format!("{:04X}", p))
@@ -503,7 +558,7 @@ impl Mmu {
                             .oam_bug_next_access
                             .take()
                             .unwrap_or(OamBugAccess::Read);
-                        if env_flag_enabled("VIBEEMU_TRACE_OAMBUG") {
+                        if trace_oambug_enabled() {
                             let pc_str = self
                                 .last_cpu_pc
                                 .map(|p| format!("{:04X}", p))
@@ -729,7 +784,7 @@ impl Mmu {
         match addr {
             0x8000..=0x9FFF => {
                 let allow = self.ppu.vram_write_accessible();
-                if env_flag_enabled("VIBEEMU_TRACE_LCDC") && val == 0x81 {
+                if trace_lcdc_enabled() && val == 0x81 {
                     let pc_str = self
                         .last_cpu_pc
                         .map(|p| format!("{:04X}", p))
@@ -781,7 +836,7 @@ impl Mmu {
             0xF000..=0xFDFF => self.wram[self.wram_bank][(addr - 0xF000) as usize] = val,
             0xFE00..=0xFE9F => {
                 let allow = self.ppu.oam_write_accessible();
-                if env_flag_enabled("VIBEEMU_TRACE_LCDC") && val == 0x81 {
+                if trace_lcdc_enabled() && val == 0x81 {
                     let pc_str = self
                         .last_cpu_pc
                         .map(|p| format!("{:04X}", p))
@@ -809,7 +864,7 @@ impl Mmu {
                         .oam_bug_next_access
                         .take()
                         .unwrap_or(OamBugAccess::Write);
-                    if env_flag_enabled("VIBEEMU_TRACE_OAMBUG") {
+                    if trace_oambug_enabled() {
                         let pc_str = self
                             .last_cpu_pc
                             .map(|p| format!("{:04X}", p))
@@ -870,7 +925,7 @@ impl Mmu {
             0xFF40 => {
                 let lcd_was_on = self.ppu.lcd_enabled();
                 let old = self.ppu.read_reg(0xFF40);
-                if env_flag_enabled("VIBEEMU_TRACE_LCDC") {
+                if trace_lcdc_enabled() {
                     let pc_str = self
                         .last_cpu_pc
                         .map(|p| format!("{:04X}", p))
@@ -1052,6 +1107,11 @@ impl Mmu {
 
     /// Advance the ongoing OAM DMA transfer if active.
     pub fn dma_step(&mut self, cycles: u16) {
+        if self.dma_cycles == 0 && self.pending_delay == 0 {
+            self.ppu.oam_dma_current_dest = 0xA1;
+            return;
+        }
+
         for _ in 0..cycles {
             self.ppu.oam_dma_current_dest = 0xA1;
             if self.pending_delay > 0 {
