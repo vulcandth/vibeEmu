@@ -6285,6 +6285,14 @@ impl Ppu {
                             increment = next_event.min(remaining);
                         }
                     }
+                    MODE_OAM => {
+                        if !self.dmg_oam_dma_contention_active() {
+                            let next_event = MODE2_CYCLES.saturating_sub(self.mode_clock);
+                            if next_event > 0 {
+                                increment = next_event.min(remaining);
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -6534,6 +6542,116 @@ impl Ppu {
     fn render_dmg_bg_window_scanline_simple(&mut self) {
         let row_base = self.ly as usize * SCREEN_WIDTH;
         let track_bg_zero = self.sprite_count > 0;
+        let zero_event_fast_path = !self.cgb
+            && self.mode3_lcdc_event_count == 0
+            && self.mode3_scx_event_count == 0
+            && self.mode3_scy_event_count == 0
+            && self.dmg_bgp_event_count == 0;
+
+        if zero_event_fast_path {
+            let bg_enabled = (self.mode3_lcdc_base & 0x01) != 0;
+            let lcdc = self.mode3_lcdc_base;
+            let bg_map_base = if (lcdc & 0x08) != 0 {
+                BG_MAP_1_BASE
+            } else {
+                BG_MAP_0_BASE
+            };
+            let bg_tile_data_unsigned = (lcdc & 0x10) != 0;
+            let scx = self.mode3_scx_base as u16;
+            let scy = self.mode3_scy_base as u16;
+            let bgp = self.dmg_line_bgp_base;
+
+            if bg_enabled {
+                for x in 0..SCREEN_WIDTH as u16 {
+                    let px = x.wrapping_add(scx) & 0xFF;
+                    let py = (self.ly as u16).wrapping_add(scy) & 0xFF;
+                    let tile_col = (px / 8) as usize;
+                    let tile_row = (py / 8) as usize;
+                    let tile_y = (py % 8) as usize;
+
+                    let tile_index =
+                        self.vram_read_for_render(0, bg_map_base + tile_row * 32 + tile_col);
+                    let addr_lo = Self::bg_tile_row_plane_addr(
+                        tile_index,
+                        tile_y,
+                        bg_tile_data_unsigned,
+                        false,
+                    );
+                    let addr_hi = Self::bg_tile_row_plane_addr(
+                        tile_index,
+                        tile_y,
+                        bg_tile_data_unsigned,
+                        true,
+                    );
+                    let bit = 7 - (px % 8) as usize;
+                    let lo = self.vram_read_for_render(0, addr_lo);
+                    let hi = self.vram_read_for_render(0, addr_hi);
+                    let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                    let color = self.dmg_bg_color_table[((bgp as usize) << 2) | color_id as usize];
+                    self.framebuffer[row_base + x as usize] = color;
+                    if track_bg_zero {
+                        self.line_color_zero[x as usize] = color_id == 0;
+                    }
+                }
+            }
+
+            let mut window_drawn = false;
+            if (lcdc & 0x20) != 0
+                && self.ly >= self.mode3_wy_base
+                && self.mode3_wx_base <= WINDOW_X_MAX
+            {
+                let window_map_base = if (lcdc & 0x40) != 0 {
+                    BG_MAP_1_BASE
+                } else {
+                    BG_MAP_0_BASE
+                };
+                let wx_reg = self.mode3_wx_base;
+                let window_origin_x = wx_reg as i16 - 7;
+                let start_x = wx_reg.saturating_sub(7) as u16;
+                let window_y = self.win_line_counter as usize;
+
+                if bg_enabled {
+                    for x in start_x..SCREEN_WIDTH as u16 {
+                        let window_x = (x as i16 - window_origin_x) as usize;
+                        let tile_col = window_x / 8;
+                        let tile_row = window_y / 8;
+                        let tile_y = window_y % 8;
+                        let tile_x = window_x % 8;
+                        let tile_index = self
+                            .vram_read_for_render(0, window_map_base + tile_row * 32 + tile_col);
+                        let addr_lo = Self::bg_tile_row_plane_addr(
+                            tile_index,
+                            tile_y,
+                            bg_tile_data_unsigned,
+                            false,
+                        );
+                        let addr_hi = Self::bg_tile_row_plane_addr(
+                            tile_index,
+                            tile_y,
+                            bg_tile_data_unsigned,
+                            true,
+                        );
+                        let bit = 7 - tile_x;
+                        let lo = self.vram_read_for_render(0, addr_lo);
+                        let hi = self.vram_read_for_render(0, addr_hi);
+                        let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                        let color =
+                            self.dmg_bg_color_table[((bgp as usize) << 2) | color_id as usize];
+                        self.framebuffer[row_base + x as usize] = color;
+                        if track_bg_zero {
+                            self.line_color_zero[x as usize] = color_id == 0;
+                        }
+                    }
+                }
+                window_drawn = true;
+            }
+
+            if window_drawn {
+                self.win_line_counter = self.win_line_counter.wrapping_add(1);
+            }
+            return;
+        }
+
         let bg_en_const = if self.mode3_lcdc_event_count == 0 {
             Some((self.mode3_lcdc_base & 0x01) != 0)
         } else {

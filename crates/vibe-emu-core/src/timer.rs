@@ -100,7 +100,28 @@ impl Timer {
         if self.tac & 0x04 == 0 && self.pending_reload.is_none() && self.tma_latch.is_none() {
             self.div = self.div.wrapping_add(cycles);
             self.last_signal = false;
+            self.reloading = false;
             return;
+        }
+
+        if self.pending_reload.is_none() && self.tma_latch.is_none() {
+            let timer_bit = match self.tac & 0x03 {
+                0x00 => 9,
+                0x01 => 3,
+                0x02 => 5,
+                0x03 => 7,
+                _ => unreachable!(),
+            };
+            let lower_mask = (1u16 << (timer_bit + 1)) - 1;
+            let low = self.div & lower_mask;
+            let to_falling = lower_mask.wrapping_sub(low).wrapping_add(1);
+
+            if cycles < to_falling {
+                self.div = self.div.wrapping_add(cycles);
+                self.last_signal = self.signal();
+                self.reloading = false;
+                return;
+            }
         }
 
         for _ in 0..cycles {

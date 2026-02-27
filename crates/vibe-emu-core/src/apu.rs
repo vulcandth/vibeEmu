@@ -391,6 +391,13 @@ impl SquareChannel {
         }
     }
 
+    #[inline]
+    fn can_skip_1mhz_batch(&self) -> bool {
+        let pipeline_flushed =
+            self.out_latched == 0 && self.out_stage1 == 0 && self.out_stage2 == 0;
+        pipeline_flushed && (!self.enabled || !self.dac_enabled || self.sample_surpressed)
+    }
+
     fn current_sample(&self) -> u8 {
         self.out_stage2
     }
@@ -572,6 +579,14 @@ impl WaveChannel {
                 self.out_latched = sample;
             }
         }
+    }
+
+    #[inline]
+    fn can_skip_1mhz_batch(&self) -> bool {
+        if !(self.out_latched == 0 && self.out_stage1 == 0 && self.out_stage2 == 0) {
+            return false;
+        }
+        !self.enabled || !self.dac_enabled || self.sample_suppressed.get() || self.shift >= 4
     }
 
     fn current_sample(&self) -> u8 {
@@ -781,6 +796,14 @@ impl NoiseChannel {
                 self.out_latched = sample;
             }
         }
+    }
+
+    #[inline]
+    fn can_skip_1mhz_batch(&self) -> bool {
+        if !(self.out_latched == 0 && self.out_stage1 == 0 && self.out_stage2 == 0) {
+            return false;
+        }
+        !self.enabled || !self.dac_enabled || self.sample_suppressed
     }
 
     fn current_sample(&self) -> u8 {
@@ -1647,16 +1670,23 @@ impl Apu {
 
         let bit = if double_speed { 13 } else { 12 };
         let mut div = div_prev;
-        for _ in 0..steps {
-            let prev_bit = (div >> bit) & 1;
-            div = div.wrapping_add(1);
-            let curr_bit = (div >> bit) & 1;
+        let mut remaining = steps;
+        let lower_mask = (1u16 << bit) - 1;
 
-            if prev_bit == 1 && curr_bit == 0 {
-                self.handle_div_event();
+        while remaining > 0 {
+            let low = div & lower_mask;
+            let to_toggle = lower_mask.wrapping_sub(low).wrapping_add(1);
+
+            if to_toggle > remaining {
+                break;
             }
 
-            if prev_bit == 0 && curr_bit == 1 {
+            div = div.wrapping_add(to_toggle);
+            remaining -= to_toggle;
+
+            if ((div >> bit) & 1) == 0 {
+                self.handle_div_event();
+            } else {
                 self.handle_div_rising_edge();
             }
         }
@@ -2626,10 +2656,18 @@ impl Apu {
 
             // Within each chunk, channel state is constant with respect to 1 MHz
             // pipeline sampling; only pipeline registers shift.
-            self.ch1.tick_1mhz_batch(chunk);
-            self.ch2.tick_1mhz_batch(chunk);
-            self.ch3.tick_1mhz_batch(chunk);
-            self.ch4.tick_1mhz_batch(chunk);
+            if !self.ch1.can_skip_1mhz_batch() {
+                self.ch1.tick_1mhz_batch(chunk);
+            }
+            if !self.ch2.can_skip_1mhz_batch() {
+                self.ch2.tick_1mhz_batch(chunk);
+            }
+            if !self.ch3.can_skip_1mhz_batch() {
+                self.ch3.tick_1mhz_batch(chunk);
+            }
+            if !self.ch4.can_skip_1mhz_batch() {
+                self.ch4.tick_1mhz_batch(chunk);
+            }
 
             self.lf_div_counter = self.lf_div_counter.wrapping_add(chunk as u64);
             remaining -= chunk;

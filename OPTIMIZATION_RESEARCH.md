@@ -921,7 +921,31 @@ entire line. The existing rendering logic already returns these base
 values for the zero-event case — this optimization simply hoists that
 determination out of the per-pixel loop.
 
-**Status:** Not started.
+Completed in [ppu.rs](crates/vibe-emu-core/src/ppu.rs):
+
+- Added a dedicated zero-event fast path in
+  `render_dmg_bg_window_scanline_simple` for DMG hardware when
+  `mode3_lcdc_event_count`, `mode3_scx_event_count`,
+  `mode3_scy_event_count`, and `dmg_bgp_event_count` are all zero.
+- Hoisted line-constant state (`LCDC`, `SCX`, `SCY`, map selection,
+  tile-data selection, `BGP`) and replaced per-pixel event helper calls
+  with direct VRAM reads + cached palette table lookup.
+- Kept window behavior and counter semantics identical, including
+  incrementing `win_line_counter` whenever the window is active for the
+  line (even if BG output is disabled).
+
+Behavior remains unchanged: this fast path is only enabled under the
+same zero-event conditions where the original helpers return constant
+base values for the entire scanline.
+
+**Status:** ✅ Completed on `2026-02-26`.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
 
 ---
 
@@ -968,7 +992,25 @@ produces identical observable state. `pending_dma` is set via `take()`
 only when `pending_delay` transitions to 0, so if it is already 0
 the take is a no-op.
 
-**Status:** Not started.
+Completed in [mmu.rs](crates/vibe-emu-core/src/mmu.rs):
+
+- Added an early-return fast path at the top of `Mmu::dma_step` for the
+  fully inactive DMA state (`dma_cycles == 0 && pending_delay == 0`).
+- Preserved observable state by still setting
+  `ppu.oam_dma_current_dest = 0xA1` before returning.
+
+Behavior remains unchanged: in the guarded inactive state, the previous
+per-cycle loop only repeated that same destination assignment and had no
+other side effects.
+
+**Status:** ✅ Completed on `2026-02-26`.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
 
 ---
 
@@ -1014,7 +1056,29 @@ are pending, no external state change can affect OAM scan results.
 DMA interleaving is handled separately (when `dma_active()`, the code
 already forces per-dot stepping).
 
-**Status:** Not started.
+Completed in [ppu.rs](crates/vibe-emu-core/src/ppu.rs):
+
+- Extended `Ppu::step` batched-dot fast path to include `MODE_OAM` by
+  skipping directly to the mode-2 boundary
+  (`MODE2_CYCLES.saturating_sub(mode_clock)`) when safe.
+- Kept accuracy guardrails aligned with existing batching requirements:
+  fast path only runs with `stat_mode_delay == 0` and
+  `pending_reg_write_count == 0`.
+- Added a DMA-contention guard (`!dmg_oam_dma_contention_active()`) so
+  DMG OAM-DMA interleaving still uses per-dot stepping.
+
+Behavior remains unchanged: when the guard conditions hold, OAM scan
+state is still advanced dot-accurately by `oam_scan_advance()` against
+the updated `mode_clock`, but with fewer outer-loop iterations.
+
+**Status:** ✅ Completed on `2026-02-26`.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
 
 ---
 
@@ -1058,7 +1122,31 @@ After `tick_1mhz_batch` is called with `ticks >= 3`, all pipeline
 stages are 0. Subsequent calls are idempotent. The flag is
 conservatively cleared on any enable/trigger event.
 
-**Status:** Not started.
+Completed in [apu.rs](crates/vibe-emu-core/src/apu.rs):
+
+- Added per-channel skip guards (`can_skip_1mhz_batch`) for square,
+  wave, and noise channels that detect when a channel is both
+  state-inactive for output and already pipeline-flushed
+  (`out_latched/out_stage1/out_stage2 == 0`).
+- Updated `Apu::tick_steps` to call `tick_1mhz_batch(chunk)` only for
+  channels that are not skippable in the current chunk.
+- Preserved flush correctness by continuing to tick channels until their
+  3-stage pipeline reaches zero; only then are further ticks skipped
+  while output remains guaranteed zero.
+
+Behavior remains unchanged: channels that can still produce or propagate
+non-zero samples continue using the existing batched pipeline logic,
+while disabled/suppressed channels with already-zero pipeline state
+avoid redundant `compute_output()` work.
+
+**Status:** ✅ Completed on `2026-02-26`.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
 
 ---
 
@@ -1104,7 +1192,30 @@ This is O(1) for the common no-event case and O(edge_count) otherwise.
 Edge positions are fully deterministic from the start value and step
 count.
 
-**Status:** Not started.
+Completed in [apu.rs](crates/vibe-emu-core/src/apu.rs):
+
+- Reworked `tick_frame_sequencer_steps` from per-CPU-step iteration to
+  edge-driven stepping that jumps directly to the next monitored DIV-bit
+  toggle.
+- Added arithmetic toggle distance calculation using the selected DIV
+  bit's lower-mask phase (`lower_mask - low + 1`) and processes only
+  actual edge points.
+- Preserved exact event ordering by invoking
+  `handle_div_event`/`handle_div_rising_edge` according to the bit state
+  after each reached toggle, matching previous rising/falling semantics.
+
+Behavior remains unchanged: the same sequence of frame-sequencer edge
+events is emitted for any `(div_prev, steps, double_speed)` input, while
+removing per-step checks in no-edge spans.
+
+**Status:** ✅ Completed on `2026-02-26`.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
 
 ---
 
@@ -1148,7 +1259,27 @@ When there are no pending reloads or TMA latches, the only side effect
 is TIMA increment on a specific DIV bit edge. The `pending_reload` and
 `tma_latch` guards preserve overflow/reload timing quirks.
 
-**Status:** Not started.
+Completed in [timer.rs](crates/vibe-emu-core/src/timer.rs):
+
+- Added a guarded enabled-timer fast path in `Timer::step` for the
+  common no-side-effect case (`pending_reload.is_none()` and
+  `tma_latch.is_none()`) that computes the distance to the next TIMA
+  falling-edge trigger from DIV phase.
+- When `cycles` cannot reach the next falling edge, `Timer::step` now
+  advances `div` and updates `last_signal` in O(1), avoiding per-cycle
+  loop work while preserving observable timer state.
+- Kept accuracy-sensitive behavior unchanged by falling back to existing
+  cycle-accurate stepping whenever a falling edge is reachable in-window
+  or reload/latch timing quirks are active.
+
+**Status:** ✅ Completed on `2026-02-26`.
+
+**Verification:** Accuracy-preserving behavior validated with:
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo test --release`
 
 ---
 

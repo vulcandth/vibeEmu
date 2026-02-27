@@ -1107,6 +1107,11 @@ impl Mmu {
 
     /// Advance the ongoing OAM DMA transfer if active.
     pub fn dma_step(&mut self, cycles: u16) {
+        if self.dma_cycles == 0 && self.pending_delay == 0 {
+            self.ppu.oam_dma_current_dest = 0xA1;
+            return;
+        }
+
         for _ in 0..cycles {
             self.ppu.oam_dma_current_dest = 0xA1;
             if self.pending_delay > 0 {
