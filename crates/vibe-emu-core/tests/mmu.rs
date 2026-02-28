@@ -225,6 +225,41 @@ fn mbc1_rom_bank_switching() {
 }
 
 #[test]
+fn cgb_rev_c_unusable_oam_aliases_by_masked_bits() {
+    let mut mmu = Mmu::new_with_revisions(true, DmgRevision::default(), CgbRevision::RevC);
+
+    // Matches which.gb's CGB D/E discriminator setup.
+    mmu.write_byte(0xFEA0, 0x55);
+    mmu.write_byte(0xFEB8, 0x44);
+
+    // On CGB 0/A/B/C, FEB8 aliases over FEA0 by masking bits 3-4.
+    assert_eq!(mmu.read_byte(0xFEA0), 0x44);
+}
+
+#[test]
+fn cgb_rev_d_unusable_oam_is_fully_addressable() {
+    let mut mmu = Mmu::new_with_revisions(true, DmgRevision::default(), CgbRevision::RevD);
+
+    mmu.write_byte(0xFEA0, 0x55);
+    mmu.write_byte(0xFEB8, 0x44);
+
+    // On CGB D, FEB8 does not alias FEA0.
+    assert_eq!(mmu.read_byte(0xFEA0), 0x55);
+}
+
+#[test]
+fn cgb_rev_e_unusable_oam_reads_address_pattern() {
+    let mut mmu = Mmu::new_with_revisions(true, DmgRevision::default(), CgbRevision::RevE);
+
+    // Writes should not affect CPU-visible reads for RevE's pattern behavior.
+    mmu.write_byte(0xFEA0, 0x55);
+    mmu.write_byte(0xFEB8, 0x44);
+
+    // which.gb expects $AA for $FEA0 on CGB E.
+    assert_eq!(mmu.read_byte(0xFEA0), 0xAA);
+}
+
+#[test]
 fn mbc1_ram_enable() {
     let mut rom = vec![0u8; 0x8000];
     rom[0x0147] = 0x03; // MBC1 + RAM + Battery

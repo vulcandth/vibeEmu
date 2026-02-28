@@ -174,10 +174,58 @@ pub struct Mmu {
     /// distinct corruption pattern on DMG.
     pub(crate) oam_bug_next_access: Option<OamBugAccess>,
 
+    /// Backing storage for CGB's "not usable" OAM range ($FEA0-$FEFF).
+    ///
+    /// Real CGB hardware differs by revision here; DMG ignores this region.
+    cgb_unusable_oam: [u8; 0x60],
+
     pub watchpoints: crate::watchpoints::WatchpointEngine,
 }
 
 impl Mmu {
+    #[inline]
+    fn cgb_unusable_oam_index(addr: u16, revision: CgbRevision) -> usize {
+        let offset = (addr - 0xFEA0) as usize;
+        match revision {
+            // CGB 0/A/B/C partially decode this range and alias writes/reads by
+            // dropping address bits 3-4.
+            CgbRevision::Rev0 | CgbRevision::RevA | CgbRevision::RevB | CgbRevision::RevC => {
+                offset & !0x18
+            }
+            // CGB D has fully addressable storage in this range.
+            CgbRevision::RevD => offset,
+            // CGB E does not expose stored bytes for this range in CPU reads.
+            CgbRevision::RevE => offset,
+        }
+    }
+
+    #[inline]
+    fn read_cgb_unusable_oam(&self, addr: u16) -> u8 {
+        match self.cgb_revision {
+            // On CGB E, reads return a deterministic address-derived pattern.
+            CgbRevision::RevE => {
+                let hi = (addr as u8) & 0xF0;
+                hi | (hi >> 4)
+            }
+            _ => {
+                let index = Self::cgb_unusable_oam_index(addr, self.cgb_revision);
+                self.cgb_unusable_oam[index]
+            }
+        }
+    }
+
+    #[inline]
+    fn write_cgb_unusable_oam(&mut self, addr: u16, val: u8) {
+        match self.cgb_revision {
+            // CGB E ignores writes to this range for CPU-visible reads.
+            CgbRevision::RevE => {}
+            _ => {
+                let index = Self::cgb_unusable_oam_index(addr, self.cgb_revision);
+                self.cgb_unusable_oam[index] = val;
+            }
+        }
+    }
+
     #[cold]
     fn read_byte_dma_blocked_value(&mut self, addr: u16) -> Option<u8> {
         match addr {
@@ -283,6 +331,7 @@ impl Mmu {
             cgb_revision,
             dmg_revision,
             oam_bug_next_access: None,
+            cgb_unusable_oam: [0xFF; 0x60],
             last_cpu_pc: None,
             data_bus: 0xFF,
             main_bus: 0xFF,
@@ -366,6 +415,7 @@ impl Mmu {
             cgb_revision,
             dmg_revision,
             oam_bug_next_access: None,
+            cgb_unusable_oam: [0xFF; 0x60],
             last_cpu_pc: None,
             data_bus: 0xFF,
             main_bus: 0xFF,
@@ -589,6 +639,10 @@ impl Mmu {
                 }
             }
             0xFEA0..=0xFEFF => {
+                if self.cgb_mode {
+                    self.oam_bug_next_access = None;
+                    return self.read_cgb_unusable_oam(addr);
+                }
                 if !self.cgb_mode && !self.ppu.oam_read_accessible() {
                     let access = self
                         .oam_bug_next_access
@@ -894,6 +948,11 @@ impl Mmu {
                 }
             }
             0xFEA0..=0xFEFF => {
+                if self.cgb_mode {
+                    self.oam_bug_next_access = None;
+                    self.write_cgb_unusable_oam(addr, val);
+                    return;
+                }
                 // Unusable region: ignore writes, but the CPU still drives the address bus.
                 // On DMG, blocked CPU accesses in $FE00-$FEFF during mode 2 can trigger
                 // the OAM corruption bug even if the address is in the unusable subrange.
