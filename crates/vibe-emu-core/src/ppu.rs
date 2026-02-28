@@ -4541,6 +4541,15 @@ impl Ppu {
         self.refresh_palette_color_tables();
     }
 
+    /// Select whether CGB hardware should render in DMG-compat mode.
+    ///
+    /// The CGB boot ROM keeps native rendering during the logo animation and
+    /// only switches to DMG compatibility after writing KEY0 near handoff.
+    pub fn set_dmg_compat_mode(&mut self, enabled: bool) {
+        self.dmg_compat = enabled;
+        self.refresh_palette_color_tables();
+    }
+
     fn write_palette(slice: &mut [u8], pal: [u16; 4]) {
         for (i, &c) in pal.iter().enumerate() {
             slice[i * 2] = (c & 0xFF) as u8;

@@ -71,11 +71,10 @@ fn power_on_wram_seed(cgb: bool, dmg_revision: DmgRevision, cgb_revision: CgbRev
     if seed == 0 { 0xA5A5_5A5A } else { seed }
 }
 
-fn init_power_on_wram(seed: u32) -> [[u8; WRAM_BANK_SIZE]; 8] {
-    let mut wram = [[0u8; WRAM_BANK_SIZE]; 8];
+fn init_power_on_wram(wram: &mut [[u8; WRAM_BANK_SIZE]; 8], seed: u32) {
     let mut state = seed;
 
-    for bank_wram in &mut wram {
+    for bank_wram in wram {
         for byte in bank_wram.iter_mut() {
             // xorshift32
             state ^= state << 13;
@@ -89,8 +88,6 @@ fn init_power_on_wram(seed: u32) -> [[u8; WRAM_BANK_SIZE]; 8] {
             *byte = v;
         }
     }
-
-    wram
 }
 
 /// Transfer mode for CGB DMA operations.
@@ -324,7 +321,11 @@ impl Mmu {
 
         let ppu = Ppu::new_with_revisions(cgb, dmg_revision, cgb_revision);
 
-        let wram = init_power_on_wram(power_on_wram_seed(cgb, dmg_revision, cgb_revision));
+        let mut wram = [[0; WRAM_BANK_SIZE]; 8];
+        init_power_on_wram(
+            &mut wram,
+            power_on_wram_seed(cgb, dmg_revision, cgb_revision),
+        );
 
         Self {
             wram,
@@ -387,7 +388,7 @@ impl Mmu {
             self.ppu.apply_dmg_post_boot_vram(logo);
         }
         self.cart = Some(cart);
-        if self.cgb_mode && is_dmg {
+        if self.cgb_mode && is_dmg && self.post_boot_state {
             self.ppu.apply_dmg_compatibility_palettes();
         }
     }
@@ -1019,6 +1020,14 @@ impl Mmu {
             0xFF4D => {
                 if self.cgb_mode {
                     self.key1 = (self.key1 & 0x80) | (val & 0x01);
+                }
+            }
+            0xFF4C => {
+                if self.cgb_mode {
+                    // KEY0 bit 2 selects DMG compatibility mode on CGB
+                    // hardware. CGB boot ROMs set this near handoff for DMG
+                    // cartridges, after rendering the native CGB logo path.
+                    self.ppu.set_dmg_compat_mode((val & 0x04) != 0);
                 }
             }
             0xFF56 => {

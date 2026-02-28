@@ -365,6 +365,30 @@ struct LoadConfig {
     cgb_bootrom_path: Option<std::path::PathBuf>,
 }
 
+fn configured_bootrom_data(load_config: &LoadConfig, cgb_mode: bool) -> Option<Vec<u8>> {
+    if let Some(data) = &load_config.bootrom_override {
+        return Some(data.clone());
+    }
+
+    let configured_path = if cgb_mode {
+        load_config.cgb_bootrom_path.as_ref()
+    } else {
+        load_config.dmg_bootrom_path.as_ref()
+    }?;
+
+    match std::fs::read(configured_path) {
+        Ok(data) => Some(data),
+        Err(e) => {
+            warn!(
+                "Failed to read {} boot ROM {}: {e}",
+                if cgb_mode { "CGB" } else { "DMG" },
+                configured_path.display()
+            );
+            None
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Speed {
     factor: f32,
@@ -768,6 +792,7 @@ struct VibeEmuApp {
     keybinds_path: std::path::PathBuf,
     joypad_state: u8,
     fast_forward: bool,
+    pending_rom_load: Option<std::path::PathBuf>,
 
     #[cfg(not(target_os = "android"))]
     gamepad: Option<GamepadInput>,
@@ -778,6 +803,7 @@ struct VibeEmuApp {
 
     // Options window state
     emulation_mode: EmulationMode,
+    bootrom_override: Option<Vec<u8>>,
     dmg_bootrom_path: String,
     cgb_bootrom_path: String,
     selected_window_scale: usize,
@@ -857,7 +883,7 @@ impl VibeEmuApp {
         rom_path: Option<std::path::PathBuf>,
         keybinds: KeyBindings,
         keybinds_path: std::path::PathBuf,
-        emulation_mode: EmulationMode,
+        load_config: LoadConfig,
         ui_config_path: std::path::PathBuf,
         ui_config: UiConfig,
         external_clock_pending: Arc<network_link::ExternalClockPending>,
@@ -872,6 +898,14 @@ impl VibeEmuApp {
         }
 
         let sound_enabled = Arc::new(AtomicBool::new(true));
+
+        let LoadConfig {
+            emulation_mode,
+            dmg_neutral: _,
+            bootrom_override,
+            dmg_bootrom_path,
+            cgb_bootrom_path,
+        } = load_config;
 
         let audio_stream = if let Ok(mut gb_lock) = gb.lock() {
             audio::start_stream(&mut gb_lock.mmu.apu, true, sound_enabled.clone())
@@ -898,6 +932,7 @@ impl VibeEmuApp {
             keybinds_path,
             joypad_state: 0xFF,
             fast_forward: false,
+            pending_rom_load: None,
 
             #[cfg(not(target_os = "android"))]
             gamepad: GamepadInput::try_new(),
@@ -905,8 +940,13 @@ impl VibeEmuApp {
             show_vram_viewer: false,
             show_options: false,
             emulation_mode,
-            dmg_bootrom_path: String::new(),
-            cgb_bootrom_path: String::new(),
+            bootrom_override,
+            dmg_bootrom_path: dmg_bootrom_path
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            cgb_bootrom_path: cgb_bootrom_path
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_default(),
             selected_window_scale: (DEFAULT_WINDOW_SCALE - 1) as usize,
             rebinding: None,
             options_tab: OptionsTab::default(),
@@ -967,6 +1007,54 @@ impl VibeEmuApp {
         app
     }
 
+    fn save_ui_config(&self) {
+        if let Err(e) = ui_config::save_to_file(&self.ui_config_path, &self.ui_config) {
+            log::warn!(
+                "Failed to save UI config {}: {e}",
+                self.ui_config_path.display()
+            );
+        }
+    }
+
+    fn optional_path_from_input(path_input: &str) -> Option<std::path::PathBuf> {
+        let trimmed = path_input.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(std::path::PathBuf::from(trimmed))
+        }
+    }
+
+    fn persist_bootrom_paths(&mut self) {
+        self.ui_config.dmg_bootrom_path = Self::optional_path_from_input(&self.dmg_bootrom_path);
+        self.ui_config.cgb_bootrom_path = Self::optional_path_from_input(&self.cgb_bootrom_path);
+        self.save_ui_config();
+    }
+
+    fn configured_bootrom_data(&self, cgb_mode: bool) -> Option<Vec<u8>> {
+        if let Some(data) = &self.bootrom_override {
+            return Some(data.clone());
+        }
+
+        let configured_path = if cgb_mode {
+            Self::optional_path_from_input(&self.cgb_bootrom_path)
+        } else {
+            Self::optional_path_from_input(&self.dmg_bootrom_path)
+        }?;
+
+        match std::fs::read(&configured_path) {
+            Ok(data) => Some(data),
+            Err(e) => {
+                warn!(
+                    "Failed to read {} boot ROM {}: {e}",
+                    if cgb_mode { "CGB" } else { "DMG" },
+                    configured_path.display()
+                );
+                None
+            }
+        }
+    }
+
     fn apply_persisted_serial_settings(&mut self) {
         self.mobile_dns1 = self.ui_config.serial.mobile_dns1.clone();
         self.mobile_dns2 = self.ui_config.serial.mobile_dns2.clone();
@@ -998,13 +1086,7 @@ impl VibeEmuApp {
         self.ui_config.serial.mobile_dns1 = self.mobile_dns1.clone();
         self.ui_config.serial.mobile_dns2 = self.mobile_dns2.clone();
         self.ui_config.serial.mobile_relay = self.mobile_relay.clone();
-
-        if let Err(e) = ui_config::save_to_file(&self.ui_config_path, &self.ui_config) {
-            log::warn!(
-                "Failed to save UI config {}: {e}",
-                self.ui_config_path.display()
-            );
-        }
+        self.save_ui_config();
     }
 
     fn apply_window_scale(&self, ctx: &egui::Context) {
@@ -1605,13 +1687,35 @@ impl VibeEmuApp {
                     EmulationMode::ForceCgb => true,
                     EmulationMode::Auto => cart.cgb,
                 };
+                let bootrom_data = self.configured_bootrom_data(cgb_mode);
                 info!(
-                    "Loading ROM: {} (CGB header: {}, mode: {:?} → cgb_mode: {})",
-                    cart.title, cart.cgb, self.emulation_mode, cgb_mode
+                    "Loading ROM: {} (CGB header: {}, mode: {:?} → cgb_mode: {}, bootrom: {})",
+                    cart.title,
+                    cart.cgb,
+                    self.emulation_mode,
+                    cgb_mode,
+                    if bootrom_data.is_some() {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
                 );
                 if let Ok(mut gb) = self.gb.lock() {
                     gb.mmu.save_cart_ram();
-                    *gb = GameBoy::new_with_mode(cgb_mode);
+                    let dmg_revision = gb.dmg_revision;
+                    let cgb_revision = gb.cgb_revision;
+                    if bootrom_data.is_some() {
+                        *gb = GameBoy::new_power_on_with_revisions(
+                            cgb_mode,
+                            dmg_revision,
+                            cgb_revision,
+                        );
+                    } else {
+                        *gb = GameBoy::new_with_revisions(cgb_mode, dmg_revision, cgb_revision);
+                    }
+                    if let Some(data) = bootrom_data {
+                        gb.mmu.load_boot_rom(data);
+                    }
                     gb.mmu.load_cart(cart);
                     self._audio_stream =
                         audio::start_stream(&mut gb.mmu.apu, true, self.sound_enabled.clone());
@@ -1645,7 +1749,7 @@ impl VibeEmuApp {
             return;
         };
 
-        self.load_rom(rom_path);
+        self.pending_rom_load = Some(rom_path);
     }
 }
 
@@ -1664,7 +1768,7 @@ impl eframe::App for VibeEmuApp {
                             .add_filter("Game Boy ROMs", &["gb", "gbc"])
                             .pick_file()
                         {
-                            self.load_rom(path);
+                            self.pending_rom_load = Some(path);
                         }
                         ui.close();
                     }
@@ -1786,6 +1890,10 @@ impl eframe::App for VibeEmuApp {
                 });
             });
         });
+
+        if let Some(path) = self.pending_rom_load.take() {
+            self.load_rom(path);
+        }
 
         // Status bar at the bottom
         egui::TopBottomPanel::bottom("status_bar")
@@ -2042,21 +2150,33 @@ impl VibeEmuApp {
             OptionsTab::Emulation => {
                 ui.horizontal(|ui| {
                     ui.label("DMG Boot ROM:");
-                    ui.text_edit_singleline(&mut self.dmg_bootrom_path);
+                    if ui
+                        .text_edit_singleline(&mut self.dmg_bootrom_path)
+                        .changed()
+                    {
+                        self.persist_bootrom_paths();
+                    }
                     if ui.button("Browse...").clicked()
                         && let Some(path) = FileDialog::new().pick_file()
                     {
                         self.dmg_bootrom_path = path.to_string_lossy().to_string();
+                        self.persist_bootrom_paths();
                     }
                 });
 
                 ui.horizontal(|ui| {
                     ui.label("CGB Boot ROM:");
-                    ui.text_edit_singleline(&mut self.cgb_bootrom_path);
+                    if ui
+                        .text_edit_singleline(&mut self.cgb_bootrom_path)
+                        .changed()
+                    {
+                        self.persist_bootrom_paths();
+                    }
                     if ui.button("Browse...").clicked()
                         && let Some(path) = FileDialog::new().pick_file()
                     {
                         self.cgb_bootrom_path = path.to_string_lossy().to_string();
+                        self.persist_bootrom_paths();
                     }
                 });
             }
@@ -4935,6 +5055,9 @@ fn main() {
         EmulationMode::Auto
     };
 
+    let ui_config_path = ui_config::default_ui_config_path();
+    let ui_config = ui_config::load_from_file(&ui_config_path);
+
     let bootrom_data = args
         .bootrom
         .as_ref()
@@ -4950,8 +5073,8 @@ fn main() {
         emulation_mode,
         dmg_neutral: args.dmg_neutral,
         bootrom_override: bootrom_data,
-        dmg_bootrom_path: None,
-        cgb_bootrom_path: None,
+        dmg_bootrom_path: ui_config.dmg_bootrom_path.clone(),
+        cgb_bootrom_path: ui_config.cgb_bootrom_path.clone(),
     };
 
     let cart: Option<Cartridge> = rom_path
@@ -4975,7 +5098,16 @@ fn main() {
         EmulationMode::Auto => cart.as_ref().is_some_and(|c| c.cgb),
     };
 
-    let mut gb = GameBoy::new_with_mode(cgb_mode);
+    let bootrom_data = configured_bootrom_data(&load_config, cgb_mode);
+
+    let mut gb = if bootrom_data.is_some() {
+        GameBoy::new_power_on_with_revisions(cgb_mode, Default::default(), CgbRevision::default())
+    } else {
+        GameBoy::new_with_mode(cgb_mode)
+    };
+    if let Some(data) = bootrom_data {
+        gb.mmu.load_boot_rom(data);
+    }
     if let Some(c) = cart {
         gb.mmu.load_cart(c);
     }
@@ -5288,9 +5420,6 @@ fn main() {
 
     let rom_path_clone = rom_path.clone();
 
-    let ui_config_path = ui_config::default_ui_config_path();
-    let ui_config = ui_config::load_from_file(&ui_config_path);
-
     if let Err(e) = eframe::run_native(
         "vibeEmu",
         native_options,
@@ -5304,7 +5433,7 @@ fn main() {
                 rom_path_clone,
                 keybinds,
                 keybinds_path,
-                emulation_mode,
+                load_config.clone(),
                 ui_config_path.clone(),
                 ui_config.clone(),
                 external_clock_pending,
