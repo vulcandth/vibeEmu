@@ -932,6 +932,12 @@ pub struct Apu {
     sweep_neg_used: bool,
 }
 
+pub(crate) struct OutputState {
+    sample_rate: u32,
+    speed_factor: f32,
+    audio_out: Option<AudioProducer>,
+}
+
 /// Lightweight snapshot of APU state for test diagnostics.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1573,6 +1579,21 @@ impl Apu {
         apu.dmg_revision = dmg_revision;
         apu.hp_coef = Apu::calc_hp_coef(apu.sample_rate);
         apu
+    }
+
+    pub(crate) fn take_output_state(&mut self) -> OutputState {
+        OutputState {
+            sample_rate: self.sample_rate,
+            speed_factor: self.speed_factor,
+            audio_out: self.audio_out.take(),
+        }
+    }
+
+    pub(crate) fn restore_output_state(&mut self, state: OutputState) {
+        self.sample_rate = state.sample_rate;
+        self.speed_factor = state.speed_factor;
+        self.hp_coef = Apu::calc_hp_coef(state.sample_rate);
+        self.audio_out = state.audio_out;
     }
 
     pub fn read_reg(&mut self, addr: u16) -> u8 {

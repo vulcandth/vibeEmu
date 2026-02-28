@@ -188,6 +188,44 @@ pub struct Mmu {
 
 impl Mmu {
     #[inline]
+    fn post_boot_div(cgb: bool, dmg_revision: DmgRevision, cgb_revision: CgbRevision) -> u16 {
+        if cgb {
+            match cgb_revision {
+                // CGB A-E share a common phase for DIV after boot.
+                CgbRevision::RevA
+                | CgbRevision::RevB
+                | CgbRevision::RevC
+                | CgbRevision::RevD
+                | CgbRevision::RevE => 0x2678,
+                // CGB0 differs from CGB A-E (mooneye misc/boot_div-cgb0).
+                CgbRevision::Rev0 => 0x2884,
+            }
+        } else {
+            match dmg_revision {
+                DmgRevision::Rev0 => 0x1830,
+                DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => 0xABCC,
+            }
+        }
+    }
+
+    #[inline]
+    fn power_on_div(cgb: bool, cgb_revision: CgbRevision) -> u16 {
+        if cgb && matches!(cgb_revision, CgbRevision::RevE) {
+            // Seed chosen to match whichboot's timing reference for CGB
+            // (LY=$90, DIV=$1E, frac=$28) when running the RevE boot ROM.
+            0x0104
+        } else if !cgb {
+            // The CPU reset sequence consumes 8 T-cycles before the first
+            // instruction fetch, offsetting the internal divider phase.
+            // Without this, boot_div and serial clock alignment tests fail
+            // because the divider ends up 8 T-cycles behind real hardware.
+            8
+        } else {
+            0
+        }
+    }
+
+    #[inline]
     fn cgb_unusable_oam_index(addr: u16, revision: CgbRevision) -> usize {
         let offset = (addr - 0xFEA0) as usize;
         match revision {
@@ -273,23 +311,7 @@ impl Mmu {
         // When running without a boot ROM, we start from the post-boot state.
         // These values match the phases measured by mooneye's boot_div tests so
         // the first post-boot instruction sequence observes the expected timing.
-        timer.div = if cgb {
-            match cgb_revision {
-                // CGB A-E share a common phase for DIV after boot.
-                CgbRevision::RevA
-                | CgbRevision::RevB
-                | CgbRevision::RevC
-                | CgbRevision::RevD
-                | CgbRevision::RevE => 0x2678,
-                // CGB0 differs from CGB A-E (mooneye misc/boot_div-cgb0).
-                CgbRevision::Rev0 => 0x2884,
-            }
-        } else {
-            match dmg_revision {
-                DmgRevision::Rev0 => 0x1830,
-                DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => 0xABCC,
-            }
-        };
+        timer.div = Self::post_boot_div(cgb, dmg_revision, cgb_revision);
 
         let dot_div = timer.div;
 
@@ -414,17 +436,7 @@ impl Mmu {
         // Power-on DIV phase differs across hardware families/revisions.
         // When executing a real boot ROM, this initial phase affects the
         // divider value observed by early cart code (e.g. whichboot).
-        if cgb && matches!(cgb_revision, CgbRevision::RevE) {
-            // Seed chosen to match whichboot's timing reference for CGB
-            // (LY=$90, DIV=$1E, frac=$28) when running the RevE boot ROM.
-            timer.div = 0x0104;
-        } else if !cgb {
-            // The CPU reset sequence consumes 8 T-cycles before the first
-            // instruction fetch, offsetting the internal divider phase.
-            // Without this, boot_div and serial clock alignment tests fail
-            // because the divider ends up 8 T-cycles behind real hardware.
-            timer.div = 8;
-        }
+        timer.div = Self::power_on_div(cgb, cgb_revision);
 
         let dot_div = timer.div;
 
@@ -489,6 +501,34 @@ impl Mmu {
 
     pub fn new() -> Self {
         Self::new_with_mode(false)
+    }
+
+    pub(crate) fn reset_post_boot_in_place(
+        &mut self,
+        cgb: bool,
+        dmg_revision: DmgRevision,
+        cgb_revision: CgbRevision,
+    ) {
+        let output_state = self.apu.take_output_state();
+        let mut replacement = Box::new(Self::new_with_revisions(cgb, dmg_revision, cgb_revision));
+        replacement.apu.restore_output_state(output_state);
+        *self = *replacement;
+    }
+
+    pub(crate) fn reset_power_on_in_place(
+        &mut self,
+        cgb: bool,
+        dmg_revision: DmgRevision,
+        cgb_revision: CgbRevision,
+    ) {
+        let output_state = self.apu.take_output_state();
+        let mut replacement = Box::new(Self::new_power_on_with_revisions(
+            cgb,
+            dmg_revision,
+            cgb_revision,
+        ));
+        replacement.apu.restore_output_state(output_state);
+        *self = *replacement;
     }
 
     pub fn load_cart(&mut self, cart: Cartridge) {

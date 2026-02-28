@@ -399,6 +399,7 @@ struct Speed {
 
 enum EmuCommand {
     SetPaused(bool),
+    Reset,
     SetSpeed(Speed),
     UpdateInput(u8),
     UpdateBreakpoints(Vec<ui::debugger::BreakpointSpec>),
@@ -579,8 +580,23 @@ fn run_emulator_thread(
         while let Ok(cmd) = rx.try_recv() {
             match cmd {
                 EmuCommand::SetPaused(p) => {
+                    debug!("[emu] SetPaused({p})");
                     paused = p;
                     next_frame = Instant::now() + FRAME_TIME;
+                }
+                EmuCommand::Reset => {
+                    info!("[reset] emu-thread reset start");
+                    if let Ok(mut gb) = gb.lock() {
+                        if gb.mmu.boot_rom.is_some() {
+                            gb.reset_power_on();
+                        } else {
+                            gb.reset();
+                        }
+                        next_frame = Instant::now() + FRAME_TIME;
+                        info!("[reset] emu-thread reset complete");
+                    } else {
+                        error!("[reset] emu-thread failed to lock gb for reset");
+                    }
                 }
                 EmuCommand::SetSpeed(s) => {
                     speed = s;
@@ -1891,14 +1907,8 @@ impl eframe::App for VibeEmuApp {
                         .add_enabled(has_rom_loaded, egui::Button::new("Reset"))
                         .clicked()
                     {
-                        if let Ok(mut gb) = self.gb.lock() {
-                            gb.reset();
-                            self._audio_stream = audio::start_stream(
-                                &mut gb.mmu.apu,
-                                true,
-                                self.sound_enabled.clone(),
-                            );
-                        }
+                        info!("[reset] requested");
+                        let _ = self.emu_tx.send(EmuCommand::Reset);
                         ui.close();
                     }
                     ui.separator();

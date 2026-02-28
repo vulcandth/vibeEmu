@@ -5,6 +5,9 @@ use crate::{
     mmu::Mmu,
 };
 
+#[cfg(test)]
+use crate::cartridge::Cartridge;
+
 /// CPU register snapshot for boot-handoff parity checks.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,12 +180,14 @@ impl GameBoy {
         let cart = self.mmu.cart.take();
         let boot = self.mmu.boot_rom.take();
         self.cpu = Cpu::new_with_mode_and_revision(self.cgb, self.dmg_revision);
-        self.mmu = Mmu::new_with_revisions(self.cgb, self.dmg_revision, self.cgb_revision);
+        self.mmu
+            .reset_post_boot_in_place(self.cgb, self.dmg_revision, self.cgb_revision);
         if let Some(c) = cart {
             self.mmu.load_cart(c);
         }
         if let Some(b) = boot {
-            self.mmu.load_boot_rom(b);
+            self.mmu.boot_rom = Some(b);
+            self.mmu.boot_mapped = false;
         }
     }
 
@@ -193,7 +198,8 @@ impl GameBoy {
         let cart = self.mmu.cart.take();
         let boot = self.mmu.boot_rom.take();
         self.cpu = Cpu::new_power_on_with_revision(self.cgb, self.dmg_revision);
-        self.mmu = Mmu::new_power_on_with_revisions(self.cgb, self.dmg_revision, self.cgb_revision);
+        self.mmu
+            .reset_power_on_in_place(self.cgb, self.dmg_revision, self.cgb_revision);
         if let Some(c) = cart {
             self.mmu.load_cart(c);
         }
@@ -206,5 +212,50 @@ impl GameBoy {
 impl Default for GameBoy {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_rom(cgb: bool) -> Vec<u8> {
+        let mut rom = vec![0; 0x8000];
+        rom[0x0147] = 0x00;
+        rom[0x0148] = 0x00;
+        rom[0x0149] = 0x00;
+        rom[0x0143] = if cgb { 0x80 } else { 0x00 };
+        rom
+    }
+
+    #[test]
+    fn reset_preserves_cart_and_boot_rom() {
+        let mut gb = GameBoy::new_with_revisions(true, DmgRevision::RevB, CgbRevision::RevC);
+        gb.mmu
+            .load_cart(Cartridge::from_bytes_with_ram(dummy_rom(true), 0));
+        gb.mmu.load_boot_rom(vec![0xEA; 0x900]);
+
+        gb.reset();
+
+        assert!(gb.mmu.cart.is_some());
+        assert!(gb.mmu.boot_rom.is_some());
+        assert!(!gb.mmu.boot_mapped);
+        assert_eq!(gb.cpu.pc, 0x0100);
+        assert!(gb.mmu.is_cgb());
+    }
+
+    #[test]
+    fn reset_power_on_preserves_cart_and_boot_rom() {
+        let mut gb = GameBoy::new_with_revisions(false, DmgRevision::RevA, CgbRevision::RevD);
+        gb.mmu
+            .load_cart(Cartridge::from_bytes_with_ram(dummy_rom(false), 0));
+        gb.mmu.load_boot_rom(vec![0x00; 0x100]);
+
+        gb.reset_power_on();
+
+        assert!(gb.mmu.cart.is_some());
+        assert!(gb.mmu.boot_rom.is_some());
+        assert_eq!(gb.cpu.pc, 0x0000);
+        assert!(!gb.mmu.is_cgb());
     }
 }
