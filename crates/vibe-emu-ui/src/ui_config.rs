@@ -45,6 +45,31 @@ pub enum EmulationMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AxisFilter {
+    #[default]
+    Nearest,
+    Linear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum DisplayEffect {
+    #[default]
+    None,
+    Scanlines,
+    LcdGrid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct VideoFilterConfig {
+    pub horizontal: AxisFilter,
+    pub vertical: AxisFilter,
+    pub effect: DisplayEffect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum WindowSize {
     #[serde(rename = "1x")]
     X1,
@@ -96,6 +121,7 @@ pub struct UiConfig {
     pub window_size: WindowSize,
     pub sound_enabled: bool,
     pub emulation_mode: EmulationMode,
+    pub video_filter: VideoFilterConfig,
     pub serial: SerialConfig,
 }
 
@@ -108,6 +134,7 @@ impl Default for UiConfig {
             window_size: WindowSize::default(),
             sound_enabled: true,
             emulation_mode: EmulationMode::default(),
+            video_filter: VideoFilterConfig::default(),
             serial: SerialConfig::default(),
         }
     }

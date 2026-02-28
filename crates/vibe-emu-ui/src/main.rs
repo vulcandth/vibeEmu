@@ -34,7 +34,10 @@ use keybinds::KeyBindings;
 use network_link::{LinkCommand, LinkEvent, NetworkLinkPort};
 use ui::debugger::{BreakpointSpec, DebuggerPauseReason, DebuggerState};
 use ui::snapshot::UiSnapshot;
-use ui_config::{EmulationMode, SerialPeripheralKind, UiConfig, WindowSize};
+use ui_config::{
+    AxisFilter, DisplayEffect, EmulationMode, SerialPeripheralKind, UiConfig, VideoFilterConfig,
+    WindowSize,
+};
 
 const DEFAULT_WINDOW_SCALE: u32 = 2;
 const MAX_WINDOW_SCALE: usize = 6;
@@ -439,6 +442,16 @@ enum OptionsTab {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum VideoFilterPreset {
+    #[default]
+    CurrentMethod,
+    HorizontalBlur,
+    Bilinear,
+    Scanlines,
+    LcdGrid,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum VramTab {
     #[default]
     BgMap,
@@ -804,6 +817,9 @@ struct VibeEmuApp {
 
     framebuffer: Vec<u32>,
     texture: Option<egui::TextureHandle>,
+    display_horizontal_filter: AxisFilter,
+    display_vertical_filter: AxisFilter,
+    display_effect: DisplayEffect,
     paused: bool,
     current_rom_path: Option<std::path::PathBuf>,
     keybinds: KeyBindings,
@@ -825,6 +841,7 @@ struct VibeEmuApp {
     dmg_bootrom_path: String,
     cgb_bootrom_path: String,
     selected_window_scale: usize,
+    current_display_scale: f32,
     rebinding: Option<RebindTarget>,
     options_tab: OptionsTab,
 
@@ -891,6 +908,171 @@ struct VibeEmuApp {
 }
 
 impl VibeEmuApp {
+    fn current_video_filter_config(&self) -> VideoFilterConfig {
+        VideoFilterConfig {
+            horizontal: self.display_horizontal_filter,
+            vertical: self.display_vertical_filter,
+            effect: self.display_effect,
+        }
+    }
+
+    fn apply_video_filter_config(&mut self, config: VideoFilterConfig) {
+        self.display_horizontal_filter = config.horizontal;
+        self.display_vertical_filter = config.vertical;
+        self.display_effect = config.effect;
+    }
+
+    fn video_filter_preset_label(preset: VideoFilterPreset) -> &'static str {
+        match preset {
+            VideoFilterPreset::CurrentMethod => "Current method (default)",
+            VideoFilterPreset::HorizontalBlur => "Horizontal blur (30fps.net)",
+            VideoFilterPreset::Bilinear => "Bilinear",
+            VideoFilterPreset::Scanlines => "Scanlines",
+            VideoFilterPreset::LcdGrid => "LCD grid",
+        }
+    }
+
+    fn video_filter_preset_config(preset: VideoFilterPreset) -> VideoFilterConfig {
+        match preset {
+            VideoFilterPreset::CurrentMethod => VideoFilterConfig {
+                horizontal: AxisFilter::Nearest,
+                vertical: AxisFilter::Nearest,
+                effect: DisplayEffect::None,
+            },
+            VideoFilterPreset::HorizontalBlur => VideoFilterConfig {
+                horizontal: AxisFilter::Linear,
+                vertical: AxisFilter::Nearest,
+                effect: DisplayEffect::None,
+            },
+            VideoFilterPreset::Bilinear => VideoFilterConfig {
+                horizontal: AxisFilter::Linear,
+                vertical: AxisFilter::Linear,
+                effect: DisplayEffect::None,
+            },
+            VideoFilterPreset::Scanlines => VideoFilterConfig {
+                horizontal: AxisFilter::Nearest,
+                vertical: AxisFilter::Nearest,
+                effect: DisplayEffect::Scanlines,
+            },
+            VideoFilterPreset::LcdGrid => VideoFilterConfig {
+                horizontal: AxisFilter::Nearest,
+                vertical: AxisFilter::Nearest,
+                effect: DisplayEffect::LcdGrid,
+            },
+        }
+    }
+
+    fn video_filter_preset_for_config(config: VideoFilterConfig) -> Option<VideoFilterPreset> {
+        [
+            VideoFilterPreset::CurrentMethod,
+            VideoFilterPreset::HorizontalBlur,
+            VideoFilterPreset::Bilinear,
+            VideoFilterPreset::Scanlines,
+            VideoFilterPreset::LcdGrid,
+        ]
+        .into_iter()
+        .find(|preset| Self::video_filter_preset_config(*preset) == config)
+    }
+
+    fn axis_filter_label(filter: AxisFilter) -> &'static str {
+        match filter {
+            AxisFilter::Nearest => "Nearest",
+            AxisFilter::Linear => "Linear",
+        }
+    }
+
+    fn display_effect_label(effect: DisplayEffect) -> &'static str {
+        match effect {
+            DisplayEffect::None => "None",
+            DisplayEffect::Scanlines => "Scanlines",
+            DisplayEffect::LcdGrid => "LCD grid",
+        }
+    }
+
+    fn blend_two_rgb(a: u32, b: u32) -> u32 {
+        let r = ((((a >> 16) & 0xFF) + ((b >> 16) & 0xFF) + 1) / 2) as u8;
+        let g = ((((a >> 8) & 0xFF) + ((b >> 8) & 0xFF) + 1) / 2) as u8;
+        let blue = (((a & 0xFF) + (b & 0xFF) + 1) / 2) as u8;
+        (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(blue)
+    }
+
+    fn blend_three_rgb(a: u32, b: u32, c: u32) -> u32 {
+        let r =
+            ((((a >> 16) & 0xFF) + (((b >> 16) & 0xFF) * 2) + ((c >> 16) & 0xFF) + 2) / 4) as u8;
+        let g = ((((a >> 8) & 0xFF) + (((b >> 8) & 0xFF) * 2) + ((c >> 8) & 0xFF) + 2) / 4) as u8;
+        let blue = (((a & 0xFF) + ((b & 0xFF) * 2) + (c & 0xFF) + 2) / 4) as u8;
+        (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(blue)
+    }
+
+    fn lerp_rgb(a: u32, b: u32, t_num: usize, t_den: usize) -> u32 {
+        if t_den == 0 || t_num == 0 {
+            return a;
+        }
+        if t_num >= t_den {
+            return b;
+        }
+
+        let t_num_u32 = t_num as u32;
+        let t_den_u32 = t_den as u32;
+        let inv = t_den_u32 - t_num_u32;
+
+        let r = ((((a >> 16) & 0xFF) * inv + ((b >> 16) & 0xFF) * t_num_u32 + (t_den_u32 / 2))
+            / t_den_u32) as u8;
+        let g = ((((a >> 8) & 0xFF) * inv + ((b >> 8) & 0xFF) * t_num_u32 + (t_den_u32 / 2))
+            / t_den_u32) as u8;
+        let blue =
+            (((a & 0xFF) * inv + (b & 0xFF) * t_num_u32 + (t_den_u32 / 2)) / t_den_u32) as u8;
+
+        (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(blue)
+    }
+
+    fn blend_four_rgb(a: u32, b: u32, c: u32, d: u32) -> u32 {
+        let r = ((((a >> 16) & 0xFF)
+            + ((b >> 16) & 0xFF)
+            + ((c >> 16) & 0xFF)
+            + ((d >> 16) & 0xFF)
+            + 2)
+            / 4) as u8;
+        let g =
+            ((((a >> 8) & 0xFF) + ((b >> 8) & 0xFF) + ((c >> 8) & 0xFF) + ((d >> 8) & 0xFF) + 2)
+                / 4) as u8;
+        let blue = (((a & 0xFF) + (b & 0xFF) + (c & 0xFF) + (d & 0xFF) + 2) / 4) as u8;
+        (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(blue)
+    }
+
+    fn darken_rgb(rgb: u32, factor: u16) -> u32 {
+        let factor = factor.min(256);
+        let r = ((((rgb >> 16) & 0xFF) * u32::from(factor) + 128) / 256) as u8;
+        let g = ((((rgb >> 8) & 0xFF) * u32::from(factor) + 128) / 256) as u8;
+        let blue = (((rgb & 0xFF) * u32::from(factor) + 128) / 256) as u8;
+        (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(blue)
+    }
+
+    fn apply_display_effect(rgb: u32, effect: DisplayEffect, x: usize, y: usize) -> u32 {
+        match effect {
+            DisplayEffect::None => rgb,
+            DisplayEffect::Scanlines => {
+                if y % 2 == 1 {
+                    Self::darken_rgb(rgb, 205)
+                } else {
+                    rgb
+                }
+            }
+            DisplayEffect::LcdGrid => {
+                let odd_x = x % 2 == 1;
+                let odd_y = y % 2 == 1;
+                let factor = if odd_x && odd_y {
+                    190
+                } else if odd_x || odd_y {
+                    225
+                } else {
+                    256
+                };
+                Self::darken_rgb(rgb, factor)
+            }
+        }
+    }
+
     fn window_size_to_index(window_size: WindowSize) -> usize {
         match window_size {
             WindowSize::X1 => 0,
@@ -921,6 +1103,11 @@ impl VibeEmuApp {
         self.ui_config.window_size = self.selected_window_size();
         self.ui_config.sound_enabled = self.sound_enabled.load(Ordering::Relaxed);
         self.ui_config.emulation_mode = self.emulation_mode;
+        self.ui_config.video_filter = VideoFilterConfig {
+            horizontal: self.display_horizontal_filter,
+            vertical: self.display_vertical_filter,
+            effect: self.display_effect,
+        };
         self.save_ui_config();
     }
 
@@ -957,6 +1144,9 @@ impl VibeEmuApp {
 
         let sound_enabled = Arc::new(AtomicBool::new(ui_config.sound_enabled));
         let selected_window_scale = Self::window_size_to_index(ui_config.window_size);
+        let display_horizontal_filter = ui_config.video_filter.horizontal;
+        let display_vertical_filter = ui_config.video_filter.vertical;
+        let display_effect = ui_config.video_filter.effect;
 
         let LoadConfig {
             emulation_mode,
@@ -985,6 +1175,9 @@ impl VibeEmuApp {
             ui_config,
             framebuffer: vec![0u32; 160 * 144],
             texture: None,
+            display_horizontal_filter,
+            display_vertical_filter,
+            display_effect,
             paused,
             current_rom_path: rom_path,
             keybinds,
@@ -1007,6 +1200,7 @@ impl VibeEmuApp {
                 .map(|path| path.to_string_lossy().to_string())
                 .unwrap_or_default(),
             selected_window_scale,
+            current_display_scale: 1.0,
             rebinding: None,
             options_tab: OptionsTab::default(),
             debugger_snapshot: None,
@@ -1636,18 +1830,61 @@ impl VibeEmuApp {
     }
 
     fn update_texture(&mut self, ctx: &egui::Context) {
-        let pixels: Vec<egui::Color32> = self
-            .framebuffer
-            .iter()
-            .map(|&rgba| {
-                let r = ((rgba >> 16) & 0xFF) as u8;
-                let g = ((rgba >> 8) & 0xFF) as u8;
-                let b = (rgba & 0xFF) as u8;
-                egui::Color32::from_rgb(r, g, b)
-            })
-            .collect();
+        const SRC_WIDTH: usize = 160;
+        const SRC_HEIGHT: usize = 144;
 
-        let image = egui::ColorImage::new([160, 144], pixels);
+        let scale = self
+            .current_display_scale
+            .round()
+            .clamp(1.0, MAX_WINDOW_SCALE as f32) as usize;
+        let out_width = SRC_WIDTH * scale;
+        let out_height = SRC_HEIGHT * scale;
+
+        let horizontal_linear = self.display_horizontal_filter == AxisFilter::Linear && scale > 1;
+        let vertical_linear = self.display_vertical_filter == AxisFilter::Linear && scale > 1;
+
+        let mut pixels = Vec::with_capacity(out_width * out_height);
+        for out_y in 0..out_height {
+            let src_y = out_y / scale;
+            let sub_y = out_y % scale;
+            let src_y_next = (src_y + 1).min(SRC_HEIGHT - 1);
+
+            for out_x in 0..out_width {
+                let src_x = out_x / scale;
+                let sub_x = out_x % scale;
+                let src_x_next = (src_x + 1).min(SRC_WIDTH - 1);
+
+                let top_left = self.framebuffer[src_y * SRC_WIDTH + src_x];
+                let top_right = self.framebuffer[src_y * SRC_WIDTH + src_x_next];
+                let bottom_left = self.framebuffer[src_y_next * SRC_WIDTH + src_x];
+                let bottom_right = self.framebuffer[src_y_next * SRC_WIDTH + src_x_next];
+
+                let top = if horizontal_linear {
+                    Self::lerp_rgb(top_left, top_right, sub_x, scale)
+                } else {
+                    top_left
+                };
+                let bottom = if horizontal_linear {
+                    Self::lerp_rgb(bottom_left, bottom_right, sub_x, scale)
+                } else {
+                    bottom_left
+                };
+
+                let rgb = if vertical_linear {
+                    Self::lerp_rgb(top, bottom, sub_y, scale)
+                } else {
+                    top
+                };
+
+                let rgb = Self::apply_display_effect(rgb, self.display_effect, out_x, out_y);
+                let r = ((rgb >> 16) & 0xFF) as u8;
+                let g = ((rgb >> 8) & 0xFF) as u8;
+                let b = (rgb & 0xFF) as u8;
+                pixels.push(egui::Color32::from_rgb(r, g, b));
+            }
+        }
+
+        let image = egui::ColorImage::new([out_width, out_height], pixels);
 
         match &mut self.texture {
             Some(tex) => tex.set(image, egui::TextureOptions::NEAREST),
@@ -2054,6 +2291,7 @@ impl eframe::App for VibeEmuApp {
                     .min(available.y / GB_HEIGHT)
                     .floor()
                     .max(1.0);
+                self.current_display_scale = scale;
                 let menu_scale = (scale as usize).clamp(1, MAX_WINDOW_SCALE) - 1;
                 if self.selected_window_scale != menu_scale {
                     self.selected_window_scale = menu_scale;
@@ -2286,6 +2524,108 @@ impl VibeEmuApp {
                         self.persist_bootrom_paths();
                     }
                 });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+                ui.label("Display filter");
+
+                let prev_filter_config = self.current_video_filter_config();
+                let mut selected_preset = Self::video_filter_preset_for_config(prev_filter_config);
+
+                egui::ComboBox::from_label("Preset")
+                    .selected_text(
+                        selected_preset
+                            .map(Self::video_filter_preset_label)
+                            .unwrap_or("Custom"),
+                    )
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut selected_preset,
+                            Some(VideoFilterPreset::CurrentMethod),
+                            Self::video_filter_preset_label(VideoFilterPreset::CurrentMethod),
+                        );
+                        ui.selectable_value(
+                            &mut selected_preset,
+                            Some(VideoFilterPreset::HorizontalBlur),
+                            Self::video_filter_preset_label(VideoFilterPreset::HorizontalBlur),
+                        );
+                        ui.selectable_value(
+                            &mut selected_preset,
+                            Some(VideoFilterPreset::Bilinear),
+                            Self::video_filter_preset_label(VideoFilterPreset::Bilinear),
+                        );
+                        ui.selectable_value(
+                            &mut selected_preset,
+                            Some(VideoFilterPreset::Scanlines),
+                            Self::video_filter_preset_label(VideoFilterPreset::Scanlines),
+                        );
+                        ui.selectable_value(
+                            &mut selected_preset,
+                            Some(VideoFilterPreset::LcdGrid),
+                            Self::video_filter_preset_label(VideoFilterPreset::LcdGrid),
+                        );
+                    });
+
+                ui.small("\"30fps.net\" is the article source name, not the emulation frame rate.");
+
+                if let Some(preset) = selected_preset {
+                    self.apply_video_filter_config(Self::video_filter_preset_config(preset));
+                }
+
+                egui::ComboBox::from_label("Horizontal sampling")
+                    .selected_text(Self::axis_filter_label(self.display_horizontal_filter))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.display_horizontal_filter,
+                            AxisFilter::Nearest,
+                            Self::axis_filter_label(AxisFilter::Nearest),
+                        );
+                        ui.selectable_value(
+                            &mut self.display_horizontal_filter,
+                            AxisFilter::Linear,
+                            Self::axis_filter_label(AxisFilter::Linear),
+                        );
+                    });
+
+                egui::ComboBox::from_label("Vertical sampling")
+                    .selected_text(Self::axis_filter_label(self.display_vertical_filter))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.display_vertical_filter,
+                            AxisFilter::Nearest,
+                            Self::axis_filter_label(AxisFilter::Nearest),
+                        );
+                        ui.selectable_value(
+                            &mut self.display_vertical_filter,
+                            AxisFilter::Linear,
+                            Self::axis_filter_label(AxisFilter::Linear),
+                        );
+                    });
+
+                egui::ComboBox::from_label("Screen effect")
+                    .selected_text(Self::display_effect_label(self.display_effect))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.display_effect,
+                            DisplayEffect::None,
+                            Self::display_effect_label(DisplayEffect::None),
+                        );
+                        ui.selectable_value(
+                            &mut self.display_effect,
+                            DisplayEffect::Scanlines,
+                            Self::display_effect_label(DisplayEffect::Scanlines),
+                        );
+                        ui.selectable_value(
+                            &mut self.display_effect,
+                            DisplayEffect::LcdGrid,
+                            Self::display_effect_label(DisplayEffect::LcdGrid),
+                        );
+                    });
+
+                if self.current_video_filter_config() != prev_filter_config {
+                    self.persist_runtime_settings();
+                }
             }
         }
     }

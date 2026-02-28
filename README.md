@@ -198,7 +198,9 @@ The default controls are:
 Use the **top menu bar** to load ROMs, change settings, capture screenshots, or
 open debugging tools. Screenshot hotkeys are configurable in
 **Options → Settings... → Keybinds**. Captures are saved to a `screenshots/`
-folder next to the loaded ROM.
+folder next to the loaded ROM. Display filtering is configurable in
+**Options → Settings... → Emulation**, including separate horizontal/vertical
+sampling and optional scanline/LCD grid effects.
 
 ## Testing
 
