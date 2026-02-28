@@ -934,7 +934,7 @@ pub struct Apu {
 
 /// Lightweight snapshot of APU state for test diagnostics.
 #[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ApuDebugState {
     pub nr52: u8,
     pub ch1_enabled: bool,
@@ -958,7 +958,59 @@ pub struct ApuDebugState {
     pub sequencer_step: u8,
 }
 
+/// Snapshot of APU register/memory-visible state for boot-handoff parity checks.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApuBootSnapshot {
+    pub regs: [u8; 0x30],
+    pub wave_ram: [u8; 0x10],
+    pub nr50: u8,
+    pub nr51: u8,
+    pub nr52: u8,
+    pub debug: ApuDebugState,
+}
+
 impl Apu {
+    pub(crate) fn apply_post_boot_state(&mut self) {
+        self.regs[0x01] = 0x80;
+        self.regs[0x03] = 0xC1;
+        self.regs[0x04] = 0x87;
+        self.regs[0x16] = 0xF0;
+
+        self.ch1.enabled = true;
+        self.ch1.active = true;
+        self.ch1.dac_enabled = true;
+        self.ch1.length = 64;
+        self.ch1.length_enable = false;
+        self.ch1.duty_pos = 1;
+
+        if self.cgb_mode {
+            for i in 0..0x10 {
+                let value = if i % 2 == 0 { 0x00 } else { 0xFF };
+                self.wave_ram[i] = value;
+                self.regs[0x20 + i] = value;
+            }
+            self.sequencer.step = 1;
+        } else {
+            self.wave_ram = [0; 0x10];
+            self.regs[0x20..0x30].fill(0);
+            self.sequencer.step = 5;
+        }
+    }
+
+    /// Returns a snapshot of APU state relevant to post-boot handoff parity.
+    #[doc(hidden)]
+    pub fn debug_boot_snapshot(&self) -> ApuBootSnapshot {
+        ApuBootSnapshot {
+            regs: self.regs,
+            wave_ram: self.wave_ram,
+            nr50: self.nr50,
+            nr51: self.nr51,
+            nr52: self.nr52,
+            debug: self.debug_state(),
+        }
+    }
+
     /// Returns a snapshot of internal APU state useful for integration-test diagnostics.
     #[doc(hidden)]
     pub fn debug_state(&self) -> ApuDebugState {

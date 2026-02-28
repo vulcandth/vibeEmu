@@ -278,7 +278,7 @@ pub fn workspace_root() -> PathBuf {
 
 #[allow(dead_code)]
 pub fn bootroms_dir() -> PathBuf {
-    let dir = workspace_root().join("bootroms");
+    let dir = roms_dir().join("bootroms");
     fs::create_dir_all(&dir).expect("failed to create bootroms directory");
     dir
 }

@@ -59,6 +59,10 @@ fn dmg_mode3_lcdc_delay_dots() -> u8 {
 
 const WRAM_BANK_SIZE: usize = 0x1000;
 
+const CGB_POST_BOOT_WRAM2_BLOCK_0900_0B7F: &[u8] = include_bytes!("cgb_post_boot_wram2.bin");
+const CGB_POST_BOOT_WRAM2_BLOCK_0B80_0C8F: &[u8] = include_bytes!("cgb_post_boot_wram2_tail.bin");
+const CGB_POST_BOOT_WRAM2_BLOCK_0C90_0CFF: &[u8] = include_bytes!("cgb_post_boot_wram2_tail2.bin");
+
 fn power_on_wram_seed(cgb: bool, dmg_revision: DmgRevision, cgb_revision: CgbRevision) -> u32 {
     // Uninitialized WRAM contents are effectively random on real hardware.
     // We keep them deterministic for reproducible tests while ensuring the
@@ -291,11 +295,74 @@ impl Mmu {
 
         let mut ppu = Ppu::new_with_revisions(cgb, dmg_revision, cgb_revision);
         ppu.apply_boot_state(if cgb { None } else { Some(dmg_revision) });
+        let mut apu = Apu::new_with_revisions(cgb, dmg_revision, cgb_revision);
+        apu.apply_post_boot_state();
+
+        let mut wram = [[0; WRAM_BANK_SIZE]; 8];
+        init_power_on_wram(
+            &mut wram,
+            power_on_wram_seed(cgb, dmg_revision, cgb_revision),
+        );
+        if cgb {
+            wram[2] = [0; WRAM_BANK_SIZE];
+            wram[2][0] = 0x2E;
+            wram[2][8] = 0x1C;
+            wram[2][11] = 0x03;
+            for i in 0..64 {
+                wram[2][2112 + i] = if i % 2 == 0 { 0xFF } else { 0x7F };
+            }
+            let end = 2304 + CGB_POST_BOOT_WRAM2_BLOCK_0900_0B7F.len();
+            wram[2][2304..end].copy_from_slice(CGB_POST_BOOT_WRAM2_BLOCK_0900_0B7F);
+            let tail_end = 2944 + CGB_POST_BOOT_WRAM2_BLOCK_0B80_0C8F.len();
+            wram[2][2944..tail_end].copy_from_slice(CGB_POST_BOOT_WRAM2_BLOCK_0B80_0C8F);
+            let tail2_end = 3216 + CGB_POST_BOOT_WRAM2_BLOCK_0C90_0CFF.len();
+            wram[2][3216..tail2_end].copy_from_slice(CGB_POST_BOOT_WRAM2_BLOCK_0C90_0CFF);
+        }
+
+        let mut hram = [0; 0x7F];
+        if !cgb {
+            // Stack scratch bytes left by the DMG boot ROM right before handoff.
+            hram[0x7A] = 0x39;
+            hram[0x7B] = 0x01;
+            hram[0x7C] = 0x2E;
+        } else {
+            // Stack scratch / handoff bookkeeping bytes left by cgb_boot.bin.
+            hram[0x72] = 0x71;
+            hram[0x73] = 0x02;
+            hram[0x74] = 0x4D;
+            hram[0x75] = 0x01;
+            hram[0x76] = 0xC1;
+            hram[0x77] = 0xFF;
+            hram[0x78] = 0x0D;
+            hram[0x7A] = 0xD3;
+            hram[0x7B] = 0x05;
+            hram[0x7C] = 0xF9;
+        }
+
+        let hdma = if cgb {
+            HdmaState {
+                src: 0xD430,
+                dst: Self::sanitize_vram_dma_dest(0x19D0),
+                blocks: 0,
+                mode: DmaMode::Gdma,
+                active: false,
+                cancelled: false,
+            }
+        } else {
+            HdmaState {
+                src: 0,
+                dst: Self::sanitize_vram_dma_dest(0),
+                blocks: 0,
+                mode: DmaMode::Gdma,
+                active: false,
+                cancelled: false,
+            }
+        };
 
         Self {
-            wram: [[0; WRAM_BANK_SIZE]; 8],
+            wram,
             wram_bank: 1,
-            hram: [0; 0x7F],
+            hram,
             cart: None,
             boot_rom: None,
             boot_mapped: false,
@@ -303,18 +370,11 @@ impl Mmu {
             ie_reg: 0,
             serial: Serial::new(cgb, dmg_revision),
             ppu,
-            apu: Apu::new_with_revisions(cgb, dmg_revision, cgb_revision),
+            apu,
             timer,
             dot_div,
             input: Input::new(),
-            hdma: HdmaState {
-                src: 0,
-                dst: Self::sanitize_vram_dma_dest(0),
-                blocks: 0,
-                mode: DmaMode::Gdma,
-                active: false,
-                cancelled: false,
-            },
+            hdma,
             key1: if cgb { 0x7E } else { 0 },
             rp: 0,
             undoc_ff72: 0,
@@ -433,9 +493,15 @@ impl Mmu {
 
     pub fn load_cart(&mut self, cart: Cartridge) {
         let is_dmg = !cart.cgb;
-        if self.post_boot_state && is_dmg {
+        if self.post_boot_state {
             let logo = cart.rom.get(0x0104..0x0134).unwrap_or(&[]);
             self.ppu.apply_dmg_post_boot_vram(logo);
+
+            if self.cgb_mode {
+                let header = cart.rom.get(0x0104..0x0134).unwrap_or(&[]);
+                let copy_len = header.len().min(self.hram.len());
+                self.hram[..copy_len].copy_from_slice(&header[..copy_len]);
+            }
         }
         self.cart = Some(cart);
         if self.cgb_mode && is_dmg && self.post_boot_state {
@@ -783,6 +849,15 @@ impl Mmu {
         }
         self.watchpoints.note_read(self.last_cpu_pc, addr, value);
         value
+    }
+
+    #[doc(hidden)]
+    pub fn debug_io_snapshot(&mut self) -> [u8; 0x80] {
+        let mut io = [0u8; 0x80];
+        for (index, byte) in io.iter_mut().enumerate() {
+            *byte = self.read_byte_inner(0xFF00 + index as u16, true);
+        }
+        io
     }
 
     fn dma_read_byte(&mut self, addr: u16) -> u8 {

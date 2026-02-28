@@ -40,10 +40,10 @@ const CGB_BOOT_A: u8 = 0x11;
 const CGB_BOOT_F: u8 = 0x80;
 const CGB_BOOT_B: u8 = 0x00;
 const CGB_BOOT_C: u8 = 0x00;
-const CGB_BOOT_D: u8 = 0x00;
-const CGB_BOOT_E: u8 = 0x08;
+const CGB_BOOT_D: u8 = 0xFF;
+const CGB_BOOT_E: u8 = 0x56;
 const CGB_BOOT_H: u8 = 0x00;
-const CGB_BOOT_L: u8 = 0x7C;
+const CGB_BOOT_L: u8 = 0x0D;
 
 // Clock ratios per machine cycle
 const CYCLES_PER_M_CYCLE: u16 = 4; // normal speed

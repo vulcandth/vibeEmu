@@ -4426,29 +4426,41 @@ impl Ppu {
             self.dmg_revision = rev;
         }
         self.lcdc = 0x91;
-        self.dma = 0xFF;
+        self.dma = 0x00;
         self.bgp = 0xFC;
         self.win_line_counter = 0;
 
         if self.cgb {
-            self.stat = 0x85;
+            self.stat = 0x80;
             self.set_mode(MODE_VBLANK);
-            self.ly = 0;
-            self.ly_for_comparison = 0;
+            self.mode_clock = 164;
+            self.ly = 0x90;
+            self.ly_for_comparison = 0x90;
+            self.lyc = 0;
+            self.bgpi = 0xC0;
+            self.obpi = 0xC1;
+            self.bgpd[0] = 0xFF;
             self.boot_hold_cycles = 0;
         } else {
-            self.stat = 0x00;
+            self.stat = 0x80;
+            // PPU mode/LY values represent what the first game instruction
+            // should observe, as verified by mooneye's boot_hwio test ROMs.
+            // These differ from the exact handoff-moment values captured by
+            // the boot-ROM parity test because boot_hold_cycles freezes the
+            // PPU while the real hardware continues clocking.
             match dmg_revision.unwrap_or_default() {
                 DmgRevision::Rev0 => {
                     self.set_mode(MODE_TRANSFER);
                     self.ly = 0x01;
                     self.ly_for_comparison = 0x01;
+                    self.lyc = 0x00;
                     self.boot_hold_cycles = BOOT_HOLD_CYCLES_DMG0;
                 }
                 DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => {
                     self.set_mode(MODE_HBLANK);
                     self.ly = 0x0A;
                     self.ly_for_comparison = 0x0A;
+                    self.lyc = 0x00;
                     self.boot_hold_cycles = BOOT_HOLD_CYCLES_DMGA;
                 }
             }

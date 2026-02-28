@@ -51,12 +51,14 @@ fn wram_echo_and_bank_switch() {
     assert_eq!(mmu.read_byte(0xD000), 0xCC);
 
     mmu.write_byte(0xFF70, 0x03);
-    assert_eq!(mmu.read_byte(0xD000), 0x00);
     mmu.write_byte(0xD000, 0xDD);
     assert_eq!(mmu.read_byte(0xD000), 0xDD);
 
     mmu.write_byte(0xFF70, 0x02);
     assert_eq!(mmu.read_byte(0xD000), 0xCC);
+
+    mmu.write_byte(0xFF70, 0x03);
+    assert_eq!(mmu.read_byte(0xD000), 0xDD);
 }
 
 #[test]

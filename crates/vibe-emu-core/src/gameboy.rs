@@ -1,8 +1,57 @@
 use crate::{
+    apu::ApuBootSnapshot,
     cpu::Cpu,
     hardware::{CgbRevision, DmgRevision},
     mmu::Mmu,
 };
+
+/// CPU register snapshot for boot-handoff parity checks.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuBootSnapshot {
+    pub a: u8,
+    pub f: u8,
+    pub b: u8,
+    pub c: u8,
+    pub d: u8,
+    pub e: u8,
+    pub h: u8,
+    pub l: u8,
+    pub pc: u16,
+    pub sp: u16,
+    pub ime: bool,
+    pub halted: bool,
+    pub stopped: bool,
+    pub double_speed: bool,
+}
+
+/// End-to-end machine snapshot captured at boot-ROM handoff.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootHandoffSnapshot {
+    pub cgb: bool,
+    pub dmg_revision: DmgRevision,
+    pub cgb_revision: CgbRevision,
+    pub cpu: CpuBootSnapshot,
+    pub boot_mapped: bool,
+    pub if_reg: u8,
+    pub ie_reg: u8,
+    pub dot_div: u16,
+    pub timer_div: u16,
+    pub timer_tima: u8,
+    pub timer_tma: u8,
+    pub timer_tac: u8,
+    pub wram_bank: usize,
+    pub wram: [[u8; 0x1000]; 8],
+    pub hram: [u8; 0x7F],
+    pub ppu_vram_bank: usize,
+    pub ppu_vram: [[u8; 0x2000]; 2],
+    pub ppu_oam: [u8; 0xA0],
+    pub ppu_mode: u8,
+    pub ppu_mode_clock: u16,
+    pub io: [u8; 0x80],
+    pub apu: ApuBootSnapshot,
+}
 
 /// High-level emulator facade representing a single Game Boy / Game Boy Color.
 ///
@@ -22,6 +71,52 @@ pub struct GameBoy {
 }
 
 impl GameBoy {
+    /// Captures a machine snapshot used to compare boot-ROM handoff parity.
+    #[doc(hidden)]
+    pub fn capture_boot_handoff_snapshot(&mut self) -> BootHandoffSnapshot {
+        let io = self.mmu.debug_io_snapshot();
+
+        BootHandoffSnapshot {
+            cgb: self.cgb,
+            dmg_revision: self.dmg_revision,
+            cgb_revision: self.cgb_revision,
+            cpu: CpuBootSnapshot {
+                a: self.cpu.a,
+                f: self.cpu.f,
+                b: self.cpu.b,
+                c: self.cpu.c,
+                d: self.cpu.d,
+                e: self.cpu.e,
+                h: self.cpu.h,
+                l: self.cpu.l,
+                pc: self.cpu.pc,
+                sp: self.cpu.sp,
+                ime: self.cpu.ime,
+                halted: self.cpu.halted,
+                stopped: self.cpu.stopped,
+                double_speed: self.cpu.double_speed,
+            },
+            boot_mapped: self.mmu.boot_mapped,
+            if_reg: self.mmu.if_reg,
+            ie_reg: self.mmu.ie_reg,
+            dot_div: self.mmu.dot_div,
+            timer_div: self.mmu.timer.div,
+            timer_tima: self.mmu.timer.tima,
+            timer_tma: self.mmu.timer.tma,
+            timer_tac: self.mmu.timer.tac,
+            wram_bank: self.mmu.wram_bank,
+            wram: self.mmu.wram,
+            hram: self.mmu.hram,
+            ppu_vram_bank: self.mmu.ppu.vram_bank,
+            ppu_vram: self.mmu.ppu.vram,
+            ppu_oam: self.mmu.ppu.oam,
+            ppu_mode: self.mmu.ppu.mode(),
+            ppu_mode_clock: self.mmu.ppu.mode_clock(),
+            io,
+            apu: self.mmu.apu.debug_boot_snapshot(),
+        }
+    }
+
     /// Creates a DMG-mode machine in the post-boot state.
     pub fn new() -> Self {
         Self::new_with_mode(false)
