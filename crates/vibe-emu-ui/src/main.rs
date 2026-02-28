@@ -37,6 +37,7 @@ use ui::snapshot::UiSnapshot;
 use ui_config::{EmulationMode, SerialPeripheralKind, UiConfig, WindowSize};
 
 const DEFAULT_WINDOW_SCALE: u32 = 2;
+const MAX_WINDOW_SCALE: usize = 6;
 const GB_WIDTH: f32 = 160.0;
 const GB_HEIGHT: f32 = 144.0;
 const MENU_BAR_HEIGHT: f32 = 24.0;
@@ -873,6 +874,39 @@ struct VibeEmuApp {
 }
 
 impl VibeEmuApp {
+    fn window_size_to_index(window_size: WindowSize) -> usize {
+        match window_size {
+            WindowSize::X1 => 0,
+            WindowSize::X2 => 1,
+            WindowSize::X3 => 2,
+            WindowSize::X4 => 3,
+            WindowSize::X5 => 4,
+            WindowSize::X6 => 5,
+            WindowSize::Fullscreen | WindowSize::FullscreenStretched => {
+                (DEFAULT_WINDOW_SCALE - 1) as usize
+            }
+        }
+    }
+
+    fn selected_window_size(&self) -> WindowSize {
+        match self.selected_window_scale {
+            0 => WindowSize::X1,
+            1 => WindowSize::X2,
+            2 => WindowSize::X3,
+            3 => WindowSize::X4,
+            4 => WindowSize::X5,
+            5 => WindowSize::X6,
+            _ => WindowSize::X2,
+        }
+    }
+
+    fn persist_runtime_settings(&mut self) {
+        self.ui_config.window_size = self.selected_window_size();
+        self.ui_config.sound_enabled = self.sound_enabled.load(Ordering::Relaxed);
+        self.ui_config.emulation_mode = self.emulation_mode;
+        self.save_ui_config();
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new(
         _cc: &eframe::CreationContext<'_>,
@@ -897,7 +931,8 @@ impl VibeEmuApp {
             let _ = emu_tx.send(EmuCommand::SetPaused(true));
         }
 
-        let sound_enabled = Arc::new(AtomicBool::new(true));
+        let sound_enabled = Arc::new(AtomicBool::new(ui_config.sound_enabled));
+        let selected_window_scale = Self::window_size_to_index(ui_config.window_size);
 
         let LoadConfig {
             emulation_mode,
@@ -947,7 +982,7 @@ impl VibeEmuApp {
             cgb_bootrom_path: cgb_bootrom_path
                 .map(|path| path.to_string_lossy().to_string())
                 .unwrap_or_default(),
-            selected_window_scale: (DEFAULT_WINDOW_SCALE - 1) as usize,
+            selected_window_scale,
             rebinding: None,
             options_tab: OptionsTab::default(),
             debugger_snapshot: None,
@@ -1103,6 +1138,7 @@ impl VibeEmuApp {
 
     fn draw_emulation_mode_submenu(&mut self, ui: &mut egui::Ui) -> bool {
         let mut close_requested = false;
+        let prev_mode = self.emulation_mode;
 
         if ui
             .radio_value(
@@ -1133,6 +1169,10 @@ impl VibeEmuApp {
             .clicked()
         {
             close_requested = true;
+        }
+
+        if self.emulation_mode != prev_mode {
+            self.persist_runtime_settings();
         }
 
         close_requested
@@ -1862,7 +1902,7 @@ impl eframe::App for VibeEmuApp {
                 ui.menu_button("Options", |ui| {
                     egui::containers::menu::SubMenuButton::new("Window Scale").ui(ui, |ui| {
                         let prev_scale = self.selected_window_scale;
-                        for idx in 0..6 {
+                        for idx in 0..MAX_WINDOW_SCALE {
                             let label = format!("{}x", idx + 1);
                             if ui
                                 .radio_value(&mut self.selected_window_scale, idx, label)
@@ -1873,6 +1913,7 @@ impl eframe::App for VibeEmuApp {
                         }
                         if self.selected_window_scale != prev_scale {
                             self.apply_window_scale(ctx);
+                            self.persist_runtime_settings();
                         }
                     });
 
@@ -1880,6 +1921,7 @@ impl eframe::App for VibeEmuApp {
                     let response = ui.checkbox(&mut enabled, "Enable sound");
                     if response.changed() {
                         self.sound_enabled.store(enabled, Ordering::Relaxed);
+                        self.persist_runtime_settings();
                         ui.close();
                     }
 
@@ -1963,12 +2005,18 @@ impl eframe::App for VibeEmuApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
+                let available = ui.available_size();
+                let scale = (available.x / GB_WIDTH)
+                    .min(available.y / GB_HEIGHT)
+                    .floor()
+                    .max(1.0);
+                let menu_scale = (scale as usize).clamp(1, MAX_WINDOW_SCALE) - 1;
+                if self.selected_window_scale != menu_scale {
+                    self.selected_window_scale = menu_scale;
+                    self.ui_config.window_size = self.selected_window_size();
+                }
+
                 if let Some(tex) = &self.texture {
-                    let available = ui.available_size();
-                    let scale = (available.x / GB_WIDTH)
-                        .min(available.y / GB_HEIGHT)
-                        .floor()
-                        .max(1.0);
                     let size = egui::vec2(GB_WIDTH * scale, GB_HEIGHT * scale);
                     let offset = (available - size) / 2.0;
                     let rect = egui::Rect::from_min_size(
@@ -2005,6 +2053,7 @@ impl eframe::App for VibeEmuApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.persist_runtime_settings();
         if let Ok(mut gb) = self.gb.lock() {
             gb.mmu.save_cart_ram();
         }
@@ -2150,8 +2199,15 @@ impl VibeEmuApp {
             OptionsTab::Emulation => {
                 ui.horizontal(|ui| {
                     ui.label("DMG Boot ROM:");
+                    let browse_button_width = 82.0;
+                    let path_width =
+                        (ui.available_width() - browse_button_width - ui.spacing().item_spacing.x)
+                            .max(120.0);
                     if ui
-                        .text_edit_singleline(&mut self.dmg_bootrom_path)
+                        .add_sized(
+                            [path_width, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.dmg_bootrom_path),
+                        )
                         .changed()
                     {
                         self.persist_bootrom_paths();
@@ -2166,8 +2222,15 @@ impl VibeEmuApp {
 
                 ui.horizontal(|ui| {
                     ui.label("CGB Boot ROM:");
+                    let browse_button_width = 82.0;
+                    let path_width =
+                        (ui.available_width() - browse_button_width - ui.spacing().item_spacing.x)
+                            .max(120.0);
                     if ui
-                        .text_edit_singleline(&mut self.cgb_bootrom_path)
+                        .add_sized(
+                            [path_width, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.cgb_bootrom_path),
+                        )
                         .changed()
                     {
                         self.persist_bootrom_paths();
@@ -5047,16 +5110,16 @@ fn main() {
     let rom_path = args.rom.clone();
     let _debug_enabled = args.debug;
 
+    let ui_config_path = ui_config::default_ui_config_path();
+    let ui_config = ui_config::load_from_file(&ui_config_path);
+
     let emulation_mode = if args.dmg {
         EmulationMode::ForceDmg
     } else if args.cgb {
         EmulationMode::ForceCgb
     } else {
-        EmulationMode::Auto
+        ui_config.emulation_mode
     };
-
-    let ui_config_path = ui_config::default_ui_config_path();
-    let ui_config = ui_config::load_from_file(&ui_config_path);
 
     let bootrom_data = args
         .bootrom
@@ -5289,7 +5352,10 @@ fn main() {
         );
     });
 
-    let scale = DEFAULT_WINDOW_SCALE as f32;
+    let scale = ui_config
+        .window_size
+        .scale_factor_px()
+        .unwrap_or(DEFAULT_WINDOW_SCALE) as f32;
     let initial_size = [
         GB_WIDTH * scale,
         GB_HEIGHT * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,

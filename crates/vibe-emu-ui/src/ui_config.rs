@@ -87,14 +87,28 @@ impl WindowSize {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
     pub dmg_bootrom_path: Option<PathBuf>,
     pub cgb_bootrom_path: Option<PathBuf>,
     pub window_size: WindowSize,
+    pub sound_enabled: bool,
     pub emulation_mode: EmulationMode,
     pub serial: SerialConfig,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            dmg_bootrom_path: None,
+            cgb_bootrom_path: None,
+            window_size: WindowSize::default(),
+            sound_enabled: true,
+            emulation_mode: EmulationMode::default(),
+            serial: SerialConfig::default(),
+        }
+    }
 }
 
 pub fn default_ui_config_path() -> PathBuf {
