@@ -38,6 +38,7 @@ use ui_config::{EmulationMode, SerialPeripheralKind, UiConfig, WindowSize};
 
 const DEFAULT_WINDOW_SCALE: u32 = 2;
 const MAX_WINDOW_SCALE: usize = 6;
+const MAX_RECENT_ROMS: usize = 10;
 const GB_WIDTH: f32 = 160.0;
 const GB_HEIGHT: f32 = 144.0;
 const MENU_BAR_HEIGHT: f32 = 24.0;
@@ -907,6 +908,13 @@ impl VibeEmuApp {
         self.save_ui_config();
     }
 
+    fn add_recent_rom(&mut self, path: &std::path::Path) {
+        self.ui_config.recent_roms.retain(|p| p != path);
+        self.ui_config.recent_roms.insert(0, path.to_path_buf());
+        self.ui_config.recent_roms.truncate(MAX_RECENT_ROMS);
+        self.save_ui_config();
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new(
         _cc: &eframe::CreationContext<'_>,
@@ -1761,6 +1769,7 @@ impl VibeEmuApp {
                         audio::start_stream(&mut gb.mmu.apu, true, self.sound_enabled.clone());
                 }
                 self.current_rom_path = Some(path.clone());
+                self.add_recent_rom(&path);
                 self.debugger_state.load_symbols_for_rom_path(Some(&path));
                 self.paused = false;
                 let _ = self.emu_tx.send(EmuCommand::SetPaused(false));
@@ -1812,6 +1821,31 @@ impl eframe::App for VibeEmuApp {
                         }
                         ui.close();
                     }
+
+                    egui::containers::menu::SubMenuButton::new("Recent ROMs").ui(ui, |ui| {
+                        if self.ui_config.recent_roms.is_empty() {
+                            ui.add_enabled(false, egui::Button::new("(No recent ROMs)"));
+                            return;
+                        }
+
+                        let recent_roms = self.ui_config.recent_roms.clone();
+                        for path in recent_roms {
+                            let label = path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .filter(|name| !name.is_empty())
+                                .map(|name| name.to_string())
+                                .unwrap_or_else(|| path.display().to_string());
+
+                            let response =
+                                ui.button(label).on_hover_text(path.display().to_string());
+                            if response.clicked() {
+                                self.pending_rom_load = Some(path);
+                                ui.close();
+                            }
+                        }
+                    });
+
                     if ui
                         .add_enabled(
                             self.current_rom_path.is_some(),

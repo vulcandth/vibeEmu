@@ -92,6 +92,7 @@ impl WindowSize {
 pub struct UiConfig {
     pub dmg_bootrom_path: Option<PathBuf>,
     pub cgb_bootrom_path: Option<PathBuf>,
+    pub recent_roms: Vec<PathBuf>,
     pub window_size: WindowSize,
     pub sound_enabled: bool,
     pub emulation_mode: EmulationMode,
@@ -103,6 +104,7 @@ impl Default for UiConfig {
         Self {
             dmg_bootrom_path: None,
             cgb_bootrom_path: None,
+            recent_roms: Vec::new(),
             window_size: WindowSize::default(),
             sound_enabled: true,
             emulation_mode: EmulationMode::default(),
