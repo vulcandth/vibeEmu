@@ -293,6 +293,7 @@ const LINE_CYCLES: u16 = 456;
 
 // Number of lines spent in VBlank
 const VBLANK_LINES: u8 = 10;
+const FRAME_DOT_CYCLES: u32 = LINE_CYCLES as u32 * (SCREEN_HEIGHT as u32 + VBLANK_LINES as u32);
 
 // Sprite limits
 const MAX_SPRITES_PER_LINE: usize = 10;
@@ -461,6 +462,7 @@ pub struct Ppu {
     /// CGB: tracks whether we've triggered the early LY=0 comparison during line 153
     cgb_line153_ly0_triggered: bool,
     frame_counter: u64,
+    lcd_off_frame_cycle_accum: u32,
     dmg_startup_cycle: Option<u16>,
     dmg_startup_stage: Option<usize>,
     dmg_post_startup_line2: bool,
@@ -1398,6 +1400,7 @@ impl Ppu {
             dmg_mode2_vblank_irq_pending: false,
             cgb_line153_ly0_triggered: false,
             frame_counter: 0,
+            lcd_off_frame_cycle_accum: 0,
             dmg_startup_cycle: None,
             dmg_startup_stage: None,
             dmg_post_startup_line2: false,
@@ -4356,6 +4359,7 @@ impl Ppu {
         self.dmg_startup_cycle = None;
         self.dmg_startup_stage = None;
         self.dmg_post_startup_line2 = false;
+        self.lcd_off_frame_cycle_accum = 0;
         self.set_mode(MODE_OAM);
         self.mode_clock = 0;
         self.ly = 0;
@@ -5413,6 +5417,7 @@ impl Ppu {
                     self.mode_clock = 0;
                     self.mode3_target_cycles = MODE3_CYCLES;
                     self.mode0_target_cycles = MODE0_CYCLES;
+                    self.lcd_off_frame_cycle_accum = 0;
                     self.win_line_counter = 0;
                     self.ly = 0;
                     self.ly_for_comparison = 0;
@@ -5434,6 +5439,7 @@ impl Ppu {
                         self.ly,
                         self.mode_clock
                     );
+                    self.lcd_off_frame_cycle_accum = 0;
                     #[cfg(feature = "ppu-trace")]
                     {
                         self.debug_lcd_enable_timer = Some(0);
@@ -6334,6 +6340,12 @@ impl Ppu {
             }
 
             if self.lcdc & 0x80 == 0 {
+                self.lcd_off_frame_cycle_accum += increment as u32;
+                while self.lcd_off_frame_cycle_accum >= FRAME_DOT_CYCLES {
+                    self.lcd_off_frame_cycle_accum -= FRAME_DOT_CYCLES;
+                    self.frame_ready = true;
+                    self.frame_counter = self.frame_counter.wrapping_add(1);
+                }
                 self.dmg_hblank_render_pending = false;
                 self.set_mode(MODE_HBLANK);
                 self.ly = 0;
@@ -8396,5 +8408,45 @@ mod mode3_timing_tests {
             dmg_mode3_cycles_with_sprites_at_oam_x(&[0, 0, 0, 0, 0, 160, 160, 160, 160, 160]),
             MODE3_CYCLES + 68
         );
+    }
+}
+
+#[cfg(test)]
+mod lcd_off_frame_timing_tests {
+    use super::*;
+
+    fn step_for_dots(ppu: &mut Ppu, dots: u32, if_reg: &mut u8) {
+        let mut remaining = dots;
+        while remaining > 0 {
+            let step = remaining.min(u16::MAX as u32) as u16;
+            let _ = ppu.step(step, if_reg);
+            remaining -= step as u32;
+        }
+    }
+
+    #[test]
+    fn lcd_off_keeps_frame_cadence() {
+        let mut ppu = Ppu::new();
+        let mut if_reg = 0u8;
+
+        assert!(!ppu.lcd_enabled());
+        assert_eq!(ppu.frames(), 0);
+
+        step_for_dots(&mut ppu, FRAME_DOT_CYCLES - 1, &mut if_reg);
+        assert!(!ppu.frame_ready());
+        assert_eq!(ppu.frames(), 0);
+        assert_eq!(ppu.ly(), 0);
+        assert_eq!(ppu.mode(), MODE_HBLANK);
+
+        step_for_dots(&mut ppu, 1, &mut if_reg);
+        assert!(ppu.frame_ready());
+        assert_eq!(ppu.frames(), 1);
+
+        ppu.clear_frame_flag();
+        step_for_dots(&mut ppu, FRAME_DOT_CYCLES, &mut if_reg);
+        assert!(ppu.frame_ready());
+        assert_eq!(ppu.frames(), 2);
+        assert_eq!(ppu.ly(), 0);
+        assert_eq!(ppu.mode(), MODE_HBLANK);
     }
 }
