@@ -2163,12 +2163,15 @@ impl eframe::App for VibeEmuApp {
                 });
 
                 ui.menu_button("Debug", |ui| {
-                    if ui.button("Debugger").clicked() {
-                        self.show_debugger = !self.show_debugger;
-                        if self.show_debugger {
-                            self.debugger_state.request_scroll_to_pc();
+                    #[cfg(debug_assertions)]
+                    {
+                        if ui.button("Debugger").clicked() {
+                            self.show_debugger = !self.show_debugger;
+                            if self.show_debugger {
+                                self.debugger_state.request_scroll_to_pc();
+                            }
+                            ui.close();
                         }
-                        ui.close();
                     }
                     if ui.button("VRAM Viewer").clicked() {
                         self.show_vram_viewer = !self.show_vram_viewer;
@@ -2313,8 +2316,14 @@ impl eframe::App for VibeEmuApp {
                 }
             });
 
+        #[cfg(debug_assertions)]
         if self.show_debugger {
             self.draw_debugger_window(ctx);
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            self.show_debugger = false;
         }
 
         if self.show_vram_viewer {
