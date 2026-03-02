@@ -990,9 +990,9 @@ impl VibeEmuApp {
     }
 
     fn blend_two_rgb(a: u32, b: u32) -> u32 {
-        let r = ((((a >> 16) & 0xFF) + ((b >> 16) & 0xFF) + 1) / 2) as u8;
-        let g = ((((a >> 8) & 0xFF) + ((b >> 8) & 0xFF) + 1) / 2) as u8;
-        let blue = (((a & 0xFF) + (b & 0xFF) + 1) / 2) as u8;
+        let r = (((a >> 16) & 0xFF) + ((b >> 16) & 0xFF)).div_ceil(2) as u8;
+        let g = (((a >> 8) & 0xFF) + ((b >> 8) & 0xFF)).div_ceil(2) as u8;
+        let blue = ((a & 0xFF) + (b & 0xFF)).div_ceil(2) as u8;
         (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(blue)
     }
 
