@@ -6,7 +6,9 @@
 
 #![allow(non_snake_case)]
 #![allow(dead_code)]
+#![warn(missing_docs)]
 
+/// Diagnostic logging infrastructure for the emulator core.
 pub mod diagnostics;
 
 #[allow(unused_macros)]

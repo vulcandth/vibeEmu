@@ -1,3 +1,4 @@
+/// Divider and timer unit (DIV/TIMA/TMA/TAC at 0xFF04–0xFF07).
 pub struct Timer {
     /// 16-bit internal divider counter. DIV register is the upper 8 bits.
     pub div: u16,
@@ -19,6 +20,7 @@ pub struct Timer {
 }
 
 impl Timer {
+    /// Create a new `Timer` with all registers at their power-on values.
     pub fn new() -> Self {
         Self {
             div: 0,
@@ -33,6 +35,7 @@ impl Timer {
         }
     }
 
+    /// Read a timer register at `addr` (0xFF04–0xFF07).
     pub fn read(&self, addr: u16) -> u8 {
         match addr {
             0xFF04 => (self.div >> 8) as u8,
@@ -43,6 +46,7 @@ impl Timer {
         }
     }
 
+    /// Write `val` to a timer register at `addr` (0xFF04–0xFF07).
     pub fn write(&mut self, addr: u16, val: u8, if_reg: &mut u8) {
         match addr {
             0xFF04 => {

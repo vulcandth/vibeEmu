@@ -4,10 +4,14 @@
 /// Used to model revision-specific quirks that affect timing and observable
 /// behavior.
 pub enum DmgRevision {
+    /// Original DMG revision 0.
     Rev0,
+    /// DMG revision A.
     RevA,
+    /// DMG revision B.
     RevB,
     #[default]
+    /// DMG revision C (default).
     RevC,
 }
 
@@ -17,12 +21,18 @@ pub enum DmgRevision {
 /// Used to model revision-specific quirks (e.g. PPU and APU behaviors) that
 /// differ across CGB motherboard revisions.
 pub enum CgbRevision {
+    /// Original CGB revision 0.
     Rev0,
+    /// CGB revision A.
     RevA,
+    /// CGB revision B.
     RevB,
+    /// CGB revision C.
     RevC,
+    /// CGB revision D.
     RevD,
     #[default]
+    /// CGB revision E (default).
     RevE,
 }
 

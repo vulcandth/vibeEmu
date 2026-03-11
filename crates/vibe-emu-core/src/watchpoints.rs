@@ -1,31 +1,48 @@
 use std::ops::RangeInclusive;
 
+/// Reason a watchpoint was triggered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchpointTrigger {
+    /// The watched address was read.
     Read,
+    /// The watched address was written.
     Write,
+    /// The CPU executed an instruction at the watched address.
     Execute,
+    /// The CPU jumped to the watched address.
     Jump,
 }
 
+/// A single configurable watchpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Watchpoint {
+    /// Unique identifier assigned by the debugger.
     pub id: u32,
+    /// Whether this watchpoint is currently active.
     pub enabled: bool,
+    /// Address range that triggers this watchpoint.
     pub range: RangeInclusive<u16>,
+    /// Trigger on memory reads.
     pub on_read: bool,
+    /// Trigger on memory writes.
     pub on_write: bool,
+    /// Trigger on instruction execution.
     pub on_execute: bool,
+    /// Trigger on jump/branch targets.
     pub on_jump: bool,
+    /// Optional value filter; `None` matches any value.
     pub value_match: Option<u8>,
+    /// Optional human-readable label shown when the watchpoint fires.
     pub message: Option<String>,
 }
 
 impl Watchpoint {
+    /// Returns `true` if `addr` falls within this watchpoint's range.
     pub fn matches_addr(&self, addr: u16) -> bool {
         self.range.contains(&addr)
     }
 
+    /// Returns `true` if `value` satisfies the optional value filter.
     pub fn matches_value(&self, value: Option<u8>) -> bool {
         match (self.value_match, value) {
             (None, _) => true,
@@ -35,15 +52,22 @@ impl Watchpoint {
     }
 }
 
+/// Details of a watchpoint that fired during emulation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchpointHit {
+    /// ID of the watchpoint that fired.
     pub id: u32,
+    /// The kind of access that triggered this hit.
     pub trigger: WatchpointTrigger,
+    /// The memory address that caused the hit.
     pub addr: u16,
+    /// The value read or written, if applicable.
     pub value: Option<u8>,
+    /// The CPU program counter at the time of the hit, if known.
     pub pc: Option<u16>,
 }
 
+/// Engine that evaluates a set of watchpoints against memory accesses.
 #[derive(Debug, Default, Clone)]
 pub struct WatchpointEngine {
     watchpoints: Vec<Watchpoint>,
@@ -54,16 +78,21 @@ pub struct WatchpointEngine {
 }
 
 impl WatchpointEngine {
+    /// Replace the active watchpoint list.
     pub fn set_watchpoints(&mut self, watchpoints: Vec<Watchpoint>) {
         self.watchpoints = watchpoints;
         self.recompute_fast_paths();
         self.pending_hit = None;
     }
 
+    /// Returns a slice of the currently registered watchpoints.
     pub fn watchpoints(&self) -> &[Watchpoint] {
         &self.watchpoints
     }
 
+    /// Suspend or resume watchpoint evaluation.
+    ///
+    /// While suspended, no hits are recorded. Suspending also clears any pending hit.
     pub fn set_suspended(&mut self, value: bool) {
         self.suspended = value;
         if value {
@@ -71,18 +100,22 @@ impl WatchpointEngine {
         }
     }
 
+    /// Returns `true` if watchpoint evaluation is currently suspended.
     pub fn suspended(&self) -> bool {
         self.suspended
     }
 
+    /// Take the pending hit, leaving `None` in its place.
     pub fn take_hit(&mut self) -> Option<WatchpointHit> {
         self.pending_hit.take()
     }
 
+    /// Discard any pending hit without returning it.
     pub fn clear_hit(&mut self) {
         self.pending_hit = None;
     }
 
+    /// Notify the engine of a memory read at `addr` with `value`.
     pub fn note_read(&mut self, pc: Option<u16>, addr: u16, value: u8) {
         if self.suspended || !self.has_read || self.pending_hit.is_some() {
             return;
@@ -106,6 +139,7 @@ impl WatchpointEngine {
         }
     }
 
+    /// Notify the engine of a memory write of `value` to `addr`.
     pub fn note_write(&mut self, pc: Option<u16>, addr: u16, value: u8) {
         if self.suspended || !self.has_write || self.pending_hit.is_some() {
             return;

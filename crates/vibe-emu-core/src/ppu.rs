@@ -371,9 +371,13 @@ const DMG_BOOT_LOGO_MAP_9910: usize = 0x1910;
 const DMG_BOOT_LOGO_MAP_992F: usize = 0x192F;
 const DMG_BOOT_TRADEMARK_BYTES: [u8; 8] = [0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C];
 
+/// Pixel Processing Unit emulating the Game Boy / Game Boy Color display hardware.
 pub struct Ppu {
+    /// Two VRAM banks (bank 1 is CGB-only).
     pub vram: [[u8; VRAM_BANK_SIZE]; 2],
+    /// Currently selected VRAM bank (0 or 1).
     pub vram_bank: usize,
+    /// Object Attribute Memory (160 bytes).
     pub oam: [u8; OAM_SIZE],
 
     render_vram_blocked: bool,
@@ -394,6 +398,7 @@ pub struct Ppu {
     /// CGB: separate value used for LYC comparison, differs from LY during
     /// line 153 quirk (LY becomes 0 early but comparison uses different timing)
     ly_for_comparison: u8,
+    /// DMA source address register (0xFF46).
     pub dma: u8,
     bgp: u8,
     obp0: u8,
@@ -416,6 +421,7 @@ pub struct Ppu {
     opri: u8,
 
     mode_clock: u16,
+    /// Current PPU mode (0=HBlank, 1=VBlank, 2=OAM, 3=Transfer).
     pub mode: u8,
     stat_mode: u8,
     stat_mode_delay: u8,
@@ -423,6 +429,7 @@ pub struct Ppu {
     mode0_target_cycles: u16,
     boot_hold_cycles: u16,
 
+    /// Completed pixel output in 0x00RRGGBB format; updated once per frame.
     pub framebuffer: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
     line_priority: [bool; SCREEN_WIDTH],
     line_color_zero: [bool; SCREEN_WIDTH],
@@ -1316,10 +1323,12 @@ impl Sprite {
 }
 
 impl Ppu {
+    /// Create a PPU with the specified hardware mode (DMG vs CGB).
     pub fn new_with_mode(cgb: bool) -> Self {
         Self::new_with_revisions(cgb, DmgRevision::default(), CgbRevision::default())
     }
 
+    /// Create a PPU with explicit DMG and CGB hardware revisions.
     pub fn new_with_revisions(
         cgb: bool,
         dmg_revision: DmgRevision,
@@ -1567,6 +1576,7 @@ impl Ppu {
         }
     }
 
+    /// Override whether VRAM reads during rendering return 0x00 (blocked) or real data.
     pub fn set_render_vram_blocked(&mut self, blocked: bool) {
         self.render_vram_blocked = blocked;
     }
@@ -3390,6 +3400,7 @@ impl Ppu {
         self.refresh_dmg_obj_color_table();
     }
 
+    /// Schedule a delayed PPU register write to take effect after `delay_dots` dot cycles.
     pub fn queue_reg_write(&mut self, addr: u16, value: u8, delay_dots: u8) {
         let delay = delay_dots.max(1);
         if self.pending_reg_write_count >= PENDING_REG_WRITES_MAX {
@@ -3408,16 +3419,19 @@ impl Ppu {
         self.pending_reg_write_count += 1;
     }
 
+    /// Schedule a delayed LCDC (0xFF40) write to take effect after `delay_dots` dot cycles.
     pub fn queue_lcdc_write(&mut self, value: u8, delay_dots: u8) {
         self.queue_reg_write(0xFF40, value, delay_dots);
     }
 
     #[inline]
+    /// Returns `true` if a DMG mode-3 object-fetch is currently in progress.
     pub fn dmg_mode3_during_object_fetch(&self) -> bool {
         !self.cgb && self.mode == MODE_TRANSFER && self.mode3_obj_fetch_active
     }
 
     #[inline]
+    /// Returns the current horizontal dot position within the active rendering line.
     pub fn dmg_mode3_position_in_line(&self) -> i16 {
         self.mode3_position_in_line
     }
@@ -4351,10 +4365,12 @@ impl Ppu {
         }
     }
 
+    /// Create a PPU in the default post-boot DMG state.
     pub fn new() -> Self {
         Self::new_with_mode(false)
     }
 
+    /// Skip the LCD startup delay; used to put the PPU into a known state for tests.
     pub fn skip_startup_for_test(&mut self) {
         self.dmg_startup_cycle = None;
         self.dmg_startup_stage = None;
@@ -4376,26 +4392,32 @@ impl Ppu {
         )
     }
 
+    /// Returns `true` if the PPU is currently in HBlank (mode 0).
     pub fn in_hblank(&self) -> bool {
         self.mode == MODE_HBLANK
     }
 
+    /// Current LY (scanline) register value.
     pub fn ly(&self) -> u8 {
         self.ly
     }
 
+    /// Dot cycles elapsed within the current PPU mode.
     pub fn mode_clock(&self) -> u16 {
         self.mode_clock
     }
 
+    /// Dot cycle count at which mode 3 ends and HBlank begins for the current line.
     pub fn hblank_target_cycles(&self) -> u16 {
         self.mode0_target_cycles
     }
 
+    /// Current PPU mode (0=HBlank, 1=VBlank, 2=OAM scan, 3=Pixel transfer).
     pub fn mode(&self) -> u8 {
         self.mode
     }
 
+    /// Current value of the BGP palette register.
     pub fn bgp(&self) -> u8 {
         self.bgp
     }
@@ -4410,6 +4432,7 @@ impl Ppu {
         (self.dmg_line_bgp_base, self.dmg_bgp_event_count, events)
     }
 
+    /// Returns `true` if the LCD is currently enabled (LCDC bit 7 set).
     pub fn lcd_enabled(&self) -> bool {
         self.lcdc & 0x80 != 0
     }
@@ -4727,14 +4750,17 @@ impl Ppu {
         }
     }
 
+    /// Returns `true` if OAM is accessible for CPU reads in the current PPU mode.
     pub fn oam_read_accessible(&self) -> bool {
         self.oam_accessible_internal(true)
     }
 
+    /// Returns `true` if OAM is accessible for CPU writes in the current PPU mode.
     pub fn oam_write_accessible(&self) -> bool {
         self.oam_accessible_internal(false)
     }
 
+    /// Returns `true` if OAM is accessible for CPU reads (backwards-compatible helper).
     pub fn oam_accessible(&self) -> bool {
         // Backwards-compatible helper (historically used for both reads and writes).
         self.oam_read_accessible()
@@ -5212,14 +5238,17 @@ impl Ppu {
         self.oam_bug_copy_row_to_two_predecessors(accessed_oam_row);
     }
 
+    /// Returns `true` if VRAM is accessible for CPU reads in the current PPU mode.
     pub fn vram_read_accessible(&self) -> bool {
         self.vram_accessible_internal(true)
     }
 
+    /// Returns `true` if VRAM is accessible for CPU writes in the current PPU mode.
     pub fn vram_write_accessible(&self) -> bool {
         self.vram_accessible_internal(false)
     }
 
+    /// Returns `true` if VRAM is accessible for CPU reads (backwards-compatible helper).
     pub fn vram_accessible(&self) -> bool {
         // Backwards-compatible helper (historically used for both reads and writes).
         self.vram_read_accessible()
@@ -5296,6 +5325,7 @@ impl Ppu {
         )
     }
 
+    /// Read a PPU register at `addr`.
     pub fn read_reg(&mut self, addr: u16) -> u8 {
         let value = match addr {
             0xFF40 => self.lcdc,
@@ -5388,6 +5418,7 @@ impl Ppu {
         value
     }
 
+    /// Write a PPU register at `addr`.
     pub fn write_reg(&mut self, addr: u16, val: u8) {
         match addr {
             0xFF40 => {
@@ -6276,6 +6307,9 @@ impl Ppu {
         }
     }
 
+    /// Advance the PPU by `cycles` dot cycles.
+    ///
+    /// Returns `true` when a new frame has been completed.
     pub fn step(&mut self, cycles: u16, if_reg: &mut u8) -> bool {
         let mut remaining = cycles;
         if self.boot_hold_cycles > 0 {

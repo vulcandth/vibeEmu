@@ -258,6 +258,7 @@ impl Serial {
         }
     }
 
+    /// Advance the serial unit by the difference between `prev_div` and `curr_div`.
     pub fn step(&mut self, prev_div: u16, curr_div: u16, double_speed: bool, if_reg: &mut u8) {
         self.step_steps(
             prev_div,
@@ -267,6 +268,7 @@ impl Serial {
         );
     }
 
+    /// Advance the serial unit by an explicit number of divider `steps`.
     pub fn step_steps(&mut self, prev_div: u16, steps: u16, double_speed: bool, if_reg: &mut u8) {
         if self.transfer.is_none() {
             return;
@@ -317,12 +319,14 @@ impl Serial {
         }
     }
 
+    /// Take and return all bytes that have been received since the last call.
     pub fn take_output(&mut self) -> Vec<u8> {
         let out = self.out_buf.clone();
         self.out_buf.clear();
         out
     }
 
+    /// Borrow the receive buffer without consuming it.
     pub fn peek_output(&self) -> &[u8] {
         &self.out_buf
     }

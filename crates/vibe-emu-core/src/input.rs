@@ -1,9 +1,11 @@
+/// Joypad input register (P1/JOYP) and button-state tracking.
 pub struct Input {
     p1: u8,
     state: u8,
 }
 
 impl Input {
+    /// Create a new `Input` in the power-on state.
     pub fn new() -> Self {
         Self {
             p1: 0xCF,
@@ -11,6 +13,7 @@ impl Input {
         }
     }
 
+    /// Read the current P1 register value based on the selected button row.
     pub fn read(&self) -> u8 {
         let mut res = self.p1 & 0xF0;
         if self.p1 & 0x10 == 0 {
@@ -23,10 +26,12 @@ impl Input {
         res
     }
 
+    /// Write to the P1 register (selects button row).
     pub fn write(&mut self, val: u8) {
         self.p1 = (self.p1 & 0xCF) | (val & 0x30);
     }
 
+    /// Unconditionally overwrite the raw button state byte.
     pub fn set_state(&mut self, state: u8) {
         self.state = state;
     }

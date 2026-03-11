@@ -5,24 +5,39 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+/// Memory Bank Controller type decoded from the cartridge header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MbcType {
+    /// No MBC; direct ROM access only.
     NoMbc,
+    /// MBC1 mapper.
     Mbc1,
+    /// MBC2 mapper (also includes built-in RAM).
     Mbc2,
+    /// MBC3 mapper (may include RTC).
     Mbc3,
+    /// MBC30 mapper (MBC3 variant with larger RAM).
     Mbc30,
+    /// MBC5 mapper.
     Mbc5,
+    /// TPP1 mapper.
     Tpp1,
+    /// Unrecognized mapper type byte.
     Unknown(u8),
 }
 
+/// A loaded Game Boy cartridge including ROM, RAM, and MBC state.
 #[derive(Debug)]
 pub struct Cartridge {
+    /// Raw ROM data.
     pub rom: Vec<u8>,
+    /// Cartridge RAM (battery-backed save RAM).
     pub ram: Vec<u8>,
+    /// The MBC type parsed from the cartridge header.
     pub mbc: MbcType,
+    /// Whether this cartridge declares CGB compatibility.
     pub cgb: bool,
+    /// Game title extracted from the cartridge header.
     pub title: String,
     cart_type: u8,
     save_path: Option<PathBuf>,
@@ -661,6 +676,7 @@ impl Cartridge {
         }
     }
 
+    /// Advance the real-time clock by `cpu_cycles` CPU cycles (MBC3/MBC30/TPP1 only).
     pub fn step_rtc(&mut self, cpu_cycles: u16) {
         match &mut self.mbc_state {
             MbcState::Mbc3 { rtc: Some(rtc), .. } | MbcState::Mbc30 { rtc: Some(rtc), .. } => {
@@ -671,12 +687,14 @@ impl Cartridge {
         }
     }
 
+    /// Load a cartridge from raw bytes and pre-allocate `ram_size` bytes of RAM.
     pub fn from_bytes_with_ram(data: Vec<u8>, ram_size: usize) -> Self {
         let mut c = Self::load(data);
         c.ram = vec![0; ram_size];
         c
     }
 
+    /// Load a cartridge from a file path, automatically loading battery-backed save data.
     pub fn from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let data = fs::read(&path)?;
         let mut cart = Self::load(data);
@@ -739,6 +757,7 @@ impl Cartridge {
         Ok(cart)
     }
 
+    /// Parse a cartridge from raw ROM bytes.
     pub fn load(data: Vec<u8>) -> Self {
         let header = Header::parse(&data);
         let ram_size = header.ram_size();
@@ -814,11 +833,13 @@ impl Cartridge {
         }
     }
 
+    /// Read a byte from the cartridge bus, updating the open-bus latch.
     pub fn read(&mut self, addr: u16) -> u8 {
         let open_bus = Self::open_bus(&self.cart_bus);
         self.read_with_open_bus(addr, open_bus)
     }
 
+    /// Read a byte from the cartridge bus using a caller-supplied open-bus value.
     pub fn read_with_open_bus(&mut self, addr: u16, open_bus: u8) -> u8 {
         let rom_bank_count = (self.rom.len() / 0x4000).max(1);
         let cart_bus = &self.cart_bus;
@@ -1064,6 +1085,7 @@ impl Cartridge {
         }
     }
 
+    /// Write a byte to the cartridge bus (MBC register or RAM write).
     pub fn write(&mut self, addr: u16, val: u8) {
         let cart_bus = &self.cart_bus;
         // CPU drives the cart data bus on writes too.
@@ -1412,6 +1434,7 @@ impl Cartridge {
         }
     }
 
+    /// Persist battery-backed RAM (and RTC state) to disk if a save path is set.
     pub fn save_ram(&mut self) -> io::Result<()> {
         if let (true, Some(path)) = (self.has_battery(), &self.save_path)
             && !self.ram.is_empty()
