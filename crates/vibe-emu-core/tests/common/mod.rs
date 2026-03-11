@@ -19,7 +19,10 @@ static HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
 static INIT: OnceCell<()> = OnceCell::new();
 
+// Keep retries bounded to avoid overly long test startup while still handling transient outages.
 const DOWNLOAD_ATTEMPTS: usize = 5;
+const INITIAL_BACKOFF_MS: u64 = 500;
+const MAX_BACKOFF_MS: u64 = 30_000;
 
 fn http_client() -> &'static reqwest::blocking::Client {
     HTTP_CLIENT.get_or_init(|| {
@@ -39,9 +42,15 @@ fn download_bytes(url: &str) -> Vec<u8> {
             Ok(resp) => {
                 let status = resp.status();
                 if status.is_success() {
-                    return resp.bytes().expect("failed to read response body").to_vec();
+                    match resp.bytes() {
+                        Ok(bytes) => return bytes.to_vec(),
+                        Err(err) => {
+                            last_error = format!("failed to read response body: {err}");
+                        }
+                    }
+                } else {
+                    last_error = format!("unexpected status {status}");
                 }
-                last_error = format!("unexpected status {status}");
             }
             Err(err) => {
                 last_error = err.to_string();
@@ -49,7 +58,8 @@ fn download_bytes(url: &str) -> Vec<u8> {
         }
 
         if attempt < DOWNLOAD_ATTEMPTS {
-            thread::sleep(Duration::from_millis((attempt as u64) * 500));
+            let backoff_ms = (INITIAL_BACKOFF_MS << (attempt - 1)).min(MAX_BACKOFF_MS);
+            thread::sleep(Duration::from_millis(backoff_ms));
         }
     }
 
