@@ -31,13 +31,29 @@ jobs:
         shell: pwsh
         run: |
           $dist = "dist/windows/${{ matrix.target }}"
+          $release = "target/${{ matrix.target }}/release"
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/vibe-emu-ui.exe" "$dist/vibeEmu.exe"
+          Copy-Item "$release/vibe-emu-ui.exe" "$dist/vibeEmu.exe"
+          Copy-Item "$release/LICENSE" "$dist/LICENSE"
+          Copy-Item "$release/THIRD_PARTY_LICENSES.html" "$dist/THIRD_PARTY_LICENSES.html"
+          Compress-Archive -Path "$dist/*" -DestinationPath "dist/vibeEmu-windows-${{ matrix.target }}.zip" -Force
+
+      - name: Verify packaged artifact
+        shell: pwsh
+        run: |
+          $extract = Join-Path $env:RUNNER_TEMP "vibeEmu-windows-${{ matrix.target }}"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $extract
+          Expand-Archive "dist/vibeEmu-windows-${{ matrix.target }}.zip" -DestinationPath $extract
+          foreach ($file in @("vibeEmu.exe", "LICENSE", "THIRD_PARTY_LICENSES.html")) {
+            if (-not (Test-Path (Join-Path $extract $file))) {
+              throw "Missing $file in Windows package"
+            }
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: vibeEmu-windows-${{ matrix.target }}
-          path: dist/windows/${{ matrix.target }}/
+          path: dist/vibeEmu-windows-${{ matrix.target }}.zip
           if-no-files-found: error
           retention-days: 30

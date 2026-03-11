@@ -159,6 +159,10 @@ The workspace root `THIRD_PARTY_LICENSES.md` covers the full workspace.
 Each crate also has its own `THIRD_PARTY_LICENSES.md` that covers only that
 crate.
 
+When building `vibe-emu-ui`, the crate build script automatically places
+`LICENSE`, `THIRD_PARTY_LICENSES.md`, and `THIRD_PARTY_LICENSES.html` next to
+the produced executable output directory (for both local and CI builds).
+
 ### Mobile Adapter GB
 
 The desktop UI includes Mobile Adapter GB support (libmobile). You can select
