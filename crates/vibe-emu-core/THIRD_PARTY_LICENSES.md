@@ -50,7 +50,7 @@ For the authoritative full license text and source code, see:
 ### MIT License
 
 Used by:
-- [vibe-emu-core 0.1.0](https://crates.io/crates/vibe-emu-core)
+- [vibe-emu-core 0.0.1](https://github.com/vulcandth/vibeEmu)
 
 ```text
 MIT License

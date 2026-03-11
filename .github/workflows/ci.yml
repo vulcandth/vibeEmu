@@ -183,7 +183,7 @@ jobs:
 
   license-report:
     name: license diff
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
 
@@ -196,8 +196,7 @@ jobs:
           tool: cargo-about
 
       - name: Ensure THIRD_PARTY_LICENSES.md is current
-        shell: pwsh
         run: |
-          $output = Join-Path $env:RUNNER_TEMP "licenses.md"
-          cargo about generate --config about.toml about.hbs -o $output
-          git diff --no-index -- THIRD_PARTY_LICENSES.md $output
+          output="$RUNNER_TEMP/licenses.md"
+          cargo about generate --config about.toml about.hbs -o "$output"
+          git diff --no-index -- THIRD_PARTY_LICENSES.md "$output"

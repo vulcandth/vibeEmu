@@ -4164,7 +4164,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vibe-emu-core"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "libtest-mimic",
  "once_cell",
@@ -4176,7 +4176,7 @@ dependencies = [
 
 [[package]]
 name = "vibe-emu-mobile"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "socket2",
  "thiserror 2.0.18",
@@ -4186,14 +4186,14 @@ dependencies = [
 
 [[package]]
 name = "vibe-emu-mobile-sys"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "vibe-emu-ui"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "clap",
  "cpal",
