@@ -45,11 +45,14 @@ jobs:
 
       - name: Create app bundle
         run: |
+          release="target/x86_64-apple-darwin/release"
           mkdir -p vibeEmu.app/Contents/{MacOS,Resources}
           lipo -create \
             target/x86_64-apple-darwin/release/vibe-emu-ui \
             target/aarch64-apple-darwin/release/vibe-emu-ui \
             -output vibeEmu.app/Contents/MacOS/vibeEmu
+          cp "$release/LICENSE" vibeEmu.app/Contents/MacOS/LICENSE
+          cp "$release/THIRD_PARTY_LICENSES.html" vibeEmu.app/Contents/MacOS/THIRD_PARTY_LICENSES.html
 
           mkdir -p /tmp/iconset.iconset
           cp gfx/vibeEmu_512px.png /tmp/iconset.iconset/icon_512x512.png
@@ -102,6 +105,12 @@ jobs:
           mkdir -p dist/macos
           rm -f dist/macos/vibeEmu.app.zip
           ditto -c -k --sequesterRsrc --keepParent vibeEmu.app dist/macos/vibeEmu.app.zip
+
+      - name: Verify packaged artifact
+        run: |
+          unzip -l dist/macos/vibeEmu.app.zip | grep -F "vibeEmu.app/Contents/MacOS/vibeEmu"
+          unzip -l dist/macos/vibeEmu.app.zip | grep -F "vibeEmu.app/Contents/MacOS/LICENSE"
+          unzip -l dist/macos/vibeEmu.app.zip | grep -F "vibeEmu.app/Contents/MacOS/THIRD_PARTY_LICENSES.html"
           
       - name: Upload artifact
         uses: actions/upload-artifact@v4

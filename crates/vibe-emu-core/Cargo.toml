@@ -4,6 +4,15 @@ version = "0.1.0"
 edition = "2024"
 authors = ["vulcandth <vulcandth@gmail.com>"]
 license = "MIT"
+include = [
+    "src/**",
+    "tests/**",
+    "Cargo.toml",
+    "LICENSE",
+    "THIRD_PARTY_LICENSES.md",
+    "about.toml",
+    "about.hbs",
+]
 
 [dependencies]
 

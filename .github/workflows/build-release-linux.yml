@@ -46,10 +46,19 @@ jobs:
       - name: Package artifact
         run: |
           dist="dist/linux/${{ matrix.target }}"
+          release="target/${{ matrix.target }}/release"
           mkdir -p "$dist"
-          cp "target/${{ matrix.target }}/release/vibe-emu-ui" "$dist/vibeEmu"
+          cp "$release/vibe-emu-ui" "$dist/vibeEmu"
+          cp "$release/LICENSE" "$dist/LICENSE"
+          cp "$release/THIRD_PARTY_LICENSES.html" "$dist/THIRD_PARTY_LICENSES.html"
           chmod +x "$dist/vibeEmu"
-          tar -C "$dist" -czf "dist/vibeEmu-linux-${{ matrix.target }}.tar.gz" vibeEmu
+          tar -C "$dist" -czf "dist/vibeEmu-linux-${{ matrix.target }}.tar.gz" vibeEmu LICENSE THIRD_PARTY_LICENSES.html
+
+      - name: Verify packaged artifact
+        run: |
+          tar -tzf "dist/vibeEmu-linux-${{ matrix.target }}.tar.gz" | grep -Fx "vibeEmu"
+          tar -tzf "dist/vibeEmu-linux-${{ matrix.target }}.tar.gz" | grep -Fx "LICENSE"
+          tar -tzf "dist/vibeEmu-linux-${{ matrix.target }}.tar.gz" | grep -Fx "THIRD_PARTY_LICENSES.html"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
