@@ -36,18 +36,26 @@ fn link_system() {
 
 fn build_bundled() {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let workspace_root = manifest_dir.join("..").join("..");
-    let vendor_root = workspace_root.join("vendor");
+    let mobile_crate_vendor_root = manifest_dir
+        .join("..")
+        .join("vibe-emu-mobile")
+        .join("vendor");
+    let workspace_vendor_root = manifest_dir.join("..").join("..").join("vendor");
 
     let vendor_dir = if let Some(src) = env::var_os("LIBMOBILE_SRC_DIR") {
         PathBuf::from(src)
     } else {
-        // Prefer explicit versioned directory if present.
-        let v022 = vendor_root.join("libmobile-0.2.2");
+        // Prefer the vendored source that ships with vibe-emu-mobile.
+        let v022 = mobile_crate_vendor_root.join("libmobile-0.2.2");
         if v022.exists() {
             v022
+        } else if mobile_crate_vendor_root.join("libmobile").exists() {
+            mobile_crate_vendor_root.join("libmobile")
+        } else if workspace_vendor_root.join("libmobile-0.2.2").exists() {
+            // Backward-compatible fallback for older layouts.
+            workspace_vendor_root.join("libmobile-0.2.2")
         } else {
-            vendor_root.join("libmobile")
+            workspace_vendor_root.join("libmobile")
         }
     };
 
@@ -55,8 +63,10 @@ fn build_bundled() {
         panic!(
             "vibe-emu-mobile-sys (bundled): missing vendored libmobile source. Tried: {}\n\n\
 Place libmobile at one of:\n\
-- vendor/libmobile-0.2.2 (recommended)\n\
-- vendor/libmobile\n\
+- crates/vibe-emu-mobile/vendor/libmobile-0.2.2 (recommended)\n\
+- crates/vibe-emu-mobile/vendor/libmobile\n\
+- vendor/libmobile-0.2.2 (legacy fallback)\n\
+- vendor/libmobile (legacy fallback)\n\
 Or set LIBMOBILE_SRC_DIR to point at a libmobile source checkout.\n\n\
 Then rebuild with: cargo build -p vibe-emu-mobile --features bundled\n",
             vendor_dir.display()
@@ -84,7 +94,7 @@ Then rebuild with: cargo build -p vibe-emu-mobile --features bundled\n",
         println!("cargo:rustc-link-lib=iphlpapi");
     }
 
-    // Compile all .c files under vendor/libmobile, excluding obvious non-library folders.
+    // Compile all .c files under the selected libmobile source, excluding obvious non-library folders.
     let c_files = collect_c_files(&vendor_dir);
     if c_files.is_empty() {
         panic!(

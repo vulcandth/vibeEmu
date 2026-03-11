@@ -6,7 +6,7 @@ authors = ["vulcandth <vulcandth@gmail.com>"]
 license = "MIT"
 
 [features]
-# Enable libmobile by building from vendor/libmobile (see vibe-emu-mobile-sys).
+# Enable libmobile by building from this crate's vendored copy.
 bundled = ["dep:vibe-emu-mobile-sys", "vibe-emu-mobile-sys/bundled"]
 # Enable libmobile by linking to a system-provided library.
 system = ["dep:vibe-emu-mobile-sys", "vibe-emu-mobile-sys/system"]
@@ -18,4 +18,3 @@ vibe-emu-core = { path = "../vibe-emu-core" }
 vibe-emu-mobile-sys = { path = "../vibe-emu-mobile-sys", optional = true }
 thiserror = "2.0.18"
 socket2 = "0.6"
-
