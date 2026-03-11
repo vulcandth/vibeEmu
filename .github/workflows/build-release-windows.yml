@@ -1,0 +1,43 @@
+name: Build Windows Release Binaries
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: windows-${{ matrix.target }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release -p vibe-emu-ui --target ${{ matrix.target }}
+
+      - name: Prepare artifact folder
+        shell: pwsh
+        run: |
+          $dist = "dist/windows/${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/vibe-emu-ui.exe" "$dist/vibeEmu.exe"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibeEmu-windows-${{ matrix.target }}
+          path: dist/windows/${{ matrix.target }}/
+          if-no-files-found: error
+          retention-days: 30

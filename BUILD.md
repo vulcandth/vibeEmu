@@ -208,6 +208,50 @@ Run Clippy linter:
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+## Manual Release Binary Workflows (GitHub Actions)
+
+The repository includes manually triggered workflows for release binaries:
+
+- **Build Windows Release Binaries** (`.github/workflows/build-release-windows.yml`)
+- **Build Linux Release Binaries** (`.github/workflows/build-release-linux.yml`)
+- **Build macOS Release Binaries** (`.github/workflows/build-mac-release.yml`)
+- **Build All Release Binaries** (`.github/workflows/build-release-all.yml`)
+
+### Running a Single Platform Workflow
+
+1. Open the repository **Actions** tab.
+2. Select the platform workflow.
+3. Click **Run workflow**.
+4. Download artifacts from the workflow run summary.
+
+### Output Artifacts and Paths
+
+- **Windows**
+  - Targets: `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`
+  - Build output: `target/<target>/release/vibe-emu-ui.exe`
+  - Uploaded artifact: `vibeEmu-windows-<target>` containing `vibeEmu.exe`
+- **Linux**
+  - Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
+  - Build output: `target/<target>/release/vibe-emu-ui`
+  - Uploaded artifact: `vibeEmu-linux-<target>` as `dist/vibeEmu-linux-<target>.tar.gz`
+- **macOS**
+  - Targets: `x86_64-apple-darwin`, `aarch64-apple-darwin` (combined into a universal app)
+  - Build output: `vibeEmu.app/Contents/MacOS/vibeEmu`
+  - Uploaded artifact: `vibeEmu-macos-universal` as `dist/macos/vibeEmu.app.zip`
+
+### Icon Updates for Release Packaging
+
+- Windows icon embedding is handled by `crates/vibe-emu-ui/build.rs` using
+  `gfx/vibeEmu.ico`.
+- macOS app bundle icon is generated from `gfx/vibeEmu_512px.png`.
+- To refresh generated icon files after updating the source image, run:
+
+```bash
+python scripts/generate_app_icons.py
+```
+
+Then commit updated files under `gfx/` before running release workflows.
+
 ## Additional Resources
 
 - [Rust Installation Guide](https://www.rust-lang.org/tools/install)

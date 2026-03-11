@@ -1,16 +1,20 @@
-name: Build macOS Release
+name: Build macOS Release Binaries
 
 on:
-  workflow_dispatch
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   build-mac:
-    name: Build macOS Release
+    name: macos-universal
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin,aarch64-apple-darwin
@@ -47,6 +51,18 @@ jobs:
             target/aarch64-apple-darwin/release/vibe-emu-ui \
             -output vibeEmu.app/Contents/MacOS/vibeEmu
 
+          mkdir -p /tmp/iconset.iconset
+          cp gfx/vibeEmu_512px.png /tmp/iconset.iconset/icon_512x512.png
+          cp gfx/vibeEmu_512px.png /tmp/iconset.iconset/icon_256x256@2x.png
+          sips -z 16 16 gfx/vibeEmu_512px.png --out /tmp/iconset.iconset/icon_16x16.png
+          sips -z 32 32 gfx/vibeEmu_512px.png --out /tmp/iconset.iconset/icon_16x16@2x.png
+          sips -z 32 32 gfx/vibeEmu_512px.png --out /tmp/iconset.iconset/icon_32x32.png
+          sips -z 64 64 gfx/vibeEmu_512px.png --out /tmp/iconset.iconset/icon_32x32@2x.png
+          sips -z 128 128 gfx/vibeEmu_512px.png --out /tmp/iconset.iconset/icon_128x128.png
+          sips -z 256 256 gfx/vibeEmu_512px.png --out /tmp/iconset.iconset/icon_128x128@2x.png
+          sips -z 256 256 gfx/vibeEmu_512px.png --out /tmp/iconset.iconset/icon_256x256.png
+          iconutil -c icns /tmp/iconset.iconset -o vibeEmu.app/Contents/Resources/vibeEmu.icns
+
           cat > vibeEmu.app/Contents/Info.plist <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -60,6 +76,8 @@ jobs:
             <string>com.vibeemu.vibeemu</string>
             <key>CFBundleInfoDictionaryVersion</key>
             <string>6.0</string>
+            <key>CFBundleIconFile</key>
+            <string>vibeEmu.icns</string>
             <key>CFBundleName</key>
             <string>vibeEmu</string>
             <key>CFBundlePackageType</key>
@@ -81,13 +99,14 @@ jobs:
 
       - name: Package app bundle (zip)
         run: |
-          rm -f vibeEmu.app.zip
-          ditto -c -k --sequesterRsrc --keepParent vibeEmu.app vibeEmu.app.zip
+          mkdir -p dist/macos
+          rm -f dist/macos/vibeEmu.app.zip
+          ditto -c -k --sequesterRsrc --keepParent vibeEmu.app dist/macos/vibeEmu.app.zip
           
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vibeEmu-macos
-          path: vibeEmu.app.zip
+          name: vibeEmu-macos-universal
+          path: dist/macos/vibeEmu.app.zip
           if-no-files-found: error
           retention-days: 30
