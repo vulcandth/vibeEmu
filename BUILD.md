@@ -232,6 +232,7 @@ The repository includes manually triggered workflows for release binaries:
   - Uploaded artifact: `vibeEmu-windows-<target>` containing `vibeEmu.exe`
 - **Linux**
   - Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
+  - ARM64 builds require the GitHub-hosted `ubuntu-24.04-arm` runner (public-repo ARM runner availability required)
   - Build output: `target/<target>/release/vibe-emu-ui`
   - Uploaded artifact: `vibeEmu-linux-<target>` as `dist/vibeEmu-linux-<target>.tar.gz`
 - **macOS**
