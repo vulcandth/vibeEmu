@@ -1,3 +1,5 @@
+![GitHub License](https://img.shields.io/github/license/vulcandth/vibeEmu)
+
 # vibeEmu
 
 <img src="gfx/vibeEmu_512px.png" alt="vibeEmu Logo" width="250" />
