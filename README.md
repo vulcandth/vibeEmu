@@ -153,6 +153,34 @@ Some traces are additionally gated by environment variables (for example
 trace events, but you still need `--log-level trace` (or an equivalent
 `RUST_LOG` filter) to actually see them.
 
+## Third-party license files
+
+The workspace root contains consolidated third-party licensing output:
+- `about.toml`
+- `about.hbs`
+- `THIRD_PARTY_LICENSES.md`
+
+Each crate also keeps crate-specific licensing files that only cover that
+crate's dependencies/attributions:
+- `crates/vibe-emu-core/about.toml`
+- `crates/vibe-emu-core/about.hbs`
+- `crates/vibe-emu-core/THIRD_PARTY_LICENSES.md`
+- `crates/vibe-emu-mobile/about.toml`
+- `crates/vibe-emu-mobile/about.hbs`
+- `crates/vibe-emu-mobile/THIRD_PARTY_LICENSES.md`
+- `crates/vibe-emu-mobile-sys/about.toml`
+- `crates/vibe-emu-mobile-sys/about.hbs`
+- `crates/vibe-emu-mobile-sys/THIRD_PARTY_LICENSES.md`
+- `crates/vibe-emu-ui/about.toml`
+- `crates/vibe-emu-ui/about.hbs`
+- `crates/vibe-emu-ui/THIRD_PARTY_LICENSES.md`
+
+To regenerate a crate's license file:
+
+```bash
+cargo about generate --manifest-path crates/<crate-name>/Cargo.toml --config crates/<crate-name>/about.toml crates/<crate-name>/about.hbs -o crates/<crate-name>/THIRD_PARTY_LICENSES.md
+```
+
 ### Mobile Adapter GB
 
 The desktop UI includes Mobile Adapter GB support (libmobile). You can select
