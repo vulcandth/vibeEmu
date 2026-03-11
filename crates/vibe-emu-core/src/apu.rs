@@ -1079,6 +1079,22 @@ impl Apu {
 
     /// Enable lock-free audio output and return a consumer handle that can be
     /// drained by the audio backend.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::apu::Apu;
+    ///
+    /// let mut apu = Apu::new();
+    /// let consumer = apu.enable_output(44_100);
+    ///
+    /// // The consumer can be sent to an audio callback thread.
+    /// // After the APU produces samples, drain them:
+    /// while let Some((left, right)) = consumer.pop_stereo() {
+    ///     // send left/right to the audio device
+    ///     let _ = (left, right);
+    /// }
+    /// ```
     pub fn enable_output(&mut self, sample_rate: u32) -> AudioConsumer {
         self.set_sample_rate(sample_rate);
         let capacity_frames = Self::max_frames_for_rate(sample_rate);

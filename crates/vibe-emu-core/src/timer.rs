@@ -94,6 +94,24 @@ impl Timer {
 
     /// Advance the timer by `cycles` CPU cycles and update IF when TIMA
     /// overflows.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::timer::Timer;
+    ///
+    /// let mut timer = Timer::new();
+    /// let mut if_reg = 0u8;
+    ///
+    /// // Enable timer at 4096 Hz (TAC = 0x04) with TMA = 0.
+    /// timer.write(0xFF07, 0x04, &mut if_reg);
+    ///
+    /// // Step enough cycles for DIV to advance and eventually overflow TIMA.
+    /// timer.step(256, &mut if_reg);
+    ///
+    /// // DIV should now have advanced.
+    /// assert!(timer.div > 0);
+    /// ```
     pub fn step(&mut self, cycles: u16, if_reg: &mut u8) {
         if cycles == 0 {
             return;

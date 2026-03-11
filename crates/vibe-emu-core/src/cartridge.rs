@@ -688,6 +688,19 @@ impl Cartridge {
     }
 
     /// Load a cartridge from raw bytes and pre-allocate `ram_size` bytes of RAM.
+    ///
+    /// Useful in tests where you want to supply a specific RAM size rather than
+    /// relying on the header.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::cartridge::Cartridge;
+    ///
+    /// let rom = vec![0u8; 0x8000];
+    /// let cart = Cartridge::from_bytes_with_ram(rom, 8192);
+    /// assert_eq!(cart.ram.len(), 8192);
+    /// ```
     pub fn from_bytes_with_ram(data: Vec<u8>, ram_size: usize) -> Self {
         let mut c = Self::load(data);
         c.ram = vec![0; ram_size];
@@ -695,6 +708,22 @@ impl Cartridge {
     }
 
     /// Load a cartridge from a file path, automatically loading battery-backed save data.
+    ///
+    /// A `.sav` file adjacent to the ROM is loaded if present. For cartridges with an
+    /// RTC, a `.rtc` file is loaded as well.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the ROM file cannot be read.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use vibe_emu_core::cartridge::Cartridge;
+    ///
+    /// let cart = Cartridge::from_file("game.gb").expect("ROM file not found");
+    /// println!("Loaded: {} (CGB: {})", cart.title, cart.cgb);
+    /// ```
     pub fn from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let data = fs::read(&path)?;
         let mut cart = Self::load(data);
@@ -758,6 +787,17 @@ impl Cartridge {
     }
 
     /// Parse a cartridge from raw ROM bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::cartridge::Cartridge;
+    ///
+    /// // A minimal ROM: 32 KiB of zeroes is enough for a NoMbc cartridge.
+    /// let rom = vec![0u8; 0x8000];
+    /// let cart = Cartridge::load(rom);
+    /// assert!(!cart.cgb); // no CGB flag set in header
+    /// ```
     pub fn load(data: Vec<u8>) -> Self {
         let header = Header::parse(&data);
         let ram_size = header.ram_size();

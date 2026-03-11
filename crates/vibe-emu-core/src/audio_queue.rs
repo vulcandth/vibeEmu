@@ -61,6 +61,18 @@ impl Inner {
 /// Returns a [`AudioProducer`] / [`AudioConsumer`] pair that share ownership of the
 /// underlying buffer. The producer is typically driven from the emulator thread and
 /// the consumer is drained by the audio backend.
+///
+/// # Examples
+///
+/// ```
+/// use vibe_emu_core::audio_queue::audio_queue;
+///
+/// let (producer, consumer) = audio_queue(4096);
+///
+/// producer.push_stereo(100, -100);
+/// assert_eq!(consumer.pop_stereo(), Some((100, -100)));
+/// assert_eq!(consumer.pop_stereo(), None); // queue is now empty
+/// ```
 pub fn audio_queue(capacity_frames: usize) -> (AudioProducer, AudioConsumer) {
     let cap = capacity_frames.saturating_add(1).max(2);
     let mut v: Vec<UnsafeCell<MaybeUninit<[i16; 2]>>> = Vec::with_capacity(cap);

@@ -28,6 +28,20 @@ impl Default for SerialTransferClock {
 /// Endpoint abstraction for the Game Boy link cable.
 ///
 /// Implementations may simulate a remote peer or bridge to an external system.
+///
+/// # Examples
+///
+/// ```
+/// use vibe_emu_core::serial::LinkPort;
+///
+/// struct EchoPort;
+///
+/// impl LinkPort for EchoPort {
+///     fn transfer(&mut self, byte: u8) -> u8 {
+///         byte // echo whatever was sent
+///     }
+/// }
+/// ```
 pub trait LinkPort: Send {
     /// Transfer a byte over the link. Returns the byte received from the
     /// partner. Implementations may perform the transfer immediately.
@@ -70,6 +84,18 @@ impl NullLinkPort {
     ///
     /// If `loopback` is `true`, transferred bytes are echoed back. Otherwise the
     /// port behaves like an open line (incoming bits read as 1), returning `0xFF`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::serial::{LinkPort, NullLinkPort};
+    ///
+    /// let mut open = NullLinkPort::new(false);
+    /// assert_eq!(open.transfer(0x42), 0xFF); // no cable attached
+    ///
+    /// let mut loopback = NullLinkPort::new(true);
+    /// assert_eq!(loopback.transfer(0x42), 0x42); // echoed back
+    /// ```
     pub fn new(loopback: bool) -> Self {
         Self { loopback }
     }

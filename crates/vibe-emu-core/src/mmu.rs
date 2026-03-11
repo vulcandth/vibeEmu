@@ -555,6 +555,20 @@ impl Mmu {
     }
 
     /// Insert a cartridge into the MMU.
+    ///
+    /// In the post-boot state this also applies logo/header data to VRAM so the
+    /// screen reflects the expected boot-time state for the inserted title.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::mmu::Mmu;
+    /// use vibe_emu_core::cartridge::Cartridge;
+    ///
+    /// let mut mmu = Mmu::new();
+    /// mmu.load_cart(Cartridge::load(vec![0u8; 0x8000]));
+    /// assert!(mmu.cart.is_some());
+    /// ```
     pub fn load_cart(&mut self, cart: Cartridge) {
         let is_dmg = !cart.cgb;
         if self.post_boot_state {

@@ -68,6 +68,31 @@ pub struct WatchpointHit {
 }
 
 /// Engine that evaluates a set of watchpoints against memory accesses.
+///
+/// # Examples
+///
+/// ```
+/// use vibe_emu_core::watchpoints::{Watchpoint, WatchpointEngine, WatchpointTrigger};
+///
+/// let mut engine = WatchpointEngine::default();
+/// engine.set_watchpoints(vec![Watchpoint {
+///     id: 1,
+///     enabled: true,
+///     range: 0xC000..=0xC000,
+///     on_read: true,
+///     on_write: false,
+///     on_execute: false,
+///     on_jump: false,
+///     value_match: None,
+///     message: None,
+/// }]);
+///
+/// engine.note_read(Some(0x0100), 0xC000, 0x42);
+/// if let Some(hit) = engine.take_hit() {
+///     assert_eq!(hit.trigger, WatchpointTrigger::Read);
+///     assert_eq!(hit.addr, 0xC000);
+/// }
+/// ```
 #[derive(Debug, Default, Clone)]
 pub struct WatchpointEngine {
     watchpoints: Vec<Watchpoint>,
