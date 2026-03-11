@@ -10,7 +10,7 @@ links = "mobile"
 build = "build.rs"
 
 [features]
-# Build libmobile from vendored source at vendor/libmobile.
+# Build libmobile from the vendored source under crates/vibe-emu-mobile/vendor/.
 bundled = []
 # Link to a system-provided libmobile (e.g. -lmobile plus optional search path).
 system = []
@@ -19,4 +19,3 @@ system = []
 cc = "1.2.56"
 
 [dependencies]
-

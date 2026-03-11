@@ -71,22 +71,22 @@ For detailed platform-specific instructions, troubleshooting, and build configur
 ### Mobile Adapter GB support (bundled by default)
 
 The UI builds with **Mobile Adapter GB** support enabled by default using the
-vendored `vendor/libmobile-0.2.2` sources. This requires a working C toolchain
+vendored `crates/vibe-emu-mobile/vendor/libmobile-0.2.2` sources. This requires a working C toolchain
 on your platform (e.g. MSVC Build Tools on Windows, or clang/gcc on Linux/macOS).
 
-**License Notice**: The bundled `libmobile` library is licensed under the **GNU Lesser General Public License (LGPL) v3**. See `vendor/libmobile-0.2.2/COPYING.LESSER` for the full license text. The LGPL permits linking this library into your application. If you wish to use a modified or updated version of `libmobile`, you have two options:
+**License Notice**: The bundled `libmobile` library is licensed under the **GNU Lesser General Public License (LGPL) v3**. See `crates/vibe-emu-mobile/vendor/libmobile-0.2.2/COPYING.LESSER` for the full license text. The LGPL permits linking this library into your application. If you wish to use a modified or updated version of `libmobile`, you have two options:
 
 1. **Use a pre-installed library**: If you have `libmobile` already compiled and installed on your system (e.g., via a package manager or custom build), you can link against it instead of the bundled version. The library must be findable via standard system library paths or by setting the `LIBMOBILE_LIB_DIR` environment variable to point to the directory containing the compiled library file (e.g., `libmobile.so` on Linux, `mobile.lib` on Windows).
    ```bash
    cargo build -p vibe-emu-ui --no-default-features --features mobile-system
    ```
 
-2. **Replace the vendored copy**: You may replace the contents of `vendor/libmobile-0.2.2/` with your modified or updated version and rebuild. The build system will automatically compile and link your replacement.
+2. **Replace the vendored copy**: You may replace the contents of `crates/vibe-emu-mobile/vendor/libmobile-0.2.2/` with your modified or updated version and rebuild. The build system will automatically compile and link your replacement.
    
    Alternatively, to keep multiple versions side-by-side:
-   - Rename `vendor/libmobile-0.2.2/` to something else (e.g., `vendor/libmobile-0.2.2-original/`)
-   - Place your modified version in `vendor/libmobile-0.2.2/`
-   - Or place it in `vendor/libmobile/` and set the `LIBMOBILE_SRC_DIR` environment variable:
+   - Rename `crates/vibe-emu-mobile/vendor/libmobile-0.2.2/` to something else (e.g., `crates/vibe-emu-mobile/vendor/libmobile-0.2.2-original/`)
+   - Place your modified version in `crates/vibe-emu-mobile/vendor/libmobile-0.2.2/`
+   - Or place it in `crates/vibe-emu-mobile/vendor/libmobile/` and set the `LIBMOBILE_SRC_DIR` environment variable:
      ```bash
      export LIBMOBILE_SRC_DIR=/path/to/your/libmobile
      cargo build -p vibe-emu-ui
@@ -155,31 +155,9 @@ trace events, but you still need `--log-level trace` (or an equivalent
 
 ## Third-party license files
 
-The workspace root contains consolidated third-party licensing output:
-- `about.toml`
-- `about.hbs`
-- `THIRD_PARTY_LICENSES.md`
-
-Each crate also keeps crate-specific licensing files that only cover that
-crate's dependencies/attributions:
-- `crates/vibe-emu-core/about.toml`
-- `crates/vibe-emu-core/about.hbs`
-- `crates/vibe-emu-core/THIRD_PARTY_LICENSES.md`
-- `crates/vibe-emu-mobile/about.toml`
-- `crates/vibe-emu-mobile/about.hbs`
-- `crates/vibe-emu-mobile/THIRD_PARTY_LICENSES.md`
-- `crates/vibe-emu-mobile-sys/about.toml`
-- `crates/vibe-emu-mobile-sys/about.hbs`
-- `crates/vibe-emu-mobile-sys/THIRD_PARTY_LICENSES.md`
-- `crates/vibe-emu-ui/about.toml`
-- `crates/vibe-emu-ui/about.hbs`
-- `crates/vibe-emu-ui/THIRD_PARTY_LICENSES.md`
-
-To regenerate a crate's license file:
-
-```bash
-cargo about generate --manifest-path crates/<crate-name>/Cargo.toml --config crates/<crate-name>/about.toml crates/<crate-name>/about.hbs -o crates/<crate-name>/THIRD_PARTY_LICENSES.md
-```
+The workspace root `THIRD_PARTY_LICENSES.md` covers the full workspace.
+Each crate also has its own `THIRD_PARTY_LICENSES.md` that covers only that
+crate.
 
 ### Mobile Adapter GB
 
