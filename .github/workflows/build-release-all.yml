@@ -1,0 +1,17 @@
+name: Build All Release Binaries
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    uses: ./.github/workflows/build-release-windows.yml
+
+  linux:
+    uses: ./.github/workflows/build-release-linux.yml
+
+  macos:
+    uses: ./.github/workflows/build-mac-release.yml
