@@ -36,7 +36,10 @@ fn link_system() {
 
 fn build_bundled() {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let mobile_crate_vendor_root = manifest_dir.join("..").join("vibe-emu-mobile").join("vendor");
+    let mobile_crate_vendor_root = manifest_dir
+        .join("..")
+        .join("vibe-emu-mobile")
+        .join("vendor");
     let workspace_vendor_root = manifest_dir.join("..").join("..").join("vendor");
 
     let vendor_dir = if let Some(src) = env::var_os("LIBMOBILE_SRC_DIR") {
