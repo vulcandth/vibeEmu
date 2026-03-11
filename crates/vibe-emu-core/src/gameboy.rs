@@ -121,6 +121,19 @@ impl GameBoy {
     }
 
     /// Creates a DMG-mode machine in the post-boot state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::gameboy::GameBoy;
+    /// use vibe_emu_core::cartridge::Cartridge;
+    ///
+    /// let mut gb = GameBoy::new();
+    /// // Load a ROM before stepping the CPU.
+    /// let rom = vec![0x00u8; 0x8000]; // minimal all-NOP ROM
+    /// gb.mmu.load_cart(Cartridge::load(rom));
+    /// gb.cpu.step(&mut gb.mmu);
+    /// ```
     pub fn new() -> Self {
         Self::new_with_mode(false)
     }
@@ -128,6 +141,17 @@ impl GameBoy {
     /// Creates a machine in the post-boot state.
     ///
     /// When `cgb` is `true`, the machine runs in CGB mode with default revisions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::gameboy::GameBoy;
+    ///
+    /// let dmg = GameBoy::new_with_mode(false);
+    /// let cgb = GameBoy::new_with_mode(true);
+    /// assert!(!dmg.cgb);
+    /// assert!(cgb.cgb);
+    /// ```
     pub fn new_with_mode(cgb: bool) -> Self {
         Self::new_with_revisions(cgb, DmgRevision::default(), CgbRevision::default())
     }
@@ -138,6 +162,16 @@ impl GameBoy {
     }
 
     /// Creates a machine in the post-boot state with explicit DMG + CGB revisions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::gameboy::GameBoy;
+    /// use vibe_emu_core::hardware::{CgbRevision, DmgRevision};
+    ///
+    /// let gb = GameBoy::new_with_revisions(true, DmgRevision::RevB, CgbRevision::RevE);
+    /// assert!(gb.cgb);
+    /// ```
     pub fn new_with_revisions(
         cgb: bool,
         dmg_revision: DmgRevision,
@@ -176,6 +210,23 @@ impl GameBoy {
     }
 
     /// Resets to the post-boot state, preserving cartridge and boot ROM.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::gameboy::GameBoy;
+    /// use vibe_emu_core::cartridge::Cartridge;
+    ///
+    /// let mut gb = GameBoy::new();
+    /// gb.mmu.load_cart(Cartridge::load(vec![0u8; 0x8000]));
+    /// gb.cpu.step(&mut gb.mmu);
+    /// let pc_before = gb.cpu.pc;
+    ///
+    /// gb.reset();
+    ///
+    /// assert_eq!(gb.cpu.pc, 0x0100); // PC restored to post-boot entry point
+    /// assert!(gb.mmu.cart.is_some()); // cartridge preserved
+    /// ```
     pub fn reset(&mut self) {
         let cart = self.mmu.cart.take();
         let boot = self.mmu.boot_rom.take();

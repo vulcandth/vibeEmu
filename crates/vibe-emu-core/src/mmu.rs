@@ -119,31 +119,48 @@ struct HdmaState {
     cancelled: bool,
 }
 
+/// Memory management unit: the full Game Boy memory map and hardware plumbing.
 pub struct Mmu {
+    /// Eight WRAM banks (DMG uses only banks 0 and 1).
     pub wram: [[u8; WRAM_BANK_SIZE]; 8],
+    /// Currently selected WRAM bank index (CGB only).
     pub wram_bank: usize,
+    /// High RAM (0xFF80–0xFFFE).
     pub hram: [u8; 0x7F],
+    /// The inserted cartridge, if any.
     pub cart: Option<Cartridge>,
+    /// Optional boot ROM image.
     pub boot_rom: Option<Vec<u8>>,
+    /// Whether the boot ROM is currently mapped at 0x0000.
     pub boot_mapped: bool,
+    /// Interrupt flag register (IF / 0xFF0F).
     pub if_reg: u8,
+    /// Interrupt enable register (IE / 0xFFFF).
     pub ie_reg: u8,
+    /// Serial link unit.
     pub serial: Serial,
+    /// Pixel Processing Unit.
     pub ppu: Ppu,
+    /// Audio Processing Unit.
     pub apu: Apu,
+    /// Divider / timer unit.
     pub timer: Timer,
     /// 16-bit divider counter in the LCD dot clock domain (used for APU/serial timing).
     /// In normal speed this matches the CPU divider progression; in CGB double-speed
     /// the CPU divider advances twice as fast as this dot counter.
     pub dot_div: u16,
+    /// Joypad input register state.
     pub input: Input,
     hdma: HdmaState,
+    /// KEY1 register (CGB speed-switch control).
     pub key1: u8,
+    /// RP register (infrared port, CGB only).
     pub rp: u8,
     undoc_ff72: u8,
     undoc_ff73: u8,
     undoc_ff74: u8,
     undoc_ff75: u8,
+    /// Remaining cycles for the active OAM DMA transfer.
     pub dma_cycles: u16,
     dma_source: u16,
     pending_dma: Option<u16>,
@@ -183,6 +200,7 @@ pub struct Mmu {
     /// Real CGB hardware differs by revision here; DMG ignores this region.
     cgb_unusable_oam: [u8; 0x60],
 
+    /// Active debugger watchpoints.
     pub watchpoints: crate::watchpoints::WatchpointEngine,
 }
 
@@ -288,18 +306,22 @@ impl Mmu {
         }
     }
 
+    /// Returns `true` if the MMU is running in CGB mode.
     pub fn is_cgb(&self) -> bool {
         self.cgb_mode
     }
 
+    /// Create an MMU in the post-boot DMG state.
     pub fn new_with_mode(cgb: bool) -> Self {
         Self::new_with_revisions(cgb, DmgRevision::default(), CgbRevision::default())
     }
 
+    /// Create an MMU in the post-boot state with a specific CGB revision.
     pub fn new_with_config(cgb: bool, revision: CgbRevision) -> Self {
         Self::new_with_revisions(cgb, DmgRevision::default(), revision)
     }
 
+    /// Create an MMU in the post-boot state with explicit DMG and CGB revisions.
     pub fn new_with_revisions(
         cgb: bool,
         dmg_revision: DmgRevision,
@@ -499,6 +521,7 @@ impl Mmu {
         addr < 0xFF00 && !(0x8000..=0x9FFF).contains(&addr)
     }
 
+    /// Create an MMU in the default post-boot DMG state.
     pub fn new() -> Self {
         Self::new_with_mode(false)
     }
@@ -531,6 +554,21 @@ impl Mmu {
         *self = *replacement;
     }
 
+    /// Insert a cartridge into the MMU.
+    ///
+    /// In the post-boot state this also applies logo/header data to VRAM so the
+    /// screen reflects the expected boot-time state for the inserted title.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::mmu::Mmu;
+    /// use vibe_emu_core::cartridge::Cartridge;
+    ///
+    /// let mut mmu = Mmu::new();
+    /// mmu.load_cart(Cartridge::load(vec![0u8; 0x8000]));
+    /// assert!(mmu.cart.is_some());
+    /// ```
     pub fn load_cart(&mut self, cart: Cartridge) {
         let is_dmg = !cart.cgb;
         if self.post_boot_state {
@@ -549,6 +587,7 @@ impl Mmu {
         }
     }
 
+    /// Flush battery-backed cartridge RAM to disk.
     pub fn save_cart_ram(&mut self) {
         if let Some(cart) = &mut self.cart
             && let Err(e) = cart.save_ram()
@@ -557,6 +596,7 @@ impl Mmu {
         }
     }
 
+    /// Map a boot ROM image and enable boot-ROM mode.
     pub fn load_boot_rom(&mut self, data: Vec<u8>) {
         self.boot_rom = Some(data);
         self.boot_mapped = true;
@@ -881,6 +921,7 @@ impl Mmu {
         }
     }
 
+    /// Read a byte from the memory map, subject to DMA blocking and bus-open rules.
     pub fn read_byte(&mut self, addr: u16) -> u8 {
         let value = self.read_byte_inner(addr, false);
         self.data_bus = value;
@@ -937,6 +978,7 @@ impl Mmu {
         self.dma_read_byte(self.dma_source.wrapping_add(idx))
     }
 
+    /// Write a byte to the memory map.
     pub fn write_byte(&mut self, addr: u16, val: u8) {
         self.data_bus = val;
         if Self::updates_main_bus(addr) {
@@ -1284,6 +1326,7 @@ impl Mmu {
         self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize] = val;
     }
 
+    /// Take and return all bytes output by the serial link since the last call.
     pub fn take_serial(&mut self) -> Vec<u8> {
         self.serial.take_output()
     }
@@ -1461,6 +1504,7 @@ impl Mmu {
         if self.key1 & 0x80 != 0 { 16 } else { 8 }
     }
 
+    /// Write 0 to FF04, resetting the CPU divider and propagating the DIV-reset event.
     pub fn reset_div(&mut self) {
         // rDIV reset affects the CPU divider (timer.div). The PPU/APU dot clock
         // domain keeps running and is not reset by writes to FF04.

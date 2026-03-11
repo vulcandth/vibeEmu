@@ -55,6 +55,7 @@ const CPU_CLOCK_HZ: u32 = 4_194_304;
 // 512 Hz frame sequencer tick (not doubled in CGB mode)
 const FRAME_SEQUENCER_PERIOD: u32 = 8192;
 const VOLUME_FACTOR: i16 = 64;
+/// Target audio latency in milliseconds used to size the output ring buffer.
 pub const AUDIO_LATENCY_MS: u32 = 40;
 // Audio sample pipeline delay is computed dynamically when a channel is
 // triggered.  See `trigger_square` for details.
@@ -847,6 +848,7 @@ impl FrameSequencer {
     }
 }
 
+/// Audio Processing Unit emulating the Game Boy's four sound channels.
 pub struct Apu {
     ch1: SquareChannel,
     ch2: SquareChannel,
@@ -1053,6 +1055,7 @@ impl Apu {
         0.999_958_f32.powf(4_194_304.0 / rate as f32)
     }
 
+    /// Set the playback speed factor; values other than 1.0 disable audio output.
     pub fn set_speed(&mut self, speed: f32) {
         self.speed_factor = speed;
     }
@@ -1061,10 +1064,12 @@ impl Apu {
         (self.speed_factor - 1.0).abs() < f32::EPSILON
     }
 
+    /// Number of stereo frames currently queued in the output buffer.
     pub fn queued_frames(&self) -> usize {
         self.audio_out.as_ref().map(|q| q.len()).unwrap_or(0)
     }
 
+    /// Maximum capacity (in frames) of the output ring buffer.
     pub fn max_queue_capacity(&self) -> usize {
         self.audio_out
             .as_ref()
@@ -1074,6 +1079,22 @@ impl Apu {
 
     /// Enable lock-free audio output and return a consumer handle that can be
     /// drained by the audio backend.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vibe_emu_core::apu::Apu;
+    ///
+    /// let mut apu = Apu::new();
+    /// let consumer = apu.enable_output(44_100);
+    ///
+    /// // The consumer can be sent to an audio callback thread.
+    /// // After the APU produces samples, drain them:
+    /// while let Some((left, right)) = consumer.pop_stereo() {
+    ///     // send left/right to the audio device
+    ///     let _ = (left, right);
+    /// }
+    /// ```
     pub fn enable_output(&mut self, sample_rate: u32) -> AudioConsumer {
         self.set_sample_rate(sample_rate);
         let capacity_frames = Self::max_frames_for_rate(sample_rate);
@@ -1087,6 +1108,7 @@ impl Apu {
         self.audio_out = None;
     }
 
+    /// Push a raw stereo sample into the output queue (bypasses speed gating).
     pub fn push_samples(&mut self, left: i16, right: i16) {
         if !self.tracking_audio() {
             return;
@@ -1560,18 +1582,22 @@ impl Apu {
         apu
     }
 
+    /// Create an APU in the default DMG post-boot state.
     pub fn new() -> Self {
         Self::new_with_revisions(false, DmgRevision::default(), CgbRevision::default())
     }
 
+    /// Create an APU with the specified hardware mode (DMG vs CGB).
     pub fn new_with_mode(cgb: bool) -> Self {
         Self::new_with_revisions(cgb, DmgRevision::default(), CgbRevision::default())
     }
 
+    /// Create an APU with the specified mode and CGB revision.
     pub fn new_with_config(cgb: bool, revision: CgbRevision) -> Self {
         Self::new_with_revisions(cgb, DmgRevision::default(), revision)
     }
 
+    /// Create an APU with explicit DMG and CGB hardware revisions.
     pub fn new_with_revisions(cgb: bool, dmg_revision: DmgRevision, revision: CgbRevision) -> Self {
         let mut apu = Self::new_internal();
         apu.cgb_mode = cgb;
@@ -1596,6 +1622,7 @@ impl Apu {
         self.audio_out = state.audio_out;
     }
 
+    /// Read an APU register at `addr`.
     pub fn read_reg(&mut self, addr: u16) -> u8 {
         if addr == 0xFF26 {
             // Process any pending sweep calculation before reading channel status
@@ -1642,6 +1669,7 @@ impl Apu {
         self.regs[idx] | Apu::read_mask(addr)
     }
 
+    /// Read a PCM output register (0xFF76 / 0xFF77, CGB only).
     pub fn read_pcm(&mut self, addr: u16) -> u8 {
         if !self.cgb_mode || self.nr52 & 0x80 == 0 {
             return 0xFF;
@@ -1661,20 +1689,26 @@ impl Apu {
         }
     }
 
+    /// Return the current PCM channel-enable mask for both PCM registers.
     pub fn pcm_mask(&mut self) -> [u8; 2] {
         self.ensure_pcm_regs_fresh();
         self.pcm_mask
     }
 
+    /// Return the current raw PCM nibble samples for all four channels.
     pub fn pcm_samples(&mut self) -> [u8; 4] {
         self.ensure_pcm_regs_fresh();
         self.pcm_samples
     }
 
+    /// The low-frequency divider phase (bits 0–1 of the internal LF counter).
     pub fn lf_div_phase(&self) -> u8 {
         (self.lf_div_counter & 0x3) as u8
     }
 
+    /// Notify the APU that the CPU divider (FF04) was just reset.
+    ///
+    /// `prev_div` is the 16-bit internal divider value before the write.
     pub fn on_div_reset(&mut self, prev_div: u16, double_speed: bool) {
         // APU frame sequencer is clocked by DIV bit 4 in single-speed and DIV
         // bit 5 in double-speed. Our `prev_div` is the internal 16-bit divider
@@ -1736,6 +1770,7 @@ impl Apu {
         self.tick_frame_sequencer_steps(div_prev, div_now.wrapping_sub(div_prev), double_speed);
     }
 
+    /// Advance the frame sequencer by explicit divider `steps`.
     pub fn tick_frame_sequencer_steps(&mut self, div_prev: u16, steps: u16, double_speed: bool) {
         if self.nr52 & 0x80 == 0 || steps == 0 {
             return;
@@ -1788,6 +1823,7 @@ impl Apu {
         self.write_reg(addr, val);
     }
 
+    /// Write an APU register at `addr`.
     pub fn write_reg(&mut self, addr: u16, mut val: u8) {
         if self.nr52 & 0x80 == 0 && addr != 0xFF26 && !(0xFF30..=0xFF3F).contains(&addr) {
             // On DMG, NR11/NR21/NR31/NR41 length writes are allowed even when APU is off
@@ -2704,6 +2740,7 @@ impl Apu {
         self.tick_steps(div_prev, div_now.wrapping_sub(div_prev), double_speed);
     }
 
+    /// Advance the APU audio pipeline by explicit divider `ticks`.
     pub fn tick_steps(&mut self, _div_prev: u16, ticks: u16, double_speed: bool) {
         let speed_changed = self.double_speed != double_speed;
         // Store the current CPU speed so trigger_square can select the
@@ -3392,6 +3429,7 @@ impl Apu {
     }
 
     #[inline]
+    /// Run one full CPU tick: sample pipeline, frame sequencer, and APU tick.
     pub fn run_cpu_tick(
         &mut self,
         dot_cycles: u16,
@@ -3412,6 +3450,7 @@ impl Apu {
     }
 
     #[inline]
+    /// Run one full CPU tick using explicit step counts for each clock domain.
     pub fn run_cpu_tick_steps(
         &mut self,
         dot_cycles: u16,
@@ -3426,6 +3465,7 @@ impl Apu {
         self.tick_steps(prev_dot_div, dot_div_steps, double_speed);
     }
 
+    /// Advance the audio sample pipeline by `cycles` CPU cycles.
     pub fn step(&mut self, cycles: u16) {
         let rate = self.sample_rate as u64;
         let sample_period = CPU_CLOCK_HZ as u64;
@@ -3551,6 +3591,7 @@ impl Apu {
         (left_out.round() as i16, right_out.round() as i16)
     }
 
+    /// Current frequency register value for channel 1.
     pub fn ch1_frequency(&self) -> u16 {
         self.ch1.frequency
     }
@@ -3580,6 +3621,7 @@ impl Apu {
         self.ch1.envelope.timer
     }
 
+    /// Set the audio output sample rate in Hz.
     pub fn set_sample_rate(&mut self, rate: u32) {
         self.sample_rate = rate;
         self.sample_timer_accum = 0;
@@ -3587,10 +3629,12 @@ impl Apu {
         // Queue sizing is handled by `enable_output()`.
     }
 
+    /// Current frame sequencer step (0–7).
     pub fn sequencer_step(&self) -> u8 {
         self.sequencer.step
     }
 
+    /// Current period timer value for channel 1.
     pub fn ch1_timer(&self) -> i32 {
         self.ch1.timer
     }
@@ -3610,6 +3654,7 @@ impl Apu {
         self.ch1.sweep.as_ref().map(|s| s.enabled).unwrap_or(false)
     }
 
+    /// Current frequency register value for channel 2.
     pub fn ch2_frequency(&self) -> u16 {
         self.ch2.frequency
     }
@@ -3639,6 +3684,7 @@ impl Apu {
         self.ch2.envelope.timer
     }
 
+    /// Current period timer value for channel 2.
     pub fn ch2_timer(&self) -> i32 {
         self.ch2.timer
     }

@@ -53,22 +53,38 @@ const CYCLES_PER_M_CYCLE_DOUBLE: u16 = 2; // double-speed mode
 const OAM_DMA_STEP_CYCLES: u8 = 4;
 const GDMA_STEP_CYCLES: u8 = 1;
 
+/// LR35902 CPU state.
 pub struct Cpu {
+    /// Accumulator register.
     pub a: u8,
+    /// Flags register (Z/N/H/C in bits 7-4).
     pub f: u8,
+    /// General-purpose register B.
     pub b: u8,
+    /// General-purpose register C.
     pub c: u8,
+    /// General-purpose register D.
     pub d: u8,
+    /// General-purpose register E.
     pub e: u8,
+    /// General-purpose register H.
     pub h: u8,
+    /// General-purpose register L.
     pub l: u8,
+    /// Program counter.
     pub pc: u16,
+    /// Stack pointer.
     pub sp: u16,
+    /// Total CPU cycles elapsed since power-on.
     pub cycles: u64,
+    /// Interrupt master enable flag.
     pub ime: bool,
+    /// Whether the CPU is halted waiting for an interrupt.
     pub halted: bool,
+    /// Whether the CPU is in the STOP state.
     pub stopped: bool,
     stop_vram_blocked: bool,
+    /// Whether the CPU is running in CGB double-speed mode.
     pub double_speed: bool,
     halt_bug: bool,
     ime_enable_delay: u8,
@@ -78,6 +94,7 @@ pub struct Cpu {
 }
 
 impl Cpu {
+    /// Create a CPU in the default post-boot DMG state.
     pub fn new() -> Self {
         Self::new_with_mode_and_revision(false, DmgRevision::default())
     }
@@ -117,6 +134,7 @@ impl Cpu {
         }
     }
 
+    /// Create a CPU in the power-on state for the given mode, using the default DMG revision.
     pub fn new_power_on(cgb: bool) -> Self {
         Self::new_power_on_with_revision(cgb, DmgRevision::default())
     }
@@ -221,6 +239,7 @@ impl Cpu {
         self.e = val as u8;
     }
 
+    /// Returns the HL register pair as a 16-bit value.
     pub fn get_hl(&self) -> u16 {
         ((self.h as u16) << 8) | self.l as u16
     }
@@ -668,6 +687,7 @@ impl Cpu {
         }
     }
 
+    /// Execute one instruction and update internal state accordingly.
     pub fn step(&mut self, mmu: &mut crate::mmu::Mmu) {
         // Default: rendering reads VRAM normally.
         mmu.ppu.set_render_vram_blocked(false);
