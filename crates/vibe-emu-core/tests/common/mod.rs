@@ -4,6 +4,8 @@ use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
+use std::time::Duration;
 
 #[derive(Clone)]
 struct CachedPng {
@@ -13,8 +15,56 @@ struct CachedPng {
 }
 
 static PNG_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedPng>>> = OnceLock::new();
+static HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
 static INIT: OnceCell<()> = OnceCell::new();
+
+// Keep retries bounded to avoid overly long test startup while still handling transient outages.
+const DOWNLOAD_ATTEMPTS: usize = 5;
+const INITIAL_BACKOFF_MS: u64 = 500;
+const MAX_BACKOFF_MS: u64 = 30_000;
+
+fn http_client() -> &'static reqwest::blocking::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .http1_only()
+            .build()
+            .expect("failed to create HTTP client")
+    })
+}
+
+fn download_bytes(url: &str) -> Vec<u8> {
+    let mut last_error = String::new();
+
+    for attempt in 1..=DOWNLOAD_ATTEMPTS {
+        let response = http_client().get(url).send();
+        match response {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    match resp.bytes() {
+                        Ok(bytes) => return bytes.to_vec(),
+                        Err(err) => {
+                            last_error = format!("failed to read response body: {err}");
+                        }
+                    }
+                } else {
+                    last_error = format!("unexpected status {status}");
+                }
+            }
+            Err(err) => {
+                last_error = err.to_string();
+            }
+        }
+
+        if attempt < DOWNLOAD_ATTEMPTS {
+            let backoff_ms = (INITIAL_BACKOFF_MS << (attempt - 1)).min(MAX_BACKOFF_MS);
+            thread::sleep(Duration::from_millis(backoff_ms));
+        }
+    }
+
+    panic!("failed to download {url} after {DOWNLOAD_ATTEMPTS} attempts: {last_error}");
+}
 
 fn ensure_test_roms() {
     INIT.get_or_init(|| {
@@ -114,12 +164,7 @@ fn ensure_c_sp_test_rom_bundle(dir: &Path) {
     }
 
     let url = "https://github.com/c-sp/game-boy-test-roms/releases/download/v7.0/game-boy-test-roms-v7.0.zip";
-    let resp = reqwest::blocking::get(url).expect("failed to download test roms");
-    let status = resp.status();
-    if !status.is_success() {
-        panic!("failed to download test roms: {status}");
-    }
-    let bytes = resp.bytes().expect("failed to read rom bytes");
+    let bytes = download_bytes(url);
     let reader = std::io::Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(reader).expect("failed to open zip archive");
     archive.extract(dir).expect("failed to extract test roms");
@@ -130,13 +175,7 @@ fn download_file(url: &str, dest: &Path) {
         fs::create_dir_all(parent).expect("failed to create destination directory");
     }
 
-    let resp = reqwest::blocking::get(url).expect("failed to download file");
-    let status = resp.status();
-    if !status.is_success() {
-        panic!("failed to download {url}: {status}");
-    }
-
-    let bytes = resp.bytes().expect("failed to read response body");
+    let bytes = download_bytes(url);
     let tmp = dest.with_extension("tmp");
     fs::write(&tmp, &bytes).expect("failed to write temporary file");
     fs::rename(&tmp, dest).unwrap_or_else(|_| {
