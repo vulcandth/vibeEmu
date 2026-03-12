@@ -126,8 +126,8 @@ fn run_single_with_frames(name: &str, frames_to_run: u32) {
         .join("blargg/dmg_sound/rom_singles")
         .join(name);
     let screenshot_name = name.replace(' ', "_").replace(".gb", ".png");
-    let screenshot = common::workspace_root()
-        .join("extra_screenshots/blargg/dmg_sound/rom_singles")
+    let screenshot = common::test_assets_dir()
+        .join("blargg/dmg_sound/rom_singles")
         .join(screenshot_name);
     run_rom(rom, screenshot, frames_to_run);
 }
