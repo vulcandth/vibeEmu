@@ -1,6 +1,6 @@
-![GitHub License](https://img.shields.io/github/license/vulcandth/vibeEmu)
-
 # vibeEmu
+![GitHub License](https://img.shields.io/github/license/vulcandth/vibeEmu)
+![Codecov](https://img.shields.io/codecov/c/github/vulcandth/vibeEmu?label=core%20coverage)
 
 <img src="gfx/vibeEmu_512px.png" alt="vibeEmu Logo" width="250" />
 
