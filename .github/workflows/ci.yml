@@ -164,6 +164,26 @@ jobs:
       - name: Test release
         run: cargo test --release --verbose -p ${{ matrix.crate }}
 
+      - name: Install cargo-llvm-cov
+        if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux'
+        uses: taiki-e/install-action@568a52fc45c416c47fc730c7ca28eda910275488 # v2.44.24
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate core coverage report
+        if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux'
+        run: cargo llvm-cov --package vibe-emu-core --lcov --output-path lcov.info
+
+      - name: Upload core coverage to Codecov
+        if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux'
+        uses: codecov/codecov-action@7f8b4b4bde536c465e797be725718b88c5d95e0e # v5.1.2
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: lcov.info
+          flags: core
+          fail_ci_if_error: true
+
   cargo-deny:
     name: cargo deny
     runs-on: ubuntu-latest
