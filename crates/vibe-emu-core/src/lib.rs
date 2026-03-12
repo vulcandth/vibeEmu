@@ -11,6 +11,17 @@
 /// Diagnostic logging infrastructure for the emulator core.
 pub mod diagnostics;
 
+/// Semantic version of this `vibe-emu-core` crate.
+///
+/// # Examples
+///
+/// ```rust
+/// use vibe_emu_core::VERSION;
+///
+/// assert!(!VERSION.is_empty());
+/// ```
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[allow(unused_macros)]
 macro_rules! core_trace {
 	(target: $target:expr, $($arg:tt)*) => {{
