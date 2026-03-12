@@ -166,7 +166,7 @@ jobs:
 
       - name: Install cargo-llvm-cov
         if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux'
-        uses: taiki-e/install-action@568a52fc45c416c47fc730c7ca28eda910275488 # v2.44.24
+        uses: taiki-e/install-action@64c5c20c872907b6f7cd50994ac189e7274160f2 # v2.68.26
         with:
           tool: cargo-llvm-cov
 
