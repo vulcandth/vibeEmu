@@ -8,7 +8,8 @@ use vibe_emu_core::{
     hardware::{CgbRevision, Model},
 };
 
-const TIMEOUT: Duration = Duration::from_secs(10);
+// Coverage instrumentation (cargo llvm-cov) adds ~3x overhead
+const TIMEOUT: Duration = Duration::from_secs(30);
 const FIB_SEQ: [u8; 6] = [3, 5, 8, 13, 21, 34];
 fn parse_cgb_revision_from_path<P: AsRef<Path>>(rom_path: P) -> Option<CgbRevision> {
     let s = rom_path.as_ref().to_string_lossy().to_ascii_uppercase();
