@@ -201,6 +201,27 @@ jobs:
       - name: Run cargo deny
         run: cargo deny --locked check
 
+  semver-checks:
+    name: semver
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # TODO: Remove baseline-rev after publishing vibe-emu-core 0.0.1 to
+      # crates.io — the action will then auto-compare against the published
+      # version and the `if:` guard above can also be dropped.
+      - name: Check semver compliance
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: vibe-emu-core
+          baseline-rev: main
+
   license-report:
     name: license diff
     runs-on: ubuntu-latest
