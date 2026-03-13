@@ -40,7 +40,7 @@ vibeEmu is a Game Boy and Game Boy Color emulator written in Rust. It pairs a
 platform-agnostic emulation core with a desktop frontend built on
 `egui`/`eframe`. The desktop app is focused on playing games, while the
 `vibe-emu-core` crate can also be reused as a library in other projects. The
-repository is organised as a Cargo workspace with multiple crates:
+repository is organized as a Cargo workspace with multiple crates:
 
 - `vibe-emu-core` contains the platform-agnostic emulation library.
 - `vibe-emu-ui` provides the desktop frontend built on the core crate.
@@ -125,19 +125,19 @@ cargo build -p vibe-emu-ui --no-default-features
 Run the desktop UI with the default debug profile:
 
 ```bash
-cargo run -p vibe-emu-ui
+cargo run
 ```
 
 For better performance when playing games:
 
 ```bash
-cargo run -p vibe-emu-ui --release
+cargo run --release
 ```
 
 You can optionally pass a ROM path after `--` to open it immediately:
 
 ```bash
-cargo run -p vibe-emu-ui -- path/to/rom.gb
+cargo run -- path/to/rom.gb
 ```
 
 If no ROM path is supplied, the UI starts paused and you can load one from the
@@ -166,7 +166,7 @@ Common arguments:
 - `--log-level <off|error|warn|info|debug|trace>`: override the default log
   verbosity.
 
-Run `cargo run -p vibe-emu-ui -- --help` for the full command-line reference.
+Run `cargo run -- --help` for the full command-line reference.
 
 ## Logging
 
