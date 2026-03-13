@@ -211,6 +211,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch main branch for semver baseline
+        run: git fetch origin main:main
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
