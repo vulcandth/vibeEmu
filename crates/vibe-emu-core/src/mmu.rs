@@ -1,7 +1,7 @@
 use crate::{
     apu::Apu,
     cartridge::Cartridge,
-    hardware::{CgbRevision, DmgRevision},
+    hardware::{CgbRevision, DmgRevision, Model},
     input::Input,
     ppu::Ppu,
     serial::Serial,
@@ -63,15 +63,17 @@ const CGB_POST_BOOT_WRAM2_BLOCK_0900_0B7F: &[u8] = include_bytes!("cgb_post_boot
 const CGB_POST_BOOT_WRAM2_BLOCK_0B80_0C8F: &[u8] = include_bytes!("cgb_post_boot_wram2_tail.bin");
 const CGB_POST_BOOT_WRAM2_BLOCK_0C90_0CFF: &[u8] = include_bytes!("cgb_post_boot_wram2_tail2.bin");
 
-fn power_on_wram_seed(cgb: bool, dmg_revision: DmgRevision, cgb_revision: CgbRevision) -> u32 {
-    // Uninitialized WRAM contents are effectively random on real hardware.
-    // We keep them deterministic for reproducible tests while ensuring the
-    // contents are not trivially all $00/$FF.
+fn power_on_wram_seed(model: Model) -> u32 {
     let mut seed: u32 = 0xC0DE_1BAD;
-    seed ^= if cgb { 0x4347_4221 } else { 0x444D_4721 };
-    seed ^= (dmg_revision as u32).wrapping_mul(0x9E37_79B9);
-    seed ^= (cgb_revision as u32).wrapping_mul(0x85EB_CA6B);
-    // Avoid the xorshift all-zero lockup state.
+    seed ^= if model.is_cgb() {
+        0x4347_4221
+    } else {
+        0x444D_4721
+    };
+    match model {
+        Model::Dmg(rev) => seed ^= (rev as u32).wrapping_mul(0x9E37_79B9),
+        Model::Cgb(rev) => seed ^= (rev as u32).wrapping_mul(0x85EB_CA6B),
+    }
     if seed == 0 { 0xA5A5_5A5A } else { seed }
 }
 
@@ -169,9 +171,7 @@ pub struct Mmu {
     gdma_cycles: u32,
     /// True when this MMU was created in the "skip boot ROM" post-boot state.
     post_boot_state: bool,
-    cgb_mode: bool,
-    cgb_revision: CgbRevision,
-    dmg_revision: DmgRevision,
+    model: Model,
     /// Last CPU program counter observed when the CPU performed a memory
     /// operation. This is set by the `Cpu` helpers before calling into the
     /// MMU so logs can attribute blocked accesses to the originating PC.
@@ -206,40 +206,29 @@ pub struct Mmu {
 
 impl Mmu {
     #[inline]
-    fn post_boot_div(cgb: bool, dmg_revision: DmgRevision, cgb_revision: CgbRevision) -> u16 {
-        if cgb {
-            match cgb_revision {
-                // CGB A-E share a common phase for DIV after boot.
+    fn post_boot_div(model: Model) -> u16 {
+        match model {
+            Model::Cgb(cgb_revision) => match cgb_revision {
                 CgbRevision::RevA
                 | CgbRevision::RevB
                 | CgbRevision::RevC
                 | CgbRevision::RevD
                 | CgbRevision::RevE => 0x2678,
-                // CGB0 differs from CGB A-E (mooneye misc/boot_div-cgb0).
                 CgbRevision::Rev0 => 0x2884,
-            }
-        } else {
-            match dmg_revision {
+            },
+            Model::Dmg(dmg_revision) => match dmg_revision {
                 DmgRevision::Rev0 => 0x1830,
                 DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => 0xABCC,
-            }
+            },
         }
     }
 
     #[inline]
-    fn power_on_div(cgb: bool, cgb_revision: CgbRevision) -> u16 {
-        if cgb && matches!(cgb_revision, CgbRevision::RevE) {
-            // Seed chosen to match whichboot's timing reference for CGB
-            // (LY=$90, DIV=$1E, frac=$28) when running the RevE boot ROM.
-            0x0104
-        } else if !cgb {
-            // The CPU reset sequence consumes 8 T-cycles before the first
-            // instruction fetch, offsetting the internal divider phase.
-            // Without this, boot_div and serial clock alignment tests fail
-            // because the divider ends up 8 T-cycles behind real hardware.
-            8
-        } else {
-            0
+    fn power_on_div(model: Model) -> u16 {
+        match model {
+            Model::Cgb(CgbRevision::RevE) => 0x0104,
+            Model::Dmg(_) => 8,
+            _ => 0,
         }
     }
 
@@ -261,14 +250,14 @@ impl Mmu {
 
     #[inline]
     fn read_cgb_unusable_oam(&self, addr: u16) -> u8 {
-        match self.cgb_revision {
+        match self.cgb_revision() {
             // On CGB E, reads return a deterministic address-derived pattern.
             CgbRevision::RevE => {
                 let hi = (addr as u8) & 0xF0;
                 hi | (hi >> 4)
             }
             _ => {
-                let index = Self::cgb_unusable_oam_index(addr, self.cgb_revision);
+                let index = Self::cgb_unusable_oam_index(addr, self.cgb_revision());
                 self.cgb_unusable_oam[index]
             }
         }
@@ -276,11 +265,11 @@ impl Mmu {
 
     #[inline]
     fn write_cgb_unusable_oam(&mut self, addr: u16, val: u8) {
-        match self.cgb_revision {
+        match self.cgb_revision() {
             // CGB E ignores writes to this range for CPU-visible reads.
             CgbRevision::RevE => {}
             _ => {
-                let index = Self::cgb_unusable_oam_index(addr, self.cgb_revision);
+                let index = Self::cgb_unusable_oam_index(addr, self.cgb_revision());
                 self.cgb_unusable_oam[index] = val;
             }
         }
@@ -308,45 +297,41 @@ impl Mmu {
 
     /// Returns `true` if the MMU is running in CGB mode.
     pub fn is_cgb(&self) -> bool {
-        self.cgb_mode
+        self.model.is_cgb()
     }
 
-    /// Create an MMU in the post-boot DMG state.
-    pub fn new_with_mode(cgb: bool) -> Self {
-        Self::new_with_revisions(cgb, DmgRevision::default(), CgbRevision::default())
+    /// Returns the hardware model and revision.
+    pub fn model(&self) -> Model {
+        self.model
     }
 
-    /// Create an MMU in the post-boot state with a specific CGB revision.
-    pub fn new_with_config(cgb: bool, revision: CgbRevision) -> Self {
-        Self::new_with_revisions(cgb, DmgRevision::default(), revision)
+    #[inline]
+    fn cgb_revision(&self) -> CgbRevision {
+        self.model.cgb_revision().unwrap_or_default()
     }
 
-    /// Create an MMU in the post-boot state with explicit DMG and CGB revisions.
-    pub fn new_with_revisions(
-        cgb: bool,
-        dmg_revision: DmgRevision,
-        cgb_revision: CgbRevision,
-    ) -> Self {
+    #[inline]
+    fn dmg_revision(&self) -> DmgRevision {
+        self.model.dmg_revision().unwrap_or_default()
+    }
+
+    /// Create an MMU in the post-boot state for the given hardware model.
+    pub fn new(model: Model) -> Self {
+        let cgb = model.is_cgb();
+        let dmg_revision = model.dmg_revision().unwrap_or_default();
+
         let mut timer = Timer::new();
-        // Power-on DIV phase differs across hardware families/revisions.
-        //
-        // When running without a boot ROM, we start from the post-boot state.
-        // These values match the phases measured by mooneye's boot_div tests so
-        // the first post-boot instruction sequence observes the expected timing.
-        timer.div = Self::post_boot_div(cgb, dmg_revision, cgb_revision);
+        timer.div = Self::post_boot_div(model);
 
         let dot_div = timer.div;
 
-        let mut ppu = Ppu::new_with_revisions(cgb, dmg_revision, cgb_revision);
+        let mut ppu = Ppu::new(model);
         ppu.apply_boot_state(if cgb { None } else { Some(dmg_revision) });
-        let mut apu = Apu::new_with_revisions(cgb, dmg_revision, cgb_revision);
+        let mut apu = Apu::new(model);
         apu.apply_post_boot_state();
 
         let mut wram = [[0; WRAM_BANK_SIZE]; 8];
-        init_power_on_wram(
-            &mut wram,
-            power_on_wram_seed(cgb, dmg_revision, cgb_revision),
-        );
+        init_power_on_wram(&mut wram, power_on_wram_seed(model));
         if cgb {
             wram[2] = [0; WRAM_BANK_SIZE];
             wram[2][0] = 0x2E;
@@ -365,12 +350,10 @@ impl Mmu {
 
         let mut hram = [0; 0x7F];
         if !cgb {
-            // Stack scratch bytes left by the DMG boot ROM right before handoff.
             hram[0x7A] = 0x39;
             hram[0x7B] = 0x01;
             hram[0x7C] = 0x2E;
         } else {
-            // Stack scratch / handoff bookkeeping bytes left by cgb_boot.bin.
             hram[0x72] = 0x71;
             hram[0x73] = 0x02;
             hram[0x74] = 0x4D;
@@ -412,7 +395,7 @@ impl Mmu {
             boot_mapped: false,
             if_reg: 0xE1,
             ie_reg: 0,
-            serial: Serial::new(cgb, dmg_revision),
+            serial: Serial::new(model),
             ppu,
             apu,
             timer,
@@ -431,9 +414,7 @@ impl Mmu {
             pending_delay: 0,
             gdma_cycles: 0,
             post_boot_state: true,
-            cgb_mode: cgb,
-            cgb_revision,
-            dmg_revision,
+            model,
             oam_bug_next_access: None,
             cgb_unusable_oam: [0xFF; 0x60],
             last_cpu_pc: None,
@@ -446,29 +427,20 @@ impl Mmu {
     /// Create an MMU initialized to an approximate power-on state suitable for
     /// executing a boot ROM.
     ///
-    /// This differs from `new_with_revisions`, which intentionally initializes
-    /// the system to a *post-boot* state when running without a boot ROM.
-    pub fn new_power_on_with_revisions(
-        cgb: bool,
-        dmg_revision: DmgRevision,
-        cgb_revision: CgbRevision,
-    ) -> Self {
-        let mut timer = Timer::new();
+    /// This differs from [`Self::new`], which intentionally initializes the
+    /// system to a *post-boot* state when running without a boot ROM.
+    pub fn new_power_on(model: Model) -> Self {
+        let cgb = model.is_cgb();
 
-        // Power-on DIV phase differs across hardware families/revisions.
-        // When executing a real boot ROM, this initial phase affects the
-        // divider value observed by early cart code (e.g. whichboot).
-        timer.div = Self::power_on_div(cgb, cgb_revision);
+        let mut timer = Timer::new();
+        timer.div = Self::power_on_div(model);
 
         let dot_div = timer.div;
 
-        let ppu = Ppu::new_with_revisions(cgb, dmg_revision, cgb_revision);
+        let ppu = Ppu::new(model);
 
         let mut wram = [[0; WRAM_BANK_SIZE]; 8];
-        init_power_on_wram(
-            &mut wram,
-            power_on_wram_seed(cgb, dmg_revision, cgb_revision),
-        );
+        init_power_on_wram(&mut wram, power_on_wram_seed(model));
 
         Self {
             wram,
@@ -479,9 +451,9 @@ impl Mmu {
             boot_mapped: false,
             if_reg: 0xE1,
             ie_reg: 0,
-            serial: Serial::new(cgb, dmg_revision),
+            serial: Serial::new(model),
             ppu,
-            apu: Apu::new_with_revisions(cgb, dmg_revision, cgb_revision),
+            apu: Apu::new(model),
             timer,
             dot_div,
             input: Input::new(),
@@ -505,9 +477,7 @@ impl Mmu {
             pending_delay: 0,
             gdma_cycles: 0,
             post_boot_state: false,
-            cgb_mode: cgb,
-            cgb_revision,
-            dmg_revision,
+            model,
             oam_bug_next_access: None,
             cgb_unusable_oam: [0xFF; 0x60],
             last_cpu_pc: None,
@@ -521,35 +491,16 @@ impl Mmu {
         addr < 0xFF00 && !(0x8000..=0x9FFF).contains(&addr)
     }
 
-    /// Create an MMU in the default post-boot DMG state.
-    pub fn new() -> Self {
-        Self::new_with_mode(false)
-    }
-
-    pub(crate) fn reset_post_boot_in_place(
-        &mut self,
-        cgb: bool,
-        dmg_revision: DmgRevision,
-        cgb_revision: CgbRevision,
-    ) {
+    pub(crate) fn reset_post_boot_in_place(&mut self, model: Model) {
         let output_state = self.apu.take_output_state();
-        let mut replacement = Box::new(Self::new_with_revisions(cgb, dmg_revision, cgb_revision));
+        let mut replacement = Box::new(Self::new(model));
         replacement.apu.restore_output_state(output_state);
         *self = *replacement;
     }
 
-    pub(crate) fn reset_power_on_in_place(
-        &mut self,
-        cgb: bool,
-        dmg_revision: DmgRevision,
-        cgb_revision: CgbRevision,
-    ) {
+    pub(crate) fn reset_power_on_in_place(&mut self, model: Model) {
         let output_state = self.apu.take_output_state();
-        let mut replacement = Box::new(Self::new_power_on_with_revisions(
-            cgb,
-            dmg_revision,
-            cgb_revision,
-        ));
+        let mut replacement = Box::new(Self::new_power_on(model));
         replacement.apu.restore_output_state(output_state);
         *self = *replacement;
     }
@@ -564,9 +515,10 @@ impl Mmu {
     /// ```
     /// use vibe_emu_core::mmu::Mmu;
     /// use vibe_emu_core::cartridge::Cartridge;
+    /// use vibe_emu_core::hardware::Model;
     ///
-    /// let mut mmu = Mmu::new();
-    /// mmu.load_cart(Cartridge::load(vec![0u8; 0x8000]));
+    /// let mut mmu = Mmu::new(Model::default());
+    /// mmu.load_cart(Cartridge::from_bytes(vec![0u8; 0x8000]));
     /// assert!(mmu.cart.is_some());
     /// ```
     pub fn load_cart(&mut self, cart: Cartridge) {
@@ -575,14 +527,14 @@ impl Mmu {
             let logo = cart.rom.get(0x0104..0x0134).unwrap_or(&[]);
             self.ppu.apply_dmg_post_boot_vram(logo);
 
-            if self.cgb_mode {
+            if self.model.is_cgb() {
                 let header = cart.rom.get(0x0104..0x0134).unwrap_or(&[]);
                 let copy_len = header.len().min(self.hram.len());
                 self.hram[..copy_len].copy_from_slice(&header[..copy_len]);
             }
         }
         self.cart = Some(cart);
-        if self.cgb_mode && is_dmg && self.post_boot_state {
+        if self.model.is_cgb() && is_dmg && self.post_boot_state {
             self.ppu.apply_dmg_compatibility_palettes();
         }
     }
@@ -612,7 +564,7 @@ impl Mmu {
 
         if (0x0000..=0x7FFF).contains(&addr) {
             if self.boot_mapped
-                && (addr <= 0x00FF || (self.cgb_mode && (0x0200..=0x08FF).contains(&addr)))
+                && (addr <= 0x00FF || (self.model.is_cgb() && (0x0200..=0x08FF).contains(&addr)))
             {
                 return self
                     .boot_rom
@@ -655,7 +607,7 @@ impl Mmu {
                 .as_ref()
                 .and_then(|b| b.get(addr as usize).copied())
                 .unwrap_or(0xFF),
-            0x0200..=0x08FF if self.boot_mapped && self.cgb_mode => self
+            0x0200..=0x08FF if self.boot_mapped && self.model.is_cgb() => self
                 .boot_rom
                 .as_ref()
                 .and_then(|b| b.get(addr as usize).copied())
@@ -750,7 +702,7 @@ impl Mmu {
                     }
                     val
                 } else {
-                    if !self.cgb_mode {
+                    if !self.model.is_cgb() {
                         let access = self
                             .oam_bug_next_access
                             .take()
@@ -785,11 +737,11 @@ impl Mmu {
                 }
             }
             0xFEA0..=0xFEFF => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.oam_bug_next_access = None;
                     return self.read_cgb_unusable_oam(addr);
                 }
-                if !self.cgb_mode && !self.ppu.oam_read_accessible() {
+                if !self.model.is_cgb() && !self.ppu.oam_read_accessible() {
                     let access = self
                         .oam_bug_next_access
                         .take()
@@ -809,35 +761,35 @@ impl Mmu {
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.read_reg(addr),
             0xFF46 => self.ppu.dma,
             0xFF51 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     (self.hdma.src >> 8) as u8
                 } else {
                     0xFF
                 }
             }
             0xFF52 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     (self.hdma.src & 0x00F0) as u8
                 } else {
                     0xFF
                 }
             }
             0xFF53 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     ((self.hdma.dst & 0x1F00) >> 8) as u8
                 } else {
                     0xFF
                 }
             }
             0xFF54 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     (self.hdma.dst & 0x00F0) as u8
                 } else {
                     0xFF
                 }
             }
             0xFF55 => {
-                if !self.cgb_mode {
+                if !self.model.is_cgb() {
                     0xFF
                 } else if self.hdma.active {
                     // Busy flag (bit 7) is cleared while the DMA is running.
@@ -851,49 +803,49 @@ impl Mmu {
                 }
             }
             0xFF4D => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     (self.key1 & 0x81) | 0x7E
                 } else {
                     0xFF
                 }
             }
             0xFF56 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.rp | 0xC0
                 } else {
                     0xFF
                 }
             }
             0xFF4F => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.ppu.vram_bank as u8
                 } else {
                     0xFF
                 }
             }
             0xFF70 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.wram_bank as u8
                 } else {
                     0xFF
                 }
             }
             0xFF72 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.undoc_ff72
                 } else {
                     0xFF
                 }
             }
             0xFF73 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.undoc_ff73
                 } else {
                     0xFF
                 }
             }
             0xFF74 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.undoc_ff74
                 } else {
                     // DMG: read-only, locked to $FF.
@@ -901,7 +853,7 @@ impl Mmu {
                 }
             }
             0xFF75 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     // Only bits 4-6 are readable/writable; other bits read high.
                     (self.undoc_ff75 & 0x70) | 0x8F
                 } else {
@@ -909,7 +861,7 @@ impl Mmu {
                 }
             }
             0xFF76 | 0xFF77 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.apu.read_pcm(addr)
                 } else {
                     0xFF
@@ -942,7 +894,7 @@ impl Mmu {
     }
 
     fn dma_read_byte(&mut self, addr: u16) -> u8 {
-        let addr = if !self.cgb_mode && (0xFE00..=0xFF9F).contains(&addr) {
+        let addr = if !self.model.is_cgb() && (0xFE00..=0xFF9F).contains(&addr) {
             addr.wrapping_sub(0x2000)
         } else {
             addr
@@ -1071,7 +1023,7 @@ impl Mmu {
                 if allow {
                     self.oam_bug_next_access = None;
                     self.ppu.oam[(addr - 0xFE00) as usize] = val;
-                } else if !self.cgb_mode {
+                } else if !self.model.is_cgb() {
                     let access = self
                         .oam_bug_next_access
                         .take()
@@ -1105,7 +1057,7 @@ impl Mmu {
                 }
             }
             0xFEA0..=0xFEFF => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.oam_bug_next_access = None;
                     self.write_cgb_unusable_oam(addr, val);
                     return;
@@ -1113,7 +1065,7 @@ impl Mmu {
                 // Unusable region: ignore writes, but the CPU still drives the address bus.
                 // On DMG, blocked CPU accesses in $FE00-$FEFF during mode 2 can trigger
                 // the OAM corruption bug even if the address is in the unusable subrange.
-                if !self.cgb_mode && !self.ppu.oam_write_accessible() {
+                if !self.model.is_cgb() && !self.ppu.oam_write_accessible() {
                     let access = self
                         .oam_bug_next_access
                         .take()
@@ -1155,7 +1107,7 @@ impl Mmu {
                         val
                     );
                 }
-                if !self.cgb_mode && lcd_was_on && self.ppu.mode == 3 {
+                if !self.model.is_cgb() && lcd_was_on && self.ppu.mode == 3 {
                     // DMG LCDC writes during mode 3 are conflict-prone: the
                     // bus first exposes a transitional value, then the target
                     // value is observed one dot later.
@@ -1187,30 +1139,30 @@ impl Mmu {
             }
             0xFF41..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
             0xFF51 => {
-                if self.cgb_mode && !self.hdma.active {
+                if self.model.is_cgb() && !self.hdma.active {
                     self.hdma.src = (val as u16) << 8 | (self.hdma.src & 0x00FF);
                 }
             }
             0xFF52 => {
-                if self.cgb_mode && !self.hdma.active {
+                if self.model.is_cgb() && !self.hdma.active {
                     self.hdma.src = (self.hdma.src & 0xFF00) | (val & 0xF0) as u16;
                 }
             }
             0xFF53 => {
-                if self.cgb_mode && !self.hdma.active {
+                if self.model.is_cgb() && !self.hdma.active {
                     let vram_hi = (val & 0x1F) as u16;
                     let raw = (vram_hi << 8) | (self.hdma.dst & 0x00F0);
                     self.hdma.dst = Self::sanitize_vram_dma_dest(raw);
                 }
             }
             0xFF54 => {
-                if self.cgb_mode && !self.hdma.active {
+                if self.model.is_cgb() && !self.hdma.active {
                     let raw = (self.hdma.dst & 0x1F00) | (val as u16 & 0x00F0);
                     self.hdma.dst = Self::sanitize_vram_dma_dest(raw);
                 }
             }
             0xFF55 => {
-                if !self.cgb_mode {
+                if !self.model.is_cgb() {
                     return;
                 }
                 self.hdma.dst = Self::sanitize_vram_dma_dest(self.hdma.dst);
@@ -1234,12 +1186,12 @@ impl Mmu {
                 }
             }
             0xFF4D => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.key1 = (self.key1 & 0x80) | (val & 0x01);
                 }
             }
             0xFF4C => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     // KEY0 bit 2 selects DMG compatibility mode on CGB
                     // hardware. CGB boot ROMs set this near handoff for DMG
                     // cartridges, after rendering the native CGB logo path.
@@ -1247,12 +1199,12 @@ impl Mmu {
                 }
             }
             0xFF56 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.rp = val & 0xC1;
                 }
             }
             0xFF4F => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.ppu.vram_bank = (val & 0x01) as usize;
                 }
             }
@@ -1290,28 +1242,28 @@ impl Mmu {
             }
             0xFF50 => self.boot_mapped = false,
             0xFF70 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     let bank = (val & 0x07) as usize;
                     self.wram_bank = if bank == 0 { 1 } else { bank };
                 }
             }
             0xFF72 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.undoc_ff72 = val;
                 }
             }
             0xFF73 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.undoc_ff73 = val;
                 }
             }
             0xFF74 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.undoc_ff74 = val;
                 }
             }
             0xFF75 => {
-                if self.cgb_mode {
+                if self.model.is_cgb() {
                     self.undoc_ff75 = val & 0x70;
                 }
             }
@@ -1542,6 +1494,6 @@ impl Mmu {
 
 impl Default for Mmu {
     fn default() -> Self {
-        Self::new()
+        Self::new(Model::default())
     }
 }

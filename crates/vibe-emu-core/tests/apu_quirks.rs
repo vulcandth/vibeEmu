@@ -1,4 +1,4 @@
-use vibe_emu_core::apu::Apu;
+use vibe_emu_core::{apu::Apu, hardware::Model};
 
 fn tick_machine(apu: &mut Apu, div: &mut u16, cycles: u16) {
     let prev = *div;
@@ -9,7 +9,7 @@ fn tick_machine(apu: &mut Apu, div: &mut u16, cycles: u16) {
 
 #[test]
 fn noise_shift_15_freezes_lfsr() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF21, 0xF0);
     apu.write_reg(0xFF22, 0xF0); // clock shift 15
@@ -24,7 +24,7 @@ fn noise_shift_15_freezes_lfsr() {
 
 #[test]
 fn wave_retrigger_corrupts_ram() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     for i in 0..0x10 {
         apu.write_reg(0xFF30 + i as u16, i as u8);
@@ -50,7 +50,7 @@ fn wave_retrigger_corrupts_ram() {
 
 #[test]
 fn zombie_mode_volume_change() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     // Use increase mode with period 0 for a consistent volume increment
     apu.write_reg(0xFF12, 0x98); // initial volume 9

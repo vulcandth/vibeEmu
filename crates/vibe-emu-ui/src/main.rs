@@ -20,7 +20,12 @@ use std::sync::{Arc, Mutex, RwLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use vibe_emu_core::serial::{LinkPort, NullLinkPort};
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::CgbRevision, mmu::Mmu};
+use vibe_emu_core::{
+    cartridge::Cartridge,
+    gameboy::GameBoy,
+    hardware::{CgbRevision, DmgRevision, Model},
+    mmu::Mmu,
+};
 use vibe_emu_mobile::{
     MobileAdapter, MobileAdapterDevice, MobileAddr, MobileConfig, MobileHost, MobileLinkPort,
     MobileNumber, MobileSockType, StdMobileHost,
@@ -2003,16 +2008,11 @@ impl VibeEmuApp {
                 );
                 if let Ok(mut gb) = self.gb.lock() {
                     gb.mmu.save_cart_ram();
-                    let dmg_revision = gb.dmg_revision;
-                    let cgb_revision = gb.cgb_revision;
+                    let model = Model::from_cgb_flag(cgb_mode);
                     if bootrom_data.is_some() {
-                        *gb = GameBoy::new_power_on_with_revisions(
-                            cgb_mode,
-                            dmg_revision,
-                            cgb_revision,
-                        );
+                        *gb = GameBoy::new_power_on(model);
                     } else {
-                        *gb = GameBoy::new_with_revisions(cgb_mode, dmg_revision, cgb_revision);
+                        *gb = GameBoy::new(model);
                     }
                     if let Some(data) = bootrom_data {
                         gb.mmu.load_boot_rom(data);
@@ -5556,10 +5556,16 @@ fn main() {
 
     let bootrom_data = configured_bootrom_data(&load_config, cgb_mode);
 
-    let mut gb = if bootrom_data.is_some() {
-        GameBoy::new_power_on_with_revisions(cgb_mode, Default::default(), CgbRevision::default())
+    let model = if cgb_mode {
+        Model::Cgb(CgbRevision::default())
     } else {
-        GameBoy::new_with_mode(cgb_mode)
+        Model::Dmg(DmgRevision::default())
+    };
+
+    let mut gb = if bootrom_data.is_some() {
+        GameBoy::new_power_on(model)
+    } else {
+        GameBoy::new(model)
     };
     if let Some(data) = bootrom_data {
         gb.mmu.load_boot_rom(data);

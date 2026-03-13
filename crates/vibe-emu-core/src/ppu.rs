@@ -1,4 +1,4 @@
-use crate::hardware::{CgbRevision, DmgRevision};
+use crate::hardware::{CgbRevision, DmgRevision, Model};
 
 #[inline]
 fn env_flag_from_str(value: &str) -> bool {
@@ -274,9 +274,10 @@ macro_rules! ppu_trace {
     ($($arg:tt)*) => {};
 }
 
-// Screen resolution used by the Game Boy PPU
-const SCREEN_WIDTH: usize = 160;
-const SCREEN_HEIGHT: usize = 144;
+/// Screen width in pixels (Game Boy native resolution).
+pub const SCREEN_WIDTH: usize = 160;
+/// Screen height in pixels (Game Boy native resolution).
+pub const SCREEN_HEIGHT: usize = 144;
 
 // Timing constants per LCD mode in T-cycles
 const MODE0_CYCLES: u16 = 204; // HBlank
@@ -382,11 +383,9 @@ pub struct Ppu {
 
     render_vram_blocked: bool,
 
-    cgb: bool,
+    model: Model,
     /// True when running a DMG cartridge on CGB hardware (DMG compatibility mode).
     dmg_compat: bool,
-    dmg_revision: DmgRevision,
-    cgb_revision: CgbRevision,
 
     lcdc: u8,
     stat: u8,
@@ -1323,27 +1322,16 @@ impl Sprite {
 }
 
 impl Ppu {
-    /// Create a PPU with the specified hardware mode (DMG vs CGB).
-    pub fn new_with_mode(cgb: bool) -> Self {
-        Self::new_with_revisions(cgb, DmgRevision::default(), CgbRevision::default())
-    }
-
-    /// Create a PPU with explicit DMG and CGB hardware revisions.
-    pub fn new_with_revisions(
-        cgb: bool,
-        dmg_revision: DmgRevision,
-        cgb_revision: CgbRevision,
-    ) -> Self {
+    /// Create a PPU for the given hardware model.
+    pub fn new(model: Model) -> Self {
         let mut ppu = Self {
             vram: [[0; VRAM_BANK_SIZE]; 2],
             vram_bank: 0,
             oam: [0; OAM_SIZE],
 
             render_vram_blocked: false,
-            cgb,
+            model,
             dmg_compat: false,
-            dmg_revision,
-            cgb_revision,
             lcdc: 0,
             stat: 0,
             scy: 0,
@@ -1598,7 +1586,7 @@ impl Ppu {
     }
 
     fn begin_mode3_line(&mut self) {
-        if self.ly == 0 && !self.cgb {
+        if self.ly == 0 && !self.cgb() {
             self.dmg_prev_line_window_active = false;
             self.dmg_prev2_line_window_active = false;
         }
@@ -1639,17 +1627,17 @@ impl Ppu {
 
     #[inline]
     fn is_dmg_mode(&self) -> bool {
-        !self.cgb || self.dmg_compat
+        !self.cgb() || self.dmg_compat
     }
 
     #[inline]
     fn is_cgb_native_mode(&self) -> bool {
-        self.cgb && !self.dmg_compat
+        self.cgb() && !self.dmg_compat
     }
 
     #[inline]
     fn is_cgb_dmg_compat_mode(&self) -> bool {
-        self.cgb && self.dmg_compat
+        self.cgb() && self.dmg_compat
     }
 
     // Returns true when all LCDC events in the current mode-3 window only
@@ -1731,7 +1719,7 @@ impl Ppu {
                 .min((SCREEN_WIDTH - 1) as u16) as u8;
             let lag = if self.ly == 0 { 2 } else { 6 };
             let mut x = raw.saturating_sub(lag);
-            if self.dmg_compat || self.cgb {
+            if self.dmg_compat || self.cgb() {
                 if self.is_cgb_dmg_compat_mode()
                     && self.mode3_lcdc_event_count == 0
                     && self.sprite_count > 0
@@ -1874,7 +1862,7 @@ impl Ppu {
     fn record_mode3_scx_event(&mut self, mode3_t: u16, val: u8) {
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
         let mut bias = dmg_mode3_scx_event_t_bias();
-        if self.cgb {
+        if self.cgb() {
             // Native CGB samples SCX event timing slightly earlier than the
             // DMG-oriented baseline used by the fetcher model. This also
             // applies to CGB DMG-compat mode.
@@ -1892,7 +1880,7 @@ impl Ppu {
                 bias += 1;
             }
         }
-        if !self.cgb && self.sprite_count > 0 {
+        if !self.cgb() && self.sprite_count > 0 {
             bias += dmg_mode3_scx_event_t_obj_bias();
             if self.line_sprites[0].x >= 8 {
                 bias += dmg_mode3_scx_event_first_x_ge8_t_adjust();
@@ -1900,10 +1888,10 @@ impl Ppu {
         }
         // Writes that land while the DMG fetcher is in PUSH affect SCX map
         // selection slightly earlier than in other phases.
-        if !self.cgb && self.mode3_fetcher_state == 6 {
+        if !self.cgb() && self.mode3_fetcher_state == 6 {
             bias += dmg_mode3_scx_event_push_state_t_adjust();
         }
-        if self.cgb
+        if self.cgb()
             && self.dmg_compat
             && self.sprite_count > 0
             && self.line_sprites[0].x == 0
@@ -1945,7 +1933,7 @@ impl Ppu {
 
     fn record_mode3_scy_event(&mut self, mode3_t: u16, val: u8) {
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        if !self.cgb && dmg_mode3_scy_use_stage_sample_t() {
+        if !self.cgb() && dmg_mode3_scy_use_stage_sample_t() {
             let t = (mode3_t as i16 + dmg_mode3_scy_event_t_bias()).clamp(0, max_t) as u16;
             Self::push_mode3_reg_event(
                 &mut self.mode3_scy_events,
@@ -1956,7 +1944,7 @@ impl Ppu {
             return;
         }
         // Keep CGB SCY event baseline stable while allowing DMG-tuned timing.
-        let mut bias = if self.cgb {
+        let mut bias = if self.cgb() {
             cgb_mode3_scy_event_t_bias()
         } else {
             dmg_mode3_scy_event_t_bias()
@@ -1966,7 +1954,7 @@ impl Ppu {
                 cgb_dmg_mode3_scy_event_early_threshold_t(),
                 cgb_dmg_mode3_scy_event_early_t_adjust(),
             )
-        } else if self.cgb {
+        } else if self.cgb() {
             (
                 cgb_mode3_scy_event_early_threshold_t(),
                 cgb_mode3_scy_event_early_t_adjust(),
@@ -2061,7 +2049,7 @@ impl Ppu {
         }
         // Similar to SCX, some SCY writes sampled while the fetcher is in PUSH
         // land slightly earlier in the effective fetch timeline.
-        if !self.cgb
+        if !self.cgb()
             && self.mode3_fetcher_state == 6
             && mode3_t >= dmg_mode3_scy_event_push_state_min_t()
         {
@@ -2074,31 +2062,31 @@ impl Ppu {
         }
         // Early writes that hit GET_LO_T1 on DMG can be sampled slightly
         // earlier in the tile-row path than pure dot-time mapping suggests.
-        if !self.cgb
+        if !self.cgb()
             && self.mode3_fetcher_state == 2
             && mode3_t <= dmg_mode3_scy_event_lo_t1_threshold_t()
         {
             bias += dmg_mode3_scy_event_lo_t1_t_adjust();
         }
-        if !self.cgb
+        if !self.cgb()
             && self.mode3_fetcher_state == 0
             && mode3_t <= dmg_mode3_scy_event_tile_t1_threshold_t()
         {
             bias += dmg_mode3_scy_event_tile_t1_t_adjust();
         }
-        if !self.cgb
+        if !self.cgb()
             && self.mode3_fetcher_state == 1
             && mode3_t <= dmg_mode3_scy_event_tile_t2_threshold_t()
         {
             bias += dmg_mode3_scy_event_tile_t2_t_adjust();
         }
-        if !self.cgb
+        if !self.cgb()
             && self.mode3_fetcher_state == 5
             && mode3_t <= dmg_mode3_scy_event_hi_t2_threshold_t()
         {
             bias += dmg_mode3_scy_event_hi_t2_t_adjust();
         }
-        if !self.cgb && self.sprite_count > 0 {
+        if !self.cgb() && self.sprite_count > 0 {
             let first_x = self.line_sprites[0].x;
             if first_x <= -6
                 && mode3_t >= dmg_mode3_scy_event_left_edge_min_t()
@@ -2119,7 +2107,7 @@ impl Ppu {
                 bias += dmg_mode3_scy_event_right_regime_t_adjust();
             }
         }
-        if !self.cgb && mode3_t <= dmg_mode3_scy_event_startup_threshold_t() {
+        if !self.cgb() && mode3_t <= dmg_mode3_scy_event_startup_threshold_t() {
             // During fetcher startup, SCY sampling phase differs from steady state.
             // Model this explicitly per stage instead of stretching global bias.
             match self.mode3_fetcher_state {
@@ -2158,14 +2146,14 @@ impl Ppu {
         } else {
             -128
         };
-        let allow_startup_same_dot = self.cgb
+        let allow_startup_same_dot = self.cgb()
             && self.dmg_compat
             && first_x >= 0
             && self.mode3_fetcher_state == 0
             && mode3_t >= cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t()
             && mode3_t <= cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t()
             && cgb_dmg_mode3_scy_startup_allow_same_dot();
-        let allow_push_full_same_dot = self.cgb
+        let allow_push_full_same_dot = self.cgb()
             && self.dmg_compat
             && first_x == 0
             && self.mode3_fetcher_state == 6
@@ -2438,7 +2426,7 @@ impl Ppu {
                 x = x.saturating_sub(lead);
             }
         }
-        if self.cgb
+        if self.cgb()
             && self.dmg_compat
             && (self.lcdc & 0x02) != 0
             && self.sprite_count > 0
@@ -2449,10 +2437,10 @@ impl Ppu {
             // DMG-oriented projection used for event-map sampling.
             x = x.saturating_add(5);
         }
-        if self.cgb
+        if self.cgb()
             && self.dmg_compat
             && self.ly != 0
-            && self.cgb_revision == CgbRevision::RevD
+            && self.cgb_revision() == CgbRevision::RevD
             && (self.lcdc & 0x02) != 0
             && self.sprite_count == 0
             && self.dmg_bgp_event_count > 0
@@ -2481,7 +2469,7 @@ impl Ppu {
         let fall_delay = dmg_bgp_falling_edge_delay_t().clamp(-8, 8);
         for ev in self.dmg_bgp_events[..self.dmg_bgp_event_count].iter() {
             let mut event_t = ev.t as i16;
-            if !self.cgb {
+            if !self.cgb() {
                 if ev.val > current {
                     event_t += rise_delay;
                 } else if ev.val < current {
@@ -2500,7 +2488,7 @@ impl Ppu {
 
     #[inline]
     fn dmg_bgp_for_pixel(&self, x: usize) -> u8 {
-        if !self.cgb
+        if !self.cgb()
             && dmg_bgp_use_t_sample()
             && self.sprite_count > 0
             && self.mode3_lcdc_event_count == 0
@@ -2536,7 +2524,7 @@ impl Ppu {
             let sample_t = sample_t as u16;
             return self.dmg_bgp_for_mode3_t(sample_t);
         }
-        if !self.cgb
+        if !self.cgb()
             && self.sprite_count > 0
             && self.mode3_lcdc_event_count == 0
             && self.dmg_bgp_event_count > 0
@@ -2553,7 +2541,7 @@ impl Ppu {
             }
             return current;
         }
-        if self.cgb
+        if self.cgb()
             && self.dmg_compat
             && self.sprite_count > 0
             && self.mode3_lcdc_event_count == 0
@@ -2585,12 +2573,12 @@ impl Ppu {
         // CGB running a DMG title observes mid-scanline BGP writes closer to
         // the mode-3 write timestamp map than to the DMG line-latch fallback.
         let use_event_map = dmg_bgp_use_event_map()
-            || (!self.cgb && self.sprite_count == 0)
+            || (!self.cgb() && self.sprite_count == 0)
             || (self.is_cgb_dmg_compat_mode());
         if use_event_map {
             let mut current = self.dmg_line_bgp_base;
             let x = x as u8;
-            let dmg_obj_phase_mix = !self.cgb && (self.lcdc & 0x02) != 0;
+            let dmg_obj_phase_mix = !self.cgb() && (self.lcdc & 0x02) != 0;
             for (i, ev) in self.dmg_bgp_events[..self.dmg_bgp_event_count]
                 .iter()
                 .enumerate()
@@ -2623,7 +2611,7 @@ impl Ppu {
             }
             return current;
         }
-        if !self.cgb
+        if !self.cgb()
             && self.ly == 0
             && self.sprite_count > 0
             && self.mode3_lcdc_event_count > 0
@@ -2641,7 +2629,7 @@ impl Ppu {
                 }
             }
         }
-        if !self.cgb
+        if !self.cgb()
             && self.sprite_count > 0
             && self.mode3_lcdc_event_count == 0
             && self.dmg_bgp_event_count > 0
@@ -2697,7 +2685,7 @@ impl Ppu {
         // DMG output samples BGP slightly later than FIFO pop; tail pixels can
         // still pick up very-late writes near the end of mode 3.
         let mut tail = dmg_bgp_tail_pixels().clamp(0, SCREEN_WIDTH as i16) as usize;
-        if !self.cgb
+        if !self.cgb()
             && (self.mode3_lcdc_base & 0x02) != 0
             && self.sprite_count > 0
             && self.mode3_lcdc_event_count > 0
@@ -2747,7 +2735,7 @@ impl Ppu {
         let mut current = self.mode3_lcdc_base;
         let x = x as u8;
         let dmg_obj_mode3 =
-            !self.cgb && (self.mode3_lcdc_base & 0x02) != 0 && self.sprite_count > 0;
+            !self.cgb() && (self.mode3_lcdc_base & 0x02) != 0 && self.sprite_count > 0;
         for (i, ev) in self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
             .iter()
             .enumerate()
@@ -2855,7 +2843,7 @@ impl Ppu {
             .enumerate()
         {
             let mut event_t = ev.t;
-            if !self.cgb && i == 0 && ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
+            if !self.cgb() && i == 0 && ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
                 if first_adj < 0 {
                     event_t = event_t.saturating_sub((-first_adj) as u16);
                 } else if first_adj > 0 {
@@ -2880,7 +2868,7 @@ impl Ppu {
             .enumerate()
         {
             let mut event_t = ev.t;
-            if !self.cgb && i == 0 {
+            if !self.cgb() && i == 0 {
                 let mut adj = 0i16;
                 let changed = self.mode3_lcdc_base ^ ev.val;
                 let tile_sel_only = (changed & 0x10) != 0
@@ -3240,7 +3228,7 @@ impl Ppu {
         if dmg_mode && self.sprite_count > 0 {
             raw_threshold = raw_threshold.max(self.line_sprites[0].x.max(0) + 1);
         }
-        let force_t_sample_left_edge = self.cgb
+        let force_t_sample_left_edge = self.cgb()
             && self.dmg_compat
             && self.sprite_count > 0
             && self.line_sprites[0].x < 0
@@ -3259,7 +3247,7 @@ impl Ppu {
         }
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
         let mut bias = dmg_bg_en_sample_t_bias();
-        if !self.cgb && matches!(self.dmg_revision, DmgRevision::RevB) {
+        if !self.cgb() && matches!(self.dmg_revision(), DmgRevision::RevB) {
             // DMG-CPU B samples BG enable transitions one dot later than the
             // default DMG profile used by the blob screenshots.
             bias += 1;
@@ -3427,7 +3415,7 @@ impl Ppu {
     #[inline]
     /// Returns `true` if a DMG mode-3 object-fetch is currently in progress.
     pub fn dmg_mode3_during_object_fetch(&self) -> bool {
-        !self.cgb && self.mode == MODE_TRANSFER && self.mode3_obj_fetch_active
+        !self.cgb() && self.mode == MODE_TRANSFER && self.mode3_obj_fetch_active
     }
 
     #[inline]
@@ -3488,7 +3476,7 @@ impl Ppu {
 
     #[inline]
     fn dmg_oam_dma_contention_active(&self) -> bool {
-        !self.cgb && (1..=0xA0).contains(&self.oam_dma_current_dest)
+        !self.cgb() && (1..=0xA0).contains(&self.oam_dma_current_dest)
     }
 
     fn mode3_latch_sprite_attributes(&mut self) {
@@ -3656,7 +3644,7 @@ impl Ppu {
                             if (self.scx & 0x07) == 3 && idx > 0 && !size_16 {
                                 size_16 = true;
                             }
-                            if self.cgb
+                            if self.cgb()
                                 && self.dmg_compat
                                 && (self.scx & 0x07) >= 4
                                 && idx > 0
@@ -4366,8 +4354,19 @@ impl Ppu {
     }
 
     /// Create a PPU in the default post-boot DMG state.
-    pub fn new() -> Self {
-        Self::new_with_mode(false)
+    #[inline]
+    fn cgb(&self) -> bool {
+        self.model.is_cgb()
+    }
+
+    #[inline]
+    fn dmg_revision(&self) -> DmgRevision {
+        self.model.dmg_revision().unwrap_or_default()
+    }
+
+    #[inline]
+    fn cgb_revision(&self) -> CgbRevision {
+        self.model.cgb_revision().unwrap_or_default()
     }
 
     /// Skip the LCD startup delay; used to put the PPU into a known state for tests.
@@ -4450,14 +4449,14 @@ impl Ppu {
     /// has finished executing.
     pub fn apply_boot_state(&mut self, dmg_revision: Option<DmgRevision>) {
         if let Some(rev) = dmg_revision {
-            self.dmg_revision = rev;
+            self.model = Model::Dmg(rev);
         }
         self.lcdc = 0x91;
         self.dma = 0x00;
         self.bgp = 0xFC;
         self.win_line_counter = 0;
 
-        if self.cgb {
+        if self.cgb() {
             self.stat = 0x80;
             self.set_mode(MODE_VBLANK);
             self.mode_clock = 164;
@@ -4521,7 +4520,7 @@ impl Ppu {
         // The DMG boot ROM explicitly primes map entries around $9910/$992F.
         // Keep that map initialization DMG-only; CGB post-boot DMG-compat
         // palette mode does not rely on this DMG tilemap priming.
-        if self.cgb {
+        if self.cgb() {
             return;
         }
 
@@ -4624,7 +4623,7 @@ impl Ppu {
 
     /// Returns true if the PPU is running in Game Boy Color mode.
     pub fn is_cgb(&self) -> bool {
-        self.cgb
+        self.cgb()
     }
 
     /// Get a CGB background palette color as 0x00RRGGBB.
@@ -4725,7 +4724,7 @@ impl Ppu {
             // CGB line 153 quirk)
             let mut coincide = self.ly_for_comparison == self.lyc;
             if coincide
-                && !self.cgb
+                && !self.cgb()
                 && let Some(stage) = self.dmg_startup_stage
                 && stage == 2
                 && self.ly_for_comparison == 1
@@ -4775,7 +4774,7 @@ impl Ppu {
             // DMG LCD-enable quirk (mooneye lcdon_write_timing-GS): during the
             // final few cycles of the first mode-2 periods after enabling the
             // PPU, OAM writes can slip through even though reads remain blocked.
-            if !self.cgb
+            if !self.cgb()
                 && !is_read
                 && self.mode_clock >= MODE2_CYCLES.saturating_sub(4)
                 && (self.dmg_startup_stage == Some(3) || self.dmg_post_startup_line2)
@@ -4786,7 +4785,7 @@ impl Ppu {
         }
 
         let mut allow = true;
-        if !self.cgb
+        if !self.cgb()
             && let Some(stage) = self.dmg_startup_stage
         {
             // DMG LCD-enable quirk: OAM reads become blocked slightly earlier
@@ -4828,7 +4827,7 @@ impl Ppu {
     }
 
     fn oam_bug_current_row(&self) -> Option<usize> {
-        if self.cgb {
+        if self.cgb() {
             return None;
         }
         if self.mode != MODE_OAM {
@@ -4850,7 +4849,7 @@ impl Ppu {
 
     #[inline]
     fn oam_bug_current_accessed_oam_row(&self) -> Option<usize> {
-        if self.cgb {
+        if self.cgb() {
             return None;
         }
         if self.mode != MODE_OAM {
@@ -5282,7 +5281,7 @@ impl Ppu {
         // periods after enabling the PPU, VRAM becomes inaccessible a few cycles
         // before STAT reports the transition to mode 3.
         if is_read
-            && !self.cgb
+            && !self.cgb()
             && self.mode == MODE_OAM
             && self.mode_clock >= MODE2_CYCLES.saturating_sub(4)
             && (self.dmg_startup_stage == Some(3) || self.dmg_post_startup_line2)
@@ -5291,7 +5290,7 @@ impl Ppu {
         }
 
         let mut allow = true;
-        if !self.cgb
+        if !self.cgb()
             && let Some(stage) = self.dmg_startup_stage
         {
             allow = match stage {
@@ -5339,7 +5338,7 @@ impl Ppu {
             0xFF43 => self.scx,
             0xFF44 => {
                 let mut ly = self.ly;
-                if !self.cgb
+                if !self.cgb()
                     && self.lcdc & 0x80 != 0
                     && self.lcdc & 0x01 != 0
                     && self.mode == MODE_HBLANK
@@ -5360,35 +5359,35 @@ impl Ppu {
             0xFF4A => self.wy,
             0xFF4B => self.wx,
             0xFF68 => {
-                if self.cgb {
+                if self.cgb() {
                     self.bgpi
                 } else {
                     0xFF
                 }
             }
             0xFF69 => {
-                if self.cgb {
+                if self.cgb() {
                     Self::read_palette_data_port(&self.bgpd, &mut self.bgpi)
                 } else {
                     0xFF
                 }
             }
             0xFF6A => {
-                if self.cgb {
+                if self.cgb() {
                     self.obpi
                 } else {
                     0xFF
                 }
             }
             0xFF6B => {
-                if self.cgb {
+                if self.cgb() {
                     Self::read_palette_data_port(&self.obpd, &mut self.obpi)
                 } else {
                     0xFF
                 }
             }
             0xFF6C => {
-                if self.cgb {
+                if self.cgb() {
                     self.opri | 0xFE
                 } else {
                     0xFF
@@ -5398,7 +5397,7 @@ impl Ppu {
         };
 
         #[cfg(feature = "ppu-trace")]
-        if !self.cgb && (self.dmg_startup_cycle.is_some() || self.ly < 5) {
+        if !self.cgb() && (self.dmg_startup_cycle.is_some() || self.ly < 5) {
             match addr {
                 0xFF41 | 0xFF44 => {
                     ppu_trace!(
@@ -5435,7 +5434,7 @@ impl Ppu {
                 self.lcdc = val;
                 // DMG: clearing OBJ enable during an active object fetch aborts
                 // that fetch; the object is skipped for this line.
-                if !self.cgb
+                if !self.cgb()
                     && self.mode == MODE_TRANSFER
                     && (old_lcdc & 0x02) != 0
                     && (self.lcdc & 0x02) == 0
@@ -5476,7 +5475,7 @@ impl Ppu {
                         self.debug_lcd_enable_timer = Some(0);
                         self.debug_prev_mode = self.mode;
                     }
-                    if !self.cgb {
+                    if !self.cgb() {
                         self.dmg_startup_cycle = Some(0);
                         self.dmg_startup_stage = Some(0);
                         self.dmg_post_startup_line2 = false;
@@ -5595,7 +5594,7 @@ impl Ppu {
                     && (self.lcdc & 0x80) != 0
                 {
                     let t = self.clamp_mode3_t_for_events(self.mode_clock);
-                    if !self.cgb {
+                    if !self.cgb() {
                         // DMG palette registers exhibit a short transitional
                         // value window during mode-3 contention.
                         let transitional = self.obp0 | val;
@@ -5667,12 +5666,12 @@ impl Ppu {
                 }
             }
             0xFF68 => {
-                if self.cgb {
+                if self.cgb() {
                     self.bgpi = Self::sanitize_palette_index(val);
                 }
             }
             0xFF69 => {
-                if self.cgb {
+                if self.cgb() {
                     Self::write_palette_data_port(&mut self.bgpd, &mut self.bgpi, val);
                     self.refresh_cgb_bg_color_table();
                     if self.dmg_compat {
@@ -5681,12 +5680,12 @@ impl Ppu {
                 }
             }
             0xFF6A => {
-                if self.cgb {
+                if self.cgb() {
                     self.obpi = Self::sanitize_palette_index(val);
                 }
             }
             0xFF6B => {
-                if self.cgb {
+                if self.cgb() {
                     Self::write_palette_data_port(&mut self.obpd, &mut self.obpi, val);
                     self.refresh_cgb_obj_color_table();
                     if self.dmg_compat {
@@ -5695,7 +5694,7 @@ impl Ppu {
                 }
             }
             0xFF6C => {
-                if self.cgb {
+                if self.cgb() {
                     self.opri = val & 0x01;
                 }
             }
@@ -6207,7 +6206,7 @@ impl Ppu {
                         let mut obj_enabled =
                             (self.dmg_line_lcdc_at_pixel[obj_en_sample_x] & 0x02) != 0;
                         if !obj_enabled
-                            && self.cgb
+                            && self.cgb()
                             && self.dmg_compat
                             && dmg_obj_en_toggled_this_line
                             && s.x <= -6
@@ -6391,7 +6390,7 @@ impl Ppu {
                 continue;
             }
 
-            if !self.cgb
+            if !self.cgb()
                 && let Some(prev_cycle) = self.dmg_startup_cycle
             {
                 if prev_cycle < DMG_STARTUP_STAGE5_END {
@@ -6475,7 +6474,7 @@ impl Ppu {
                     if self.ly == 153 && !self.cgb_line153_ly0_triggered {
                         self.cgb_line153_ly0_triggered = true;
                         self.ly_for_comparison = 0;
-                        if self.cgb {
+                        if self.cgb() {
                             self.ly = 0;
                         }
                         self.update_lyc_compare();
@@ -6609,7 +6608,7 @@ impl Ppu {
     fn render_dmg_bg_window_scanline_simple(&mut self) {
         let row_base = self.ly as usize * SCREEN_WIDTH;
         let track_bg_zero = self.sprite_count > 0;
-        let zero_event_fast_path = !self.cgb
+        let zero_event_fast_path = !self.cgb()
             && self.mode3_lcdc_event_count == 0
             && self.mode3_scx_event_count == 0
             && self.mode3_scy_event_count == 0
@@ -7000,7 +6999,7 @@ impl Ppu {
         let mut wx_event_idx = 0usize;
         let mut wy_event_idx = 0usize;
         let use_stage_scy_sampling =
-            (!self.cgb && dmg_mode3_scy_use_stage_sample_t()) || (self.is_cgb_dmg_compat_mode());
+            (!self.cgb() && dmg_mode3_scy_use_stage_sample_t()) || (self.is_cgb_dmg_compat_mode());
         let max_mode3_t_i16 = self.mode3_target_cycles.saturating_sub(1) as i16;
 
         if has_win_en_toggle && self.mode3_wx_event_count > 0 && self.mode3_wx_events[0].t <= 7 {
@@ -7204,10 +7203,10 @@ impl Ppu {
             {
                 let prev_lcdc = lcdc_cur;
                 lcdc_cur = self.mode3_lcdc_events[lcdc_event_idx].val;
-                if !self.cgb && (prev_lcdc & 0x20) == 0 && (lcdc_cur & 0x20) != 0 {
+                if !self.cgb() && (prev_lcdc & 0x20) == 0 && (lcdc_cur & 0x20) != 0 {
                     win_en_just_enabled = true;
                 }
-                if !self.cgb
+                if !self.cgb()
                     && (prev_lcdc & 0x20) != 0
                     && (lcdc_cur & 0x20) == 0
                     && window_is_being_fetched
@@ -7268,7 +7267,7 @@ impl Ppu {
                     }
                 } else if wx_cur < 166 {
                     let mut win_en_will_disable_next_t = false;
-                    if !self.cgb {
+                    if !self.cgb() {
                         let mut next_idx = lcdc_event_idx;
                         while next_idx < self.mode3_lcdc_event_count
                             && self.mode3_lcdc_events[next_idx].t == t.saturating_add(1)
@@ -7289,7 +7288,7 @@ impl Ppu {
                         should_activate_window = true;
                     } else if (0..=255).contains(&pos6)
                         && wx_cur == pos6 as u8
-                        && !self.cgb
+                        && !self.cgb()
                         && dmg_wx_activate_on_pos6()
                         && !wx_just_changed
                     {
@@ -7316,7 +7315,7 @@ impl Ppu {
                     wx_triggered = true;
                     window_is_being_fetched = true;
                     fetcher_state = FETCH_GET_TILE_T1;
-                    if activated_on_pos6 && !self.cgb && !win_en_just_enabled && lcd_x > 0 {
+                    if activated_on_pos6 && !self.cgb() && !win_en_just_enabled && lcd_x > 0 {
                         lcd_x -= 1;
                     }
                     if window_activations == 0 {
@@ -7374,7 +7373,7 @@ impl Ppu {
                             let first_x = self.line_sprites[0].x;
                             first_x <= -1 || first_x >= 7
                         };
-                    let lcdc_fetch = if (!self.cgb
+                    let lcdc_fetch = if (!self.cgb()
                         && wx_triggered
                         && use_window_tile_sel_pos_sampling)
                         || cgb_dmg_compat_use_win_tile_sel_pos
@@ -7427,7 +7426,7 @@ impl Ppu {
                     } else {
                         self.ly.wrapping_add(scy_cur)
                     };
-                    if self.cgb
+                    if self.cgb()
                         && self.dmg_compat
                         && !wx_triggered
                         && self.ly == 0
@@ -7444,12 +7443,12 @@ impl Ppu {
                         // resampling independently at LO/HI stage boundaries.
                         bg_fetcher_y_latched = fetcher_y;
                     }
-                    let cgb_dmg_compat_use_win_map_pos = self.cgb
+                    let cgb_dmg_compat_use_win_map_pos = self.cgb()
                         && self.dmg_compat
                         && wx_triggered
                         && self.sprite_count > 0
                         && self.line_sprites[0].x >= 8;
-                    let lcdc_fetch = if (!self.cgb && wx_triggered && use_window_map_pos_sampling)
+                    let lcdc_fetch = if (!self.cgb() && wx_triggered && use_window_map_pos_sampling)
                         || cgb_dmg_compat_use_win_map_pos
                     {
                         self.dmg_lcdc_for_bg_fetch_window_map_pos(position_in_line)
@@ -7559,7 +7558,7 @@ impl Ppu {
                 }
                 _ => {
                     if bg_fifo.is_empty() {
-                        if !self.cgb
+                        if !self.cgb()
                             && wy_triggered
                             && (lcdc_cur & 0x20) == 0
                             && !disable_window_pixel_insertion_glitch
@@ -8071,7 +8070,7 @@ impl Ppu {
 
 impl Default for Ppu {
     fn default() -> Self {
-        Self::new()
+        Self::new(Model::default())
     }
 }
 
@@ -8080,7 +8079,7 @@ mod mode3_timing_tests {
     use super::*;
 
     fn dmg_mode3_cycles_with_single_sprite_at_oam_x(oam_x: u8) -> u16 {
-        let mut ppu = Ppu::new_with_mode(false);
+        let mut ppu = Ppu::new(Model::default());
         ppu.scx = 0;
         ppu.lcdc = 0x80 | 0x01 | 0x02;
 
@@ -8107,7 +8106,7 @@ mod mode3_timing_tests {
     }
 
     fn dmg_mode3_cycles_with_sprites_at_oam_x(xs: &[u8]) -> u16 {
-        let mut ppu = Ppu::new_with_mode(false);
+        let mut ppu = Ppu::new(Model::default());
         ppu.scx = 0;
         ppu.lcdc = 0x80 | 0x01 | 0x02;
 
@@ -8460,7 +8459,7 @@ mod lcd_off_frame_timing_tests {
 
     #[test]
     fn lcd_off_keeps_frame_cadence() {
-        let mut ppu = Ppu::new();
+        let mut ppu = Ppu::new(Model::default());
         let mut if_reg = 0u8;
 
         assert!(!ppu.lcd_enabled());

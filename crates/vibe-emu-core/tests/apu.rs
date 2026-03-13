@@ -1,5 +1,5 @@
 use vibe_emu_core::apu::Apu;
-use vibe_emu_core::hardware::CgbRevision;
+use vibe_emu_core::hardware::{CgbRevision, Model};
 use vibe_emu_core::mmu::Mmu;
 
 fn tick_machine(apu: &mut Apu, div: &mut u16, cycles: u16) {
@@ -11,7 +11,7 @@ fn tick_machine(apu: &mut Apu, div: &mut u16, cycles: u16) {
 
 #[test]
 fn frame_sequencer_tick() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     let mut div = 0u16;
     assert_eq!(apu.sequencer_step(), 0);
     for _ in 0..(16 * 8192 / 4) {
@@ -26,7 +26,7 @@ fn frame_sequencer_tick() {
 
 #[test]
 fn sample_generation() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     let consumer = apu.enable_output(44_100);
     // enable sound and channel 2 with simple settings
     apu.write_reg(0xFF26, 0x80); // master enable
@@ -48,13 +48,13 @@ fn sample_generation() {
 
 #[test]
 fn read_mask_unused_bits() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     assert_eq!(apu.read_reg(0xFF11), 0xBF);
 }
 
 #[test]
 fn register_write_read_fidelity() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     apu.write_reg(0xFF10, 0x07);
     apu.write_reg(0xFF11, 0xA2);
@@ -64,7 +64,7 @@ fn register_write_read_fidelity() {
 
 #[test]
 fn wave_ram_access() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     // write while channel 3 inactive
     apu.write_reg(0xFF30, 0x12);
     assert_eq!(apu.read_reg(0xFF30), 0x12);
@@ -88,7 +88,7 @@ fn wave_ram_access() {
 
 #[test]
 fn dac_off_disables_channel() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable
     apu.write_reg(0xFF12, 0xF0); // envelope with volume
     apu.write_reg(0xFF14, 0x80); // trigger channel 1
@@ -99,7 +99,7 @@ fn dac_off_disables_channel() {
 
 #[test]
 fn pcm_register_open_bus() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x00); // power off
     assert_eq!(apu.read_pcm(0xFF76), 0xFF);
     assert_eq!(apu.read_pcm(0xFF77), 0xFF);
@@ -107,7 +107,7 @@ fn pcm_register_open_bus() {
 
 #[test]
 fn pcm_mmu_mapping() {
-    let mut mmu = Mmu::new_with_mode(true);
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
     mmu.write_byte(0xFF26, 0x80);
     mmu.write_byte(0xFF11, 0x00); // duty 12.5%
     mmu.write_byte(0xFF12, 0xF0);
@@ -120,13 +120,13 @@ fn pcm_mmu_mapping() {
         tick_machine(&mut mmu.apu, &mut div, 4);
     }
     assert_eq!(mmu.read_byte(0xFF76), 0xF0);
-    let mut dmg = Mmu::new();
+    let mut dmg = Mmu::new(Model::default());
     assert_eq!(dmg.read_byte(0xFF76), 0xFF);
 }
 
 #[test]
 fn nr52_power_toggle() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     // default power state should be on
     assert_eq!(apu.read_reg(0xFF26) & 0x80, 0x80);
     // power off
@@ -142,7 +142,7 @@ fn nr52_power_toggle() {
 
 #[test]
 fn nr52_clears_registers_when_off() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // ensure enabled
     apu.write_reg(0xFF12, 0xF0);
     assert_eq!(apu.read_reg(0xFF12) & 0xF0, 0xF0);
@@ -159,7 +159,7 @@ fn nr52_clears_registers_when_off() {
 
 #[test]
 fn nr52_channel_status_bits() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     assert_eq!(apu.read_reg(0xFF26) & 0x0F, 0x00);
     // trigger channel 1
@@ -182,7 +182,7 @@ fn nr52_channel_status_bits() {
 
 #[test]
 fn nr52_bits_ignore_dac_only() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     apu.write_reg(0xFF17, 0x08); // enable DAC on channel 2 without trigger
     assert_eq!(apu.read_reg(0xFF26) & 0x02, 0x00);
@@ -190,7 +190,7 @@ fn nr52_bits_ignore_dac_only() {
 
 #[test]
 fn nr52_wave_ram_persist() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF30, 0x12);
     apu.write_reg(0xFF26, 0x00);
     assert_eq!(apu.read_reg(0xFF30), 0x12);
@@ -200,7 +200,7 @@ fn nr52_wave_ram_persist() {
 }
 
 fn run_ch2_sample(pan: u8) -> (i16, i16) {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     let consumer = apu.enable_output(44_100);
     apu.write_reg(0xFF26, 0x80); // enable
     apu.write_reg(0xFF24, 0x77); // max volume
@@ -217,7 +217,7 @@ fn run_ch2_sample(pan: u8) -> (i16, i16) {
 }
 
 fn run_ch2_sample_with_nr50(pan: u8, nr50: u8) -> (i16, i16) {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     let consumer = apu.enable_output(44_100);
     apu.write_reg(0xFF26, 0x80); // enable
     apu.write_reg(0xFF24, nr50); // master volume
@@ -285,7 +285,7 @@ fn nr50_vin_bits_ignored() {
 
 #[test]
 fn nr11_write_sets_duty_and_length() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     let val = 0xCA; // duty 3, length 0x0A
     apu.write_reg(0xFF11, val);
@@ -296,7 +296,7 @@ fn nr11_write_sets_duty_and_length() {
 
 #[test]
 fn nr12_zero_turns_off_dac() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     apu.write_reg(0xFF12, 0xF0); // DAC on
     apu.write_reg(0xFF14, 0x80); // trigger
@@ -307,7 +307,7 @@ fn nr12_zero_turns_off_dac() {
 
 #[test]
 fn nr12_bit3_enables_dac() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF12, 0x08); // volume 0, envelope add -> DAC should be on
     apu.write_reg(0xFF14, 0x80); // trigger channel 1
@@ -316,7 +316,7 @@ fn nr12_bit3_enables_dac() {
 
 #[test]
 fn nr12_write_requires_retrigger() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF12, 0xF0); // initial volume 15
     apu.write_reg(0xFF14, 0x80); // trigger
@@ -331,7 +331,7 @@ fn nr12_write_requires_retrigger() {
 
 #[test]
 fn nr13_write_sets_frequency_low_bits_and_is_write_only() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     apu.write_reg(0xFF13, 0x34); // write low bits
     apu.write_reg(0xFF14, 0x82); // trigger at frequency 0x234
@@ -341,7 +341,7 @@ fn nr13_write_sets_frequency_low_bits_and_is_write_only() {
 
 #[test]
 fn nr13_period_change_delayed_until_sample_end() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF11, 0x00);
     apu.write_reg(0xFF12, 0xF0);
@@ -368,7 +368,7 @@ fn nr13_period_change_delayed_until_sample_end() {
 
 #[test]
 fn retrigger_preserves_timer_low_bits_ch1() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF12, 0xF0);
     apu.write_reg(0xFF13, 0x00);
@@ -384,7 +384,7 @@ fn retrigger_preserves_timer_low_bits_ch1() {
 
 #[test]
 fn nr14_write_sets_frequency_high_bits_and_is_write_only() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     apu.write_reg(0xFF13, 0xAA); // low bits
     apu.write_reg(0xFF14, 0x05); // high bits = 5, no trigger
@@ -395,7 +395,7 @@ fn nr14_write_sets_frequency_high_bits_and_is_write_only() {
 
 #[test]
 fn nr14_length_enable_read_write() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF14, 0x40); // enable length counter
     assert_eq!(apu.read_reg(0xFF14), 0xFF);
@@ -405,7 +405,7 @@ fn nr14_length_enable_read_write() {
 
 #[test]
 fn nr21_write_sets_duty_and_length() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     let val = 0xCA; // duty 3, length 0x0A
     apu.write_reg(0xFF16, val);
@@ -416,7 +416,7 @@ fn nr21_write_sets_duty_and_length() {
 
 #[test]
 fn nr22_zero_turns_off_dac() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF17, 0xF0);
     apu.write_reg(0xFF19, 0x80); // trigger
@@ -427,7 +427,7 @@ fn nr22_zero_turns_off_dac() {
 
 #[test]
 fn nr22_bit3_enables_dac() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF17, 0x08); // volume 0, envelope add
     apu.write_reg(0xFF19, 0x80); // trigger channel 2
@@ -436,7 +436,7 @@ fn nr22_bit3_enables_dac() {
 
 #[test]
 fn nr22_write_requires_retrigger() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF17, 0xF0); // initial volume 15
     apu.write_reg(0xFF19, 0x80); // trigger
@@ -449,7 +449,7 @@ fn nr22_write_requires_retrigger() {
 
 #[test]
 fn nr23_write_sets_frequency_low_bits_and_is_write_only() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF18, 0x34);
     apu.write_reg(0xFF19, 0x82);
@@ -459,7 +459,7 @@ fn nr23_write_sets_frequency_low_bits_and_is_write_only() {
 
 #[test]
 fn nr23_period_change_delayed_until_sample_end() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF16, 0x00);
     apu.write_reg(0xFF17, 0xF0);
@@ -486,7 +486,7 @@ fn nr23_period_change_delayed_until_sample_end() {
 
 #[test]
 fn nr24_write_sets_frequency_high_bits_and_is_write_only() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF18, 0xAA);
     apu.write_reg(0xFF19, 0x05);
@@ -496,7 +496,7 @@ fn nr24_write_sets_frequency_high_bits_and_is_write_only() {
 
 #[test]
 fn nr24_length_enable_read_write() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF19, 0x40); // enable length counter
     assert_eq!(apu.read_reg(0xFF19), 0xFF);
@@ -506,7 +506,7 @@ fn nr24_length_enable_read_write() {
 
 #[test]
 fn wave_ram_accessible_with_dac_on_when_inactive() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     apu.write_reg(0xFF1A, 0x80); // DAC on but channel inactive
     apu.write_reg(0xFF30, 0xAB);
@@ -517,7 +517,7 @@ fn wave_ram_accessible_with_dac_on_when_inactive() {
 
 #[test]
 fn wave_ram_locked_read_returns_latched_nibble_on_dmg() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     let first_byte = 0x9C; // high nibble 9, low nibble C
     apu.write_reg(0xFF30, first_byte);
@@ -558,7 +558,7 @@ fn wave_ram_locked_read_redirects_on_cgb_e() {
     // CGB (all revisions through E) redirects wave RAM reads while CH3 is
     // active to the byte at the current playback position, regardless of
     // which wave RAM address was requested.
-    let mut apu = Apu::new_with_config(true, CgbRevision::RevE);
+    let mut apu = Apu::new(Model::Cgb(CgbRevision::RevE));
     apu.write_reg(0xFF26, 0x80); // enable APU
     // Write a recognisable pattern into wave RAM so that different positions
     // produce different values and we can verify redirection.
@@ -592,7 +592,7 @@ fn wave_ram_locked_read_redirects_on_cgb_e() {
 
 #[test]
 fn wave_ram_locked_write_commits_after_byte_advance() {
-    let mut apu = Apu::new_with_config(true, CgbRevision::RevC);
+    let mut apu = Apu::new(Model::Cgb(CgbRevision::RevC));
     apu.write_reg(0xFF26, 0x80); // enable APU
     apu.write_reg(0xFF30, 0x21);
     for addr in 0xFF31..=0xFF3F {
@@ -625,7 +625,7 @@ fn wave_ram_locked_write_commits_after_byte_advance() {
 
 #[test]
 fn nr30_dac_off_disables_channel() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     apu.write_reg(0xFF1A, 0x80); // enable DAC
     apu.write_reg(0xFF1E, 0x80); // trigger channel 3
@@ -636,7 +636,7 @@ fn nr30_dac_off_disables_channel() {
 
 #[test]
 fn nr31_write_sets_length() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // ensure enabled
     apu.write_reg(0xFF1B, 0x20);
     assert_eq!(apu.ch3_length(), 256 - 0x20);
@@ -644,7 +644,7 @@ fn nr31_write_sets_length() {
 
 #[test]
 fn nr31_write_updates_length_when_disabled_on_dmg() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x00); // disable APU
     apu.write_reg(0xFF1B, 0x40);
     // On DMG, NR31 length writes are allowed even when the APU is off
@@ -653,7 +653,7 @@ fn nr31_write_updates_length_when_disabled_on_dmg() {
 
 #[test]
 fn nr33_write_sets_frequency_low_bits_and_is_write_only() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     apu.write_reg(0xFF1D, 0x34); // write low bits
     apu.write_reg(0xFF1E, 0x05); // high bits=5, no trigger
@@ -663,7 +663,7 @@ fn nr33_write_sets_frequency_low_bits_and_is_write_only() {
 
 #[test]
 fn nr34_write_sets_frequency_high_bits_and_is_write_only() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF1D, 0xAA);
     apu.write_reg(0xFF1E, 0x05); // high bits=5
@@ -673,7 +673,7 @@ fn nr34_write_sets_frequency_high_bits_and_is_write_only() {
 
 #[test]
 fn nr34_length_enable_read_write() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF1E, 0x40); // enable length counter
     assert_eq!(apu.read_reg(0xFF1E), 0xFF);
@@ -683,7 +683,7 @@ fn nr34_length_enable_read_write() {
 
 #[test]
 fn nr34_retrigger_resets_wave_position() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     for i in 0..0x10 {
         apu.write_reg(0xFF30 + i as u16, (i * 0x11) as u8);
@@ -716,7 +716,7 @@ fn nr34_retrigger_resets_wave_position() {
 
 #[test]
 fn wave_retrigger_emits_last_sample() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     for addr in 0xFF30..=0xFF3F {
         apu.write_reg(addr, 0x11); // sample value 0x1 in all nibbles
@@ -737,7 +737,7 @@ fn wave_retrigger_emits_last_sample() {
 
 #[test]
 fn nr41_write_sets_length() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF20, 0x20);
     assert_eq!(apu.ch4_length(), 64 - (0x20 & 0x3F));
@@ -746,7 +746,7 @@ fn nr41_write_sets_length() {
 
 #[test]
 fn nr41_zero_sets_full_length() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF20, 0x00);
     assert_eq!(apu.ch4_length(), 64);
@@ -754,7 +754,7 @@ fn nr41_zero_sets_full_length() {
 
 #[test]
 fn nr41_high_bits_ignored() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF20, 0xFF);
     assert_eq!(apu.ch4_length(), 64 - 0x3F);
@@ -763,7 +763,7 @@ fn nr41_high_bits_ignored() {
 
 #[test]
 fn nr42_zero_turns_off_dac() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF21, 0xF0);
     apu.write_reg(0xFF23, 0x80);
@@ -774,7 +774,7 @@ fn nr42_zero_turns_off_dac() {
 
 #[test]
 fn nr42_bit3_enables_dac() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF21, 0x08); // volume 0, envelope add
     apu.write_reg(0xFF23, 0x80); // trigger noise
@@ -783,7 +783,7 @@ fn nr42_bit3_enables_dac() {
 
 #[test]
 fn nr42_write_requires_retrigger() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF21, 0xF0);
     apu.write_reg(0xFF23, 0x80);
@@ -796,7 +796,7 @@ fn nr42_write_requires_retrigger() {
 
 #[test]
 fn nr42_writes_ignored_when_disabled() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     // disable the entire APU
     apu.write_reg(0xFF26, 0x00);
     // attempt to set envelope params while powered off
@@ -811,7 +811,7 @@ fn nr42_writes_ignored_when_disabled() {
 
 #[test]
 fn nr43_lfsr_first_step() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF21, 0xF0);
     apu.write_reg(0xFF22, 0x00);
@@ -825,7 +825,7 @@ fn nr43_lfsr_first_step() {
 
 #[test]
 fn nr43_bit15_copies_to_bit7_in_short_mode() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF21, 0xF0);
     apu.write_reg(0xFF22, 0x08); // short mode
@@ -840,7 +840,7 @@ fn nr43_bit15_copies_to_bit7_in_short_mode() {
 
 #[test]
 fn nr44_length_enable_read_write() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF23, 0x40);
     assert_eq!(apu.read_reg(0xFF23), 0xFF);
@@ -850,7 +850,7 @@ fn nr44_length_enable_read_write() {
 
 #[test]
 fn nr12_period_zero_sets_timer_to_8() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF12, 0xF0); // period 0
     apu.write_reg(0xFF14, 0x80); // trigger
@@ -859,7 +859,7 @@ fn nr12_period_zero_sets_timer_to_8() {
 
 #[test]
 fn nr22_period_zero_sets_timer_to_8() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF17, 0xF0); // period 0
     apu.write_reg(0xFF19, 0x80); // trigger
@@ -868,7 +868,7 @@ fn nr22_period_zero_sets_timer_to_8() {
 
 #[test]
 fn nr43_output_depends_on_lfsr() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF21, 0xF0); // volume 15
     apu.write_reg(0xFF22, 0x00); // period 8
@@ -890,7 +890,7 @@ fn nr43_output_depends_on_lfsr() {
 
 #[test]
 fn duty_step_reset_when_apu_powered_off() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF12, 0xF0);
     apu.write_reg(0xFF14, 0x80);
@@ -909,7 +909,7 @@ fn duty_step_reset_when_apu_powered_off() {
 
 #[test]
 fn pcm_mask_glitch_releases_after_first_sample() {
-    let mut apu = Apu::new_with_config(true, CgbRevision::RevC);
+    let mut apu = Apu::new(Model::Cgb(CgbRevision::RevC));
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF24, 0x77);
     apu.write_reg(0xFF25, 0x11);
@@ -935,7 +935,7 @@ fn pcm_mask_glitch_releases_after_first_sample() {
 
 #[test]
 fn double_speed_preserves_lf_div_phase() {
-    let mut normal = Apu::new_with_config(true, CgbRevision::RevE);
+    let mut normal = Apu::new(Model::Cgb(CgbRevision::RevE));
     let mut div = 0u16;
     for _ in 0..64 {
         let prev = div;
@@ -944,7 +944,7 @@ fn double_speed_preserves_lf_div_phase() {
         normal.step(4);
     }
 
-    let mut fast = Apu::new_with_config(true, CgbRevision::RevE);
+    let mut fast = Apu::new(Model::Cgb(CgbRevision::RevE));
     let mut div_fast = 0u16;
     for _ in 0..64 {
         let prev = div_fast;
@@ -958,7 +958,7 @@ fn double_speed_preserves_lf_div_phase() {
 
 #[test]
 fn pcm_mask_defaults_to_full_on_reve() {
-    let mut apu = Apu::new_with_config(true, CgbRevision::RevE);
+    let mut apu = Apu::new(Model::Cgb(CgbRevision::RevE));
     assert_eq!(apu.pcm_mask()[0], 0xFF);
     assert_eq!(apu.pcm_mask()[1], 0xFF);
 }

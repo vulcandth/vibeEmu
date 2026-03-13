@@ -1,6 +1,6 @@
 mod common;
 
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
 
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
@@ -58,13 +58,13 @@ fn frame_to_rgb(frame: &[u32]) -> Vec<u8> {
 
 #[test]
 fn rtc_invalid_banks_png() {
-    let mut gb = GameBoy::new();
+    let mut gb = GameBoy::new(Model::default());
 
     let rom = std::fs::read(common::rom_path(
         "gbeshootout/cpp/rtc-invalid-banks-test.gb",
     ))
     .expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     // Give the ROM time to draw its result screen.
     run_for_frames(&mut gb, 600);

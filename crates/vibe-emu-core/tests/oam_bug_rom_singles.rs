@@ -1,6 +1,6 @@
 mod common;
 
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
 
 fn decode_blargg_tile_space_at_zero(tile: u8) -> char {
     // Common blargg shell convention: printable ASCII starting at tile 0 (space).
@@ -183,9 +183,9 @@ fn blargg_oam_bug_rom_singles_dmg() {
         {
             continue;
         }
-        let mut gb = GameBoy::new();
+        let mut gb = GameBoy::new(Model::default());
         let rom = std::fs::read(common::rom_path(rel)).expect("rom not found");
-        gb.mmu.load_cart(Cartridge::load(rom));
+        gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
         // These are small single-purpose ROMs; they should finish quickly.
         // Use a hard limit in dot-cycles so the test can't run forever even if

@@ -1,6 +1,6 @@
 mod common;
 
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
 
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
@@ -222,10 +222,10 @@ impl RowSpan {
 
 #[test]
 fn strikethrough_hacktix_png() {
-    let mut gb = GameBoy::new();
+    let mut gb = GameBoy::new(Model::default());
 
     let rom = std::fs::read(common::rom_path("hacktix/strikethrough.gb")).expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     // The ROM is fully visual; give it time to reach a steady screen.
     run_for_frames(&mut gb, 120);

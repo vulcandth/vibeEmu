@@ -3,7 +3,7 @@ mod common;
 use vibe_emu_core::{
     cartridge::Cartridge,
     gameboy::GameBoy,
-    hardware::{CgbRevision, DmgRevision},
+    hardware::{CgbRevision, DmgRevision, Model},
 };
 const FIB_SEQ: [u8; 6] = [3, 5, 8, 13, 21, 34];
 const FAIL_SEQ: [u8; 6] = [0x42; 6];
@@ -14,10 +14,10 @@ fn capture_first_div_reads_cgb_seed(seed_div: u16) -> Vec<u8> {
         "mooneye-test-suite/misc/boot_div-cgbABCDE.gb",
     ))
     .expect("rom not found");
-    let cart = Cartridge::load(rom);
+    let cart = Cartridge::from_bytes(rom);
     assert!(cart.cgb, "expected CGB ROM");
 
-    let mut gb = GameBoy::new_with_revisions(true, DmgRevision::default(), CgbRevision::default());
+    let mut gb = GameBoy::new(Model::Cgb(CgbRevision::default()));
     gb.mmu.load_cart(cart);
 
     gb.mmu.timer.div = seed_div;
@@ -53,8 +53,13 @@ fn run_mooneye_quit_protocol_with_dmg_revision<P: AsRef<std::path::Path>>(
     dmg_revision: DmgRevision,
 ) -> bool {
     let rom = std::fs::read(&rom_path).expect("rom not found");
-    let cart = Cartridge::load(rom);
-    let mut gb = GameBoy::new_with_revisions(cart.cgb, dmg_revision, CgbRevision::default());
+    let cart = Cartridge::from_bytes(rom);
+    let model = if cart.cgb {
+        Model::Cgb(CgbRevision::default())
+    } else {
+        Model::Dmg(dmg_revision)
+    };
+    let mut gb = GameBoy::new(model);
     gb.mmu.load_cart(cart);
 
     while gb.cpu.cycles < max_cycles {
@@ -100,12 +105,12 @@ fn run_mooneye_acceptance_with_bootrom<P: AsRef<std::path::Path>>(
     dmg_revision: DmgRevision,
 ) -> bool {
     let rom = std::fs::read(&rom_path).expect("rom not found");
-    let cart = Cartridge::load(rom);
+    let cart = Cartridge::from_bytes(rom);
     assert!(!cart.cgb, "expected DMG ROM");
 
     let boot = std::fs::read(common::dmg_boot_rom_path()).expect("boot ROM not found");
 
-    let mut gb = GameBoy::new_power_on_with_revisions(false, dmg_revision, CgbRevision::default());
+    let mut gb = GameBoy::new_power_on(Model::Dmg(dmg_revision));
     gb.mmu.load_boot_rom(boot);
     gb.mmu.load_cart(cart);
 
@@ -153,8 +158,13 @@ fn run_mooneye_acceptance_with_dmg_revision<P: AsRef<std::path::Path>>(
     dmg_revision: DmgRevision,
 ) -> bool {
     let rom = std::fs::read(&rom_path).expect("rom not found");
-    let cart = Cartridge::load(rom);
-    let mut gb = GameBoy::new_with_revisions(cart.cgb, dmg_revision, CgbRevision::default());
+    let cart = Cartridge::from_bytes(rom);
+    let model = if cart.cgb {
+        Model::Cgb(CgbRevision::default())
+    } else {
+        Model::Dmg(dmg_revision)
+    };
+    let mut gb = GameBoy::new(model);
     gb.mmu.load_cart(cart);
 
     // Optional targeted trace: capture the first few reads of DIV (FF04) so
@@ -224,8 +234,8 @@ fn run_mooneye_acceptance_force_cgb_revision<P: AsRef<std::path::Path>>(
     cgb_revision: CgbRevision,
 ) -> bool {
     let rom = std::fs::read(&rom_path).expect("rom not found");
-    let cart = Cartridge::load(rom);
-    let mut gb = GameBoy::new_with_revisions(true, DmgRevision::default(), cgb_revision);
+    let cart = Cartridge::from_bytes(rom);
+    let mut gb = GameBoy::new(Model::Cgb(cgb_revision));
     gb.mmu.load_cart(cart);
 
     while gb.cpu.cycles < max_cycles {

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use vibe_emu_core::{
     cartridge::Cartridge,
     gameboy::GameBoy,
-    hardware::{CgbRevision, DmgRevision},
+    hardware::{CgbRevision, DmgRevision, Model},
 };
 
 const DEFAULT_ROM: &str =
@@ -145,12 +145,18 @@ fn prehistorik_capture_probe() {
     );
 
     let rom = std::fs::read(&rom_path).expect("failed to read ROM");
-    let cart = Cartridge::load(rom);
+    let cart = Cartridge::from_bytes(rom);
+
+    let model = if cgb_mode {
+        Model::Cgb(cgb_rev)
+    } else {
+        Model::Dmg(dmg_rev)
+    };
 
     let mut gb = if bootrom_path.is_some() {
-        GameBoy::new_power_on_with_revisions(cgb_mode, dmg_rev, cgb_rev)
+        GameBoy::new_power_on(model)
     } else {
-        GameBoy::new_with_revisions(cgb_mode, dmg_rev, cgb_rev)
+        GameBoy::new(model)
     };
 
     if let Some(path) = &bootrom_path {

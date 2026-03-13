@@ -1,8 +1,11 @@
-use vibe_emu_core::ppu::Ppu;
+use vibe_emu_core::{
+    hardware::{CgbRevision, Model},
+    ppu::Ppu,
+};
 
 #[test]
 fn register_access() {
-    let mut ppu = Ppu::new_with_mode(true);
+    let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF40, 0x91);
     ppu.write_reg(0xFF47, 0xFC);
     ppu.write_reg(0xFF4A, 0x01);
@@ -24,7 +27,7 @@ fn register_access() {
 
 #[test]
 fn step_vblank_interrupt() {
-    let mut ppu = Ppu::new();
+    let mut ppu = Ppu::new(Model::default());
     ppu.write_reg(0xFF40, 0x80);
     let mut if_reg = 0u8;
     for _ in 0..144 {
@@ -37,7 +40,7 @@ fn step_vblank_interrupt() {
 
 #[test]
 fn render_sprite_scanline() {
-    let mut ppu = Ppu::new();
+    let mut ppu = Ppu::new(Model::default());
     ppu.write_reg(0xFF40, 0x82); // LCD on, sprites enabled
     ppu.skip_startup_for_test();
     let mut if_reg = 0u8;
@@ -56,7 +59,7 @@ fn render_sprite_scanline() {
 
 #[test]
 fn sprite_8x16_tile_offset() {
-    let mut ppu = Ppu::new();
+    let mut ppu = Ppu::new(Model::default());
     ppu.write_reg(0xFF40, 0x86); // LCD on, sprites 8x16
     ppu.skip_startup_for_test();
     let mut if_reg = 0u8;
@@ -81,7 +84,7 @@ fn sprite_8x16_tile_offset() {
 
 #[test]
 fn sprite_x_priority() {
-    let mut ppu = Ppu::new();
+    let mut ppu = Ppu::new(Model::default());
     ppu.write_reg(0xFF40, 0x82); // LCD on, sprites enabled
     ppu.skip_startup_for_test();
     let mut if_reg = 0u8;
@@ -108,7 +111,7 @@ fn sprite_x_priority() {
 
 #[test]
 fn cgb_obj_priority_mode_cgb() {
-    let mut ppu = Ppu::new_with_mode(true);
+    let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF40, 0x82); // LCD on, sprites enabled
     ppu.write_reg(0xFF48, 0xE4);
     // two sprite tiles -> color1
@@ -142,7 +145,7 @@ fn cgb_obj_priority_mode_cgb() {
 
 #[test]
 fn cgb_obj_priority_mode_dmg() {
-    let mut ppu = Ppu::new_with_mode(true);
+    let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF40, 0x82); // LCD on, sprites enabled
     ppu.write_reg(0xFF48, 0xE4);
     ppu.vram[0][0] = 0xFF;
@@ -175,7 +178,7 @@ fn cgb_obj_priority_mode_dmg() {
 
 #[test]
 fn obj_priority_color0() {
-    let mut ppu = Ppu::new();
+    let mut ppu = Ppu::new(Model::default());
     ppu.write_reg(0xFF40, 0x83); // LCD on, BG and OBJ
     ppu.skip_startup_for_test();
     let mut if_reg = 0u8;
@@ -198,7 +201,7 @@ fn obj_priority_color0() {
 
 #[test]
 fn cgb_bg_attr_priority() {
-    let mut ppu = Ppu::new_with_mode(true);
+    let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF40, 0x93); // BG and OBJ
     // BG palette 0 color1 -> red
     ppu.write_reg(0xFF68, 0x80);
@@ -231,7 +234,7 @@ fn cgb_bg_attr_priority() {
 
 #[test]
 fn cgb_master_priority() {
-    let mut ppu = Ppu::new_with_mode(true);
+    let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     // LCD on, OBJ enabled, master priority cleared
     ppu.write_reg(0xFF40, 0x92);
     // BG palette 0 color1 -> red
@@ -266,7 +269,7 @@ fn cgb_master_priority() {
 
 #[test]
 fn cgb_bg_palette() {
-    let mut ppu = Ppu::new_with_mode(true);
+    let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF40, 0x91);
     // palette 2 color 1 -> red
     ppu.write_reg(0xFF68, 0x80 | 0x10); // index 0x10 with auto inc
@@ -287,7 +290,7 @@ fn cgb_bg_palette() {
 
 #[test]
 fn cgb_bg_bank_select() {
-    let mut ppu = Ppu::new_with_mode(true);
+    let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF40, 0x91);
     // palette 0 color 1 -> red
     ppu.write_reg(0xFF68, 0x80); // index 0 with auto inc
@@ -308,7 +311,7 @@ fn cgb_bg_bank_select() {
 
 #[test]
 fn cgb_obj_palette_autoinc_read() {
-    let mut ppu = Ppu::new_with_mode(true);
+    let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     // write two values with auto-increment
     ppu.write_reg(0xFF6A, 0x80); // index 0, auto inc
     ppu.write_reg(0xFF6B, 0x11);
@@ -324,7 +327,7 @@ fn cgb_obj_palette_autoinc_read() {
 
 #[test]
 fn cgb_bg_palette_autoinc_read() {
-    let mut ppu = Ppu::new_with_mode(true);
+    let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF68, 0x80); // index 0, auto inc
     ppu.write_reg(0xFF69, 0x33);
     ppu.write_reg(0xFF69, 0x44);
@@ -338,7 +341,7 @@ fn cgb_bg_palette_autoinc_read() {
 
 #[test]
 fn bg_disable_yields_color0() {
-    let mut ppu = Ppu::new();
+    let mut ppu = Ppu::new(Model::default());
     // LCD enabled, background/window disabled
     ppu.write_reg(0xFF40, 0x80);
     ppu.write_reg(0xFF47, 0xFC); // default palette

@@ -6,7 +6,7 @@
 //! 3. Two-device link cable simulation
 
 use std::collections::VecDeque;
-use vibe_emu_core::hardware::DmgRevision;
+use vibe_emu_core::hardware::Model;
 use vibe_emu_core::serial::{LinkPort, NullLinkPort, Serial};
 
 /// A link port that records all bytes sent and returns pre-programmed responses.
@@ -53,7 +53,7 @@ fn null_link_port_loopback_echoes_byte() {
 
 #[test]
 fn serial_sb_readable_writable() {
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
 
     serial.write(0xFF01, 0x42);
     assert_eq!(serial.read(0xFF01), 0x42);
@@ -64,7 +64,7 @@ fn serial_sb_readable_writable() {
 
 #[test]
 fn serial_sc_dmg_masks_unused_bits() {
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
 
     serial.write(0xFF02, 0xFF);
     // DMG: bits 1-6 are unused and read as 1
@@ -76,7 +76,7 @@ fn serial_sc_dmg_masks_unused_bits() {
 
 #[test]
 fn serial_sc_cgb_preserves_fast_clock_bit() {
-    let mut serial = Serial::new(true, DmgRevision::default());
+    let mut serial = Serial::new(Model::from_cgb_flag(true));
 
     serial.write(0xFF02, 0x83); // bit7 + bit1 + bit0
     assert_eq!(serial.read(0xFF02), 0x83);
@@ -89,7 +89,7 @@ fn serial_sc_cgb_preserves_fast_clock_bit() {
 #[test]
 fn internal_clock_transfer_exchanges_bytes() {
     let responses = RecordingLinkPort::new([0xAB]);
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
     serial.connect(Box::new(responses));
 
     serial.write(0xFF01, 0x12);
@@ -106,7 +106,7 @@ fn internal_clock_transfer_exchanges_bytes() {
 #[test]
 fn external_clock_transfer_waits_for_pulses() {
     let responses = RecordingLinkPort::new([0xAB]);
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
     serial.connect(Box::new(responses));
 
     serial.write(0xFF01, 0x12);
@@ -130,7 +130,7 @@ fn external_clock_transfer_waits_for_pulses() {
 #[test]
 fn external_clock_partial_pulses() {
     let responses = RecordingLinkPort::new([0xAB]);
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
     serial.connect(Box::new(responses));
 
     serial.write(0xFF01, 0x12);
@@ -157,7 +157,7 @@ fn external_clock_partial_pulses() {
 
 #[test]
 fn has_external_clock_transfer_pending_works() {
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
 
     assert!(!serial.has_external_clock_transfer_pending());
 
@@ -167,7 +167,7 @@ fn has_external_clock_transfer_pending_works() {
     assert!(!serial.has_external_clock_transfer_pending());
 
     // Start external clock transfer
-    let mut serial2 = Serial::new(false, DmgRevision::default());
+    let mut serial2 = Serial::new(Model::default());
     serial2.write(0xFF01, 0x12);
     serial2.write(0xFF02, 0x80);
     assert!(serial2.has_external_clock_transfer_pending());
@@ -175,7 +175,7 @@ fn has_external_clock_transfer_pending_works() {
 
 #[test]
 fn pending_external_clock_outgoing_returns_byte() {
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
 
     assert!(serial.pending_external_clock_outgoing().is_none());
 
@@ -188,7 +188,7 @@ fn pending_external_clock_outgoing_returns_byte() {
 #[test]
 fn transfer_cancelled_by_clearing_sc_bit7() {
     let responses = RecordingLinkPort::new([0xAB]);
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
     serial.connect(Box::new(responses));
 
     serial.write(0xFF01, 0x12);
@@ -207,7 +207,7 @@ fn transfer_cancelled_by_clearing_sc_bit7() {
 #[test]
 fn multiple_sequential_transfers() {
     let responses = RecordingLinkPort::new([0x11, 0x22, 0x33]);
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
     serial.connect(Box::new(responses));
 
     for (send, expect) in [(0xAA, 0x11), (0xBB, 0x22), (0xCC, 0x33)] {
@@ -225,7 +225,7 @@ fn multiple_sequential_transfers() {
 
 #[test]
 fn sb_output_captures_writes() {
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
 
     serial.write(0xFF01, 0x41); // 'A'
     serial.write(0xFF01, 0x42); // 'B'
@@ -241,7 +241,7 @@ fn sb_output_captures_writes() {
 #[test]
 fn out_buf_captures_completed_transfers() {
     let responses = RecordingLinkPort::new([0x11, 0x22]);
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
     serial.connect(Box::new(responses));
 
     serial.write(0xFF01, 0xAA);
@@ -260,7 +260,7 @@ fn out_buf_captures_completed_transfers() {
 #[test]
 fn cgb_fast_clock_completes_faster() {
     let responses = RecordingLinkPort::new([0xAB]);
-    let mut serial = Serial::new(true, DmgRevision::default());
+    let mut serial = Serial::new(Model::from_cgb_flag(true));
     serial.connect(Box::new(responses));
 
     serial.write(0xFF01, 0x12);
@@ -282,7 +282,7 @@ fn cgb_fast_clock_completes_faster() {
 fn pokemon_style_handshake() {
     // Simulate master sending 0x01 and receiving 0x02
     let master_responses = RecordingLinkPort::new([0x02]);
-    let mut master = Serial::new(false, DmgRevision::default());
+    let mut master = Serial::new(Model::default());
     master.connect(Box::new(master_responses));
 
     master.write(0xFF01, 0x01);
@@ -297,7 +297,7 @@ fn pokemon_style_handshake() {
 
     // Simulate slave receiving 0x01 and sending 0x02 via external clock
     let slave_responses = RecordingLinkPort::new([0x01]);
-    let mut slave = Serial::new(false, DmgRevision::default());
+    let mut slave = Serial::new(Model::default());
     slave.connect(Box::new(slave_responses));
 
     slave.write(0xFF01, 0x02);
@@ -317,7 +317,7 @@ fn pokemon_style_handshake() {
 fn serial_no_data_byte_handling() {
     // Slave responds with 0xFE (not ready) three times, then 0x42
     let responses = RecordingLinkPort::new([0xFE, 0xFE, 0xFE, 0x42]);
-    let mut serial = Serial::new(false, DmgRevision::default());
+    let mut serial = Serial::new(Model::default());
     serial.connect(Box::new(responses));
 
     // First three transfers get 0xFE

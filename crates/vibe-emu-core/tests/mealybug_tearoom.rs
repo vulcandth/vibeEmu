@@ -5,7 +5,7 @@ mod common;
 use vibe_emu_core::{
     cartridge::Cartridge,
     gameboy::GameBoy,
-    hardware::{CgbRevision, DmgRevision},
+    hardware::{CgbRevision, DmgRevision, Model},
 };
 
 const SCREEN_W: u32 = 160;
@@ -68,9 +68,14 @@ fn run_until_ld_b_b(
     max_cycles: u64,
 ) -> GameBoy {
     let rom = std::fs::read(rom_path).expect("rom not found");
-    let cart = Cartridge::load(rom);
+    let cart = Cartridge::from_bytes(rom);
 
-    let mut gb = GameBoy::new_with_revisions(cgb, dmg_revision, cgb_revision);
+    let model = if cgb {
+        Model::Cgb(cgb_revision)
+    } else {
+        Model::Dmg(dmg_revision)
+    };
+    let mut gb = GameBoy::new(model);
     gb.mmu.load_cart(cart);
 
     while gb.cpu.cycles < max_cycles {

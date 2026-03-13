@@ -1,5 +1,9 @@
 mod common;
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{
+    cartridge::Cartridge,
+    gameboy::GameBoy,
+    hardware::{CgbRevision, Model},
+};
 
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
@@ -16,10 +20,10 @@ fn run_for_frames(gb: &mut GameBoy, frames: u32) {
 
 #[test]
 fn interrupt_time_dmg_png() {
-    let mut gb = GameBoy::new();
+    let mut gb = GameBoy::new(Model::default());
     let rom = std::fs::read(common::rom_path("blargg/interrupt_time/interrupt_time.gb"))
         .expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     run_for_frames(&mut gb, 120);
 
@@ -45,10 +49,10 @@ fn interrupt_time_dmg_png() {
 
 #[test]
 fn interrupt_time_cgb_png() {
-    let mut gb = GameBoy::new_with_mode(true);
+    let mut gb = GameBoy::new(Model::Cgb(CgbRevision::default()));
     let rom = std::fs::read(common::rom_path("blargg/interrupt_time/interrupt_time.gb"))
         .expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     run_for_frames(&mut gb, 120);
 

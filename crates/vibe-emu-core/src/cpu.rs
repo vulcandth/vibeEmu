@@ -1,4 +1,4 @@
-use crate::hardware::DmgRevision;
+use crate::hardware::{DmgRevision, Model};
 use crate::ppu::OamBugAccess;
 
 // CPU flag bits as documented in gbdev.io/pandocs/The_CPU_Flags.html
@@ -94,21 +94,89 @@ pub struct Cpu {
 }
 
 impl Cpu {
-    /// Create a CPU in the default post-boot DMG state.
-    pub fn new() -> Self {
-        Self::new_with_mode_and_revision(false, DmgRevision::default())
+    /// Create a CPU initialized to the post-boot register state for the given
+    /// hardware model.
+    pub fn new(model: Model) -> Self {
+        match model {
+            Model::Cgb(_) => Self {
+                a: CGB_BOOT_A,
+                f: CGB_BOOT_F,
+                b: CGB_BOOT_B,
+                c: CGB_BOOT_C,
+                d: CGB_BOOT_D,
+                e: CGB_BOOT_E,
+                h: CGB_BOOT_H,
+                l: CGB_BOOT_L,
+                pc: BOOT_PC,
+                sp: BOOT_SP,
+                cycles: 0,
+                ime: false,
+                halted: false,
+                stopped: false,
+                stop_vram_blocked: false,
+                double_speed: false,
+                halt_bug: false,
+                ime_enable_delay: 0,
+                halt_pc: None,
+                halt_pending: 0,
+                dma_conflict_active: false,
+            },
+            Model::Dmg(dmg_revision) => {
+                let (a, f, b, c, d, e, h, l) = match dmg_revision {
+                    DmgRevision::Rev0 => (
+                        DMG0_BOOT_A,
+                        DMG0_BOOT_F,
+                        DMG0_BOOT_B,
+                        DMG0_BOOT_C,
+                        DMG0_BOOT_D,
+                        DMG0_BOOT_E,
+                        DMG0_BOOT_H,
+                        DMG0_BOOT_L,
+                    ),
+                    DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => (
+                        DMG_ABC_BOOT_A,
+                        DMG_ABC_BOOT_F,
+                        DMG_ABC_BOOT_B,
+                        DMG_ABC_BOOT_C,
+                        DMG_ABC_BOOT_D,
+                        DMG_ABC_BOOT_E,
+                        DMG_ABC_BOOT_H,
+                        DMG_ABC_BOOT_L,
+                    ),
+                };
+                Self {
+                    a,
+                    f,
+                    b,
+                    c,
+                    d,
+                    e,
+                    h,
+                    l,
+                    pc: BOOT_PC,
+                    sp: BOOT_SP,
+                    cycles: 0,
+                    ime: false,
+                    halted: false,
+                    stopped: false,
+                    stop_vram_blocked: false,
+                    double_speed: false,
+                    halt_bug: false,
+                    ime_enable_delay: 0,
+                    halt_pc: None,
+                    halt_pending: 0,
+                    dma_conflict_active: false,
+                }
+            }
+        }
     }
 
     /// Create a CPU initialized to an approximate power-on state suitable for
     /// executing a boot ROM.
     ///
-    /// Unlike `new_with_mode*`, which initializes registers to the *post-boot*
-    /// values documented in Pan Docs, this starts from a neutral state and is
-    /// intended to be paired with mapping a boot ROM at 0x0000.
-    pub fn new_power_on_with_revision(_cgb: bool, _dmg_revision: DmgRevision) -> Self {
-        // The exact power-on register contents are not relied upon by most boot
-        // ROMs (they re-initialize early). The critical part for correctness is
-        // that we do NOT start from the post-boot state when executing a boot ROM.
+    /// Power-on register contents are identical regardless of model — boot ROMs
+    /// re-initialize early.
+    pub fn new_power_on() -> Self {
         Self {
             a: 0,
             f: 0,
@@ -131,93 +199,6 @@ impl Cpu {
             halt_pc: None,
             halt_pending: 0,
             dma_conflict_active: false,
-        }
-    }
-
-    /// Create a CPU in the power-on state for the given mode, using the default DMG revision.
-    pub fn new_power_on(cgb: bool) -> Self {
-        Self::new_power_on_with_revision(cgb, DmgRevision::default())
-    }
-
-    /// Create a CPU initialized to the post-boot register state for the
-    /// selected hardware mode.
-    pub fn new_with_mode(cgb: bool) -> Self {
-        Self::new_with_mode_and_revision(cgb, DmgRevision::default())
-    }
-
-    /// Create a CPU initialized to the post-boot register state for the
-    /// selected hardware mode and DMG hardware revision.
-    pub fn new_with_mode_and_revision(cgb: bool, dmg_revision: DmgRevision) -> Self {
-        if cgb {
-            Self {
-                a: CGB_BOOT_A,
-                f: CGB_BOOT_F,
-                b: CGB_BOOT_B,
-                c: CGB_BOOT_C,
-                d: CGB_BOOT_D,
-                e: CGB_BOOT_E,
-                h: CGB_BOOT_H,
-                l: CGB_BOOT_L,
-                pc: BOOT_PC,
-                sp: BOOT_SP,
-                cycles: 0,
-                ime: false,
-                halted: false,
-                stopped: false,
-                stop_vram_blocked: false,
-                double_speed: false,
-                halt_bug: false,
-                ime_enable_delay: 0,
-                halt_pc: None,
-                halt_pending: 0,
-                dma_conflict_active: false,
-            }
-        } else {
-            let (a, f, b, c, d, e, h, l) = match dmg_revision {
-                DmgRevision::Rev0 => (
-                    DMG0_BOOT_A,
-                    DMG0_BOOT_F,
-                    DMG0_BOOT_B,
-                    DMG0_BOOT_C,
-                    DMG0_BOOT_D,
-                    DMG0_BOOT_E,
-                    DMG0_BOOT_H,
-                    DMG0_BOOT_L,
-                ),
-                DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => (
-                    DMG_ABC_BOOT_A,
-                    DMG_ABC_BOOT_F,
-                    DMG_ABC_BOOT_B,
-                    DMG_ABC_BOOT_C,
-                    DMG_ABC_BOOT_D,
-                    DMG_ABC_BOOT_E,
-                    DMG_ABC_BOOT_H,
-                    DMG_ABC_BOOT_L,
-                ),
-            };
-            Self {
-                a,
-                f,
-                b,
-                c,
-                d,
-                e,
-                h,
-                l,
-                pc: BOOT_PC,
-                sp: BOOT_SP,
-                cycles: 0,
-                ime: false,
-                halted: false,
-                stopped: false,
-                stop_vram_blocked: false,
-                double_speed: false,
-                halt_bug: false,
-                ime_enable_delay: 0,
-                halt_pc: None,
-                halt_pending: 0,
-                dma_conflict_active: false,
-            }
         }
     }
 
@@ -1803,6 +1784,6 @@ impl Cpu {
 
 impl Default for Cpu {
     fn default() -> Self {
-        Self::new()
+        Self::new(Model::default())
     }
 }

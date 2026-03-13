@@ -1,4 +1,4 @@
-use crate::hardware::DmgRevision;
+use crate::hardware::{DmgRevision, Model};
 
 /// Clock information for an in-flight serial transfer.
 ///
@@ -117,8 +117,7 @@ pub struct Serial {
     sb_out_buf: Vec<u8>,
     port: Box<dyn LinkPort + Send>,
     transfer: Option<TransferState>,
-    cgb_mode: bool,
-    dmg_revision: DmgRevision,
+    model: Model,
 }
 
 struct TransferState {
@@ -165,17 +164,26 @@ impl TransferState {
 
 impl Serial {
     /// Creates a new serial unit.
-    pub fn new(cgb: bool, dmg_revision: DmgRevision) -> Self {
+    pub fn new(model: Model) -> Self {
         Self {
             sb: 0,
-            sc: if cgb { 0x7F } else { 0x7E },
+            sc: if model.is_cgb() { 0x7F } else { 0x7E },
             out_buf: Vec::new(),
             sb_out_buf: Vec::new(),
             port: Box::new(NullLinkPort::default()),
             transfer: None,
-            cgb_mode: cgb,
-            dmg_revision,
+            model,
         }
+    }
+
+    #[inline]
+    fn cgb_mode(&self) -> bool {
+        self.model.is_cgb()
+    }
+
+    #[inline]
+    fn dmg_revision(&self) -> DmgRevision {
+        self.model.dmg_revision().unwrap_or_default()
     }
 
     /// Attaches a link cable endpoint.
@@ -188,7 +196,7 @@ impl Serial {
         match addr {
             0xFF01 => self.sb,
             0xFF02 => {
-                if self.cgb_mode {
+                if self.cgb_mode() {
                     self.sc
                 } else {
                     self.sc | 0x7E
@@ -314,7 +322,7 @@ impl Serial {
 
         let (clock_bit, phase) = if let Some(state) = self.transfer.as_ref() {
             (
-                clock_bit_index(self.cgb_mode, double_speed, state.fast_clock),
+                clock_bit_index(self.cgb_mode(), double_speed, state.fast_clock),
                 self.phase_adjust(double_speed, state.fast_clock),
             )
         } else {
@@ -390,7 +398,7 @@ impl Serial {
     }
 
     fn phase_adjust(&self, double_speed: bool, fast_clock: bool) -> u16 {
-        if self.cgb_mode {
+        if self.cgb_mode() {
             return 0;
         }
 
@@ -398,7 +406,7 @@ impl Serial {
             return 0;
         }
 
-        match self.dmg_revision {
+        match self.dmg_revision() {
             DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => 0,
             DmgRevision::Rev0 => 0,
         }
@@ -414,7 +422,7 @@ impl Serial {
 
         let outgoing = state.outgoing;
         let incoming = if internal_clock {
-            let clock = if self.cgb_mode {
+            let clock = if self.cgb_mode() {
                 SerialTransferClock {
                     dot_cycles_per_bit: serial_dot_cycles_per_bit(state.fast_clock, double_speed),
                     high_speed: state.fast_clock,
@@ -482,7 +490,7 @@ fn clock_bit_index(cgb_mode: bool, double_speed: bool, fast_clock: bool) -> u32 
 #[cfg(test)]
 mod tests {
     use super::{LinkPort, Serial, serial_dot_cycles_per_bit};
-    use crate::hardware::DmgRevision;
+    use crate::hardware::Model;
 
     struct FixedInLinkPort {
         ret: u8,
@@ -565,7 +573,7 @@ mod tests {
 
     #[test]
     fn sc_write_during_active_transfer_does_not_cancel() {
-        let mut serial = Serial::new(false, DmgRevision::default());
+        let mut serial = Serial::new(Model::default());
         serial.connect(Box::new(FixedInLinkPort::new(0x34)));
 
         serial.write(0xFF01, 0x12);
@@ -584,7 +592,7 @@ mod tests {
 
     #[test]
     fn internal_clock_transfer_completes_and_requests_irq() {
-        let mut serial = Serial::new(false, DmgRevision::default());
+        let mut serial = Serial::new(Model::default());
         serial.connect(Box::new(FixedInLinkPort::new(0x34)));
 
         serial.write(0xFF01, 0x12);
@@ -602,7 +610,7 @@ mod tests {
 
     #[test]
     fn internal_clock_waits_for_partner_byte_before_clocking() {
-        let mut serial = Serial::new(false, DmgRevision::default());
+        let mut serial = Serial::new(Model::default());
         serial.connect(Box::new(DelayedTryPort::new(0x34, 1)));
 
         serial.write(0xFF01, 0x12);
@@ -622,7 +630,7 @@ mod tests {
 
     #[test]
     fn internal_clock_shifts_bits_into_sb() {
-        let mut serial = Serial::new(false, DmgRevision::default());
+        let mut serial = Serial::new(Model::default());
         serial.connect(Box::new(FixedInLinkPort::new(0x80)));
 
         serial.write(0xFF01, 0x00);
@@ -642,7 +650,7 @@ mod tests {
 
     #[test]
     fn external_clock_stalls_without_pulses() {
-        let mut serial = Serial::new(false, DmgRevision::default());
+        let mut serial = Serial::new(Model::default());
         serial.connect(Box::new(FixedInLinkPort::new(0x34)));
 
         serial.write(0xFF01, 0x12);
@@ -657,7 +665,7 @@ mod tests {
 
     #[test]
     fn external_clock_completes_with_pulses() {
-        let mut serial = Serial::new(false, DmgRevision::default());
+        let mut serial = Serial::new(Model::default());
         serial.connect(Box::new(FixedInLinkPort::new(0x34)));
 
         serial.write(0xFF01, 0x12);
@@ -676,7 +684,7 @@ mod tests {
 
     #[test]
     fn external_clock_latches_and_shifts_partner_byte() {
-        let mut serial = Serial::new(false, DmgRevision::default());
+        let mut serial = Serial::new(Model::default());
         serial.connect(Box::new(ExternalTryPort::new(0xA5)));
 
         serial.write(0xFF01, 0x00);
@@ -696,7 +704,7 @@ mod tests {
 
     #[test]
     fn internal_clock_irq_only_on_final_bit_dmg() {
-        let mut serial = Serial::new(false, DmgRevision::default());
+        let mut serial = Serial::new(Model::default());
         serial.connect(Box::new(FixedInLinkPort::new(0x34)));
 
         serial.write(0xFF01, 0x12);
@@ -717,7 +725,7 @@ mod tests {
 
     #[test]
     fn internal_clock_rate_cgb_normal_speed() {
-        let mut serial = Serial::new(true, DmgRevision::default());
+        let mut serial = Serial::new(Model::from_cgb_flag(true));
         serial.connect(Box::new(FixedInLinkPort::new(0x34)));
 
         serial.write(0xFF01, 0x12);
@@ -738,7 +746,7 @@ mod tests {
 
     #[test]
     fn internal_clock_rate_cgb_double_speed() {
-        let mut serial = Serial::new(true, DmgRevision::default());
+        let mut serial = Serial::new(Model::from_cgb_flag(true));
         serial.connect(Box::new(FixedInLinkPort::new(0x34)));
 
         serial.write(0xFF01, 0x12);
@@ -759,7 +767,7 @@ mod tests {
 
     #[test]
     fn internal_clock_rate_cgb_fast_clock() {
-        let mut serial = Serial::new(true, DmgRevision::default());
+        let mut serial = Serial::new(Model::from_cgb_flag(true));
         serial.connect(Box::new(FixedInLinkPort::new(0x34)));
 
         serial.write(0xFF01, 0x12);
@@ -781,7 +789,7 @@ mod tests {
 
     #[test]
     fn internal_clock_rate_cgb_fast_clock_double_speed() {
-        let mut serial = Serial::new(true, DmgRevision::default());
+        let mut serial = Serial::new(Model::from_cgb_flag(true));
         serial.connect(Box::new(FixedInLinkPort::new(0x34)));
 
         serial.write(0xFF01, 0x12);
@@ -810,7 +818,7 @@ mod tests {
 
     #[test]
     fn open_bus_no_partner_internal_clock_receives_ff() {
-        let mut serial = Serial::new(false, DmgRevision::default());
+        let mut serial = Serial::new(Model::default());
         // No connect(): uses NullLinkPort which shifts in 1s.
         serial.write(0xFF01, 0x12);
         serial.write(0xFF02, 0x80 | 0x01);
@@ -824,7 +832,7 @@ mod tests {
 
     #[test]
     fn open_bus_no_partner_external_clock_receives_ff() {
-        let mut serial = Serial::new(false, DmgRevision::default());
+        let mut serial = Serial::new(Model::default());
         // No connect(): uses NullLinkPort which shifts in 1s.
         serial.write(0xFF01, 0x12);
         serial.write(0xFF02, 0x80);
@@ -838,7 +846,7 @@ mod tests {
 
     #[test]
     fn sc_write_with_bit7_restarts_transfer_using_current_sb() {
-        let mut serial = Serial::new(false, DmgRevision::default());
+        let mut serial = Serial::new(Model::default());
         serial.connect(Box::new(FixedInLinkPort::new(0x34)));
 
         serial.write(0xFF01, 0x12);

@@ -2,13 +2,13 @@ mod common;
 
 use vibe_emu_core::{
     cartridge::Cartridge,
-    hardware::{CgbRevision, DmgRevision},
+    hardware::{CgbRevision, Model},
     mmu::Mmu,
 };
 
 #[test]
 fn hdma_wait_loop_observes_idle_ff55() {
-    let mut mmu = Mmu::new_with_mode(true);
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
     // Ensure the LCD is considered enabled so HDMA enters H-Blank mode.
     mmu.write_byte(0xFF40, 0x80);
 
@@ -40,7 +40,7 @@ fn hdma_wait_loop_observes_idle_ff55() {
 
 #[test]
 fn wram_echo_and_bank_switch() {
-    let mut mmu = Mmu::new_with_mode(true);
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
     mmu.write_byte(0xC000, 0xAA);
     assert_eq!(mmu.read_byte(0xC000), 0xAA);
     mmu.write_byte(0xE000, 0xBB);
@@ -63,7 +63,7 @@ fn wram_echo_and_bank_switch() {
 
 #[test]
 fn vram_bank_switch() {
-    let mut mmu = Mmu::new_with_mode(true);
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
     mmu.write_byte(0x8000, 0x11);
     assert_eq!(mmu.read_byte(0x8000), 0x11);
 
@@ -78,7 +78,7 @@ fn vram_bank_switch() {
 
 #[test]
 fn boot_rom_disable() {
-    let mut mmu = Mmu::new();
+    let mut mmu = Mmu::new(Model::default());
     mmu.load_boot_rom(vec![0xAA; 0x100]);
     mmu.load_cart(Cartridge::from_bytes_with_ram(vec![0xBB; 0x200], 0x2000));
     assert_eq!(mmu.read_byte(0x00), 0xAA);
@@ -98,7 +98,7 @@ fn cgb_boot_rom_mapping() {
     rom[0x08FF] = 0xC5;
     let cart = Cartridge::from_bytes_with_ram(rom, 0);
 
-    let mut mmu = Mmu::new_with_mode(true);
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
     mmu.load_cart(cart);
 
     let mut boot = vec![0u8; 0x900];
@@ -148,8 +148,8 @@ fn dmg_post_boot_vram_matches_real_boot_rom() {
     let mut rom = vec![0u8; 0x8000];
     rom[0x0104..0x0134].copy_from_slice(logo);
 
-    let mut mmu = Mmu::new_with_revisions(false, DmgRevision::default(), CgbRevision::default());
-    mmu.load_cart(Cartridge::load(rom));
+    let mut mmu = Mmu::new(Model::default());
+    mmu.load_cart(Cartridge::from_bytes(rom));
     let vram = &mmu.ppu.vram[0];
 
     fn expand_nibble(nibble: u8) -> u8 {
@@ -191,7 +191,7 @@ fn dmg_post_boot_vram_matches_real_boot_rom() {
 
 #[test]
 fn cartridge_ram_access() {
-    let mut mmu = Mmu::new();
+    let mut mmu = Mmu::new(Model::default());
     mmu.load_cart(Cartridge::from_bytes_with_ram(vec![0; 0x200], 0x2000));
 
     mmu.write_byte(0xA000, 0x55);
@@ -209,8 +209,8 @@ fn mbc1_rom_bank_switching() {
         rom[i * 0x4000] = i as u8;
     }
 
-    let cart = Cartridge::load(rom);
-    let mut mmu = Mmu::new();
+    let cart = Cartridge::from_bytes(rom);
+    let mut mmu = Mmu::new(Model::default());
     mmu.load_cart(cart);
 
     // default bank 1 at 0x4000
@@ -228,7 +228,7 @@ fn mbc1_rom_bank_switching() {
 
 #[test]
 fn cgb_rev_c_unusable_oam_aliases_by_masked_bits() {
-    let mut mmu = Mmu::new_with_revisions(true, DmgRevision::default(), CgbRevision::RevC);
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::RevC));
 
     // Matches which.gb's CGB D/E discriminator setup.
     mmu.write_byte(0xFEA0, 0x55);
@@ -240,7 +240,7 @@ fn cgb_rev_c_unusable_oam_aliases_by_masked_bits() {
 
 #[test]
 fn cgb_rev_d_unusable_oam_is_fully_addressable() {
-    let mut mmu = Mmu::new_with_revisions(true, DmgRevision::default(), CgbRevision::RevD);
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::RevD));
 
     mmu.write_byte(0xFEA0, 0x55);
     mmu.write_byte(0xFEB8, 0x44);
@@ -251,7 +251,7 @@ fn cgb_rev_d_unusable_oam_is_fully_addressable() {
 
 #[test]
 fn cgb_rev_e_unusable_oam_reads_address_pattern() {
-    let mut mmu = Mmu::new_with_revisions(true, DmgRevision::default(), CgbRevision::RevE);
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::RevE));
 
     // Writes should not affect CPU-visible reads for RevE's pattern behavior.
     mmu.write_byte(0xFEA0, 0x55);
@@ -268,7 +268,7 @@ fn mbc1_ram_enable() {
     rom[0x0149] = 0x03; // 32KB RAM
     let cart = Cartridge::from_bytes_with_ram(rom, 0x8000);
 
-    let mut mmu = Mmu::new();
+    let mut mmu = Mmu::new(Model::default());
     mmu.load_cart(cart);
 
     mmu.write_byte(0xA000, 0x55);
@@ -284,7 +284,7 @@ fn mbc1_ram_enable() {
 
 #[test]
 fn oam_dma_transfer() {
-    let mut mmu = Mmu::new();
+    let mut mmu = Mmu::new(Model::default());
     for i in 0..0xA0u16 {
         mmu.write_byte(0x8000 + i, i as u8);
     }
@@ -296,7 +296,7 @@ fn oam_dma_transfer() {
 
 #[test]
 fn oam_dma_initial_delay() {
-    let mut mmu = Mmu::new();
+    let mut mmu = Mmu::new(Model::default());
     for i in 0..0xA0u16 {
         mmu.write_byte(0x8000 + i, i as u8);
     }
@@ -313,7 +313,7 @@ fn oam_dma_initial_delay() {
 
 #[test]
 fn oam_dma_restart_timing() {
-    let mut mmu = Mmu::new();
+    let mut mmu = Mmu::new(Model::default());
     for i in 0..0xA0u16 {
         mmu.write_byte(0x8000 + i, i as u8);
         mmu.write_byte(0x9000 + i, (i + 0x10) as u8);
@@ -336,7 +336,7 @@ fn oam_dma_restart_timing() {
 
 #[test]
 fn vram_oam_access_blocking() {
-    let mut mmu = Mmu::new();
+    let mut mmu = Mmu::new(Model::default());
     mmu.ppu.mode = 3;
     mmu.write_byte(0x8000, 0x12);
     assert_eq!(mmu.read_byte(0x8000), 0xFF);

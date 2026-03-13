@@ -1,9 +1,4 @@
-use crate::{
-    apu::ApuBootSnapshot,
-    cpu::Cpu,
-    hardware::{CgbRevision, DmgRevision},
-    mmu::Mmu,
-};
+use crate::{apu::ApuBootSnapshot, cpu::Cpu, hardware::Model, mmu::Mmu};
 
 #[cfg(test)]
 use crate::cartridge::Cartridge;
@@ -32,9 +27,7 @@ pub struct CpuBootSnapshot {
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootHandoffSnapshot {
-    pub cgb: bool,
-    pub dmg_revision: DmgRevision,
-    pub cgb_revision: CgbRevision,
+    pub model: Model,
     pub cpu: CpuBootSnapshot,
     pub boot_mapped: bool,
     pub if_reg: u8,
@@ -65,12 +58,8 @@ pub struct GameBoy {
     pub cpu: Cpu,
     /// Memory map and attached devices (PPU/APU/timer/cartridge/etc).
     pub mmu: Mmu,
-    /// Whether the machine is running in CGB mode.
-    pub cgb: bool,
-    /// DMG CPU/board revision used for revision-specific quirks.
-    pub dmg_revision: DmgRevision,
-    /// CGB revision used for revision-specific quirks.
-    pub cgb_revision: CgbRevision,
+    /// Hardware model and revision of the emulated system.
+    pub model: Model,
 }
 
 impl GameBoy {
@@ -80,9 +69,7 @@ impl GameBoy {
         let io = self.mmu.debug_io_snapshot();
 
         BootHandoffSnapshot {
-            cgb: self.cgb,
-            dmg_revision: self.dmg_revision,
-            cgb_revision: self.cgb_revision,
+            model: self.model,
             cpu: CpuBootSnapshot {
                 a: self.cpu.a,
                 f: self.cpu.f,
@@ -120,93 +107,37 @@ impl GameBoy {
         }
     }
 
-    /// Creates a DMG-mode machine in the post-boot state.
+    /// Creates a machine in the post-boot state for the given hardware model.
     ///
     /// # Examples
     ///
     /// ```
     /// use vibe_emu_core::gameboy::GameBoy;
-    /// use vibe_emu_core::cartridge::Cartridge;
+    /// use vibe_emu_core::hardware::{Model, DmgRevision, CgbRevision};
     ///
-    /// let mut gb = GameBoy::new();
-    /// // Load a ROM before stepping the CPU.
-    /// let rom = vec![0x00u8; 0x8000]; // minimal all-NOP ROM
-    /// gb.mmu.load_cart(Cartridge::load(rom));
-    /// gb.cpu.step(&mut gb.mmu);
+    /// let dmg = GameBoy::new(Model::Dmg(DmgRevision::default()));
+    /// let cgb = GameBoy::new(Model::Cgb(CgbRevision::default()));
+    /// assert!(dmg.model.is_dmg());
+    /// assert!(cgb.model.is_cgb());
     /// ```
-    pub fn new() -> Self {
-        Self::new_with_mode(false)
-    }
-
-    /// Creates a machine in the post-boot state.
-    ///
-    /// When `cgb` is `true`, the machine runs in CGB mode with default revisions.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use vibe_emu_core::gameboy::GameBoy;
-    ///
-    /// let dmg = GameBoy::new_with_mode(false);
-    /// let cgb = GameBoy::new_with_mode(true);
-    /// assert!(!dmg.cgb);
-    /// assert!(cgb.cgb);
-    /// ```
-    pub fn new_with_mode(cgb: bool) -> Self {
-        Self::new_with_revisions(cgb, DmgRevision::default(), CgbRevision::default())
-    }
-
-    /// Creates a machine in the post-boot state with an explicit CGB revision.
-    pub fn new_with_revision(cgb: bool, revision: CgbRevision) -> Self {
-        Self::new_with_revisions(cgb, DmgRevision::default(), revision)
-    }
-
-    /// Creates a machine in the post-boot state with explicit DMG + CGB revisions.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use vibe_emu_core::gameboy::GameBoy;
-    /// use vibe_emu_core::hardware::{CgbRevision, DmgRevision};
-    ///
-    /// let gb = GameBoy::new_with_revisions(true, DmgRevision::RevB, CgbRevision::RevE);
-    /// assert!(gb.cgb);
-    /// ```
-    pub fn new_with_revisions(
-        cgb: bool,
-        dmg_revision: DmgRevision,
-        cgb_revision: CgbRevision,
-    ) -> Self {
+    pub fn new(model: Model) -> Self {
         Self {
-            cpu: Cpu::new_with_mode_and_revision(cgb, dmg_revision),
-            mmu: Mmu::new_with_revisions(cgb, dmg_revision, cgb_revision),
-            cgb,
-            dmg_revision,
-            cgb_revision,
+            cpu: Cpu::new(model),
+            mmu: Mmu::new(model),
+            model,
         }
     }
 
     /// Creates a machine initialized to an approximate power-on state.
     ///
     /// This is intended for executing a boot ROM. If you are skipping the boot
-    /// ROM, prefer [`Self::new_with_revisions`].
-    pub fn new_power_on_with_revisions(
-        cgb: bool,
-        dmg_revision: DmgRevision,
-        cgb_revision: CgbRevision,
-    ) -> Self {
+    /// ROM, prefer [`Self::new`].
+    pub fn new_power_on(model: Model) -> Self {
         Self {
-            cpu: Cpu::new_power_on_with_revision(cgb, dmg_revision),
-            mmu: Mmu::new_power_on_with_revisions(cgb, dmg_revision, cgb_revision),
-            cgb,
-            dmg_revision,
-            cgb_revision,
+            cpu: Cpu::new_power_on(),
+            mmu: Mmu::new_power_on(model),
+            model,
         }
-    }
-
-    /// Creates a power-on machine with an explicit CGB revision.
-    pub fn new_power_on_with_revision(cgb: bool, revision: CgbRevision) -> Self {
-        Self::new_power_on_with_revisions(cgb, DmgRevision::default(), revision)
     }
 
     /// Resets to the post-boot state, preserving cartridge and boot ROM.
@@ -216,9 +147,10 @@ impl GameBoy {
     /// ```
     /// use vibe_emu_core::gameboy::GameBoy;
     /// use vibe_emu_core::cartridge::Cartridge;
+    /// use vibe_emu_core::hardware::Model;
     ///
-    /// let mut gb = GameBoy::new();
-    /// gb.mmu.load_cart(Cartridge::load(vec![0u8; 0x8000]));
+    /// let mut gb = GameBoy::new(Model::default());
+    /// gb.mmu.load_cart(Cartridge::from_bytes(vec![0u8; 0x8000]));
     /// gb.cpu.step(&mut gb.mmu);
     /// let pc_before = gb.cpu.pc;
     ///
@@ -230,9 +162,8 @@ impl GameBoy {
     pub fn reset(&mut self) {
         let cart = self.mmu.cart.take();
         let boot = self.mmu.boot_rom.take();
-        self.cpu = Cpu::new_with_mode_and_revision(self.cgb, self.dmg_revision);
-        self.mmu
-            .reset_post_boot_in_place(self.cgb, self.dmg_revision, self.cgb_revision);
+        self.cpu = Cpu::new(self.model);
+        self.mmu.reset_post_boot_in_place(self.model);
         if let Some(c) = cart {
             self.mmu.load_cart(c);
         }
@@ -248,9 +179,8 @@ impl GameBoy {
     pub fn reset_power_on(&mut self) {
         let cart = self.mmu.cart.take();
         let boot = self.mmu.boot_rom.take();
-        self.cpu = Cpu::new_power_on_with_revision(self.cgb, self.dmg_revision);
-        self.mmu
-            .reset_power_on_in_place(self.cgb, self.dmg_revision, self.cgb_revision);
+        self.cpu = Cpu::new_power_on();
+        self.mmu.reset_power_on_in_place(self.model);
         if let Some(c) = cart {
             self.mmu.load_cart(c);
         }
@@ -262,13 +192,14 @@ impl GameBoy {
 
 impl Default for GameBoy {
     fn default() -> Self {
-        Self::new()
+        Self::new(Model::default())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hardware::{CgbRevision, DmgRevision};
 
     fn dummy_rom(cgb: bool) -> Vec<u8> {
         let mut rom = vec![0; 0x8000];
@@ -281,7 +212,7 @@ mod tests {
 
     #[test]
     fn reset_preserves_cart_and_boot_rom() {
-        let mut gb = GameBoy::new_with_revisions(true, DmgRevision::RevB, CgbRevision::RevC);
+        let mut gb = GameBoy::new(Model::Cgb(CgbRevision::RevC));
         gb.mmu
             .load_cart(Cartridge::from_bytes_with_ram(dummy_rom(true), 0));
         gb.mmu.load_boot_rom(vec![0xEA; 0x900]);
@@ -297,7 +228,7 @@ mod tests {
 
     #[test]
     fn reset_power_on_preserves_cart_and_boot_rom() {
-        let mut gb = GameBoy::new_with_revisions(false, DmgRevision::RevA, CgbRevision::RevD);
+        let mut gb = GameBoy::new(Model::Dmg(DmgRevision::RevA));
         gb.mmu
             .load_cart(Cartridge::from_bytes_with_ram(dummy_rom(false), 0));
         gb.mmu.load_boot_rom(vec![0x00; 0x100]);

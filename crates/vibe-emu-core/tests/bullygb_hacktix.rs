@@ -3,7 +3,7 @@
 mod common;
 
 use std::time::{Duration, Instant};
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::DmgRevision};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
 
 const EXPECTED_SUCCESS: &[u8] = b"All tests OK!";
 
@@ -40,15 +40,11 @@ fn run_bullygb(mode_cgb: bool) {
     };
     let boot_rom_bytes = std::fs::read(&boot_rom_path).expect("boot ROM not found");
 
-    let cart = Cartridge::load(rom_bytes);
+    let cart = Cartridge::from_bytes(rom_bytes);
 
     // Force DMG/CGB mode explicitly (even if the ROM header is CGB-compatible)
     // and start from a power-on state so we can execute the real boot ROM.
-    let mut gb = if mode_cgb {
-        GameBoy::new_power_on_with_revisions(true, DmgRevision::default(), Default::default())
-    } else {
-        GameBoy::new_power_on_with_revisions(false, DmgRevision::default(), Default::default())
-    };
+    let mut gb = GameBoy::new_power_on(Model::from_cgb_flag(mode_cgb));
     gb.mmu.load_cart(cart);
     gb.mmu.load_boot_rom(boot_rom_bytes);
 

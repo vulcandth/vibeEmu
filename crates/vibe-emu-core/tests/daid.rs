@@ -1,6 +1,10 @@
 mod common;
 
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{
+    cartridge::Cartridge,
+    gameboy::GameBoy,
+    hardware::{CgbRevision, Model},
+};
 
 fn run_for_frames(gb: &mut GameBoy, frames: u32) {
     let mut seen = 0u32;
@@ -57,10 +61,10 @@ fn assert_framebuffer_matches_png(gb: &GameBoy, png_relative_path: &str) {
 fn daid_speed_switch_timing_div() {
     // Validates correctness by comparing the framebuffer against the reference PNG
     // from GBEmulatorShootout.
-    let mut gb = GameBoy::new_with_mode(true);
+    let mut gb = GameBoy::new(Model::Cgb(CgbRevision::default()));
     let rom =
         std::fs::read(common::rom_path("daid/speed_switch_timing_div.gbc")).expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     run_for_frames(&mut gb, 120);
     assert_framebuffer_matches_png(&gb, "daid/speed_switch_timing_div.png");
@@ -71,10 +75,10 @@ fn daid_speed_switch_timing_ly() {
     // The ROM samples `rLY` 128 times after a speed switch and stores results into
     // WRAM0 at $C000..$C07F. Validate that buffer against Daid's published `expect`
     // table from the upstream ASM.
-    let mut gb = GameBoy::new_with_mode(true);
+    let mut gb = GameBoy::new(Model::Cgb(CgbRevision::default()));
     let rom =
         std::fs::read(common::rom_path("daid/speed_switch_timing_ly.gbc")).expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     const EXPECT: [u8; 128] = [
         0x85, 0x86, 0x86, 0x86, 0x86, 0x86, 0x86, 0x86, 0x86, 0x86, 0x86, 0x86, 0x86, 0x86, 0x86,
@@ -109,10 +113,10 @@ fn daid_speed_switch_timing_ly() {
 
 #[test]
 fn daid_speed_switch_timing_stat() {
-    let mut gb = GameBoy::new_with_mode(true);
+    let mut gb = GameBoy::new(Model::Cgb(CgbRevision::default()));
     let rom = std::fs::read(common::rom_path("daid/speed_switch_timing_stat.gbc"))
         .expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     const EXPECT: [u8; 64] = [
         0x80, 0x82, 0x82, 0x82, 0x82, 0x82, 0x82, 0x82, 0x82, 0x83, 0x83, 0x83, 0x83, 0x83, 0x83,
@@ -143,9 +147,9 @@ fn daid_speed_switch_timing_stat() {
 
 #[test]
 fn daid_stop_instr_dmg() {
-    let mut gb = GameBoy::new_with_mode(false);
+    let mut gb = GameBoy::new(Model::default());
     let rom = std::fs::read(common::rom_path("daid/stop_instr.gb")).expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     // The ROM prints a failure message and then executes STOP with the LCD on.
     // If STOP returns, it will print "STOP not stopping..." (failure).
@@ -169,9 +173,9 @@ fn daid_stop_instr_dmg() {
 fn daid_stop_instr_cgb() {
     // In CGB mode, STOP should keep the PPU running but prevent it from accessing
     // VRAM, resulting in a black screen.
-    let mut gb = GameBoy::new_with_mode(true);
+    let mut gb = GameBoy::new(Model::Cgb(CgbRevision::default()));
     let rom = std::fs::read(common::rom_path("daid/stop_instr.gb")).expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     run_for_frames(&mut gb, 120);
     assert_framebuffer_matches_png(&gb, "daid/stop_instr.gbc.png");
@@ -181,10 +185,10 @@ fn daid_stop_instr_cgb() {
 fn daid_stop_instr_cgb_mode3() {
     // STOP during mode 3 on CGB should keep the already-displayed frame stable
     // (the PPU continues running and can access VRAM during mode 3).
-    let mut gb = GameBoy::new_with_mode(true);
+    let mut gb = GameBoy::new(Model::Cgb(CgbRevision::default()));
     let rom =
         std::fs::read(common::rom_path("daid/stop_instr_gbc_mode3.gb")).expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     run_for_frames(&mut gb, 120);
     assert_framebuffer_matches_png(&gb, "daid/stop_instr_gbc_mode3.png");
@@ -196,8 +200,8 @@ fn daid_ppu_scanline_bgp_gbc() {
     // The test ROM writes different BGP values during mode 3 to create colored bands.
     let rom = std::fs::read(common::rom_path("daid/ppu_scanline_bgp.gb")).expect("rom not found");
 
-    let mut gb = GameBoy::new_with_mode(true);
-    gb.mmu.load_cart(Cartridge::load(rom));
+    let mut gb = GameBoy::new(Model::Cgb(CgbRevision::default()));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     run_for_frames(&mut gb, 60);
     assert_framebuffer_matches_png(&gb, "daid/ppu_scanline_bgp.gbc.png");
@@ -209,8 +213,8 @@ fn daid_ppu_scanline_bgp_dmg() {
     // during mode 3 to create colored bands.
     let rom = std::fs::read(common::rom_path("daid/ppu_scanline_bgp.gb")).expect("rom not found");
 
-    let mut gb = GameBoy::new_with_mode(false);
-    gb.mmu.load_cart(Cartridge::load(rom));
+    let mut gb = GameBoy::new(Model::default());
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     // Use grayscale palette to match the reference screenshots
     gb.mmu

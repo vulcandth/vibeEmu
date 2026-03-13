@@ -1,4 +1,4 @@
-use vibe_emu_core::apu::Apu;
+use vibe_emu_core::{apu::Apu, hardware::Model};
 
 fn tick_machine(apu: &mut Apu, div: &mut u16, cycles: u16) {
     let prev = *div;
@@ -9,7 +9,7 @@ fn tick_machine(apu: &mut Apu, div: &mut u16, cycles: u16) {
 
 #[test]
 fn channel1_triggers_when_dac_on() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     apu.write_reg(0xFF12, 0xF0); // DAC on
     apu.write_reg(0xFF14, 0x80); // trigger channel 1
@@ -18,7 +18,7 @@ fn channel1_triggers_when_dac_on() {
 
 #[test]
 fn channel1_trigger_ignored_when_dac_off() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80); // enable APU
     apu.write_reg(0xFF12, 0x00); // DAC off
     apu.write_reg(0xFF14, 0x80); // attempt trigger
@@ -28,7 +28,7 @@ fn channel1_trigger_ignored_when_dac_off() {
 #[test]
 #[ignore]
 fn channel1_disabled_by_length_timer() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF11, 0x3F); // length = 1
     apu.write_reg(0xFF12, 0xF0); // DAC on
@@ -48,7 +48,7 @@ fn channel1_disabled_by_length_timer() {
 #[test]
 #[ignore]
 fn sweep_overflow_disables_channel1() {
-    let mut apu = Apu::new();
+    let mut apu = Apu::new(Model::default());
     apu.write_reg(0xFF26, 0x80);
     apu.write_reg(0xFF10, 0x01); // period=0, shift=1 (addition)
     apu.write_reg(0xFF12, 0xF0);

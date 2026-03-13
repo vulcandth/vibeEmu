@@ -18,7 +18,7 @@ use std::cell::Cell;
 
 use crate::audio_queue::{AudioConsumer, AudioProducer, audio_queue};
 
-use crate::hardware::{CgbRevision, DmgRevision};
+use crate::hardware::{CgbRevision, DmgRevision, Model};
 
 /// State machine for skipping DIV-APU events when APU powers on with DIV bit already set.
 ///
@@ -901,9 +901,7 @@ pub struct Apu {
     /// Our CPU does write→tick, but hardware steps APU before each bus access.
     wave_prestep_deficit: i32,
     /// True if running in CGB mode; used for model-specific APU quirks.
-    cgb_mode: bool,
-    cgb_revision: CgbRevision,
-    dmg_revision: DmgRevision,
+    model: Model,
     /// State machine for skipping DIV-APU events when APU powers on with DIV bit set.
     skip_div_event: SkipDivEvent,
 
@@ -992,7 +990,7 @@ impl Apu {
         self.ch1.length_enable = false;
         self.ch1.duty_pos = 1;
 
-        if self.cgb_mode {
+        if self.cgb_mode() {
             for i in 0..0x10 {
                 let value = if i % 2 == 0 { 0x00 } else { 0xFF };
                 self.wave_ram[i] = value;
@@ -1084,8 +1082,9 @@ impl Apu {
     ///
     /// ```
     /// use vibe_emu_core::apu::Apu;
+    /// use vibe_emu_core::hardware::Model;
     ///
-    /// let mut apu = Apu::new();
+    /// let mut apu = Apu::new(Model::default());
     /// let consumer = apu.enable_output(44_100);
     ///
     /// // The consumer can be sent to an audio callback thread.
@@ -1239,7 +1238,7 @@ impl Apu {
         self.ch3.bugged_read_countdown = 2;
         self.ch3.sample_suppressed.set(true);
 
-        if self.cgb_mode {
+        if self.cgb_mode() {
             // CGB: always redirect to the byte at the current playback position
             self.wave_ram[byte_idx]
         } else {
@@ -1276,7 +1275,7 @@ impl Apu {
         let locked = self.ch3.enabled && self.ch3.dac_enabled;
         self.ch3.wave_ram_locked.set(locked);
         if locked {
-            if !self.cgb_mode && !self.ch3.wave_form_just_read.get() {
+            if !self.cgb_mode() && !self.ch3.wave_form_just_read.get() {
                 return;
             }
             let target = self.wave_current_byte_index();
@@ -1318,7 +1317,7 @@ impl Apu {
         self.ch3 = WaveChannel::default();
         self.ch4 = NoiseChannel::default();
         self.regs.fill(0);
-        if !self.cgb_mode {
+        if !self.cgb_mode() {
             self.ch1.length = ch1_len;
             self.ch2.length = ch2_len;
             self.ch3.length = ch3_len;
@@ -1427,16 +1426,17 @@ impl Apu {
 
     /// Apply the NRX2 write glitch ("zombie mode") to the given current volume for a square channel.
     fn apply_nrx2_glitch_square(&mut self, ch: u8, vol: u8, old_val: u8, new_val: u8) -> u8 {
+        let model = self.model;
         let lock = if ch == 1 {
             &mut self.ch1_env_clock
         } else {
             &mut self.ch2_env_clock
         };
         // On pre CGB-D models (DMG and up to CGB-C) the glitch behaves as if two writes happen via 0xFF
-        let is_old_model = !self.cgb_mode
+        let is_old_model = !model.is_cgb()
             || matches!(
-                self.cgb_revision,
-                CgbRevision::Rev0 | CgbRevision::RevA | CgbRevision::RevB | CgbRevision::RevC
+                model.cgb_revision(),
+                Some(CgbRevision::Rev0 | CgbRevision::RevA | CgbRevision::RevB | CgbRevision::RevC)
             );
         if is_old_model {
             let v1 = Apu::nrx2_glitch_step(vol, 0xFF, old_val, lock);
@@ -1533,9 +1533,7 @@ impl Apu {
             apu_enable_tick: 0,
             mhz2_residual: 0,
             wave_prestep_deficit: 0,
-            cgb_mode: false,
-            cgb_revision: CgbRevision::default(),
-            dmg_revision: DmgRevision::default(),
+            model: Model::default(),
             ch1_env_clock: EnvelopeClock::default(),
             ch2_env_clock: EnvelopeClock::default(),
             ch4_env_clock: EnvelopeClock::default(),
@@ -1582,29 +1580,27 @@ impl Apu {
         apu
     }
 
-    /// Create an APU in the default DMG post-boot state.
-    pub fn new() -> Self {
-        Self::new_with_revisions(false, DmgRevision::default(), CgbRevision::default())
-    }
-
-    /// Create an APU with the specified hardware mode (DMG vs CGB).
-    pub fn new_with_mode(cgb: bool) -> Self {
-        Self::new_with_revisions(cgb, DmgRevision::default(), CgbRevision::default())
-    }
-
-    /// Create an APU with the specified mode and CGB revision.
-    pub fn new_with_config(cgb: bool, revision: CgbRevision) -> Self {
-        Self::new_with_revisions(cgb, DmgRevision::default(), revision)
-    }
-
-    /// Create an APU with explicit DMG and CGB hardware revisions.
-    pub fn new_with_revisions(cgb: bool, dmg_revision: DmgRevision, revision: CgbRevision) -> Self {
+    /// Create an APU for the given hardware model.
+    pub fn new(model: Model) -> Self {
         let mut apu = Self::new_internal();
-        apu.cgb_mode = cgb;
-        apu.cgb_revision = revision;
-        apu.dmg_revision = dmg_revision;
+        apu.model = model;
         apu.hp_coef = Apu::calc_hp_coef(apu.sample_rate);
         apu
+    }
+
+    #[inline]
+    fn cgb_mode(&self) -> bool {
+        self.model.is_cgb()
+    }
+
+    #[inline]
+    fn cgb_revision(&self) -> CgbRevision {
+        self.model.cgb_revision().unwrap_or_default()
+    }
+
+    #[inline]
+    fn dmg_revision(&self) -> DmgRevision {
+        self.model.dmg_revision().unwrap_or_default()
     }
 
     pub(crate) fn take_output_state(&mut self) -> OutputState {
@@ -1659,7 +1655,7 @@ impl Apu {
             // with an advance-before-read ordering. CGB always redirects
             // reads to the current position, so the extra advance would put us
             // 2 ticks ahead of the correct phase.
-            if !self.cgb_mode {
+            if !self.cgb_mode() {
                 self.prestep_wave();
             }
             return self.wave_cpu_read(index);
@@ -1671,7 +1667,7 @@ impl Apu {
 
     /// Read a PCM output register (0xFF76 / 0xFF77, CGB only).
     pub fn read_pcm(&mut self, addr: u16) -> u8 {
-        if !self.cgb_mode || self.nr52 & 0x80 == 0 {
+        if !self.cgb_mode() || self.nr52 & 0x80 == 0 {
             return 0xFF;
         }
         self.ensure_pcm_regs_fresh();
@@ -1827,7 +1823,7 @@ impl Apu {
     pub fn write_reg(&mut self, addr: u16, mut val: u8) {
         if self.nr52 & 0x80 == 0 && addr != 0xFF26 && !(0xFF30..=0xFF3F).contains(&addr) {
             // On DMG, NR11/NR21/NR31/NR41 length writes are allowed even when APU is off
-            if !self.cgb_mode && matches!(addr, 0xFF11 | 0xFF16 | 0xFF1B | 0xFF20) {
+            if !self.cgb_mode() && matches!(addr, 0xFF11 | 0xFF16 | 0xFF1B | 0xFF20) {
                 if matches!(addr, 0xFF11 | 0xFF16) {
                     val &= 0x3F;
                 }
@@ -1855,7 +1851,7 @@ impl Apu {
                 }
 
                 let old_negate = if matches!(
-                    self.cgb_revision,
+                    self.cgb_revision(),
                     CgbRevision::Rev0 | CgbRevision::RevA | CgbRevision::RevB | CgbRevision::RevC
                 ) {
                     true // On old CGB revisions, treat old_negate as true
@@ -1924,7 +1920,7 @@ impl Apu {
                 self.apply_square_de_freq_change_phase_quirk(1, old_val, val);
                 self.ch1.write_frequency_high(val);
                 let triggered = val & 0x80 != 0;
-                if triggered && !self.cgb_mode {
+                if triggered && !self.cgb_mode() {
                     self.extra_length_clock_square(prev, length_enable, false, 1);
                     self.trigger_square(1, prev);
                 } else {
@@ -1974,7 +1970,7 @@ impl Apu {
                 self.apply_square_de_freq_change_phase_quirk(2, old_val, val);
                 self.ch2.write_frequency_high(val);
                 let triggered = val & 0x80 != 0;
-                if triggered && !self.cgb_mode {
+                if triggered && !self.cgb_mode() {
                     self.extra_length_clock_square(prev, length_enable, false, 2);
                     self.trigger_square(2, prev);
                 } else {
@@ -2028,7 +2024,7 @@ impl Apu {
                 self.ch3.sample_length =
                     (self.ch3.sample_length & 0xFF) | (((val & 0x07) as u16) << 8);
                 let triggered = val & 0x80 != 0;
-                if triggered && !self.cgb_mode {
+                if triggered && !self.cgb_mode() {
                     self.prestep_wave();
                     self.extra_length_clock_wave(prev, length_enable, false);
                     let was_enabled = self.ch3.enabled && self.ch3.dac_enabled;
@@ -2115,7 +2111,7 @@ impl Apu {
                 let prev = self.ch4.length_enable;
                 let length_enable = val & 0x40 != 0;
                 let triggered = val & 0x80 != 0;
-                if triggered && !self.cgb_mode {
+                if triggered && !self.cgb_mode() {
                     self.extra_length_clock_noise(prev, length_enable, false);
                     self.trigger_noise(prev, length_enable);
                     self.mark_pcm_dirty();
@@ -2165,7 +2161,7 @@ impl Apu {
                 self.regs[idx] = 0x70 | (self.nr52 & 0x80);
             }
             0xFF30..=0xFF3F => {
-                if !self.cgb_mode {
+                if !self.cgb_mode() {
                     self.prestep_wave();
                 }
                 let index = (addr - 0xFF30) as usize;
@@ -2176,6 +2172,7 @@ impl Apu {
     }
 
     fn trigger_square(&mut self, idx: u8, prev_length_enable: bool) {
+        let model = self.model;
         let reg_idx = if idx == 1 { 0x04 } else { 0x09 };
         let value = self.regs[reg_idx];
         let length_enable = value & 0x40 != 0;
@@ -2186,7 +2183,8 @@ impl Apu {
         };
 
         let freq_updated = false;
-        let de_window = self.cgb_mode && self.cgb_revision.supports_de_window();
+        let de_window =
+            model.is_cgb() && model.cgb_revision().is_some_and(|r| r.supports_de_window());
         {
             let ch = if idx == 1 {
                 &mut self.ch1
@@ -2217,13 +2215,15 @@ impl Apu {
             if !was_active {
                 // Pre-CGB-D revisions in double-speed invert the lf_div
                 // contribution; all other models/speeds use 6 - lf_div.
-                let pre_cgb_d = self.cgb_mode
+                let pre_cgb_d = model.is_cgb()
                     && matches!(
-                        self.cgb_revision,
-                        CgbRevision::Rev0
-                            | CgbRevision::RevA
-                            | CgbRevision::RevB
-                            | CgbRevision::RevC
+                        model.cgb_revision(),
+                        Some(
+                            CgbRevision::Rev0
+                                | CgbRevision::RevA
+                                | CgbRevision::RevB
+                                | CgbRevision::RevC
+                        )
                     );
                 let mut delay = if pre_cgb_d && self.double_speed {
                     6 + lf_div
@@ -2322,7 +2322,7 @@ impl Apu {
 
             if ch.length == 0 {
                 ch.length = 64;
-                if !self.cgb_mode
+                if !model.is_cgb()
                     && ch.length_enable
                     && (!prev_length_enable || (self.sequencer.step & 1) != 0)
                 {
@@ -2350,7 +2350,7 @@ impl Apu {
                 // Reload timer depends on lf_div and CGB revision
                 let base_timer = if (self.lf_div & 1) != (if self.double_speed { 1 } else { 0 })
                     && matches!(
-                        self.cgb_revision,
+                        self.cgb_revision(),
                         CgbRevision::Rev0
                             | CgbRevision::RevA
                             | CgbRevision::RevB
@@ -2376,7 +2376,7 @@ impl Apu {
             // These are set unconditionally.
             // In double-speed, ticks_2mhz=1 per step so hold decrements half as
             // fast; subtract 1 to compensate for the skip adding one effective tick.
-            let cgb_not_d = self.cgb_mode && self.cgb_revision != CgbRevision::RevD;
+            let cgb_not_d = self.cgb_mode() && self.cgb_revision() != CgbRevision::RevD;
             let base_hold = 2 - (self.lf_div & 1) + if cgb_not_d { 2 } else { 0 };
             self.ch1_restart_hold = if self.double_speed {
                 base_hold - 1
@@ -2413,7 +2413,7 @@ impl Apu {
     }
     fn trigger_wave(&mut self, was_enabled: bool, prev_length_enable: bool, length_enable: bool) {
         let prev_sample = self.ch3.compute_output();
-        let retrigger_bug = !self.cgb_mode && was_enabled && self.ch3.sample_countdown == 0;
+        let retrigger_bug = !self.cgb_mode() && was_enabled && self.ch3.sample_countdown == 0;
         if retrigger_bug {
             // DMG hardware copies upcoming wave RAM bytes into the first slot when retriggered on the read edge.
             let byte_index =
@@ -2478,7 +2478,7 @@ impl Apu {
         self.ch3.length_enable = length_enable;
         if self.ch3.length == 0 {
             self.ch3.length = 256;
-            if !self.cgb_mode
+            if !self.cgb_mode()
                 && self.ch3.length_enable
                 && (!prev_length_enable || (self.sequencer.step & 1) != 0)
             {
@@ -2491,7 +2491,7 @@ impl Apu {
         self.ch4.length_enable = length_enable;
         if self.ch4.length == 0 {
             self.ch4.length = 64;
-            if !self.cgb_mode
+            if !self.cgb_mode()
                 && self.ch4.length_enable
                 && (!prev_length_enable || (self.sequencer.step & 1) != 0)
             {
@@ -2504,7 +2504,7 @@ impl Apu {
         self.ch4.pending_reset = true;
         self.ch4.pending_disable = false;
 
-        if !self.cgb_mode && (self.ch4.alignment & 3) != 0 {
+        if !self.cgb_mode() && (self.ch4.alignment & 3) != 0 {
             self.ch4.dmg_delayed_start = 6;
             self.ch4.enabled = false;
             self.ch4.sample_suppressed = true;
@@ -2866,7 +2866,7 @@ impl Apu {
             return;
         }
 
-        let should_step = self.ch4.enabled || !self.cgb_mode;
+        let should_step = self.ch4.enabled || !self.cgb_mode();
         if !should_step {
             return;
         }
@@ -2906,7 +2906,7 @@ impl Apu {
                 self.ch4.enabled = false;
                 self.ch4.sample_suppressed = true;
                 self.ch4.set_pipeline_sample(0);
-                if self.cgb_mode {
+                if self.cgb_mode() {
                     break;
                 }
             }
@@ -2934,9 +2934,9 @@ impl Apu {
     }
 
     fn is_pre_de_revision(&self) -> bool {
-        !self.cgb_mode
+        !self.cgb_mode()
             || matches!(
-                self.cgb_revision,
+                self.cgb_revision(),
                 CgbRevision::Rev0 | CgbRevision::RevA | CgbRevision::RevB | CgbRevision::RevC
             )
     }
@@ -2958,7 +2958,7 @@ impl Apu {
     fn effective_noise_counter(&self) -> u16 {
         let mut counter = (self.ch4.counter & 0x3FFF) as u16;
         let nr43 = self.regs[NR43_IDX];
-        if !self.cgb_mode {
+        if !self.cgb_mode() {
             if counter & 0x8 != 0 {
                 counter |= 0xE;
             }
@@ -2989,7 +2989,7 @@ impl Apu {
             return counter;
         }
 
-        match self.cgb_revision {
+        match self.cgb_revision() {
             CgbRevision::RevB => {
                 if counter & 0x8 != 0 {
                     counter |= 0xE;
@@ -3178,9 +3178,9 @@ impl Apu {
     }
 
     fn cgb_early_length_bug(&self) -> bool {
-        self.cgb_mode
+        self.cgb_mode()
             && matches!(
-                self.cgb_revision,
+                self.cgb_revision(),
                 CgbRevision::Rev0 | CgbRevision::RevA | CgbRevision::RevB
             )
     }
@@ -3303,8 +3303,8 @@ impl Apu {
         old_reg_value: u8,
         new_reg_value: u8,
     ) {
-        if !self.cgb_mode
-            || !matches!(self.cgb_revision, CgbRevision::RevD | CgbRevision::RevE)
+        if !self.cgb_mode()
+            || !matches!(self.cgb_revision(), CgbRevision::RevD | CgbRevision::RevE)
             || !self.double_speed
             || (new_reg_value & 0x80) != 0
         {
@@ -3332,9 +3332,9 @@ impl Apu {
         old_reg_value: u8,
         new_reg_value: u8,
     ) {
-        if !self.cgb_mode
+        if !self.cgb_mode()
             || !matches!(
-                self.cgb_revision,
+                self.cgb_revision(),
                 CgbRevision::Rev0 | CgbRevision::RevB | CgbRevision::RevC
             )
             || (new_reg_value & 0x80) != 0
@@ -3392,7 +3392,7 @@ impl Apu {
         active[3] = ch4_active;
 
         let mut mask = [0xFFu8; 2];
-        if self.cgb_revision.has_pcm_mask_glitch() {
+        if self.cgb_revision().has_pcm_mask_glitch() {
             mask = [0, 0];
             if active[0] && samples[0] > 0 {
                 mask[0] |= 0x0F;
@@ -3812,7 +3812,7 @@ impl Apu {
 
 impl Default for Apu {
     fn default() -> Self {
-        Self::new()
+        Self::new(Model::default())
     }
 }
 
@@ -3822,7 +3822,7 @@ mod tests {
 
     #[test]
     fn dc_filter_reduces_constant_input() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new(Model::default());
         let first = apu.dc_block(1000, 1000);
         let second = apu.dc_block(1000, 1000);
         assert!(second.0 < first.0);
@@ -3831,7 +3831,7 @@ mod tests {
 
     #[test]
     fn dc_filter_converges_to_zero() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new(Model::default());
         let mut out = (0i16, 0i16);
         for _ in 0..8192 {
             out = apu.dc_block(1000, 1000);
@@ -3842,7 +3842,7 @@ mod tests {
 
     #[test]
     fn dc_filter_channels_independent() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new(Model::default());
         let mut last_left = 0i16;
         let mut last_right = 0i16;
         for _ in 0..8 {
@@ -3856,7 +3856,7 @@ mod tests {
 
     #[test]
     fn dc_filter_reset_when_all_dacs_off() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new(Model::default());
         apu.nr50 = 0x00;
         apu.nr51 = 0x11;
         apu.ch1.enabled = true;
@@ -3875,7 +3875,7 @@ mod tests {
 
     #[test]
     fn dc_filter_active_when_dac_on() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new(Model::default());
         apu.nr50 = 0x00;
         apu.nr51 = 0x11;
         apu.ch1.enabled = true;

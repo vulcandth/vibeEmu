@@ -1,4 +1,9 @@
-use vibe_emu_core::{cartridge::Cartridge, cpu::Cpu, mmu::Mmu};
+use vibe_emu_core::{
+    cartridge::Cartridge,
+    cpu::Cpu,
+    hardware::{CgbRevision, Model},
+    mmu::Mmu,
+};
 
 #[test]
 fn simple_program() {
@@ -16,10 +21,10 @@ fn simple_program() {
         0x00, // 0x0010: NOP
     ];
 
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0; // start executing at 0
-    let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::default());
+    mmu.load_cart(Cartridge::from_bytes(program));
 
     for _ in 0..8 {
         cpu.step(&mut mmu);
@@ -37,12 +42,12 @@ fn simple_program() {
 fn interrupt_handling() {
     let program = vec![0x00]; // NOP
 
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
     cpu.sp = 0xC100;
     cpu.ime = true;
-    let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::default());
+    mmu.load_cart(Cartridge::from_bytes(program));
     mmu.if_reg = 0x01;
     mmu.ie_reg = 0x01;
 
@@ -61,21 +66,21 @@ fn jr_nz_cycles() {
     // JR NZ should take 12 cycles when branch taken and 8 when not
     let program = vec![0x20, 0x01, 0x00];
 
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
     cpu.f = 0x00; // Z flag cleared
-    let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge::load(program.clone()));
+    let mut mmu = Mmu::new(Model::default());
+    mmu.load_cart(Cartridge::from_bytes(program.clone()));
     cpu.step(&mut mmu);
 
     assert_eq!(cpu.pc, 3);
     assert_eq!(cpu.cycles, 12);
 
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
     cpu.f = 0x80; // Z flag set
-    let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::default());
+    mmu.load_cart(Cartridge::from_bytes(program));
     cpu.step(&mut mmu);
 
     assert_eq!(cpu.pc, 2);
@@ -86,10 +91,10 @@ fn jr_nz_cycles() {
 fn ei_delay() {
     let program = vec![0xFB, 0x00]; // EI; NOP
 
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
-    let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::default());
+    mmu.load_cart(Cartridge::from_bytes(program));
 
     cpu.step(&mut mmu); // EI
     assert!(!cpu.ime);
@@ -117,10 +122,10 @@ fn ld_rr_instructions() {
         0x70, // LD (HL),B
     ];
 
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
-    let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::default());
+    mmu.load_cart(Cartridge::from_bytes(program));
 
     for _ in 0..15 {
         cpu.step(&mut mmu);
@@ -142,10 +147,10 @@ fn alu_immediate_ops() {
         0xEE, 0xFF, // XOR 0xFF -> A=0xFF
     ];
 
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
-    let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::default());
+    mmu.load_cart(Cartridge::from_bytes(program));
 
     for _ in 0..4 {
         cpu.step(&mut mmu);
@@ -172,10 +177,10 @@ fn alu_register_ops() {
         0x00, // NOP
     ];
 
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
-    let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::default());
+    mmu.load_cart(Cartridge::from_bytes(program));
 
     for _ in 0..12 {
         cpu.step(&mut mmu);
@@ -192,10 +197,10 @@ fn alu_register_ops() {
 fn halt_bug() {
     // DI; HALT; LD A,0x12
     let program = vec![0xF3, 0x76, 0x3E, 0x12];
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
-    let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::default());
+    mmu.load_cart(Cartridge::from_bytes(program));
     mmu.if_reg = 0x01;
     mmu.ie_reg = 0x01;
 
@@ -211,10 +216,10 @@ fn halt_bug() {
 fn stop_speed_switch() {
     // STOP 0x00 ; NOP
     let program = vec![0x10, 0x00, 0x00];
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
-    let mut mmu = Mmu::new_with_mode(true);
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
+    mmu.load_cart(Cartridge::from_bytes(program));
     mmu.key1 = 0x01; // request speed switch
 
     cpu.step(&mut mmu); // STOP
@@ -228,10 +233,10 @@ fn stop_speed_switch() {
 fn speed_switch_stall_advances_dot_div_but_not_cpu_div() {
     // STOP 0x00 ; NOP
     let program = vec![0x10, 0x00, 0x00];
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
-    let mut mmu = Mmu::new_with_mode(true);
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
+    mmu.load_cart(Cartridge::from_bytes(program));
     mmu.key1 = 0x01; // request speed switch
     mmu.timer.div = 0x4321;
     mmu.dot_div = 0x1234;
@@ -253,10 +258,10 @@ fn gdma_stall_advances_cpu_div() {
     // While a CGB GDMA stall is active, the CPU is blocked from executing
     // instructions, but time still advances (including the CPU divider).
     let program = vec![0x00]; // NOP (won't execute during the stall)
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
-    let mut mmu = Mmu::new_with_mode(true);
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
+    mmu.load_cart(Cartridge::from_bytes(program));
 
     // Point GDMA at WRAM0 -> VRAM.
     mmu.wram[0][0] = 0xAB;
@@ -285,10 +290,10 @@ fn gdma_stall_advances_cpu_div() {
 fn double_speed_timer_scaling() {
     // STOP to switch speed, then NOP
     let program = vec![0x10, 0x00, 0x00];
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
-    let mut mmu = Mmu::new_with_mode(true);
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
+    mmu.load_cart(Cartridge::from_bytes(program));
     mmu.key1 = 0x01;
 
     cpu.step(&mut mmu); // STOP
@@ -308,10 +313,10 @@ fn double_speed_timer_scaling() {
 fn stop_resets_div_and_pauses() {
     // STOP; NOP
     let program = vec![0x10, 0x00, 0x00];
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new(Model::default());
     cpu.pc = 0;
-    let mut mmu = Mmu::new();
-    mmu.load_cart(Cartridge::load(program));
+    let mut mmu = Mmu::new(Model::default());
+    mmu.load_cart(Cartridge::from_bytes(program));
     mmu.timer.div = 0x1234;
 
     cpu.step(&mut mmu); // STOP

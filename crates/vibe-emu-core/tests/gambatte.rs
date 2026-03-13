@@ -7,11 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use libtest_mimic::{Arguments, Failed, Trial};
-use vibe_emu_core::{
-    cartridge::Cartridge,
-    gameboy::GameBoy,
-    hardware::{CgbRevision, DmgRevision},
-};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
 
 const GB_WIDTH: usize = 160;
 const GB_HEIGHT: usize = 144;
@@ -260,14 +256,10 @@ fn execute_mode(
 
     let rom_data =
         fs::read(rom).map_err(|err| format!("failed to read {}: {err}", rom.display()))?;
-    let cart = Cartridge::load(rom_data);
+    let cart = Cartridge::from_bytes(rom_data);
     let mut gb = match mode {
-        Mode::Dmg => {
-            GameBoy::new_with_revisions(false, DmgRevision::default(), CgbRevision::default())
-        }
-        Mode::Cgb => {
-            GameBoy::new_with_revisions(true, DmgRevision::default(), CgbRevision::default())
-        }
+        Mode::Dmg => GameBoy::new(Model::default()),
+        Mode::Cgb => GameBoy::new(Model::from_cgb_flag(true)),
     };
     gb.mmu.load_cart(cart);
 

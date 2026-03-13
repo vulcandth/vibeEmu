@@ -1,6 +1,6 @@
 mod common;
 
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
 
 const NINTENDO_LOGO: [u8; 48] = [
     0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
@@ -53,7 +53,7 @@ fn capture_bootrom_handoff_snapshot(cgb: bool) -> vibe_emu_core::gameboy::BootHa
     };
     let boot_rom = std::fs::read(boot_rom_path).expect("failed to read boot ROM");
 
-    let mut gb = GameBoy::new_power_on_with_revisions(cgb, Default::default(), Default::default());
+    let mut gb = GameBoy::new_power_on(Model::from_cgb_flag(cgb));
     gb.mmu.load_boot_rom(boot_rom);
     gb.mmu.load_cart(Cartridge::from_bytes_with_ram(
         build_minimal_bootable_rom(cgb),
@@ -75,7 +75,7 @@ fn capture_bootrom_handoff_snapshot(cgb: bool) -> vibe_emu_core::gameboy::BootHa
 }
 
 fn capture_no_boot_snapshot(cgb: bool) -> vibe_emu_core::gameboy::BootHandoffSnapshot {
-    let mut gb = GameBoy::new_with_mode(cgb);
+    let mut gb = GameBoy::new(Model::from_cgb_flag(cgb));
     gb.mmu.load_cart(Cartridge::from_bytes_with_ram(
         build_minimal_bootable_rom(cgb),
         0,

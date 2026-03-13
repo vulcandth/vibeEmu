@@ -64,13 +64,13 @@ The main entry point is `GameBoy`, which holds the `cpu` and `mmu` fields.
 Step the CPU to advance emulation and read the framebuffer from `mmu.ppu`:
 
 ```rust
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
 
 // Load a ROM from bytes
 let rom = std::fs::read("game.gb").unwrap();
-let cart = Cartridge::load(rom);
+let cart = Cartridge::from_bytes(rom);
 
-let mut gb = GameBoy::new();
+let mut gb = GameBoy::new(Model::default());
 gb.mmu.load_cart(cart);
 
 // Run one frame

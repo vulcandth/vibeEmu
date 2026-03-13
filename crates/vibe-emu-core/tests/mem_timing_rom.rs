@@ -1,10 +1,10 @@
 mod common;
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
 
 fn run_mem_timing<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> String {
-    let mut gb = GameBoy::new();
+    let mut gb = GameBoy::new(Model::default());
     let rom = std::fs::read(rom_path).expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     let mut checked_up_to = 0;
     while gb.cpu.cycles < max_cycles {

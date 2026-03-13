@@ -2,7 +2,11 @@
 mod common;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::CgbRevision};
+use vibe_emu_core::{
+    cartridge::Cartridge,
+    gameboy::GameBoy,
+    hardware::{CgbRevision, Model},
+};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 const FIB_SEQ: [u8; 6] = [3, 5, 8, 13, 21, 34];
@@ -38,11 +42,11 @@ fn parse_cgb_revision_from_path<P: AsRef<Path>>(rom_path: P) -> Option<CgbRevisi
 
 fn run_same_suite<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> bool {
     let rom = std::fs::read(&rom_path).expect("rom not found");
-    let cart = Cartridge::load(rom);
+    let cart = Cartridge::from_bytes(rom);
     let mut gb = if let Some(rev) = parse_cgb_revision_from_path(&rom_path) {
-        GameBoy::new_with_revision(cart.cgb, rev)
+        GameBoy::new(Model::Cgb(rev))
     } else {
-        GameBoy::new_with_mode(cart.cgb)
+        GameBoy::new(Model::from_cgb_flag(cart.cgb))
     };
     gb.mmu.load_cart(cart);
     let start = Instant::now();
@@ -89,11 +93,11 @@ fn run_same_suite<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> bo
 
 fn run_same_suite_gb<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> GameBoy {
     let rom = std::fs::read(&rom_path).expect("rom not found");
-    let cart = Cartridge::load(rom);
+    let cart = Cartridge::from_bytes(rom);
     let mut gb = if let Some(rev) = parse_cgb_revision_from_path(&rom_path) {
-        GameBoy::new_with_revision(cart.cgb, rev)
+        GameBoy::new(Model::Cgb(rev))
     } else {
-        GameBoy::new_with_mode(cart.cgb)
+        GameBoy::new(Model::from_cgb_flag(cart.cgb))
     };
     gb.mmu.load_cart(cart);
     let start = Instant::now();

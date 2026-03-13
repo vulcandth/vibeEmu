@@ -27,7 +27,7 @@ fn mbc30_header_detection() {
     rom[0x0147] = 0x13; // MBC3 + RAM + Battery
     rom[0x0149] = 0x05; // 64KB RAM -> MBC30
 
-    let cart = Cartridge::load(rom);
+    let cart = Cartridge::from_bytes(rom);
     assert_eq!(cart.mbc, MbcType::Mbc30);
 }
 

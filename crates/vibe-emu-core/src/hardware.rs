@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 /// DMG hardware revision.
 ///
 /// Used to model revision-specific quirks that affect timing and observable
@@ -15,7 +15,7 @@ pub enum DmgRevision {
     RevC,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 /// CGB hardware revision.
 ///
 /// Used to model revision-specific quirks (e.g. PPU and APU behaviors) that
@@ -50,5 +50,66 @@ impl CgbRevision {
             self,
             CgbRevision::Rev0 | CgbRevision::RevA | CgbRevision::RevB | CgbRevision::RevC
         )
+    }
+}
+
+/// Hardware model and revision of the emulated system.
+///
+/// Combines the system family (DMG or CGB) with its board/silicon revision
+/// into a single typed value. This eliminates the `cgb: bool` parameter that
+/// was previously threaded through every constructor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Model {
+    /// Original Game Boy (DMG) with the given board revision.
+    Dmg(DmgRevision),
+    /// Game Boy Color (CGB) with the given board revision.
+    Cgb(CgbRevision),
+}
+
+impl Model {
+    /// Returns `true` when this model is a CGB (Game Boy Color).
+    #[inline]
+    pub const fn is_cgb(self) -> bool {
+        matches!(self, Model::Cgb(_))
+    }
+
+    /// Returns `true` when this model is a DMG (original Game Boy).
+    #[inline]
+    pub const fn is_dmg(self) -> bool {
+        matches!(self, Model::Dmg(_))
+    }
+
+    /// Returns the DMG board revision, if this is a DMG model.
+    #[inline]
+    pub const fn dmg_revision(self) -> Option<DmgRevision> {
+        match self {
+            Model::Dmg(rev) => Some(rev),
+            Model::Cgb(_) => None,
+        }
+    }
+
+    /// Returns the CGB board revision, if this is a CGB model.
+    #[inline]
+    pub const fn cgb_revision(self) -> Option<CgbRevision> {
+        match self {
+            Model::Cgb(rev) => Some(rev),
+            Model::Dmg(_) => None,
+        }
+    }
+
+    /// Build a `Model` from a CGB-mode flag, using default revisions.
+    #[inline]
+    pub fn from_cgb_flag(cgb: bool) -> Self {
+        if cgb {
+            Model::Cgb(CgbRevision::default())
+        } else {
+            Model::Dmg(DmgRevision::default())
+        }
+    }
+}
+
+impl Default for Model {
+    fn default() -> Self {
+        Model::Dmg(DmgRevision::default())
     }
 }

@@ -702,7 +702,7 @@ impl Cartridge {
     /// assert_eq!(cart.ram.len(), 8192);
     /// ```
     pub fn from_bytes_with_ram(data: Vec<u8>, ram_size: usize) -> Self {
-        let mut c = Self::load(data);
+        let mut c = Self::from_bytes(data);
         c.ram = vec![0; ram_size];
         c
     }
@@ -726,7 +726,7 @@ impl Cartridge {
     /// ```
     pub fn from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let data = fs::read(&path)?;
-        let mut cart = Self::load(data);
+        let mut cart = Self::from_bytes(data);
 
         if cart.has_battery() {
             let mut save = PathBuf::from(path.as_ref());
@@ -795,10 +795,10 @@ impl Cartridge {
     ///
     /// // A minimal ROM: 32 KiB of zeroes is enough for a NoMbc cartridge.
     /// let rom = vec![0u8; 0x8000];
-    /// let cart = Cartridge::load(rom);
+    /// let cart = Cartridge::from_bytes(rom);
     /// assert!(!cart.cgb); // no CGB flag set in header
     /// ```
-    pub fn load(data: Vec<u8>) -> Self {
+    pub fn from_bytes(data: Vec<u8>) -> Self {
         let header = Header::parse(&data);
         let ram_size = header.ram_size();
 
@@ -1715,7 +1715,7 @@ mod tests {
         rom[0x0147] = 0x03; // MBC1 + RAM + BAT
         rom[0x0149] = 0x02; // 8KB RAM
 
-        let cart = Cartridge::load(rom);
+        let cart = Cartridge::from_bytes(rom);
         assert!(!cart.ram.is_empty());
         assert!(cart.ram.iter().all(|&b| b == 0xFF));
     }
@@ -1726,7 +1726,7 @@ mod tests {
         rom[0x0147] = 0x00; // No MBC
         rom[0x0149] = 0x01; // 2KB RAM
 
-        let mut cart = Cartridge::load(rom);
+        let mut cart = Cartridge::from_bytes(rom);
         // Writes to $A800 should mirror to $A000 for 2KB RAM.
         cart.write(0xA800, 0x12);
         assert_eq!(cart.read(0xA000), 0x12);
@@ -1742,7 +1742,7 @@ mod tests {
             *b = 0x11;
         }
 
-        let mut cart = Cartridge::load(rom);
+        let mut cart = Cartridge::from_bytes(rom);
         // Select an out-of-range bank; should wrap to bank 1.
         cart.write(0x2000, 5);
         assert_eq!(cart.read(0x4000), 0x11);
@@ -1790,7 +1790,7 @@ mod tests {
     #[test]
     fn tpp1_features_battery_and_rtc() {
         let rom = make_tpp1_rom(1, 0x0C);
-        let cart = Cartridge::load(rom);
+        let cart = Cartridge::from_bytes(rom);
         assert!(cart.has_battery());
         assert!(cart.has_rtc());
     }
@@ -1798,7 +1798,7 @@ mod tests {
     #[test]
     fn tpp1_initial_state() {
         let rom = make_tpp1_rom(1, 0x08);
-        let mut cart = Cartridge::load(rom);
+        let mut cart = Cartridge::from_bytes(rom);
         assert_eq!(cart.current_rom_bank(), 1);
         assert_eq!(cart.current_ram_bank(), 0);
         // Initial mapping is control registers; reading A000 returns MR0 = 1
@@ -1810,7 +1810,7 @@ mod tests {
     #[test]
     fn tpp1_rom_banking() {
         let rom = make_tpp1_rom(0, 0);
-        let mut cart = Cartridge::load(rom);
+        let mut cart = Cartridge::from_bytes(rom);
         // Bank 0 home area reads from 0x0000
         assert_eq!(cart.read(0x0000), 0x00);
         // Bank 1 initially mapped to 0x4000-0x7FFF
@@ -1824,7 +1824,7 @@ mod tests {
     #[test]
     fn tpp1_sram_read_write() {
         let rom = make_tpp1_rom(1, 0x08);
-        let mut cart = Cartridge::load(rom);
+        let mut cart = Cartridge::from_bytes(rom);
         // Enable SRAM read/write
         cart.write(0x0003, 0x03);
         assert!(cart.ram_enabled());
@@ -1840,7 +1840,7 @@ mod tests {
     #[test]
     fn tpp1_control_register_readback() {
         let rom = make_tpp1_rom(1, 0);
-        let mut cart = Cartridge::load(rom);
+        let mut cart = Cartridge::from_bytes(rom);
         // Map control registers
         cart.write(0x0003, 0x00);
         // Write MR0 = 0x05, MR1 = 0x02, MR2 = 0x03
@@ -1859,7 +1859,7 @@ mod tests {
     #[test]
     fn tpp1_rtc_latch_and_readback() {
         let rom = make_tpp1_rom(0, 0x04);
-        let mut cart = Cartridge::load(rom);
+        let mut cart = Cartridge::from_bytes(rom);
         // Start the RTC
         cart.write(0x0003, 0x19);
         // Map RTC latched registers
@@ -1939,7 +1939,7 @@ mod tests {
     fn tpp1_rumble_speed_clamped() {
         // has_rumble=true, has_multi_rumble=false
         let rom = make_tpp1_rom(0, 0x01);
-        let mut cart = Cartridge::load(rom);
+        let mut cart = Cartridge::from_bytes(rom);
         // Map control registers
         cart.write(0x0003, 0x00);
         // Request speed 3

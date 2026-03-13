@@ -2,7 +2,7 @@ mod common;
 
 use std::{fmt::Write as _, path::Path};
 
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
 
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
@@ -80,9 +80,9 @@ fn bg_tilemap_ascii_dump(gb: &mut GameBoy) -> String {
 }
 
 fn run_rom<P: AsRef<Path>, Q: AsRef<Path>>(rom_path: P, screenshot_path: Q, frames_to_run: u32) {
-    let mut gb = GameBoy::new();
+    let mut gb = GameBoy::new(Model::default());
     let rom = std::fs::read(rom_path).expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     let mut frames = 0u32;
     while frames < frames_to_run {

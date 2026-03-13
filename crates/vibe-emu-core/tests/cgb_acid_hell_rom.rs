@@ -1,12 +1,16 @@
 mod common;
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{
+    cartridge::Cartridge,
+    gameboy::GameBoy,
+    hardware::{CgbRevision, Model},
+};
 
 #[test]
 fn cgb_acid_hell_rom() {
-    let mut gb = GameBoy::new_with_mode(true);
+    let mut gb = GameBoy::new(Model::Cgb(CgbRevision::default()));
     let rom =
         std::fs::read(common::rom_path("cgb-acid-hell/cgb-acid-hell.gbc")).expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     let mut frames = 0u32;
     while frames < 120 {

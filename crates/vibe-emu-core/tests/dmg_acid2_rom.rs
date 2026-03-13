@@ -1,13 +1,13 @@
 mod common;
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
 
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
 #[test]
 fn dmg_acid2_rom() {
-    let mut gb = GameBoy::new();
+    let mut gb = GameBoy::new(Model::default());
     let rom = std::fs::read(common::rom_path("dmg-acid2/dmg-acid2.gb")).expect("rom not found");
-    gb.mmu.load_cart(Cartridge::load(rom));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
 
     let mut frames = 0u32;
     while frames < 120 {
