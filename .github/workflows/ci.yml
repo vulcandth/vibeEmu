@@ -18,6 +18,7 @@ jobs:
         crate: [vibe-emu-core, vibe-emu-ui]
     env:
       SCCACHE_VERSION: 0.10.0
+      HAS_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
 
     steps:
       - uses: actions/checkout@v3
@@ -175,7 +176,7 @@ jobs:
         run: cargo llvm-cov --package vibe-emu-core --lcov --output-path lcov.info
 
       - name: Upload core coverage to Codecov
-        if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux' && (github.event_name == 'push' || secrets.CODECOV_TOKEN != '')
+        if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux' && env.HAS_CODECOV_TOKEN == 'true'
         uses: codecov/codecov-action@7f8b4b4bde536c465e797be725718b88c5d95e0e # v5.1.2
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
