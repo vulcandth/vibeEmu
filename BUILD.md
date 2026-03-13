@@ -113,7 +113,8 @@ If you have `libmobile` installed on your system and prefer to use it instead of
 cargo build -p vibe-emu-ui --no-default-features --features mobile-system
 ```
 
-**Note**: This requires `libmobile` to be installed and discoverable via `pkg-config`.
+**Note**: This requires `libmobile` to be installed and discoverable by the
+linker. If needed, set `LIBMOBILE_LIB_DIR=/path/to/libdir` before building.
 
 ## Running
 

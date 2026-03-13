@@ -36,17 +36,25 @@
 >
 > — Vulcandth
 
-vibeEmu is a Game Boy and Game Boy Color emulator written in Rust. It aims to
-feature a cycle‑accurate CPU, MMU, PPU and APU along with a `winit` + `pixels`
-frontend. An ImGui powered debug UI exposes a register viewer and a VRAM viewer,
-making the emulator useful both for playing games and for studying how the
-hardware works. The repository is organised as a Cargo workspace with multiple
-crates:
+vibeEmu is a Game Boy and Game Boy Color emulator written in Rust. It pairs a
+platform-agnostic emulation core with a desktop frontend built on
+`egui`/`eframe`. The desktop app is focused on playing games, while the
+`vibe-emu-core` crate can also be reused as a library in other projects. The
+repository is organised as a Cargo workspace with multiple crates:
 
 - `vibe-emu-core` contains the platform-agnostic emulation library.
 - `vibe-emu-ui` provides the desktop frontend built on the core crate.
 - `vibe-emu-mobile` provides Mobile Adapter GB integration (libmobile wrapper).
 - `vibe-emu-mobile-sys` builds/links libmobile and exposes minimal FFI.
+
+## Desktop UI features
+
+- Load a ROM from the command line or from the app menu.
+- Configurable keyboard controls with optional gamepad input.
+- Screenshot capture and display filter settings.
+- Selectable serial peripherals, including link cable support and Mobile
+  Adapter GB.
+- A VRAM viewer for inspecting tiles, maps, sprites, and palettes.
 
 ## Building
 
@@ -62,37 +70,49 @@ For better performance when playing games, use a release build:
 cargo build --release
 ```
 
-### Platform Requirements
+### Runtime requirements
 
-- **Windows**: Visual Studio Build Tools with C++ support
-- **Linux**: X11, GTK3, and ALSA development packages
-- **macOS**: Xcode Command Line Tools
+- **Windows** and **macOS**: no extra runtime setup beyond the platform system
+  libraries used by the app.
+- **Linux**: the desktop UI depends on the windowing, audio, and GTK/GLib
+  libraries provided by your distribution.
+
+### Build requirements
+
+- **All platforms**: a recent stable Rust toolchain.
+- **Windows**: Visual Studio Build Tools or Visual Studio with C++ support.
+- **Linux**: a C toolchain plus the GTK3/GLib, X11/Wayland, ALSA, and
+  `pkg-config` development packages listed in [BUILD.md](BUILD.md).
+- **macOS**: Xcode Command Line Tools.
 
 For detailed platform-specific instructions, troubleshooting, and build configuration options, see [BUILD.md](BUILD.md).
 
 ### Mobile Adapter GB support (bundled by default)
 
-The UI builds with **Mobile Adapter GB** support enabled by default using the
-vendored `crates/vibe-emu-mobile/vendor/libmobile-0.2.2` sources. This requires a working C toolchain
-on your platform (e.g. MSVC Build Tools on Windows, or clang/gcc on Linux/macOS).
+The desktop UI builds with **Mobile Adapter GB** support enabled by default
+using the vendored `crates/vibe-emu-mobile/vendor/libmobile-0.2.2` sources.
+This requires a working C toolchain on your platform.
 
-**License Notice**: The bundled `libmobile` library is licensed under the **GNU Lesser General Public License (LGPL) v3**. See `crates/vibe-emu-mobile/vendor/libmobile-0.2.2/COPYING.LESSER` for the full license text. The LGPL permits linking this library into your application. If you wish to use a modified or updated version of `libmobile`, you have two options:
+**License Notice**: The bundled `libmobile` library is licensed under the
+**GNU Lesser General Public License (LGPL) v3**. See
+`crates/vibe-emu-mobile/vendor/libmobile-0.2.2/COPYING.LESSER` for the full
+license text.
 
-1. **Use a pre-installed library**: If you have `libmobile` already compiled and installed on your system (e.g., via a package manager or custom build), you can link against it instead of the bundled version. The library must be findable via standard system library paths or by setting the `LIBMOBILE_LIB_DIR` environment variable to point to the directory containing the compiled library file (e.g., `libmobile.so` on Linux, `mobile.lib` on Windows).
+1. **Use a pre-installed library**: If you already have `libmobile` installed,
+   build with the `mobile-system` feature instead of the bundled one. If the
+   library is not in the default linker search path, set
+   `LIBMOBILE_LIB_DIR=/path/to/libdir`.
    ```bash
    cargo build -p vibe-emu-ui --no-default-features --features mobile-system
    ```
 
-2. **Replace the vendored copy**: You may replace the contents of `crates/vibe-emu-mobile/vendor/libmobile-0.2.2/` with your modified or updated version and rebuild. The build system will automatically compile and link your replacement.
-   
-   Alternatively, to keep multiple versions side-by-side:
-   - Rename `crates/vibe-emu-mobile/vendor/libmobile-0.2.2/` to something else (e.g., `crates/vibe-emu-mobile/vendor/libmobile-0.2.2-original/`)
-   - Place your modified version in `crates/vibe-emu-mobile/vendor/libmobile-0.2.2/`
-   - Or place it in `crates/vibe-emu-mobile/vendor/libmobile/` and set the `LIBMOBILE_SRC_DIR` environment variable:
-     ```bash
-     export LIBMOBILE_SRC_DIR=/path/to/your/libmobile
-     cargo build -p vibe-emu-ui
-     ```
+2. **Replace the vendored copy**: Replace
+   `crates/vibe-emu-mobile/vendor/libmobile-0.2.2/` with your modified source,
+   or point `LIBMOBILE_SRC_DIR` at an alternate libmobile checkout:
+   ```bash
+   export LIBMOBILE_SRC_DIR=/path/to/your/libmobile
+   cargo build -p vibe-emu-ui
+   ```
 
 If you want to build the UI without Mobile Adapter GB support entirely:
 
@@ -102,105 +122,78 @@ cargo build -p vibe-emu-ui --no-default-features
 
 ## Running
 
-The emulator expects the path to a ROM file. The command below will start the emulator in CGB mode by default:
+Run the desktop UI with the default debug profile:
+
+```bash
+cargo run -p vibe-emu-ui
+```
+
+For better performance when playing games:
+
+```bash
+cargo run -p vibe-emu-ui --release
+```
+
+You can optionally pass a ROM path after `--` to open it immediately:
 
 ```bash
 cargo run -p vibe-emu-ui -- path/to/rom.gb
 ```
 
-Pass `--dmg` to force DMG mode, `--cgb` to force CGB mode, or `--serial` to run in serial test mode. Add `--headless` to run without a window or audio output. When headless you can control execution with:
+If no ROM path is supplied, the UI starts paused and you can load one from the
+menu.
 
-* `--frames <n>` – run for the given number of frames.
-* `--seconds <n>` – run for about `<n>` seconds.
-* `--cycles <n>` – stop after `<n>` CPU cycles.
+Common arguments:
 
-If no limit is specified the emulator runs until interrupted.
+- `--dmg`: force DMG mode.
+- `--dmg-neutral`: use neutral DMG palette settings.
+- `--cgb`: force CGB mode.
+- `--bootrom <path>`: load a boot ROM file.
+- `--headless`: run without a window or audio output.
+- `--frames <n>`: in headless mode, stop after `n` frames.
+- `--seconds <n>`: in headless mode, stop after about `n` seconds.
+- `--cycles <n>`: in headless mode, stop after `n` CPU cycles.
+- `--mobile`: start with Mobile Adapter GB selected.
+- `--mobile-config <path>`: load a Mobile Adapter configuration file.
+- `--mobile-device <blue|yellow|green|red>`: choose the Mobile Adapter model.
+- `--mobile-unmetered`: mark the Mobile Adapter connection as unmetered.
+- `--mobile-dns1 <addr>` / `--mobile-dns2 <addr>`: override Mobile Adapter DNS
+  servers.
+- `--mobile-relay <addr>`: set the Mobile Adapter relay address.
+- `--mobile-p2p-port <port>`: set the Mobile Adapter peer-to-peer port.
+- `--mobile-diag`: enable Mobile Adapter diagnostic logging.
+- `--keybinds <path>`: use a custom keybind configuration file.
+- `--log-level <off|error|warn|info|debug|trace>`: override the default log
+  verbosity.
+
+Run `cargo run -p vibe-emu-ui -- --help` for the full command-line reference.
 
 ## Logging
 
-In `--release` builds, vibeEmu defaults to **no console log output**. To enable
-logging, pass `--log-level`:
+Debug builds default to `info` logging. Release builds default to `off`.
+Override the default with `--log-level`:
 
 ```bash
 cargo run -p vibe-emu-ui --release -- --log-level info path/to/rom.gb
 ```
 
-Supported levels:
-
-- `off`: no logs (default in release builds)
-- `error`: fatal errors only
-- `warn`: non-fatal problems (e.g. audio disabled)
-- `info`: high-level lifecycle (ROM load, reset, DMG/CGB mode)
-- `debug`: emulator/UI diagnostics (serial dumps, CPU state snapshots)
-- `trace`: very verbose tracing (PPU/APU traces, DMA, LCDC and OAM bug tracing)
-
-Log targets used by the codebase:
-
-- `vibe_emu_ui::serial`: formatted serial output
-- `vibe_emu_ui::cpu`: periodic CPU state snapshots
-- `vibe_emu_core::cartridge`: ROM/load/save/RTC messages
-- `vibe_emu_core::ppu`, `vibe_emu_core::apu`: subsystem traces
-- `vibe_emu_core::dma`, `vibe_emu_core::lcdc`, `vibe_emu_core::oambug`: deep
-   timing/diagnostic traces
-
-Advanced filtering is still available via `RUST_LOG` (env_logger syntax). For
-example:
+`RUST_LOG` can still be used for per-module filtering. For example:
 
 ```bash
 RUST_LOG=vibe_emu_ui=debug,vibe_emu_core=trace cargo run -p vibe-emu-ui -- --log-level trace path/to/rom.gb
 ```
 
-Some traces are additionally gated by environment variables (for example
-`VIBEEMU_TRACE_OAMBUG` and `VIBEEMU_TRACE_LCDC`). These enable generating the
-trace events, but you still need `--log-level trace` (or an equivalent
-`RUST_LOG` filter) to actually see them.
-
-## Third-party license files
-
-The workspace root `THIRD_PARTY_LICENSES.md` covers the full workspace.
-Each crate also has its own `THIRD_PARTY_LICENSES.md` that covers only that
-crate.
-
-When building `vibe-emu-ui`, the crate build script automatically places
-`LICENSE`, `THIRD_PARTY_LICENSES.md`, and `THIRD_PARTY_LICENSES.html` next to
-the produced executable output directory (for both local and CI builds).
-
-### Mobile Adapter GB
-
-The desktop UI includes Mobile Adapter GB support (libmobile). You can select
-the active serial peripheral at runtime via the UI (see **Debugging UI**).
-
-To start the emulator with the Mobile Adapter selected immediately:
-
-```bash
-cargo run -p vibe-emu-ui -- --mobile path/to/rom.gbc
-```
-
-To log libmobile debug messages and socket activity:
-
-```bash
-cargo run -p vibe-emu-ui -- --mobile --mobile-diag path/to/rom.gbc
-```
-
-Test ROMs used for development are located in the `roms/` directory.
-
-## Debugging UI
-
-Right‑click the main window to pause emulation and open a context menu.  From
-here you can load another ROM, reset the Game Boy, choose the active **Serial
-Peripheral**, or open the **Debugger** and **VRAM Viewer** windows. The debugger
-shows CPU registers while the VRAM viewer lets you inspect background maps,
-tiles, OAM and palettes. Hold **Space** to fast‑forward (4× speed), press
-**F12** to capture a screenshot, and press **Escape** to quit.
+Some trace streams are additionally gated by environment variables such as
+`VIBEEMU_TRACE_OAMBUG` and `VIBEEMU_TRACE_LCDC`.
 
 ## Controls
 
-The default controls are:
+The default keyboard controls are:
 
 - **Arrow Keys**: D-pad
-- **S**: A button
-- **A**: B button
-- **Shift**: Select
+- **A**: A button
+- **S**: B button
+- **Tab**: Select
 - **Enter**: Start
 - **Space**: Hold to fast-forward
 - **F12**: Capture screenshot
@@ -208,7 +201,7 @@ The default controls are:
 - **Escape**: Quit the emulator
 
 Use the **top menu bar** to load ROMs, change settings, capture screenshots, or
-open debugging tools. Screenshot hotkeys are configurable in
+open the VRAM Viewer and serial peripheral settings. Screenshot hotkeys are configurable in
 **Options → Settings... → Keybinds**. Captures are saved to a `screenshots/`
 folder next to the loaded ROM. Display filtering is configurable in
 **Options → Settings... → Emulation**, including separate horizontal/vertical
