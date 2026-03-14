@@ -680,6 +680,10 @@ impl Cpu {
     /// Execute one instruction and update internal state accordingly.
     pub fn step(&mut self, mmu: &mut crate::mmu::Mmu) {
         if self.faulted {
+            // Keep hardware clocks advancing after a CPU fault so callers that
+            // wait on PPU/timer progress do not spin forever. Frontends can
+            // still stop emulation by checking `faulted` explicitly.
+            self.tick(mmu, 1);
             return;
         }
 
