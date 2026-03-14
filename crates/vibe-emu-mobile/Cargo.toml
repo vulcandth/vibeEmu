@@ -3,7 +3,10 @@ name = "vibe-emu-mobile"
 version = "0.0.1"
 edition = "2024"
 authors = ["vulcandth <vulcandth@gmail.com>"]
+description = "Mobile Adapter GB integration for vibeEmu"
+repository = "https://github.com/vulcandth/vibeEmu"
 license = "MIT"
+publish = false
 
 [features]
 # Enable libmobile by building from this crate's vendored copy.
@@ -14,7 +17,7 @@ system = ["dep:vibe-emu-mobile-sys", "vibe-emu-mobile-sys/system"]
 default = []
 
 [dependencies]
-vibe-emu-core = { path = "../vibe-emu-core" }
+vibe-emu-core.workspace = true
 vibe-emu-mobile-sys = { path = "../vibe-emu-mobile-sys", optional = true }
 thiserror = "2.0.18"
 socket2 = "0.6"

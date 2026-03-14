@@ -7,6 +7,9 @@ members = [
 ]
 resolver = "2"
 
+[workspace.dependencies]
+vibe-emu-core = { version = "0.0.1", path = "crates/vibe-emu-core" }
+
 [profile.dev]
 opt-level = 1
 

@@ -1395,9 +1395,9 @@ limitations under the License.
 ### MIT License
 
 Used by:
-- [vibe-emu-core 0.1.0](https://crates.io/crates/vibe-emu-core)
-- [vibe-emu-mobile 0.1.0](https://crates.io/crates/vibe-emu-mobile)
-- [vibe-emu-mobile-sys 0.1.0](https://crates.io/crates/vibe-emu-mobile-sys)
+- [vibe-emu-core 0.0.1](https://github.com/vulcandth/vibeEmu)
+- [vibe-emu-mobile 0.0.1](https://github.com/vulcandth/vibeEmu)
+- [vibe-emu-mobile-sys 0.0.1](https://github.com/vulcandth/vibeEmu)
 
 ```text
 MIT License

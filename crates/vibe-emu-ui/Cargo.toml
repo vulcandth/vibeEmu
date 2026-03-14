@@ -3,7 +3,10 @@ name = "vibe-emu-ui"
 version = "0.0.1"
 edition = "2024"
 authors = ["vulcandth <vulcandth@gmail.com>"]
+description = "Desktop UI for the vibeEmu Game Boy emulator"
+repository = "https://github.com/vulcandth/vibeEmu"
 license = "MIT"
+publish = false
 
 [features]
 mobile-bundled = ["vibe-emu-mobile/bundled"]
@@ -12,7 +15,7 @@ mobile-system = ["vibe-emu-mobile/system"]
 default = ["mobile-bundled"]
 
 [dependencies]
-vibe-emu-core = { path = "../vibe-emu-core" }
+vibe-emu-core.workspace = true
 vibe-emu-mobile = { path = "../vibe-emu-mobile" }
 clap = { version = "4.5.58", features = ["derive"] }
 eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "wgpu", "wayland", "x11"] }

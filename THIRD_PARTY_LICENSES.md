@@ -6659,9 +6659,9 @@ SOFTWARE.
 
 Used by:
 - [vibe-emu-core 0.0.1](https://github.com/vulcandth/vibeEmu)
-- [vibe-emu-mobile 0.0.1](https://crates.io/crates/vibe-emu-mobile)
-- [vibe-emu-mobile-sys 0.0.1](https://crates.io/crates/vibe-emu-mobile-sys)
-- [vibe-emu-ui 0.0.1](https://crates.io/crates/vibe-emu-ui)
+- [vibe-emu-mobile 0.0.1](https://github.com/vulcandth/vibeEmu)
+- [vibe-emu-mobile-sys 0.0.1](https://github.com/vulcandth/vibeEmu)
+- [vibe-emu-ui 0.0.1](https://github.com/vulcandth/vibeEmu)
 
 ```text
 MIT License
