@@ -1,6 +1,8 @@
 # vibeEmu
 ![GitHub License](https://img.shields.io/github/license/vulcandth/vibeEmu)
 ![Codecov](https://img.shields.io/codecov/c/github/vulcandth/vibeEmu?label=core%20coverage)
+![Crates.io Version](https://img.shields.io/crates/v/vibe-emu-core?label=vibe-emu-core)
+![docs.rs](https://img.shields.io/docsrs/vibe-emu-core)
 
 <img src="gfx/vibeEmu_512px.png" alt="vibeEmu Logo" width="250" />
 
