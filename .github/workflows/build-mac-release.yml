@@ -52,7 +52,7 @@ jobs:
             target/aarch64-apple-darwin/release/vibe-emu-ui \
             -output vibeEmu.app/Contents/MacOS/vibeEmu
           cp "$release/LICENSE" vibeEmu.app/Contents/MacOS/LICENSE
-          cp "$release/THIRD_PARTY_LICENSES.html" vibeEmu.app/Contents/MacOS/THIRD_PARTY_LICENSES.html
+          cp "$release/THIRD_PARTY_LICENSES.md" vibeEmu.app/Contents/MacOS/THIRD_PARTY_LICENSES.md
 
           mkdir -p /tmp/iconset.iconset
           cp gfx/vibeEmu_512px.png /tmp/iconset.iconset/icon_512x512.png
@@ -110,7 +110,7 @@ jobs:
         run: |
           unzip -l dist/macos/vibeEmu.app.zip | grep -F "vibeEmu.app/Contents/MacOS/vibeEmu"
           unzip -l dist/macos/vibeEmu.app.zip | grep -F "vibeEmu.app/Contents/MacOS/LICENSE"
-          unzip -l dist/macos/vibeEmu.app.zip | grep -F "vibeEmu.app/Contents/MacOS/THIRD_PARTY_LICENSES.html"
+          unzip -l dist/macos/vibeEmu.app.zip | grep -F "vibeEmu.app/Contents/MacOS/THIRD_PARTY_LICENSES.md"
           
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -35,7 +35,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
           Copy-Item "$release/vibe-emu-ui.exe" "$dist/vibeEmu.exe"
           Copy-Item "$release/LICENSE" "$dist/LICENSE"
-          Copy-Item "$release/THIRD_PARTY_LICENSES.html" "$dist/THIRD_PARTY_LICENSES.html"
+          Copy-Item "$release/THIRD_PARTY_LICENSES.md" "$dist/THIRD_PARTY_LICENSES.md"
           Compress-Archive -Path "$dist/*" -DestinationPath "dist/vibeEmu-windows-${{ matrix.target }}.zip" -Force
 
       - name: Verify packaged artifact
@@ -44,7 +44,7 @@ jobs:
           $extract = Join-Path $env:RUNNER_TEMP "vibeEmu-windows-${{ matrix.target }}"
           Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $extract
           Expand-Archive "dist/vibeEmu-windows-${{ matrix.target }}.zip" -DestinationPath $extract
-          foreach ($file in @("vibeEmu.exe", "LICENSE", "THIRD_PARTY_LICENSES.html")) {
+          foreach ($file in @("vibeEmu.exe", "LICENSE", "THIRD_PARTY_LICENSES.md")) {
             if (-not (Test-Path (Join-Path $extract $file))) {
               throw "Missing $file in Windows package"
             }

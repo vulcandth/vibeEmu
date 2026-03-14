@@ -50,15 +50,15 @@ jobs:
           mkdir -p "$dist"
           cp "$release/vibe-emu-ui" "$dist/vibeEmu"
           cp "$release/LICENSE" "$dist/LICENSE"
-          cp "$release/THIRD_PARTY_LICENSES.html" "$dist/THIRD_PARTY_LICENSES.html"
+          cp "$release/THIRD_PARTY_LICENSES.md" "$dist/THIRD_PARTY_LICENSES.md"
           chmod +x "$dist/vibeEmu"
-          tar -C "$dist" -czf "dist/vibeEmu-linux-${{ matrix.target }}.tar.gz" vibeEmu LICENSE THIRD_PARTY_LICENSES.html
+          tar -C "$dist" -czf "dist/vibeEmu-linux-${{ matrix.target }}.tar.gz" vibeEmu LICENSE THIRD_PARTY_LICENSES.md
 
       - name: Verify packaged artifact
         run: |
           tar -tzf "dist/vibeEmu-linux-${{ matrix.target }}.tar.gz" | grep -Fx "vibeEmu"
           tar -tzf "dist/vibeEmu-linux-${{ matrix.target }}.tar.gz" | grep -Fx "LICENSE"
-          tar -tzf "dist/vibeEmu-linux-${{ matrix.target }}.tar.gz" | grep -Fx "THIRD_PARTY_LICENSES.html"
+          tar -tzf "dist/vibeEmu-linux-${{ matrix.target }}.tar.gz" | grep -Fx "THIRD_PARTY_LICENSES.md"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

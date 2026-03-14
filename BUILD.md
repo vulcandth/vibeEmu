@@ -231,19 +231,19 @@ The repository includes manually triggered workflows for release binaries:
   - Targets: `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`
   - Build output: `target/<target>/release/vibe-emu-ui.exe`
   - Uploaded artifact: `vibeEmu-windows-<target>` as `dist/vibeEmu-windows-<target>.zip`
-    containing `vibeEmu.exe`, `LICENSE`, and `THIRD_PARTY_LICENSES.html`
+    containing `vibeEmu.exe`, `LICENSE`, and `THIRD_PARTY_LICENSES.md`
 - **Linux**
   - Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
   - ARM64 builds require the GitHub-hosted `ubuntu-24.04-arm` runner (public-repo ARM runner availability required)
   - Build output: `target/<target>/release/vibe-emu-ui`
   - Uploaded artifact: `vibeEmu-linux-<target>` as `dist/vibeEmu-linux-<target>.tar.gz`
-    containing `vibeEmu`, `LICENSE`, and `THIRD_PARTY_LICENSES.html`
+    containing `vibeEmu`, `LICENSE`, and `THIRD_PARTY_LICENSES.md`
 - **macOS**
   - Targets: `x86_64-apple-darwin`, `aarch64-apple-darwin` (combined into a universal app)
   - Build output: `vibeEmu.app/Contents/MacOS/vibeEmu`
   - Uploaded artifact: `vibeEmu-macos-universal` as `dist/macos/vibeEmu.app.zip`
     with legal files embedded at
-    `vibeEmu.app/Contents/MacOS/{LICENSE,THIRD_PARTY_LICENSES.html}`
+    `vibeEmu.app/Contents/MacOS/{LICENSE,THIRD_PARTY_LICENSES.md}`
 
 ### Icon Updates for Release Packaging
 
