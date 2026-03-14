@@ -525,6 +525,23 @@ pub struct Ppu {
     dmg_prev2_line_window_active: bool,
 }
 
+impl std::fmt::Debug for Ppu {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ppu")
+            .field("mode", &self.mode)
+            .field("ly", &self.ly)
+            .field("lcdc", &self.lcdc)
+            .field("stat", &self.stat)
+            .field("scy", &self.scy)
+            .field("scx", &self.scx)
+            .field("vram_bank", &self.vram_bank)
+            .field("frame_ready", &self.frame_ready)
+            .field("frame_counter", &self.frame_counter)
+            .field("model", &self.model)
+            .finish_non_exhaustive()
+    }
+}
+
 define_env_i16!(dmg_obp0_sample_t_bias, "VIBEEMU_DMG_OBP0_SAMPLE_T_BIAS", -1);
 define_env_i16!(
     dmg_mode3_scx_event_t_bias,

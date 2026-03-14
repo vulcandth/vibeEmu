@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::hardware::{DmgRevision, Model};
 
 /// Clock information for an in-flight serial transfer.
@@ -74,7 +76,7 @@ pub trait LinkPort: Send {
 /// By default it emulates a "line dead" scenario where incoming bits are all 1,
 /// so any transfer receives 0xFF. When `loopback` is true the sent byte is
 /// echoed back instead.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct NullLinkPort {
     loopback: bool,
 }
@@ -118,6 +120,17 @@ pub struct Serial {
     port: Box<dyn LinkPort + Send>,
     transfer: Option<TransferState>,
     model: Model,
+}
+
+impl fmt::Debug for Serial {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Serial")
+            .field("sb", &self.sb)
+            .field("sc", &self.sc)
+            .field("transfer_active", &self.transfer.is_some())
+            .field("model", &self.model)
+            .finish_non_exhaustive()
+    }
 }
 
 struct TransferState {
@@ -276,8 +289,7 @@ impl Serial {
 
         let mut transfer_complete = false;
         let mut completed_outgoing = 0;
-        {
-            let state = self.transfer.as_mut().unwrap();
+        if let Some(state) = self.transfer.as_mut() {
             for _ in 0..count {
                 if state.shift(&mut self.sb) {
                     transfer_complete = true;
@@ -331,8 +343,7 @@ impl Serial {
 
         let mut transfer_complete = false;
         let mut completed_outgoing = 0;
-        {
-            let state = self.transfer.as_mut().unwrap();
+        if let Some(state) = self.transfer.as_mut() {
             let mut div = prev_div;
             let mut prev_clock = ((div.wrapping_sub(phase) >> clock_bit) & 1) != 0;
 

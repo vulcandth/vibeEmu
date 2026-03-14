@@ -54,6 +54,7 @@ const OAM_DMA_STEP_CYCLES: u8 = 4;
 const GDMA_STEP_CYCLES: u8 = 1;
 
 /// LR35902 CPU state.
+#[derive(Debug)]
 pub struct Cpu {
     /// Accumulator register.
     pub a: u8,
@@ -86,6 +87,11 @@ pub struct Cpu {
     stop_vram_blocked: bool,
     /// Whether the CPU is running in CGB double-speed mode.
     pub double_speed: bool,
+    /// Set when the CPU encounters an illegal opcode.
+    ///
+    /// Once faulted the CPU refuses to execute further instructions.
+    /// Frontends should check this flag in their run loop.
+    pub faulted: bool,
     halt_bug: bool,
     ime_enable_delay: u8,
     halt_pc: Option<u16>,
@@ -115,6 +121,7 @@ impl Cpu {
                 stopped: false,
                 stop_vram_blocked: false,
                 double_speed: false,
+                faulted: false,
                 halt_bug: false,
                 ime_enable_delay: 0,
                 halt_pc: None,
@@ -161,6 +168,7 @@ impl Cpu {
                     stopped: false,
                     stop_vram_blocked: false,
                     double_speed: false,
+                    faulted: false,
                     halt_bug: false,
                     ime_enable_delay: 0,
                     halt_pc: None,
@@ -194,6 +202,7 @@ impl Cpu {
             stopped: false,
             stop_vram_blocked: false,
             double_speed: false,
+            faulted: false,
             halt_bug: false,
             ime_enable_delay: 0,
             halt_pc: None,
@@ -670,6 +679,14 @@ impl Cpu {
 
     /// Execute one instruction and update internal state accordingly.
     pub fn step(&mut self, mmu: &mut crate::mmu::Mmu) {
+        if self.faulted {
+            // Keep hardware clocks advancing after a CPU fault so callers that
+            // wait on PPU/timer progress do not spin forever. Frontends can
+            // still stop emulation by checking `faulted` explicitly.
+            self.tick(mmu, 1);
+            return;
+        }
+
         // Default: rendering reads VRAM normally.
         mmu.ppu.set_render_vram_blocked(false);
 
@@ -1765,10 +1782,14 @@ impl Cpu {
                     | if self.a < val { FLAG_C } else { 0 };
             }
             _ => {
-                panic!(
-                    "unhandled opcode {opcode:02X} at PC={:04X}",
+                core_warn!(
+                    target: "vibe_emu_core::cpu",
+                    "unhandled opcode {:02X} at PC={:04X}; CPU faulted",
+                    opcode,
                     self.pc.wrapping_sub(1)
                 );
+                self.faulted = true;
+                return;
             }
         }
 

@@ -2,11 +2,14 @@
 name = "vibe-emu-core"
 version = "0.0.1"
 edition = "2024"
+rust-version = "1.85"
 authors = ["vulcandth <vulcandth@gmail.com>"]
 description = "Cycle-accurate Game Boy / Game Boy Color emulation library"
 repository = "https://github.com/vulcandth/vibeEmu"
 license = "MIT"
 readme = "README.md"
+keywords = ["gameboy", "emulator", "gbc", "dmg", "emulation"]
+categories = ["emulators", "game-development"]
 include = [
     "src/**",
     "tests/**",
@@ -14,6 +17,7 @@ include = [
     "Cargo.toml",
     "LICENSE",
     "README.md",
+    "!test_roms/**/README*",
     "THIRD_PARTY_LICENSES.md",
     "about.toml",
     "about.hbs",

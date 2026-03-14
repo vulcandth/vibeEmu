@@ -5,7 +5,7 @@
 //!
 //! SameBoy is licensed under the MIT (Expat) License:
 //!   Copyright (c) 2015-2025 Lior Halphon
-//!   https://github.com/LIJI32/SameBoy
+//!   <https://github.com/LIJI32/SameBoy>
 //!
 //! Specifically, the following components are derived from SameBoy's `Core/apu.c`:
 //! - NRX2 "zombie mode" envelope glitch logic (`nrx2_glitch_step` and related functions)
@@ -28,7 +28,7 @@ use crate::hardware::{CgbRevision, DmgRevision, Model};
 /// effectively delaying all frame sequencer-based effects by one event.
 ///
 /// This behavior is derived from SameBoy's `skip_div_event` handling.
-/// See: https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c
+/// See: <https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c>
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum SkipDivEvent {
     #[default]
@@ -87,7 +87,7 @@ const NR44_IDX: usize = (0xFF23 - 0xFF10) as usize;
 /// Envelope clock/lock state for square and noise channels.
 ///
 /// This mechanism is derived from SameBoy's envelope clock implementation.
-/// See: https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c
+/// See: <https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c>
 #[derive(Default, Clone, Copy)]
 struct EnvelopeClock {
     clock: bool,
@@ -938,6 +938,19 @@ pub(crate) struct OutputState {
     audio_out: Option<AudioProducer>,
 }
 
+impl std::fmt::Debug for Apu {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Apu")
+            .field("nr52", &self.nr52)
+            .field("nr50", &self.nr50)
+            .field("nr51", &self.nr51)
+            .field("sample_rate", &self.sample_rate)
+            .field("model", &self.model)
+            .field("double_speed", &self.double_speed)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Lightweight snapshot of APU state for test diagnostics.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1357,7 +1370,7 @@ impl Apu {
     /// Update envelope clock state, handling lock conditions.
     ///
     /// Derived from SameBoy's `set_envelope_clock` function.
-    /// See: https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c
+    /// See: <https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c>
     #[inline]
     fn set_envelope_clock(clock: &mut EnvelopeClock, value: bool, direction_add: bool, volume: u8) {
         if clock.clock == value {
@@ -1380,7 +1393,7 @@ impl Apu {
     /// This "zombie mode" implementation is derived from SameBoy's `_nrx2_glitch` function.
     /// The complex envelope behavior when NRX2 is written while the channel is active
     /// was reverse-engineered and documented by LIJI32 in SameBoy.
-    /// See: https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c
+    /// See: <https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c>
     fn nrx2_glitch_step(mut vol: u8, new_v: u8, old_v: u8, lock: &mut EnvelopeClock) -> u8 {
         let old_period = old_v & 0x07;
         let new_period = new_v & 0x07;
@@ -2611,7 +2624,7 @@ impl Apu {
     ///
     /// The timing and behavior of sweep calculations, including the "APU bug" where
     /// the frequency is checked after adding the delta twice, is derived from SameBoy.
-    /// See: https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c
+    /// See: <https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c>
     fn sweep_calculation_done(&mut self) {
         let nr10 = self.regs[0x00];
         let negate = nr10 & 0x08 != 0;

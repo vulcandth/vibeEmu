@@ -204,6 +204,24 @@ pub struct Mmu {
     pub watchpoints: crate::watchpoints::WatchpointEngine,
 }
 
+impl std::fmt::Debug for Mmu {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mmu")
+            .field("model", &self.model)
+            .field("boot_mapped", &self.boot_mapped)
+            .field("if_reg", &self.if_reg)
+            .field("ie_reg", &self.ie_reg)
+            .field("wram_bank", &self.wram_bank)
+            .field("key1", &self.key1)
+            .field("cart", &self.cart.as_ref().map(|c| &c.title))
+            .field("ppu", &self.ppu)
+            .field("apu", &self.apu)
+            .field("timer", &self.timer)
+            .field("serial", &self.serial)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Mmu {
     #[inline]
     fn post_boot_div(model: Model) -> u16 {
@@ -1339,7 +1357,7 @@ impl Mmu {
             let elapsed = initial - self.dma_cycles;
             let current_dest = ((elapsed / per_byte) + 1).min(0xA1) as u8;
             self.ppu.oam_dma_current_dest = current_dest;
-            if elapsed.is_multiple_of(per_byte) {
+            if elapsed % per_byte == 0 {
                 let idx: u16 = elapsed / per_byte;
                 if idx < 0xA0 {
                     // Clear `last_cpu_pc` to avoid attributing DMA-originated reads

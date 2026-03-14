@@ -1,4 +1,5 @@
 /// Joypad input register (P1/JOYP) and button-state tracking.
+#[derive(Debug)]
 pub struct Input {
     p1: u8,
     state: u8,
