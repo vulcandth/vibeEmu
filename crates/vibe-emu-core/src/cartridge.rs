@@ -332,8 +332,14 @@ impl Mbc3Rtc {
             return false;
         }
 
-        let secs = u64::from_le_bytes(data[5..13].try_into().unwrap());
-        let nanos = u32::from_le_bytes(data[13..17].try_into().unwrap()).min(999_999_999);
+        let Ok(secs_bytes) = data[5..13].try_into() else {
+            return false;
+        };
+        let Ok(nanos_bytes) = data[13..17].try_into() else {
+            return false;
+        };
+        let secs = u64::from_le_bytes(secs_bytes);
+        let nanos = u32::from_le_bytes(nanos_bytes).min(999_999_999);
 
         self.last_update = UNIX_EPOCH + Duration::from_secs(secs);
         self.subsecond_cycles = ((nanos as u128).saturating_mul(RTC_CYCLES_PER_SECOND as u128)
@@ -588,8 +594,14 @@ impl Tpp1Rtc {
             return false;
         }
 
-        let secs = u64::from_le_bytes(data[5..13].try_into().unwrap());
-        let nanos = u32::from_le_bytes(data[13..17].try_into().unwrap()).min(999_999_999);
+        let Ok(secs_bytes) = data[5..13].try_into() else {
+            return false;
+        };
+        let Ok(nanos_bytes) = data[13..17].try_into() else {
+            return false;
+        };
+        let secs = u64::from_le_bytes(secs_bytes);
+        let nanos = u32::from_le_bytes(nanos_bytes).min(999_999_999);
 
         self.last_update = UNIX_EPOCH + Duration::from_secs(secs);
         self.subsecond_cycles = ((nanos as u128).saturating_mul(RTC_CYCLES_PER_SECOND as u128)

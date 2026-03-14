@@ -1,4 +1,5 @@
 use std::cell::UnsafeCell;
+use std::fmt;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -135,6 +136,15 @@ impl AudioProducer {
     }
 }
 
+impl fmt::Debug for AudioProducer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AudioProducer")
+            .field("len", &self.len())
+            .field("capacity", &self.capacity_frames())
+            .finish()
+    }
+}
+
 impl AudioConsumer {
     #[inline]
     /// Pop and return the next stereo frame, or `None` if the buffer is empty.
@@ -167,5 +177,14 @@ impl AudioConsumer {
     /// Maximum number of stereo frames this buffer can hold.
     pub fn capacity_frames(&self) -> usize {
         self.inner.capacity_frames()
+    }
+}
+
+impl fmt::Debug for AudioConsumer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AudioConsumer")
+            .field("len", &self.len())
+            .field("capacity", &self.capacity_frames())
+            .finish()
     }
 }

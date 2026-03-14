@@ -53,6 +53,7 @@ pub struct BootHandoffSnapshot {
 ///
 /// `GameBoy` owns the CPU and MMU and provides constructors for common initial
 /// states (post-boot vs. power-on) across DMG/CGB modes and hardware revisions.
+#[derive(Debug)]
 pub struct GameBoy {
     /// CPU core.
     pub cpu: Cpu,
