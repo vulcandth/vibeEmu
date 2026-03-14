@@ -54,6 +54,12 @@ const STATUS_BAR_HEIGHT: f32 = 24.0;
 const GB_FPS: f64 = 59.7275;
 const FRAME_TIME: Duration = Duration::from_nanos((1e9_f64 / GB_FPS) as u64);
 const FF_MULT: f32 = 4.0;
+const APP_NAME: &str = "vibeEmu";
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const APP_LICENSE: &str = env!("CARGO_PKG_LICENSE");
+const APP_GITHUB_URL: &str = "https://github.com/vulcandth/vibeEmu";
+const APP_SHORT_DESCRIPTION: &str =
+    "Game Boy and Game Boy Color emulator written in Rust with an egui/eframe desktop frontend.";
 
 #[cfg(not(target_os = "android"))]
 struct GamepadInput {
@@ -156,6 +162,8 @@ static VIEWPORT_WATCHPOINTS: LazyLock<egui::ViewportId> =
     LazyLock::new(|| egui::ViewportId::from_hash_of("watchpoints"));
 static VIEWPORT_OPTIONS: LazyLock<egui::ViewportId> =
     LazyLock::new(|| egui::ViewportId::from_hash_of("options"));
+static VIEWPORT_ABOUT: LazyLock<egui::ViewportId> =
+    LazyLock::new(|| egui::ViewportId::from_hash_of("about"));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum LogLevelArg {
@@ -839,6 +847,7 @@ struct VibeEmuApp {
     show_debugger: bool,
     show_vram_viewer: bool,
     show_options: bool,
+    show_about: bool,
 
     // Options window state
     emulation_mode: EmulationMode,
@@ -1196,6 +1205,7 @@ impl VibeEmuApp {
             show_debugger: false,
             show_vram_viewer: false,
             show_options: false,
+            show_about: false,
             emulation_mode,
             bootrom_override,
             dmg_bootrom_path: dmg_bootrom_path
@@ -2214,6 +2224,13 @@ impl eframe::App for VibeEmuApp {
                         ui.close();
                     }
                 });
+
+                ui.menu_button("Help", |ui| {
+                    if ui.button("About").clicked() {
+                        self.show_about = true;
+                        ui.close();
+                    }
+                });
             });
         });
 
@@ -2338,6 +2355,10 @@ impl eframe::App for VibeEmuApp {
             self.draw_options_window(ctx);
         }
 
+        if self.show_about {
+            self.draw_about_window(ctx);
+        }
+
         if !self.paused {
             ctx.request_repaint();
         }
@@ -2353,6 +2374,81 @@ impl eframe::App for VibeEmuApp {
 }
 
 impl VibeEmuApp {
+    fn draw_about_window(&mut self, ctx: &egui::Context) {
+        ctx.show_viewport_immediate(
+            *VIEWPORT_ABOUT,
+            egui::ViewportBuilder::default()
+                .with_title(format!("About {APP_NAME}"))
+                .with_inner_size([500.0, 320.0]),
+            |ctx, class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    self.show_about = false;
+                }
+
+                match class {
+                    egui::ViewportClass::Embedded => {
+                        egui::Window::new(format!("About {APP_NAME}")).show(ctx, |ui| {
+                            self.draw_about_content(ui);
+                        });
+                    }
+                    _ => {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            self.draw_about_content(ui);
+                        });
+                    }
+                }
+            },
+        );
+    }
+
+    fn draw_about_content(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.heading(format!("{APP_NAME} {APP_VERSION}"));
+                ui.label("Game Boy / Game Boy Color emulator");
+            });
+
+            ui.add_space(8.0);
+            ui.label(APP_SHORT_DESCRIPTION);
+
+            ui.add_space(12.0);
+            egui::Grid::new("about_info_grid")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.strong("GitHub:");
+                    ui.hyperlink_to(APP_GITHUB_URL, APP_GITHUB_URL);
+                    ui.end_row();
+
+                    ui.strong("App license:");
+                    ui.label(APP_LICENSE);
+                    ui.end_row();
+
+                    ui.strong("License files:");
+                    ui.label("See LICENSE and THIRD_PARTY_LICENSES.md included with the app.");
+                    ui.end_row();
+                });
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(8.0);
+
+            ui.label("vibeEmu is distributed under the MIT license.");
+            ui.label("Third-party dependency notices are collected in THIRD_PARTY_LICENSES.md.");
+
+            if cfg!(feature = "mobile-bundled") {
+                ui.label(
+                    "Bundled builds also include vendored libmobile under LGPL-3.0-or-later. See THIRD_PARTY_LICENSES.md for details.",
+                );
+            }
+
+            ui.add_space(12.0);
+            if ui.button("Close").clicked() {
+                self.show_about = false;
+            }
+        });
+    }
+
     fn draw_options_window(&mut self, ctx: &egui::Context) {
         ctx.show_viewport_immediate(
             *VIEWPORT_OPTIONS,
