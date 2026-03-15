@@ -6898,8 +6898,10 @@ impl Ppu {
             };
             let tile_x = (source_x % 8) as usize;
             let tile_index = self.vram_read_for_render(0, map_base + tile_row * 32 + tile_col);
-            let addr_lo = Self::bg_tile_row_plane_addr(tile_index, tile_y, bg_tile_data_unsigned, false);
-            let addr_hi = Self::bg_tile_row_plane_addr(tile_index, tile_y, bg_tile_data_unsigned, true);
+            let addr_lo =
+                Self::bg_tile_row_plane_addr(tile_index, tile_y, bg_tile_data_unsigned, false);
+            let addr_hi =
+                Self::bg_tile_row_plane_addr(tile_index, tile_y, bg_tile_data_unsigned, true);
             let lo = self.vram_read_for_render(0, addr_lo);
             let hi = self.vram_read_for_render(0, addr_hi);
             let run_len = (8 - tile_x).min(screen_end - screen_x);
