@@ -5933,7 +5933,7 @@ impl Ppu {
 
         if line_has_sprites {
             self.line_priority.fill(false);
-            self.line_color_zero.fill(false);
+            self.line_color_zero.fill(true);
             self.cgb_line_obj_enabled.fill(self.lcdc & 0x02 != 0);
         }
 
@@ -5952,14 +5952,14 @@ impl Ppu {
         // treat the line as having color 0. The framebuffer is initialized with
         // this color so sprite rendering can overlay on top.
         let cgb_bg_color0 = self.cgb_bg_color_from_color_id(0, 0);
-        for x in 0..SCREEN_WIDTH {
-            self.framebuffer[row_base + x] = if cgb_render {
-                cgb_bg_color0
-            } else {
-                self.dmg_bg_color_for_pixel(x, 0)
-            };
-            if line_has_sprites {
-                self.line_color_zero[x] = true;
+        if cgb_render {
+            self.framebuffer[row_base..row_base + SCREEN_WIDTH].fill(cgb_bg_color0);
+        } else if self.dmg_bgp_event_count == 0 {
+            self.framebuffer[row_base..row_base + SCREEN_WIDTH]
+                .fill(self.dmg_bg_color_table[(self.dmg_line_bgp_base as usize) << 2]);
+        } else {
+            for x in 0..SCREEN_WIDTH {
+                self.framebuffer[row_base + x] = self.dmg_bg_color_for_pixel(x, 0);
             }
         }
 
@@ -6337,6 +6337,41 @@ impl Ppu {
             }
         }
 
+        if self.lcdc & 0x80 != 0
+            && self.stat_mode_delay == 0
+            && self.pending_reg_write_count == 0
+            && !self.stat_irq_dirty
+            && !self.dmg_mode2_vblank_irq_pending
+            && (self.cgb() || self.dmg_startup_cycle.is_none())
+        {
+            match self.mode {
+                MODE_HBLANK => {
+                    let target = self.mode0_target_cycles;
+                    if !self.dmg_hblank_render_pending {
+                        if self.mode_clock.saturating_add(remaining) < target {
+                            self.mode_clock += remaining;
+                            return false;
+                        }
+                    } else if self.mode_clock < dmg_hblank_render_delay() {
+                        let next_event = target.min(dmg_hblank_render_delay());
+                        if self.mode_clock.saturating_add(remaining) < next_event {
+                            self.mode_clock += remaining;
+                            return false;
+                        }
+                    }
+                }
+                MODE_VBLANK => {
+                    if !(self.ly == 153 && !self.cgb_line153_ly0_triggered)
+                        && self.mode_clock.saturating_add(remaining) < MODE1_CYCLES
+                    {
+                        self.mode_clock += remaining;
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         let mut hblank_triggered = false;
         while remaining > 0 {
             let mut increment = 1u16;
@@ -6645,37 +6680,22 @@ impl Ppu {
             let bgp = self.dmg_line_bgp_base;
 
             if bg_enabled {
-                for x in 0..SCREEN_WIDTH as u16 {
-                    let px = x.wrapping_add(scx) & 0xFF;
-                    let py = (self.ly as u16).wrapping_add(scy) & 0xFF;
-                    let tile_col = (px / 8) as usize;
-                    let tile_row = (py / 8) as usize;
-                    let tile_y = (py % 8) as usize;
-
-                    let tile_index =
-                        self.vram_read_for_render(0, bg_map_base + tile_row * 32 + tile_col);
-                    let addr_lo = Self::bg_tile_row_plane_addr(
-                        tile_index,
-                        tile_y,
-                        bg_tile_data_unsigned,
-                        false,
-                    );
-                    let addr_hi = Self::bg_tile_row_plane_addr(
-                        tile_index,
-                        tile_y,
-                        bg_tile_data_unsigned,
-                        true,
-                    );
-                    let bit = 7 - (px % 8) as usize;
-                    let lo = self.vram_read_for_render(0, addr_lo);
-                    let hi = self.vram_read_for_render(0, addr_hi);
-                    let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                    let color = self.dmg_bg_color_table[((bgp as usize) << 2) | color_id as usize];
-                    self.framebuffer[row_base + x as usize] = color;
-                    if track_bg_zero {
-                        self.line_color_zero[x as usize] = color_id == 0;
-                    }
-                }
+                let py = (self.ly as u16).wrapping_add(scy) & 0xFF;
+                let tile_row = ((py / 8) as usize) & 31;
+                let tile_y = (py % 8) as usize;
+                self.render_dmg_static_tile_span(
+                    0,
+                    SCREEN_WIDTH,
+                    row_base,
+                    bg_map_base,
+                    tile_row,
+                    tile_y,
+                    scx,
+                    true,
+                    bg_tile_data_unsigned,
+                    bgp,
+                    track_bg_zero,
+                );
             }
 
             let mut window_drawn = false;
@@ -6694,37 +6714,19 @@ impl Ppu {
                 let window_y = self.win_line_counter as usize;
 
                 if bg_enabled {
-                    for x in start_x..SCREEN_WIDTH as u16 {
-                        let window_x = (x as i16 - window_origin_x) as usize;
-                        let tile_col = window_x / 8;
-                        let tile_row = window_y / 8;
-                        let tile_y = window_y % 8;
-                        let tile_x = window_x % 8;
-                        let tile_index = self
-                            .vram_read_for_render(0, window_map_base + tile_row * 32 + tile_col);
-                        let addr_lo = Self::bg_tile_row_plane_addr(
-                            tile_index,
-                            tile_y,
-                            bg_tile_data_unsigned,
-                            false,
-                        );
-                        let addr_hi = Self::bg_tile_row_plane_addr(
-                            tile_index,
-                            tile_y,
-                            bg_tile_data_unsigned,
-                            true,
-                        );
-                        let bit = 7 - tile_x;
-                        let lo = self.vram_read_for_render(0, addr_lo);
-                        let hi = self.vram_read_for_render(0, addr_hi);
-                        let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                        let color =
-                            self.dmg_bg_color_table[((bgp as usize) << 2) | color_id as usize];
-                        self.framebuffer[row_base + x as usize] = color;
-                        if track_bg_zero {
-                            self.line_color_zero[x as usize] = color_id == 0;
-                        }
-                    }
+                    self.render_dmg_static_tile_span(
+                        start_x as usize,
+                        SCREEN_WIDTH,
+                        row_base,
+                        window_map_base,
+                        window_y / 8,
+                        window_y % 8,
+                        start_x.wrapping_add_signed(-window_origin_x),
+                        false,
+                        bg_tile_data_unsigned,
+                        bgp,
+                        track_bg_zero,
+                    );
                 }
                 window_drawn = true;
             }
@@ -6855,6 +6857,50 @@ impl Ppu {
         }
         if window_drawn {
             self.win_line_counter = self.win_line_counter.wrapping_add(1);
+        }
+    }
+
+    fn render_dmg_static_tile_span(
+        &mut self,
+        screen_start: usize,
+        screen_end: usize,
+        row_base: usize,
+        map_base: usize,
+        tile_row: usize,
+        tile_y: usize,
+        pixel_x_start: u16,
+        wrap_x: bool,
+        bg_tile_data_unsigned: bool,
+        bgp: u8,
+        track_bg_zero: bool,
+    ) {
+        let mut screen_x = screen_start;
+        let mut pixel_x = pixel_x_start;
+        while screen_x < screen_end {
+            let source_x = if wrap_x { pixel_x & 0xFF } else { pixel_x };
+            let tile_col = if wrap_x {
+                ((source_x / 8) as usize) & 31
+            } else {
+                (source_x / 8) as usize
+            };
+            let tile_x = (source_x % 8) as usize;
+            let tile_index = self.vram_read_for_render(0, map_base + tile_row * 32 + tile_col);
+            let addr_lo = Self::bg_tile_row_plane_addr(tile_index, tile_y, bg_tile_data_unsigned, false);
+            let addr_hi = Self::bg_tile_row_plane_addr(tile_index, tile_y, bg_tile_data_unsigned, true);
+            let lo = self.vram_read_for_render(0, addr_lo);
+            let hi = self.vram_read_for_render(0, addr_hi);
+            let run_len = (8 - tile_x).min(screen_end - screen_x);
+            for offset in 0..run_len {
+                let bit = 7 - (tile_x + offset);
+                let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                self.framebuffer[row_base + screen_x + offset] =
+                    self.dmg_bg_color_table[((bgp as usize) << 2) | color_id as usize];
+                if track_bg_zero {
+                    self.line_color_zero[screen_x + offset] = color_id == 0;
+                }
+            }
+            screen_x += run_len;
+            pixel_x = pixel_x.wrapping_add(run_len as u16);
         }
     }
 

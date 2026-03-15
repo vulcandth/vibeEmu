@@ -341,7 +341,7 @@ impl SquareChannel {
     }
 
     #[inline]
-    fn compute_output(&mut self) -> u8 {
+    fn compute_output(&self) -> u8 {
         if !self.enabled || !self.dac_enabled {
             return 0;
         }
@@ -352,7 +352,7 @@ impl SquareChannel {
         level * self.envelope.volume
     }
 
-    fn output(&mut self) -> u8 {
+    fn output(&self) -> u8 {
         self.compute_output()
     }
 
@@ -363,13 +363,14 @@ impl SquareChannel {
     /// (third-stage output produced by the pipeline).
     fn tick_1mhz(&mut self) {
         let sample = self.compute_output();
+        self.tick_1mhz_with_sample(sample);
+    }
+
+    #[inline]
+    fn tick_1mhz_with_sample(&mut self, sample: u8) {
         self.out_stage2 = self.out_stage1;
         self.out_stage1 = self.out_latched;
         self.out_latched = sample;
-        // Shift the 1 MHz staging pipeline by one step.
-        // `out_latched` captures the most recent duty output, `out_stage1` reflects the
-        // intermediate step, and `out_stage2` is the latched value consumed by the mixer
-        // (third-stage output produced by the pipeline).
     }
 
     fn tick_1mhz_batch(&mut self, ticks: u16) {
@@ -378,7 +379,7 @@ impl SquareChannel {
         }
         let sample = self.compute_output();
         match ticks {
-            1 => self.tick_1mhz(),
+            1 => self.tick_1mhz_with_sample(sample),
             2 => {
                 self.out_stage2 = self.out_latched;
                 self.out_stage1 = sample;
@@ -557,6 +558,11 @@ impl WaveChannel {
 
     fn tick_1mhz(&mut self) {
         let sample = self.compute_output();
+        self.tick_1mhz_with_sample(sample);
+    }
+
+    #[inline]
+    fn tick_1mhz_with_sample(&mut self, sample: u8) {
         self.out_stage2 = self.out_stage1;
         self.out_stage1 = self.out_latched;
         self.out_latched = sample;
@@ -568,7 +574,7 @@ impl WaveChannel {
         }
         let sample = self.compute_output();
         match ticks {
-            1 => self.tick_1mhz(),
+            1 => self.tick_1mhz_with_sample(sample),
             2 => {
                 self.out_stage2 = self.out_latched;
                 self.out_stage1 = sample;
@@ -774,6 +780,11 @@ impl NoiseChannel {
 
     fn tick_1mhz(&mut self) {
         let sample = self.compute_output();
+        self.tick_1mhz_with_sample(sample);
+    }
+
+    #[inline]
+    fn tick_1mhz_with_sample(&mut self, sample: u8) {
         self.out_stage2 = self.out_stage1;
         self.out_stage1 = self.out_latched;
         self.out_latched = sample;
@@ -785,7 +796,7 @@ impl NoiseChannel {
         }
         let sample = self.compute_output();
         match ticks {
-            1 => self.tick_1mhz(),
+            1 => self.tick_1mhz_with_sample(sample),
             2 => {
                 self.out_stage2 = self.out_latched;
                 self.out_stage1 = sample;
@@ -1786,9 +1797,23 @@ impl Apu {
         }
 
         let bit = if double_speed { 13 } else { 12 };
+        let toggle_span = 1u16 << bit;
+        if steps <= toggle_span {
+            let div_now = div_prev.wrapping_add(steps);
+            if ((div_prev ^ div_now) & toggle_span) == 0 {
+                return;
+            }
+            if ((div_now >> bit) & 1) == 0 {
+                self.handle_div_event();
+            } else {
+                self.handle_div_rising_edge();
+            }
+            return;
+        }
+
         let mut div = div_prev;
         let mut remaining = steps;
-        let lower_mask = (1u16 << bit) - 1;
+        let lower_mask = toggle_span - 1;
 
         while remaining > 0 {
             let low = div & lower_mask;
@@ -2732,6 +2757,14 @@ impl Apu {
         }
     }
 
+    #[inline]
+    fn sweep_tick_pending(&self) -> bool {
+        self.sweep_calc_reload_timer > 0
+            || self.sweep_instant_calc_done
+            || (self.sweep_calc_countdown > 0
+                && ((self.regs[0x00] & 0x07 != 0) || self.sweep_unshifted))
+    }
+
     fn clock_frame_sequencer(&mut self, step: u8) {
         if matches!(step, 0 | 2 | 4 | 6) {
             self.ch1.clock_length();
@@ -2760,6 +2793,26 @@ impl Apu {
         // correct initial delay when a channel is triggered.
         self.double_speed = double_speed;
         if ticks == 0 {
+            return;
+        }
+        if !self.sweep_tick_pending() {
+            if !self.ch1.can_skip_1mhz_batch() {
+                self.ch1.tick_1mhz_batch(ticks);
+            }
+            if !self.ch2.can_skip_1mhz_batch() {
+                self.ch2.tick_1mhz_batch(ticks);
+            }
+            if !self.ch3.can_skip_1mhz_batch() {
+                self.ch3.tick_1mhz_batch(ticks);
+            }
+            if !self.ch4.can_skip_1mhz_batch() {
+                self.ch4.tick_1mhz_batch(ticks);
+            }
+
+            self.lf_div_counter = self.lf_div_counter.wrapping_add(ticks as u64);
+            self.sweep_dot_countdown = 0;
+            self.mark_pcm_dirty();
+            self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
             return;
         }
         // Sweep ticks are tied to dot-phase boundaries. Keep a countdown to
@@ -2845,6 +2898,9 @@ impl Apu {
 
         let ticks = cycles as u32;
         self.ch3.step(ticks, &self.wave_ram);
+        if self.ch3.wave_ram_state == 0 && self.ch3.bugged_read_countdown == 0 {
+            return;
+        }
         let mut changed = self.apply_pending_wave_commits();
         if !self.ch3.enabled || !self.ch3.dac_enabled {
             changed |= self.flush_wave_shadow();
@@ -3482,6 +3538,7 @@ impl Apu {
     pub fn step(&mut self, cycles: u16) {
         let rate = self.sample_rate as u64;
         let sample_period = CPU_CLOCK_HZ as u64;
+        let emit_audio = self.audio_out.is_some();
         // Advance square channels at 2 MHz: 1 tick per 2 CPU cycles (accumulated)
         self.mhz2_residual += cycles as i32;
         let ticks_2mhz = self.mhz2_residual / 2;
@@ -3523,6 +3580,10 @@ impl Apu {
         self.cpu_cycles = self.cpu_cycles.wrapping_add(cycles as u64);
 
         self.sample_timer_accum += rate * cycles as u64;
+        if !emit_audio {
+            self.sample_timer_accum %= sample_period;
+            return;
+        }
         while self.sample_timer_accum >= sample_period {
             self.sample_timer_accum -= sample_period;
             let (left, right) = self.mix_output();
