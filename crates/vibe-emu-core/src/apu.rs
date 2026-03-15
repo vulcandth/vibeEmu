@@ -2815,6 +2815,14 @@ impl Apu {
             self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
             return;
         }
+        self.tick_steps_with_sweep(ticks, double_speed, speed_changed);
+        self.mark_pcm_dirty();
+        // cpu_cycles remains a CPU cycle counter for timers and IRQs.
+        self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
+    }
+
+    #[inline(never)]
+    fn tick_steps_with_sweep(&mut self, ticks: u16, double_speed: bool, speed_changed: bool) {
         // Sweep ticks are tied to dot-phase boundaries. Keep a countdown to
         // the next boundary and avoid per-chunk modulo/phase calculations.
         let divisor: u8 = if double_speed { 2 } else { 4 };
@@ -2855,9 +2863,6 @@ impl Apu {
                 self.sweep_dot_countdown -= chunk as u8;
             }
         }
-        self.mark_pcm_dirty();
-        // cpu_cycles remains a CPU cycle counter for timers and IRQs.
-        self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
     }
 
     fn clock_square_channels_2mhz(&mut self, cycles: i32) {

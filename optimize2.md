@@ -39,11 +39,14 @@ branch-heavy per-cycle bookkeeping, not from chasing cache locality first.
 
 ## Implemented Result
 
-Eight recommendations from this plan have now been implemented:
+Nine recommendations from this plan have now been implemented:
 
 - `Apu::tick_steps` now takes a fast path when no sweep work is pending, so it
   no longer splits the entire 1 MHz pipeline into small countdown chunks in the
   common no-sweep case.
+- The rare sweep-handling path in `Apu::tick_steps` is now outlined into a
+  dedicated helper, keeping the hot no-sweep path smaller and reducing
+  stack/register pressure in the common case.
 - `clock_wave_channel_2mhz_inner` now skips pending-commit bookkeeping when the
   wave channel has no pending wave RAM writes and no bugged-read countdown.
 - `Apu::step` now skips sample mixing and DC-block filter work when no audio
@@ -67,16 +70,14 @@ Eight recommendations from this plan have now been implemented:
 
 Measured on the same workload after those changes:
 
-- 6000 frames in 14.48 s wall clock
-- about 414 frames/s
-- 170.7B instructions, 57.7B cycles, IPC 2.96
-- `Ppu::step` is down to 18.09% self-time
-- `Apu::tick_steps` is at 17.97% self-time
-- `Apu::step` is at 17.31% self-time
-- `Cpu::tick` is at 12.57% self-time
+- 6000 frames in 14.33 s wall clock
+- about 419 frames/s
+- latest sampled profile puts `Ppu::step` at 18.95% self-time
+- latest sampled profile puts `Apu::step` at 18.12% self-time
+- latest sampled profile puts `Apu::tick_steps` at 16.60% self-time
+- latest sampled profile puts `Cpu::tick` at 12.49% self-time
 
-That is roughly a 34% wall-clock speedup and about a 32% cycle-count
-reduction for this profiled workload.
+That is roughly a 35% wall-clock speedup for this profiled workload.
 
 ## Current Hotspots
 
@@ -84,16 +85,16 @@ reduction for this profiled workload.
 
 | Self | Function | File | Notes |
 | ---: | --- | --- | --- |
-| 18.09% | `vibe_emu_core::ppu::Ppu::step` | `crates/vibe-emu-core/src/ppu.rs` | PPU scheduling is still present, but the new mode-2 fast path cut a large chunk of its remaining self-time |
-| 17.97% | `vibe_emu_core::apu::Apu::tick_steps` | `crates/vibe-emu-core/src/apu.rs` | 1 MHz APU channel stepping is now effectively tied with the remaining PPU scheduler cost |
-| 17.31% | `vibe_emu_core::apu::Apu::step` | `crates/vibe-emu-core/src/apu.rs` | 2 MHz stepping and sample scheduling remain a major control-flow cost |
-| 12.57% | `vibe_emu_core::cpu::Cpu::tick` | `crates/vibe-emu-core/src/cpu.rs` | Residual shared scheduling overhead under the core tick loop |
-| 9.20% | `vibe_emu_core::ppu::Ppu::render_scanline` | `crates/vibe-emu-core/src/ppu.rs` | The render path is improved, but it still remains one of the main remaining PPU costs |
+| 18.95% | `vibe_emu_core::ppu::Ppu::step` | `crates/vibe-emu-core/src/ppu.rs` | PPU scheduling is still the single largest flat hotspot after the retained stable-span work |
+| 18.12% | `vibe_emu_core::apu::Apu::step` | `crates/vibe-emu-core/src/apu.rs` | 2 MHz stepping and sample scheduling remain a major control-flow cost |
+| 16.60% | `vibe_emu_core::apu::Apu::tick_steps` | `crates/vibe-emu-core/src/apu.rs` | the hot no-sweep path is smaller now, but 1 MHz APU pipeline stepping is still expensive |
+| 12.49% | `vibe_emu_core::cpu::Cpu::tick` | `crates/vibe-emu-core/src/cpu.rs` | residual shared scheduling overhead under the core tick loop |
+| 9.54% | `vibe_emu_core::ppu::Ppu::render_scanline` | `crates/vibe-emu-core/src/ppu.rs` | scanline rendering remains the main PPU slow-path cost after scheduler wins |
 
 The APU frame-sequencer path no longer appears among the top self-time entries.
 The retained PPU work now consists of HBlank, VBlank, and OAM scheduler fast
-paths plus a chunked zero-event DMG renderer, which lowered the representative
-workload to 14.48 s.
+paths plus a chunked zero-event DMG renderer, and the latest retained APU
+`tick_steps` refactor lowered the representative workload further to 14.33 s.
 
 ## Original Hotspots
 
@@ -127,10 +128,11 @@ paths under `Cpu::step`:
 - `Mbc3Rtc::add_cycles`: 1.17% cumulative
 
 At the time of the initial profile this was an APU-first optimization problem.
-After the retained APU wins, the frame-sequencer fast path, the stable-span PPU
-scheduler fast paths, and the chunked zero-event DMG renderer, the next best
-optimization target has shifted toward the broader event-driven APU work, with
-remaining PPU value mostly in mode-3 and render slow cases.
+After the retained APU wins, the frame-sequencer fast path, the outlined
+`tick_steps` sweep slow path, the stable-span PPU scheduler fast paths, and the
+chunked zero-event DMG renderer, the next best optimization target remains the
+broader event-driven APU work, with remaining PPU value mostly in mode-3 and
+render slow cases.
 
 ## What Has Already Been Fixed
 
