@@ -294,22 +294,26 @@ impl SquareChannel {
             // Delay is accounted for in initial sample_countdown at trigger.
             self.delay = 0;
         }
-        while cycles_left > self.sample_countdown {
-            // Advance to the next sample boundary
-            let advance_2mhz = self.sample_countdown + 1;
-            cycles_left -= advance_2mhz;
-            // At each duty edge, reload the CPU-period timer to the current period.
-            // Do not subtract any additional partial CPU cycles here; timer changes only on edges.
+        if cycles_left > self.sample_countdown {
+            let advance_to_first_edge = self.sample_countdown + 1;
+            cycles_left -= advance_to_first_edge;
+
+            let sample_period = SquareChannel::sample_countdown_from_length(self.sample_length) + 1;
+            let additional_edges = cycles_left / sample_period;
+            let remaining_cycles = cycles_left % sample_period;
+            let total_edges = 1 + additional_edges;
+
             self.timer = self.period();
-            self.sample_countdown = SquareChannel::sample_countdown_from_length(self.sample_length);
-            self.duty_pos = (self.duty_pos + 1) & 7;
-            // Apply any pending duty change only after finishing the current sample.
+            self.sample_countdown = sample_period - 1;
+            self.duty_pos = (self.duty_pos + ((total_edges & 7) as u8)) & 7;
             self.duty = self.duty_next;
             self.sample_surpressed = false;
             self.pending_reset = false;
             self.did_tick = true;
+
+            cycles_left = remaining_cycles;
         }
-        // Consume any remaining 2 MHz ticks (no boundary crossing); timer remains unchanged
+
         if cycles_left > 0 {
             self.sample_countdown -= cycles_left;
             if self.sample_countdown < 0 {
@@ -642,13 +646,21 @@ impl WaveChannel {
 
         self.wave_ram_locked.set(true);
 
-        while cycles_left > self.sample_countdown {
-            cycles_left -= self.sample_countdown + 1;
-            self.sample_countdown = WaveChannel::period_from_sample_length(self.sample_length) - 1;
+        if cycles_left > self.sample_countdown {
+            let advance_to_first_edge = self.sample_countdown + 1;
+            cycles_left -= advance_to_first_edge;
+
+            let sample_period = WaveChannel::period_from_sample_length(self.sample_length);
+            let additional_edges = cycles_left / sample_period;
+            let remaining_cycles = cycles_left % sample_period;
+            let total_edges = 1 + additional_edges;
+
+            self.sample_countdown = sample_period - 1;
             if self.sample_countdown < 0 {
                 self.sample_countdown = 0;
             }
-            self.current_sample_index = (self.current_sample_index + 1) & 0x1F;
+            self.current_sample_index =
+                self.current_sample_index.wrapping_add(total_edges as u8) & 0x1F;
             self.wave_position.set(self.current_sample_index);
             let byte_index = (self.current_sample_index >> 1) as usize;
             let byte = wave_ram[byte_index];
@@ -659,11 +671,15 @@ impl WaveChannel {
                 byte & 0x0F
             };
             self.wave_ram_access_index.set(byte_index as u8);
-            self.wave_form_just_read.set(true);
+            self.wave_form_just_read.set(remaining_cycles == 0);
             self.sample_suppressed.set(false);
             self.pending_reset = false;
             self.did_tick = true;
-            self.tick_count = self.tick_count.saturating_add(1);
+            self.tick_count = self
+                .tick_count
+                .saturating_add(total_edges.min(i32::from(u8::MAX)) as u8);
+
+            cycles_left = remaining_cycles;
         }
 
         if cycles_left > 0 {
@@ -2866,11 +2882,8 @@ impl Apu {
     }
 
     fn clock_square_channels_2mhz(&mut self, cycles: i32) {
-        let clock_channel = |ch: &mut SquareChannel| {
-            ch.clock_2mhz(cycles);
-        };
-        clock_channel(&mut self.ch1);
-        clock_channel(&mut self.ch2);
+        self.ch1.clock_2mhz(cycles);
+        self.ch2.clock_2mhz(cycles);
     }
 
     /// Synchronizes wave channel state before a timing-sensitive register write.
