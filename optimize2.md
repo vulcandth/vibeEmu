@@ -39,7 +39,7 @@ branch-heavy per-cycle bookkeeping, not from chasing cache locality first.
 
 ## Implemented Result
 
-Seven recommendations from this plan have now been implemented:
+Eight recommendations from this plan have now been implemented:
 
 - `Apu::tick_steps` now takes a fast path when no sweep work is pending, so it
   no longer splits the entire 1 MHz pipeline into small countdown chunks in the
@@ -61,18 +61,21 @@ Seven recommendations from this plan have now been implemented:
 - The zero-event DMG path in `render_dmg_bg_window_scanline_simple` now renders
   background and window tile rows in chunks, so it fetches each tile row once
   per span instead of re-reading the same tile planes for every covered pixel.
+- `Ppu::step` now also fast-paths stable mode-2 spans when OAM DMA contention,
+  startup quirks, delayed STAT state, and pending register effects are absent,
+  letting `oam_scan_advance` consume the batch without the outer scheduler loop.
 
 Measured on the same workload after those changes:
 
-- 6000 frames in 15.38 s wall clock
-- about 390 frames/s
-- 173.3B instructions, 59.3B cycles, IPC 2.92
-- `Ppu::step` is at 22.35% self-time
-- `Apu::tick_steps` is at 17.08% self-time
-- `Apu::step` is at 16.38% self-time
-- `Cpu::tick` is at 12.34% self-time
+- 6000 frames in 14.48 s wall clock
+- about 414 frames/s
+- 170.7B instructions, 57.7B cycles, IPC 2.96
+- `Ppu::step` is down to 18.09% self-time
+- `Apu::tick_steps` is at 17.97% self-time
+- `Apu::step` is at 17.31% self-time
+- `Cpu::tick` is at 12.57% self-time
 
-That is roughly a 30% wall-clock speedup and about a 30% cycle-count
+That is roughly a 34% wall-clock speedup and about a 32% cycle-count
 reduction for this profiled workload.
 
 ## Current Hotspots
@@ -81,15 +84,16 @@ reduction for this profiled workload.
 
 | Self | Function | File | Notes |
 | ---: | --- | --- | --- |
-| 22.35% | `vibe_emu_core::ppu::Ppu::step` | `crates/vibe-emu-core/src/ppu.rs` | PPU mode scheduling remains the top hotspot even after the stable-span fast path |
-| 17.08% | `vibe_emu_core::apu::Apu::tick_steps` | `crates/vibe-emu-core/src/apu.rs` | 1 MHz APU channel stepping is still the next largest block of compute |
-| 16.38% | `vibe_emu_core::apu::Apu::step` | `crates/vibe-emu-core/src/apu.rs` | 2 MHz stepping and sample scheduling remain a major control-flow cost |
-| 12.34% | `vibe_emu_core::cpu::Cpu::tick` | `crates/vibe-emu-core/src/cpu.rs` | Residual shared scheduling overhead under the core tick loop |
-| 9.20% | `vibe_emu_core::ppu::Ppu::render_scanline` | `crates/vibe-emu-core/src/ppu.rs` | The render path is improved again, but it still remains one of the main remaining PPU costs |
+| 18.09% | `vibe_emu_core::ppu::Ppu::step` | `crates/vibe-emu-core/src/ppu.rs` | PPU scheduling is still present, but the new mode-2 fast path cut a large chunk of its remaining self-time |
+| 17.97% | `vibe_emu_core::apu::Apu::tick_steps` | `crates/vibe-emu-core/src/apu.rs` | 1 MHz APU channel stepping is now effectively tied with the remaining PPU scheduler cost |
+| 17.31% | `vibe_emu_core::apu::Apu::step` | `crates/vibe-emu-core/src/apu.rs` | 2 MHz stepping and sample scheduling remain a major control-flow cost |
+| 12.57% | `vibe_emu_core::cpu::Cpu::tick` | `crates/vibe-emu-core/src/cpu.rs` | Residual shared scheduling overhead under the core tick loop |
+| 9.20% | `vibe_emu_core::ppu::Ppu::render_scanline` | `crates/vibe-emu-core/src/ppu.rs` | The render path is improved, but it still remains one of the main remaining PPU costs |
 
 The APU frame-sequencer path no longer appears among the top self-time entries.
-The retained PPU work now consists of both scheduler fast paths and a chunked
-zero-event DMG renderer, which lowered the representative workload to 15.38 s.
+The retained PPU work now consists of HBlank, VBlank, and OAM scheduler fast
+paths plus a chunked zero-event DMG renderer, which lowered the representative
+workload to 14.48 s.
 
 ## Original Hotspots
 
@@ -124,9 +128,9 @@ paths under `Cpu::step`:
 
 At the time of the initial profile this was an APU-first optimization problem.
 After the retained APU wins, the frame-sequencer fast path, the stable-span PPU
-scheduler fast path, and the chunked zero-event DMG renderer, the next best
-optimization target is still the PPU scheduler slow cases and then the broader
-event-driven APU work.
+scheduler fast paths, and the chunked zero-event DMG renderer, the next best
+optimization target has shifted toward the broader event-driven APU work, with
+remaining PPU value mostly in mode-3 and render slow cases.
 
 ## What Has Already Been Fixed
 

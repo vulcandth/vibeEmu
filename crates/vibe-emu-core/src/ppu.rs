@@ -6368,6 +6368,19 @@ impl Ppu {
                         return false;
                     }
                 }
+                MODE_OAM => {
+                    if !self.dmg_oam_dma_contention_active()
+                        && self.mode_clock.saturating_add(remaining) < MODE2_CYCLES
+                    {
+                        self.mode_clock += remaining;
+                        self.oam_scan_advance();
+                        #[cfg(feature = "ppu-trace")]
+                        if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+                            *timer += remaining as u64;
+                        }
+                        return false;
+                    }
+                }
                 _ => {}
             }
         }
