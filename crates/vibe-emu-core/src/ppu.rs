@@ -6361,7 +6361,7 @@ impl Ppu {
                     }
                 }
                 MODE_VBLANK => {
-                    if !(self.ly == 153 && !self.cgb_line153_ly0_triggered)
+                    if (self.ly != 153 || self.cgb_line153_ly0_triggered)
                         && self.mode_clock.saturating_add(remaining) < MODE1_CYCLES
                     {
                         self.mode_clock += remaining;
@@ -6873,6 +6873,7 @@ impl Ppu {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_dmg_static_tile_span(
         &mut self,
         screen_start: usize,
