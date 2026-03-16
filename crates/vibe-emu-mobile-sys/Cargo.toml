@@ -19,6 +19,6 @@ bundled = []
 system = []
 
 [build-dependencies]
-cc = "1.2.56"
+cc = "1.2.57"
 
 [dependencies]
