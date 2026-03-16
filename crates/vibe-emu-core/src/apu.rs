@@ -3978,4 +3978,97 @@ mod tests {
         let (second, _) = apu.mix_output();
         assert!(second.abs() < first.abs());
     }
+
+    #[test]
+    fn square_clock_2mhz_batches_multiple_edges() {
+        let mut square = SquareChannel::new(false);
+        square.enabled = true;
+        square.dac_enabled = true;
+        square.frequency = 2046;
+        square.sample_length = 2046;
+        square.sample_countdown = 1;
+        square.duty = 1;
+        square.duty_next = 2;
+        square.duty_pos = 7;
+        square.pending_reset = true;
+        square.sample_surpressed = true;
+
+        square.clock_2mhz(10);
+
+        assert_eq!(square.timer, square.period());
+        assert_eq!(
+            square.sample_countdown,
+            SquareChannel::sample_countdown_from_length(square.sample_length)
+        );
+        assert_eq!(square.duty_pos, 2);
+        assert_eq!(square.duty, 2);
+        assert!(!square.sample_surpressed);
+        assert!(!square.pending_reset);
+        assert!(square.did_tick);
+        assert!(square.just_reloaded);
+    }
+
+    #[test]
+    fn square_clock_2mhz_consumes_remainder_after_batch() {
+        let mut square = SquareChannel::new(false);
+        square.enabled = true;
+        square.dac_enabled = true;
+        square.frequency = 2046;
+        square.sample_length = 2046;
+        square.sample_countdown = 1;
+
+        square.clock_2mhz(11);
+
+        assert_eq!(square.sample_countdown, 2);
+        assert!(!square.just_reloaded);
+    }
+
+    #[test]
+    fn wave_step_batches_to_exact_boundary() {
+        let mut wave = WaveChannel::default();
+        let mut wave_ram = [0u8; 0x10];
+        wave_ram[0] = 0xAB;
+        wave.enabled = true;
+        wave.dac_enabled = true;
+        wave.sample_length = 2046;
+        wave.sample_countdown = 0;
+        wave.current_sample_index = 30;
+        wave.pending_reset = true;
+        wave.sample_suppressed.set(true);
+
+        wave.step(5, &wave_ram);
+
+        assert_eq!(wave.sample_countdown, 1);
+        assert_eq!(wave.timer, 1);
+        assert_eq!(wave.current_sample_index, 1);
+        assert_eq!(wave.wave_position.get(), 1);
+        assert_eq!(wave.wave_ram_access_index.get(), 0);
+        assert_eq!(wave.current_sample_byte, 0xAB);
+        assert_eq!(wave.wave_sample_buffer, 0x0B);
+        assert!(wave.wave_form_just_read.get());
+        assert!(!wave.sample_suppressed.get());
+        assert!(!wave.pending_reset);
+        assert!(wave.did_tick);
+        assert_eq!(wave.tick_count, 3);
+    }
+
+    #[test]
+    fn wave_step_clears_just_read_after_remainder() {
+        let mut wave = WaveChannel::default();
+        let mut wave_ram = [0u8; 0x10];
+        wave_ram[0] = 0xAB;
+        wave.enabled = true;
+        wave.dac_enabled = true;
+        wave.sample_length = 2046;
+        wave.sample_countdown = 0;
+        wave.current_sample_index = 29;
+
+        wave.step(6, &wave_ram);
+
+        assert_eq!(wave.sample_countdown, 0);
+        assert_eq!(wave.timer, 0);
+        assert_eq!(wave.current_sample_index, 0);
+        assert_eq!(wave.wave_sample_buffer, 0x0A);
+        assert!(!wave.wave_form_just_read.get());
+    }
 }
