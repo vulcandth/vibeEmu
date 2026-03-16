@@ -8562,3 +8562,28 @@ mod lcd_off_frame_timing_tests {
         assert_eq!(ppu.mode(), MODE_HBLANK);
     }
 }
+
+#[cfg(test)]
+mod step_fast_path_tests {
+    use super::*;
+
+    #[test]
+    fn oam_fast_path_advances_without_contention() {
+        let mut ppu = Ppu::new(Model::default());
+        let mut if_reg = 0u8;
+
+        ppu.skip_startup_for_test();
+        ppu.lcdc = 0x80;
+
+        assert_eq!(ppu.mode(), MODE_OAM);
+        assert_eq!(ppu.mode_clock(), 0);
+        assert_eq!(ppu.oam_bug_current_row(), Some(1));
+
+        assert!(!ppu.step(4, &mut if_reg));
+
+        assert_eq!(ppu.mode(), MODE_OAM);
+        assert_eq!(ppu.mode_clock(), 4);
+        assert_eq!(ppu.oam_bug_current_row(), Some(2));
+        assert_eq!(if_reg, 0);
+    }
+}
