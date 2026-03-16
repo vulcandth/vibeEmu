@@ -294,22 +294,26 @@ impl SquareChannel {
             // Delay is accounted for in initial sample_countdown at trigger.
             self.delay = 0;
         }
-        while cycles_left > self.sample_countdown {
-            // Advance to the next sample boundary
-            let advance_2mhz = self.sample_countdown + 1;
-            cycles_left -= advance_2mhz;
-            // At each duty edge, reload the CPU-period timer to the current period.
-            // Do not subtract any additional partial CPU cycles here; timer changes only on edges.
+        if cycles_left > self.sample_countdown {
+            let advance_to_first_edge = self.sample_countdown + 1;
+            cycles_left -= advance_to_first_edge;
+
+            let sample_period = SquareChannel::sample_countdown_from_length(self.sample_length) + 1;
+            let additional_edges = cycles_left / sample_period;
+            let remaining_cycles = cycles_left % sample_period;
+            let total_edges = 1 + additional_edges;
+
             self.timer = self.period();
-            self.sample_countdown = SquareChannel::sample_countdown_from_length(self.sample_length);
-            self.duty_pos = (self.duty_pos + 1) & 7;
-            // Apply any pending duty change only after finishing the current sample.
+            self.sample_countdown = sample_period - 1;
+            self.duty_pos = (self.duty_pos + ((total_edges & 7) as u8)) & 7;
             self.duty = self.duty_next;
             self.sample_surpressed = false;
             self.pending_reset = false;
             self.did_tick = true;
+
+            cycles_left = remaining_cycles;
         }
-        // Consume any remaining 2 MHz ticks (no boundary crossing); timer remains unchanged
+
         if cycles_left > 0 {
             self.sample_countdown -= cycles_left;
             if self.sample_countdown < 0 {
@@ -341,7 +345,7 @@ impl SquareChannel {
     }
 
     #[inline]
-    fn compute_output(&mut self) -> u8 {
+    fn compute_output(&self) -> u8 {
         if !self.enabled || !self.dac_enabled {
             return 0;
         }
@@ -352,7 +356,7 @@ impl SquareChannel {
         level * self.envelope.volume
     }
 
-    fn output(&mut self) -> u8 {
+    fn output(&self) -> u8 {
         self.compute_output()
     }
 
@@ -363,13 +367,14 @@ impl SquareChannel {
     /// (third-stage output produced by the pipeline).
     fn tick_1mhz(&mut self) {
         let sample = self.compute_output();
+        self.tick_1mhz_with_sample(sample);
+    }
+
+    #[inline]
+    fn tick_1mhz_with_sample(&mut self, sample: u8) {
         self.out_stage2 = self.out_stage1;
         self.out_stage1 = self.out_latched;
         self.out_latched = sample;
-        // Shift the 1 MHz staging pipeline by one step.
-        // `out_latched` captures the most recent duty output, `out_stage1` reflects the
-        // intermediate step, and `out_stage2` is the latched value consumed by the mixer
-        // (third-stage output produced by the pipeline).
     }
 
     fn tick_1mhz_batch(&mut self, ticks: u16) {
@@ -378,7 +383,7 @@ impl SquareChannel {
         }
         let sample = self.compute_output();
         match ticks {
-            1 => self.tick_1mhz(),
+            1 => self.tick_1mhz_with_sample(sample),
             2 => {
                 self.out_stage2 = self.out_latched;
                 self.out_stage1 = sample;
@@ -557,6 +562,11 @@ impl WaveChannel {
 
     fn tick_1mhz(&mut self) {
         let sample = self.compute_output();
+        self.tick_1mhz_with_sample(sample);
+    }
+
+    #[inline]
+    fn tick_1mhz_with_sample(&mut self, sample: u8) {
         self.out_stage2 = self.out_stage1;
         self.out_stage1 = self.out_latched;
         self.out_latched = sample;
@@ -568,7 +578,7 @@ impl WaveChannel {
         }
         let sample = self.compute_output();
         match ticks {
-            1 => self.tick_1mhz(),
+            1 => self.tick_1mhz_with_sample(sample),
             2 => {
                 self.out_stage2 = self.out_latched;
                 self.out_stage1 = sample;
@@ -636,13 +646,21 @@ impl WaveChannel {
 
         self.wave_ram_locked.set(true);
 
-        while cycles_left > self.sample_countdown {
-            cycles_left -= self.sample_countdown + 1;
-            self.sample_countdown = WaveChannel::period_from_sample_length(self.sample_length) - 1;
+        if cycles_left > self.sample_countdown {
+            let advance_to_first_edge = self.sample_countdown + 1;
+            cycles_left -= advance_to_first_edge;
+
+            let sample_period = WaveChannel::period_from_sample_length(self.sample_length);
+            let additional_edges = cycles_left / sample_period;
+            let remaining_cycles = cycles_left % sample_period;
+            let total_edges = 1 + additional_edges;
+
+            self.sample_countdown = sample_period - 1;
             if self.sample_countdown < 0 {
                 self.sample_countdown = 0;
             }
-            self.current_sample_index = (self.current_sample_index + 1) & 0x1F;
+            self.current_sample_index =
+                self.current_sample_index.wrapping_add(total_edges as u8) & 0x1F;
             self.wave_position.set(self.current_sample_index);
             let byte_index = (self.current_sample_index >> 1) as usize;
             let byte = wave_ram[byte_index];
@@ -653,11 +671,15 @@ impl WaveChannel {
                 byte & 0x0F
             };
             self.wave_ram_access_index.set(byte_index as u8);
-            self.wave_form_just_read.set(true);
+            self.wave_form_just_read.set(remaining_cycles == 0);
             self.sample_suppressed.set(false);
             self.pending_reset = false;
             self.did_tick = true;
-            self.tick_count = self.tick_count.saturating_add(1);
+            self.tick_count = self
+                .tick_count
+                .saturating_add(total_edges.min(i32::from(u8::MAX)) as u8);
+
+            cycles_left = remaining_cycles;
         }
 
         if cycles_left > 0 {
@@ -774,6 +796,11 @@ impl NoiseChannel {
 
     fn tick_1mhz(&mut self) {
         let sample = self.compute_output();
+        self.tick_1mhz_with_sample(sample);
+    }
+
+    #[inline]
+    fn tick_1mhz_with_sample(&mut self, sample: u8) {
         self.out_stage2 = self.out_stage1;
         self.out_stage1 = self.out_latched;
         self.out_latched = sample;
@@ -785,7 +812,7 @@ impl NoiseChannel {
         }
         let sample = self.compute_output();
         match ticks {
-            1 => self.tick_1mhz(),
+            1 => self.tick_1mhz_with_sample(sample),
             2 => {
                 self.out_stage2 = self.out_latched;
                 self.out_stage1 = sample;
@@ -1786,9 +1813,23 @@ impl Apu {
         }
 
         let bit = if double_speed { 13 } else { 12 };
+        let toggle_span = 1u16 << bit;
+        if steps <= toggle_span {
+            let div_now = div_prev.wrapping_add(steps);
+            if ((div_prev ^ div_now) & toggle_span) == 0 {
+                return;
+            }
+            if ((div_now >> bit) & 1) == 0 {
+                self.handle_div_event();
+            } else {
+                self.handle_div_rising_edge();
+            }
+            return;
+        }
+
         let mut div = div_prev;
         let mut remaining = steps;
-        let lower_mask = (1u16 << bit) - 1;
+        let lower_mask = toggle_span - 1;
 
         while remaining > 0 {
             let low = div & lower_mask;
@@ -2732,6 +2773,14 @@ impl Apu {
         }
     }
 
+    #[inline]
+    fn sweep_tick_pending(&self) -> bool {
+        self.sweep_calc_reload_timer > 0
+            || self.sweep_instant_calc_done
+            || (self.sweep_calc_countdown > 0
+                && ((self.regs[0x00] & 0x07 != 0) || self.sweep_unshifted))
+    }
+
     fn clock_frame_sequencer(&mut self, step: u8) {
         if matches!(step, 0 | 2 | 4 | 6) {
             self.ch1.clock_length();
@@ -2762,6 +2811,34 @@ impl Apu {
         if ticks == 0 {
             return;
         }
+        if !self.sweep_tick_pending() {
+            if !self.ch1.can_skip_1mhz_batch() {
+                self.ch1.tick_1mhz_batch(ticks);
+            }
+            if !self.ch2.can_skip_1mhz_batch() {
+                self.ch2.tick_1mhz_batch(ticks);
+            }
+            if !self.ch3.can_skip_1mhz_batch() {
+                self.ch3.tick_1mhz_batch(ticks);
+            }
+            if !self.ch4.can_skip_1mhz_batch() {
+                self.ch4.tick_1mhz_batch(ticks);
+            }
+
+            self.lf_div_counter = self.lf_div_counter.wrapping_add(ticks as u64);
+            self.sweep_dot_countdown = 0;
+            self.mark_pcm_dirty();
+            self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
+            return;
+        }
+        self.tick_steps_with_sweep(ticks, double_speed, speed_changed);
+        self.mark_pcm_dirty();
+        // cpu_cycles remains a CPU cycle counter for timers and IRQs.
+        self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
+    }
+
+    #[inline(never)]
+    fn tick_steps_with_sweep(&mut self, ticks: u16, double_speed: bool, speed_changed: bool) {
         // Sweep ticks are tied to dot-phase boundaries. Keep a countdown to
         // the next boundary and avoid per-chunk modulo/phase calculations.
         let divisor: u8 = if double_speed { 2 } else { 4 };
@@ -2802,17 +2879,11 @@ impl Apu {
                 self.sweep_dot_countdown -= chunk as u8;
             }
         }
-        self.mark_pcm_dirty();
-        // cpu_cycles remains a CPU cycle counter for timers and IRQs.
-        self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
     }
 
     fn clock_square_channels_2mhz(&mut self, cycles: i32) {
-        let clock_channel = |ch: &mut SquareChannel| {
-            ch.clock_2mhz(cycles);
-        };
-        clock_channel(&mut self.ch1);
-        clock_channel(&mut self.ch2);
+        self.ch1.clock_2mhz(cycles);
+        self.ch2.clock_2mhz(cycles);
     }
 
     /// Synchronizes wave channel state before a timing-sensitive register write.
@@ -2845,6 +2916,9 @@ impl Apu {
 
         let ticks = cycles as u32;
         self.ch3.step(ticks, &self.wave_ram);
+        if self.ch3.wave_ram_state == 0 && self.ch3.bugged_read_countdown == 0 {
+            return;
+        }
         let mut changed = self.apply_pending_wave_commits();
         if !self.ch3.enabled || !self.ch3.dac_enabled {
             changed |= self.flush_wave_shadow();
@@ -3482,6 +3556,7 @@ impl Apu {
     pub fn step(&mut self, cycles: u16) {
         let rate = self.sample_rate as u64;
         let sample_period = CPU_CLOCK_HZ as u64;
+        let emit_audio = self.audio_out.is_some();
         // Advance square channels at 2 MHz: 1 tick per 2 CPU cycles (accumulated)
         self.mhz2_residual += cycles as i32;
         let ticks_2mhz = self.mhz2_residual / 2;
@@ -3523,6 +3598,10 @@ impl Apu {
         self.cpu_cycles = self.cpu_cycles.wrapping_add(cycles as u64);
 
         self.sample_timer_accum += rate * cycles as u64;
+        if !emit_audio {
+            self.sample_timer_accum %= sample_period;
+            return;
+        }
         while self.sample_timer_accum >= sample_period {
             self.sample_timer_accum -= sample_period;
             let (left, right) = self.mix_output();
@@ -3898,5 +3977,98 @@ mod tests {
         apu.ch1.out_latched = 15;
         let (second, _) = apu.mix_output();
         assert!(second.abs() < first.abs());
+    }
+
+    #[test]
+    fn square_clock_2mhz_batches_multiple_edges() {
+        let mut square = SquareChannel::new(false);
+        square.enabled = true;
+        square.dac_enabled = true;
+        square.frequency = 2046;
+        square.sample_length = 2046;
+        square.sample_countdown = 1;
+        square.duty = 1;
+        square.duty_next = 2;
+        square.duty_pos = 7;
+        square.pending_reset = true;
+        square.sample_surpressed = true;
+
+        square.clock_2mhz(10);
+
+        assert_eq!(square.timer, square.period());
+        assert_eq!(
+            square.sample_countdown,
+            SquareChannel::sample_countdown_from_length(square.sample_length)
+        );
+        assert_eq!(square.duty_pos, 2);
+        assert_eq!(square.duty, 2);
+        assert!(!square.sample_surpressed);
+        assert!(!square.pending_reset);
+        assert!(square.did_tick);
+        assert!(square.just_reloaded);
+    }
+
+    #[test]
+    fn square_clock_2mhz_consumes_remainder_after_batch() {
+        let mut square = SquareChannel::new(false);
+        square.enabled = true;
+        square.dac_enabled = true;
+        square.frequency = 2046;
+        square.sample_length = 2046;
+        square.sample_countdown = 1;
+
+        square.clock_2mhz(11);
+
+        assert_eq!(square.sample_countdown, 2);
+        assert!(!square.just_reloaded);
+    }
+
+    #[test]
+    fn wave_step_batches_to_exact_boundary() {
+        let mut wave = WaveChannel::default();
+        let mut wave_ram = [0u8; 0x10];
+        wave_ram[0] = 0xAB;
+        wave.enabled = true;
+        wave.dac_enabled = true;
+        wave.sample_length = 2046;
+        wave.sample_countdown = 0;
+        wave.current_sample_index = 30;
+        wave.pending_reset = true;
+        wave.sample_suppressed.set(true);
+
+        wave.step(5, &wave_ram);
+
+        assert_eq!(wave.sample_countdown, 1);
+        assert_eq!(wave.timer, 1);
+        assert_eq!(wave.current_sample_index, 1);
+        assert_eq!(wave.wave_position.get(), 1);
+        assert_eq!(wave.wave_ram_access_index.get(), 0);
+        assert_eq!(wave.current_sample_byte, 0xAB);
+        assert_eq!(wave.wave_sample_buffer, 0x0B);
+        assert!(wave.wave_form_just_read.get());
+        assert!(!wave.sample_suppressed.get());
+        assert!(!wave.pending_reset);
+        assert!(wave.did_tick);
+        assert_eq!(wave.tick_count, 3);
+    }
+
+    #[test]
+    fn wave_step_clears_just_read_after_remainder() {
+        let mut wave = WaveChannel::default();
+        let mut wave_ram = [0u8; 0x10];
+        wave_ram[0] = 0xAB;
+        wave.enabled = true;
+        wave.dac_enabled = true;
+        wave.sample_length = 2046;
+        wave.sample_countdown = 0;
+        wave.current_sample_index = 29;
+
+        wave.step(6, &wave_ram);
+
+        assert_eq!(wave.sample_countdown, 0);
+        assert_eq!(wave.timer, 0);
+        assert_eq!(wave.current_sample_index, 0);
+        assert_eq!(wave.wave_sample_buffer, 0x0A);
+        assert!(!wave.wave_form_just_read.get());
     }
 }
