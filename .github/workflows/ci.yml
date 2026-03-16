@@ -21,7 +21,7 @@ jobs:
       HAS_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -30,7 +30,7 @@ jobs:
           sudo apt-get install -y libasound2-dev libx11-dev libgtk-3-dev build-essential pkg-config libfontconfig1-dev libudev-dev
 
       - name: Cache cargo registry and git
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -132,14 +132,14 @@ jobs:
         run: echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
 
       - name: Cache sccache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/sccache
           key: ${{ runner.os }}-sccache-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-sccache-
 
       - name: Cache target (debug)
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: target/debug
           key: ${{ runner.os }}-target-debug-${{ hashFiles('**/Cargo.lock') }}
@@ -156,7 +156,7 @@ jobs:
         run: cargo test --verbose -p ${{ matrix.crate }}
 
       - name: Cache target (release)
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: target/release
           key: ${{ runner.os }}-target-release-${{ hashFiles('**/Cargo.lock') }}
@@ -189,7 +189,7 @@ jobs:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -206,23 +206,26 @@ jobs:
     name: semver
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Check semver compliance
-        uses: obi1kenobi/cargo-semver-checks-action@v2
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
         with:
-          package: vibe-emu-core
+          tool: cargo-semver-checks
+
+      - name: Check semver compliance
+        run: cargo semver-checks check-release --package vibe-emu-core
 
   license-report:
     name: license diff
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
