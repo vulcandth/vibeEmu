@@ -1395,7 +1395,7 @@ limitations under the License.
 ### MIT License
 
 Used by:
-- [vibe-emu-core 0.0.1](https://github.com/vulcandth/vibeEmu)
+- [vibe-emu-core 0.0.2](https://github.com/vulcandth/vibeEmu)
 - [vibe-emu-mobile 0.0.1](https://github.com/vulcandth/vibeEmu)
 - [vibe-emu-mobile-sys 0.0.1](https://github.com/vulcandth/vibeEmu)
 
