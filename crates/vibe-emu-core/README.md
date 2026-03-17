@@ -57,7 +57,7 @@ Add `vibe-emu-core` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-vibe-emu-core = "0.0.1"
+vibe-emu-core = "0.0.2"
 ```
 
 The main entry point is `GameBoy`, which holds the `cpu` and `mmu` fields.
