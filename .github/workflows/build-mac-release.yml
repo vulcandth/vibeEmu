@@ -46,6 +46,7 @@ jobs:
       - name: Create app bundle
         run: |
           release="target/x86_64-apple-darwin/release"
+          APP_VERSION=$(grep '^version' crates/vibe-emu-ui/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           mkdir -p vibeEmu.app/Contents/{MacOS,Resources}
           lipo -create \
             target/x86_64-apple-darwin/release/vibe-emu-ui \
@@ -66,7 +67,7 @@ jobs:
           sips -z 256 256 gfx/vibeEmu_512px.png --out /tmp/iconset.iconset/icon_256x256.png
           iconutil -c icns /tmp/iconset.iconset -o vibeEmu.app/Contents/Resources/vibeEmu.icns
 
-          cat > vibeEmu.app/Contents/Info.plist <<'PLIST'
+          cat > vibeEmu.app/Contents/Info.plist << PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -86,9 +87,9 @@ jobs:
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>CFBundleShortVersionString</key>
-            <string>0.0.0</string>
+            <string>${APP_VERSION}</string>
             <key>CFBundleVersion</key>
-            <string>0</string>
+            <string>${APP_VERSION}</string>
             <key>LSMinimumSystemVersion</key>
             <string>10.13</string>
           </dict>

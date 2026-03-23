@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-#![allow(unused_imports)]
 
 mod audio;
 mod keybinds;
@@ -12,11 +11,9 @@ use cpal::traits::StreamTrait;
 use eframe::{egui, egui_wgpu, wgpu};
 use log::{debug, error, info, warn};
 use rfd::FileDialog;
-use std::collections::HashMap;
 use std::io::{BufWriter, Cursor};
-use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use vibe_emu_core::serial::{LinkPort, NullLinkPort};
@@ -24,11 +21,9 @@ use vibe_emu_core::{
     cartridge::Cartridge,
     gameboy::GameBoy,
     hardware::{CgbRevision, DmgRevision, Model},
-    mmu::Mmu,
 };
 use vibe_emu_mobile::{
-    MobileAdapter, MobileAdapterDevice, MobileAddr, MobileConfig, MobileHost, MobileLinkPort,
-    MobileNumber, MobileSockType, StdMobileHost,
+    MobileAdapter, MobileAdapterDevice, MobileAddr, MobileConfig, MobileLinkPort,
 };
 
 #[cfg(not(target_os = "android"))]
@@ -816,6 +811,34 @@ fn run_emulator_thread(
     }
 }
 
+struct StatusNotification {
+    message: String,
+    color: egui::Color32,
+    expires_at: std::time::Instant,
+}
+
+impl StatusNotification {
+    fn info(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            color: egui::Color32::GREEN,
+            expires_at: std::time::Instant::now() + Duration::from_secs(3),
+        }
+    }
+
+    fn error(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            color: egui::Color32::RED,
+            expires_at: std::time::Instant::now() + Duration::from_secs(5),
+        }
+    }
+
+    fn is_expired(&self) -> bool {
+        std::time::Instant::now() >= self.expires_at
+    }
+}
+
 struct VibeEmuApp {
     gb: Arc<Mutex<GameBoy>>,
     emu_tx: mpsc::Sender<EmuCommand>,
@@ -919,6 +942,7 @@ struct VibeEmuApp {
     last_fps_update: std::time::Instant,
     frame_count_since_update: u64,
     current_fps: f64,
+    status_notification: Option<StatusNotification>,
 }
 
 impl VibeEmuApp {
@@ -1263,6 +1287,7 @@ impl VibeEmuApp {
             last_fps_update: std::time::Instant::now(),
             frame_count_since_update: 0,
             current_fps: 0.0,
+            status_notification: None,
         };
 
         app.apply_persisted_serial_settings();
@@ -1990,8 +2015,23 @@ impl VibeEmuApp {
 
     fn capture_screenshot(&mut self) {
         match self.save_current_frame_screenshot() {
-            Ok(path) => info!("Saved screenshot to {}", path.display()),
-            Err(e) => warn!("Failed to save screenshot: {e}"),
+            Ok(path) => {
+                info!("Saved screenshot to {}", path.display());
+                let file_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                self.status_notification = Some(StatusNotification::info(format!(
+                    "📸 Screenshot saved: {file_name}"
+                )));
+            }
+            Err(e) => {
+                warn!("Failed to save screenshot: {e}");
+                self.status_notification = Some(StatusNotification::error(format!(
+                    "⚠ Failed to save screenshot: {e}"
+                )));
+            }
         }
     }
 
@@ -2040,6 +2080,9 @@ impl VibeEmuApp {
             }
             Err(e) => {
                 error!("Failed to load ROM: {e}");
+                self.status_notification = Some(StatusNotification::error(format!(
+                    "⚠ Failed to load ROM: {e}"
+                )));
             }
         }
     }
@@ -2239,6 +2282,19 @@ impl eframe::App for VibeEmuApp {
         }
 
         // Status bar at the bottom
+        // Clear expired status notifications before rendering the status bar
+        if self
+            .status_notification
+            .as_ref()
+            .is_some_and(|n| n.is_expired())
+        {
+            self.status_notification = None;
+        }
+        let active_notification = self
+            .status_notification
+            .as_ref()
+            .map(|n| (n.message.clone(), n.color));
+
         egui::TopBottomPanel::bottom("status_bar")
             .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(4.0))
             .show(ctx, |ui| {
@@ -2282,18 +2338,27 @@ impl eframe::App for VibeEmuApp {
 
                     let remaining = total_width - ui.min_rect().width() - fps_reserve - 30.0;
 
-                    // ROM name only if there's enough room
-                    if remaining > 60.0
-                        && let Some(path) = &self.current_rom_path
-                        && let Some(name) = path.file_name().and_then(|n| n.to_str())
-                    {
-                        ui.separator();
-                        ui.add_sized(
-                            [remaining.min(200.0), ui.available_height()],
-                            egui::Label::new(name)
-                                .truncate()
-                                .wrap_mode(egui::TextWrapMode::Truncate),
-                        );
+                    if remaining > 60.0 {
+                        if let Some((msg, color)) = &active_notification {
+                            // Timed notification takes precedence over the ROM name
+                            ui.separator();
+                            ui.add_sized(
+                                [remaining.min(400.0), ui.available_height()],
+                                egui::Label::new(egui::RichText::new(msg.as_str()).color(*color))
+                                    .truncate()
+                                    .wrap_mode(egui::TextWrapMode::Truncate),
+                            );
+                        } else if let Some(path) = &self.current_rom_path
+                            && let Some(name) = path.file_name().and_then(|n| n.to_str())
+                        {
+                            ui.separator();
+                            ui.add_sized(
+                                [remaining.min(200.0), ui.available_height()],
+                                egui::Label::new(name)
+                                    .truncate()
+                                    .wrap_mode(egui::TextWrapMode::Truncate),
+                            );
+                        }
                     }
 
                     // FPS counter (right-aligned)
