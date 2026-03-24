@@ -31,7 +31,7 @@ toml = "1.1.0"
 gilrs = "0.11"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-wgpu = { version = "27", default-features = false, features = ["vulkan", "gles"] }
+wgpu = { version = "29", default-features = false, features = ["vulkan", "gles"] }
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
