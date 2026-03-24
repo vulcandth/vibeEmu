@@ -2,8 +2,12 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const README_ABOUT_EXCERPT_START: &str = "<!-- about-page-excerpt:start -->";
+const README_ABOUT_EXCERPT_END: &str = "<!-- about-page-excerpt:end -->";
+
 fn main() {
     println!("cargo:rerun-if-changed=../../gfx/vibeEmu.ico");
+    println!("cargo:rerun-if-changed=../../README.md");
     println!("cargo:rerun-if-changed=LICENSE");
     println!("cargo:rerun-if-changed=THIRD_PARTY_LICENSES.md");
 
@@ -15,6 +19,34 @@ fn main() {
     }
 
     copy_legal_files_to_binary_output_dir();
+    generate_about_assets();
+}
+
+fn generate_about_assets() {
+    let manifest_dir = PathBuf::from(
+        env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR should be available"),
+    );
+    let out_dir =
+        PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR should be available during build"));
+    let readme = fs::read_to_string(manifest_dir.join("../../README.md"))
+        .expect("failed to read workspace README.md for about page excerpt");
+    let license = fs::read_to_string(manifest_dir.join("LICENSE"))
+        .expect("failed to read LICENSE from vibe-emu-ui crate");
+    let third_party = fs::read_to_string(manifest_dir.join("THIRD_PARTY_LICENSES.md"))
+        .expect("failed to read THIRD_PARTY_LICENSES.md from vibe-emu-ui crate");
+    let about_excerpt = extract_about_excerpt(&readme);
+    let about_assets = format!(
+        concat!(
+            "pub const AUTHOR_STATEMENT_EXCERPT: &str = ",
+            "{:?};\n",
+            "pub const LICENSE_TEXT: &str = {:?};\n",
+            "pub const THIRD_PARTY_LICENSES_TEXT: &str = {:?};\n",
+        ),
+        about_excerpt, license, third_party
+    );
+
+    fs::write(out_dir.join("about_assets.rs"), about_assets)
+        .expect("failed to write generated about assets for vibe-emu-ui");
 }
 
 fn copy_legal_files_to_binary_output_dir() {
@@ -62,6 +94,32 @@ fn markdown_html_document(markdown: &str) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>Third-party licenses</title></head><body><pre>{escaped}</pre></body></html>"
     )
+}
+
+fn extract_about_excerpt(readme: &str) -> String {
+    let excerpt = readme
+        .split_once(README_ABOUT_EXCERPT_START)
+        .and_then(|(_, rest)| {
+            rest.split_once(README_ABOUT_EXCERPT_END)
+                .map(|(excerpt, _)| excerpt)
+        })
+        .map(str::trim)
+        .filter(|excerpt| !excerpt.is_empty())
+        .expect("README about-page excerpt markers should contain content");
+
+    excerpt
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            let line = line.strip_prefix('>').map(str::trim_start).unwrap_or(line);
+            if line.is_empty() {
+                None
+            } else {
+                Some(line.replace("**", "").replace('*', ""))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Cargo exposes `OUT_DIR` as a nested path under `target/<profile>/build/.../out`.

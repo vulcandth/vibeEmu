@@ -45,6 +45,10 @@ use ui_config::{
     WindowSize,
 };
 
+mod about_assets {
+    include!(concat!(env!("OUT_DIR"), "/about_assets.rs"));
+}
+
 const DEFAULT_WINDOW_SCALE: u32 = 2;
 const MAX_WINDOW_SCALE: usize = 6;
 const MAX_RECENT_ROMS: usize = 10;
@@ -165,6 +169,30 @@ static VIEWPORT_OPTIONS: LazyLock<egui::ViewportId> =
     LazyLock::new(|| egui::ViewportId::from_hash_of("options"));
 static VIEWPORT_ABOUT: LazyLock<egui::ViewportId> =
     LazyLock::new(|| egui::ViewportId::from_hash_of("about"));
+static VIEWPORT_LEGAL: LazyLock<egui::ViewportId> =
+    LazyLock::new(|| egui::ViewportId::from_hash_of("legal"));
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LegalDocument {
+    License,
+    ThirdPartyLicenses,
+}
+
+impl LegalDocument {
+    fn title(self) -> &'static str {
+        match self {
+            Self::License => "LICENSE",
+            Self::ThirdPartyLicenses => "THIRD_PARTY_LICENSES.md",
+        }
+    }
+
+    fn body(self) -> &'static str {
+        match self {
+            Self::License => about_assets::LICENSE_TEXT,
+            Self::ThirdPartyLicenses => about_assets::THIRD_PARTY_LICENSES_TEXT,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum LogLevelArg {
@@ -849,6 +877,7 @@ struct VibeEmuApp {
     show_vram_viewer: bool,
     show_options: bool,
     show_about: bool,
+    legal_document: Option<LegalDocument>,
 
     // Options window state
     emulation_mode: EmulationMode,
@@ -1207,6 +1236,7 @@ impl VibeEmuApp {
             show_vram_viewer: false,
             show_options: false,
             show_about: false,
+            legal_document: None,
             emulation_mode,
             bootrom_override,
             dmg_bootrom_path: dmg_bootrom_path
@@ -2360,6 +2390,10 @@ impl eframe::App for VibeEmuApp {
             self.draw_about_window(ctx);
         }
 
+        if self.legal_document.is_some() {
+            self.draw_legal_window(ctx);
+        }
+
         if !self.paused {
             ctx.request_repaint();
         }
@@ -2380,7 +2414,7 @@ impl VibeEmuApp {
             *VIEWPORT_ABOUT,
             egui::ViewportBuilder::default()
                 .with_title(format!("About {APP_NAME}"))
-                .with_inner_size([500.0, 320.0]),
+                .with_inner_size([560.0, 520.0]),
             |ctx, class| {
                 if ctx.input(|i| i.viewport().close_requested()) {
                     self.show_about = false;
@@ -2413,6 +2447,14 @@ impl VibeEmuApp {
             ui.label(APP_SHORT_DESCRIPTION);
 
             ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.label("From the author:");
+            ui.group(|ui| {
+                ui.label(about_assets::AUTHOR_STATEMENT_EXCERPT);
+            });
+
+            ui.add_space(12.0);
             egui::Grid::new("about_info_grid")
                 .num_columns(2)
                 .spacing([12.0, 8.0])
@@ -2426,7 +2468,15 @@ impl VibeEmuApp {
                     ui.end_row();
 
                     ui.strong("License files:");
-                    ui.label("See LICENSE and THIRD_PARTY_LICENSES.md included with the app.");
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.link("LICENSE").clicked() {
+                            self.legal_document = Some(LegalDocument::License);
+                        }
+                        ui.label("|");
+                        if ui.link("THIRD_PARTY_LICENSES.md").clicked() {
+                            self.legal_document = Some(LegalDocument::ThirdPartyLicenses);
+                        }
+                    });
                     ui.end_row();
                 });
 
@@ -2435,7 +2485,7 @@ impl VibeEmuApp {
             ui.add_space(8.0);
 
             ui.label("vibeEmu is distributed under the MIT license.");
-            ui.label("Third-party dependency notices are collected in THIRD_PARTY_LICENSES.md.");
+            ui.label("The About page can open embedded copies of both legal documents.");
 
             if cfg!(feature = "mobile-bundled") {
                 ui.label(
@@ -2448,6 +2498,62 @@ impl VibeEmuApp {
                 self.show_about = false;
             }
         });
+    }
+
+    fn draw_legal_window(&mut self, ctx: &egui::Context) {
+        let Some(document) = self.legal_document else {
+            return;
+        };
+
+        ctx.show_viewport_immediate(
+            *VIEWPORT_LEGAL,
+            egui::ViewportBuilder::default()
+                .with_title(document.title())
+                .with_inner_size([760.0, 640.0]),
+            |ctx, class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    self.legal_document = None;
+                }
+
+                match class {
+                    egui::ViewportClass::Embedded => {
+                        egui::Window::new(document.title()).show(ctx, |ui| {
+                            self.draw_legal_content(ui, document);
+                        });
+                    }
+                    _ => {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            self.draw_legal_content(ui, document);
+                        });
+                    }
+                }
+            },
+        );
+    }
+
+    fn draw_legal_content(&mut self, ui: &mut egui::Ui, document: LegalDocument) {
+        ui.horizontal(|ui| {
+            ui.heading(document.title());
+            ui.separator();
+            ui.label("Embedded with the app for compliance and portability.");
+        });
+        ui.add_space(8.0);
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            let mut body = document.body().to_owned();
+            ui.add(
+                egui::TextEdit::multiline(&mut body)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY)
+                    .interactive(false),
+            );
+        });
+
+        ui.add_space(8.0);
+        if ui.button("Close").clicked() {
+            self.legal_document = None;
+        }
     }
 
     fn draw_options_window(&mut self, ctx: &egui::Context) {

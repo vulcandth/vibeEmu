@@ -8,12 +8,14 @@
 
 > **AI is a tool, not a crutch.**  
 >
+> <!-- about-page-excerpt:start -->
 > *vibeEmu* is a personal project to see how far I could get making an emulator
 > using **vibe coding** — describing what you want in natural language and
 > letting an asynchronous AI agent do most of the heavy lifting. I chose to do
 > this out of fun, to get some exposure to Rust, and to better understand what
 > AI is good and bad at, as well as how to interact with it effectively. I also
 > wanted an emulator of my own that I could use for other projects.
+> <!-- about-page-excerpt:end -->
 >
 > This project is **not** a statement! I am not endorsing the use of AI, and I
 > understand many people have differing opinions about it. vibeEmu passes many
