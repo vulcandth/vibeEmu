@@ -68,6 +68,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -328,7 +329,7 @@ fun EmulatorScreen(
 
     val optionsRepository = remember(context) { OptionsRepository(context) }
     var options by remember { mutableStateOf(optionsRepository.load()) }
-    var screen by remember { mutableStateOf(UiScreen.Instances) }
+    var screen by rememberSaveable { mutableStateOf(UiScreen.Instances) }
 
     val bootRomDmgFile = remember(context) { File(context.filesDir, "bootrom_dmg.bin") }
     val bootRomCgbFile = remember(context) { File(context.filesDir, "bootrom_cgb.bin") }
@@ -378,8 +379,8 @@ fun EmulatorScreen(
         if (cgbBytes != null) emulator.setBootRom(BootRomMode.Cgb, cgbBytes) else emulator.clearBootRom(BootRomMode.Cgb)
     }
 
-    var status by remember { mutableStateOf("Select an instance to play") }
-    var romLabel by remember { mutableStateOf("No instance loaded") }
+    var status by rememberSaveable { mutableStateOf("Select an instance to play") }
+    var romLabel by rememberSaveable { mutableStateOf("No instance loaded") }
     var inputState by remember { mutableStateOf(0xFF) }
     var menuExpanded by remember { mutableStateOf(false) }
 
