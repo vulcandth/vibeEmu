@@ -4187,6 +4187,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vibe-emu-android"
+version = "0.0.1"
+dependencies = [
+ "jni",
+ "vibe-emu-core",
+ "vibe-emu-mobile",
+]
+
+[[package]]
 name = "vibe-emu-core"
 version = "0.0.2"
 dependencies = [

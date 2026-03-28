@@ -15,6 +15,11 @@ This document provides detailed build instructions for vibeEmu on Windows, Linux
   - Download from [Visual Studio Downloads](https://visualstudio.microsoft.com/downloads/)
   - Select "Desktop development with C++" workload
   - This provides the MSVC compiler that Rust's `cc` crate uses to compile the bundled `libmobile` C library
+- **Android Studio** with the Android SDK, SDK Command-line Tools, and NDK if you want to build the Android app
+- **Rust Android targets** if you want to build the Android app:
+  ```bash
+  rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+  ```
 
 ### Linux
 
@@ -80,6 +85,33 @@ For an optimized release build:
 cargo build --release
 ```
 
+### Android App
+
+The repository includes an Android app under `android/` plus an in-repo JNI bridge crate at `crates/vibe-emu-android`.
+
+On Windows, make sure these components are installed first:
+
+- Android SDK platform `android-36`
+- Android SDK Build-Tools `36.1.0`
+- Android NDK `29.0.14206865`
+- Android SDK Command-line Tools
+- `cargo-ndk`:
+  ```bash
+  cargo install cargo-ndk
+  ```
+
+If Android Studio installed the SDK into the default location, the wrapper build should work once `JAVA_HOME` points at the bundled JBR:
+
+```powershell
+$env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
+$env:ANDROID_SDK_ROOT="$env:LOCALAPPDATA\Android\Sdk"
+$env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
+cd android
+.\gradlew.bat assembleDebug
+```
+
+The debug APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
+
 ### Building Individual Crates
 
 You can build specific crates independently:
@@ -141,6 +173,18 @@ The release build provides significantly better emulation performance and is rec
 **Issue**: Cannot find `cl.exe` or MSVC compiler.
 
 **Solution**: The `cc` crate usually detects MSVC automatically. If it fails, run the build from a "Developer Command Prompt" or "Developer PowerShell" that comes with Visual Studio, or ensure the MSVC tools are in your PATH.
+
+**Issue**: Android build fails with missing Rust target errors such as `can't find crate for core`.
+
+**Solution**: Install the Android Rust targets:
+
+```bash
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+```
+
+**Issue**: Android build fails because `sdkmanager`, the NDK, or `cargo ndk` is missing.
+
+**Solution**: Install Android SDK Command-line Tools, install NDK `29.0.14206865`, and install `cargo-ndk` with `cargo install cargo-ndk`.
 
 ### Linux
 

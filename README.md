@@ -42,7 +42,8 @@
 
 vibeEmu is a Game Boy and Game Boy Color emulator written in Rust. It pairs a
 platform-agnostic emulation core with a desktop frontend built on
-`egui`/`eframe`. The desktop app is focused on playing games, while the
+`egui`/`eframe`. The repository also now includes an Android app under
+`android/`. The desktop app is focused on playing games, while the
 `vibe-emu-core` crate can also be reused as a library in other projects. The
 repository is organized as a Cargo workspace with multiple crates:
 
@@ -50,6 +51,7 @@ repository is organized as a Cargo workspace with multiple crates:
 - `vibe-emu-ui` provides the desktop frontend built on the core crate.
 - `vibe-emu-mobile` provides Mobile Adapter GB integration (libmobile wrapper).
 - `vibe-emu-mobile-sys` builds/links libmobile and exposes minimal FFI.
+- `vibe-emu-android` provides the JNI bridge used by the Android app.
 
 ## Desktop UI features
 
@@ -90,6 +92,23 @@ cargo build --release
 - **macOS**: Xcode Command Line Tools.
 
 For detailed platform-specific instructions, troubleshooting, and build configuration options, see [BUILD.md](BUILD.md).
+
+### Android build
+
+The Android project lives in `android/` and builds its native library from the
+same workspace sources via `cargo-ndk`.
+
+On Windows, a wrapper-based debug build looks like this:
+
+```powershell
+$env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
+$env:ANDROID_SDK_ROOT="$env:LOCALAPPDATA\Android\Sdk"
+$env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
+cd android
+.\gradlew.bat assembleDebug
+```
+
+See [BUILD.md](BUILD.md) for the required SDK, NDK, and Rust target setup.
 
 ### Mobile Adapter GB support (bundled by default)
 

@@ -36,7 +36,7 @@ pub fn install_android_log_sink() {
 
     const TAG: &str = "vibeEmu";
 
-    extern "C" {
+    unsafe extern "C" {
         fn __android_log_write(prio: c_int, tag: *const c_char, text: *const c_char) -> c_int;
     }
 

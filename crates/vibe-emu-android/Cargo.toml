@@ -1,0 +1,23 @@
+[package]
+name = "vibe-emu-android"
+version = "0.0.1"
+edition = "2024"
+authors = ["vulcandth <vulcandth@gmail.com>"]
+description = "Android JNI bridge for the vibeEmu Game Boy emulator"
+repository = "https://github.com/vulcandth/vibeEmu"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+mobile-bundled = ["vibe-emu-mobile/bundled"]
+mobile-system = ["vibe-emu-mobile/system"]
+
+default = ["mobile-bundled"]
+
+[dependencies]
+vibe-emu-core.workspace = true
+vibe-emu-mobile = { path = "../vibe-emu-mobile", default-features = false }
+jni = "0.21"
