@@ -518,11 +518,48 @@ enum TileDataSelect {
     Addr8000,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GuessedPalette {
-    Bg(usize),
-    Obj(usize),
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TilesDisplayMode {
+    #[default]
+    Paletted,
+    Grayscale,
+    PaletteUsage,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TileUsageSource {
+    Bg,
+    Obj,
+}
+
+impl TileUsageSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Bg => "BG Map",
+            Self::Obj => "OBJ",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TileUsageSummary {
+    source: TileUsageSource,
+    palette: usize,
+    x_flip: bool,
+    y_flip: bool,
+    priority: bool,
+}
+
+const VRAM_TILE_DMG_COLORS: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
+const VRAM_TILE_GRAYSCALE_COLORS: [u32; 4] = [0x00FFFFFF, 0x00AAAAAA, 0x00555555, 0x00000000];
+const VRAM_TILE_UNUSED_USAGE_COLORS: [u32; 4] = [0x00282C34, 0x00353A44, 0x00454C58, 0x00586270];
+// Matches palettes.png in the repo root: BG row first, OBJ row second, palettes 0-7.
+const VRAM_TILE_BG_USAGE_SWATCHES: [u32; 8] = [
+    0x00A1B0C0, 0x00E51D4E, 0x008BE71B, 0x002E96FE, 0x00FEE01D, 0x00F48334, 0x0046F1F1, 0x00DE35EE,
+];
+const VRAM_TILE_OBJ_USAGE_SWATCHES: [u32; 8] = [
+    0x00536272, 0x008D0F05, 0x001CB22E, 0x004605CC, 0x00FE79A9, 0x009B6528, 0x00499A91, 0x007C1E5F,
+];
 
 struct VramViewerState {
     bg_map_tex: Option<egui::TextureHandle>,
@@ -550,8 +587,9 @@ struct VramViewerState {
 
     // Tiles tab options
     tiles_last_frame: u64,
+    tiles_last_display_mode: TilesDisplayMode,
     tiles_show_grid: bool,
-    tiles_show_paletted: bool,
+    tiles_display_mode: TilesDisplayMode,
     tiles_selected: Option<(u8, u16)>,
     tiles_preview_tex: Option<egui::TextureHandle>,
     tiles_preview_buf: Vec<u8>,
@@ -586,8 +624,9 @@ impl Default for VramViewerState {
             bg_tile_preview_tex: None,
             bg_tile_preview_buf: vec![0; 8 * 8 * 4],
             tiles_last_frame: 0,
+            tiles_last_display_mode: TilesDisplayMode::Paletted,
             tiles_show_grid: true,
-            tiles_show_paletted: true,
+            tiles_display_mode: TilesDisplayMode::Paletted,
             tiles_selected: None,
             tiles_preview_tex: None,
             tiles_preview_buf: vec![0; 8 * 8 * 4],
@@ -4211,7 +4250,7 @@ impl VibeEmuApp {
             *VIEWPORT_VRAM_VIEWER,
             egui::ViewportBuilder::default()
                 .with_title("VRAM Viewer")
-                .with_inner_size([700.0, 500.0]),
+                .with_inner_size([860.0, 500.0]),
             |ctx, class| {
                 if ctx.input(|i| i.viewport().close_requested()) {
                     self.show_vram_viewer = false;
@@ -4809,7 +4848,6 @@ impl VibeEmuApp {
         ctx: &egui::Context,
         ppu: &ui::snapshot::PpuSnapshot,
     ) {
-        const DMG_COLORS: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
         const TILE_W: usize = 8;
         const TILE_H: usize = 8;
         const TILES_PER_ROW: usize = 16;
@@ -4825,26 +4863,23 @@ impl VibeEmuApp {
         }
 
         let frame = ppu.frame_counter;
-        let show_paletted = self.vram_viewer.tiles_show_paletted;
+        let display_mode = self.vram_viewer.tiles_display_mode;
 
-        if frame != self.vram_viewer.tiles_last_frame || self.vram_viewer.tiles_tex.is_none() {
+        if frame != self.vram_viewer.tiles_last_frame
+            || display_mode != self.vram_viewer.tiles_last_display_mode
+            || self.vram_viewer.tiles_tex.is_none()
+        {
             self.vram_viewer.tiles_last_frame = frame;
+            self.vram_viewer.tiles_last_display_mode = display_mode;
             let buf = &mut self.vram_viewer.tiles_buf[..img_w * img_h * 4];
             buf.fill(0);
-
-            let bgp = ppu.bgp;
 
             for bank in 0..banks {
                 for tile_idx in 0..384 {
                     let col = tile_idx % TILES_PER_ROW;
                     let row = tile_idx / TILES_PER_ROW;
                     let tile_addr = tile_idx * 16;
-
-                    let pal_idx = if show_paletted && ppu.cgb {
-                        Self::guess_tile_palette(ppu, bank, tile_idx)
-                    } else {
-                        None
-                    };
+                    let usage = Self::find_tile_usage(ppu, bank, tile_idx);
 
                     for y in 0..TILE_H {
                         let vram = ppu.vram_bank(bank);
@@ -4854,25 +4889,8 @@ impl VibeEmuApp {
                         for x in 0..TILE_W {
                             let bit = 7 - x;
                             let idx = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-
-                            let rgb = if ppu.cgb {
-                                match pal_idx {
-                                    Some(GuessedPalette::Bg(pal)) => {
-                                        ppu.cgb_bg_colors[pal][idx as usize]
-                                    }
-                                    Some(GuessedPalette::Obj(pal)) => {
-                                        ppu.cgb_ob_colors[pal][idx as usize]
-                                    }
-                                    None => {
-                                        // Grayscale for tiles without a guessed palette
-                                        let gray = [0x00FFFFFF, 0x00AAAAAA, 0x00555555, 0x00000000];
-                                        gray[idx as usize]
-                                    }
-                                }
-                            } else {
-                                let shade = (bgp >> (idx * 2)) & 0x03;
-                                DMG_COLORS[shade as usize]
-                            };
+                            let rgb =
+                                Self::tile_pixel_color(ppu, idx as usize, usage, display_mode);
 
                             let px = (bank * 128) + (col * TILE_W) + x;
                             let py = row * TILE_H + y;
@@ -4984,15 +5002,16 @@ impl VibeEmuApp {
             ui.add_space(8.0);
 
             ui.vertical(|ui| {
+                let selected_usage = self
+                    .vram_viewer
+                    .tiles_selected
+                    .and_then(|(sel_bank, sel_idx)| {
+                        Self::find_tile_usage(ppu, sel_bank as usize, sel_idx as usize)
+                    });
+
                 if let Some((sel_bank, sel_idx)) = self.vram_viewer.tiles_selected {
                     let tile_addr = (sel_idx as usize) * 16;
                     let vram = ppu.vram_bank(sel_bank as usize);
-
-                    let pal_idx = if ppu.cgb {
-                        Self::guess_tile_palette(ppu, sel_bank as usize, sel_idx as usize)
-                    } else {
-                        None
-                    };
 
                     let preview_buf = &mut self.vram_viewer.tiles_preview_buf;
                     if tile_addr + 16 <= vram.len() {
@@ -5002,24 +5021,8 @@ impl VibeEmuApp {
                             for col in 0..8 {
                                 let bit = 7 - col;
                                 let idx = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                                let color = if ppu.cgb {
-                                    match pal_idx {
-                                        Some(GuessedPalette::Bg(pal)) => {
-                                            ppu.cgb_bg_colors[pal][idx as usize]
-                                        }
-                                        Some(GuessedPalette::Obj(pal)) => {
-                                            ppu.cgb_ob_colors[pal][idx as usize]
-                                        }
-                                        None => {
-                                            let gray =
-                                                [0x00FFFFFF, 0x00AAAAAA, 0x00555555, 0x00000000];
-                                            gray[idx as usize]
-                                        }
-                                    }
-                                } else {
-                                    let shade = (ppu.bgp >> (idx * 2)) & 0x03;
-                                    DMG_COLORS[shade as usize]
-                                };
+                                let color =
+                                    Self::tile_pixel_color(ppu, idx as usize, selected_usage, display_mode);
                                 let off = (row * 8 + col) * 4;
                                 preview_buf[off] = ((color >> 16) & 0xFF) as u8;
                                 preview_buf[off + 1] = ((color >> 8) & 0xFF) as u8;
@@ -5075,80 +5078,273 @@ impl VibeEmuApp {
                         }
                         ui.end_row();
 
-                        if ppu.cgb {
-                            ui.label("Guessed palette");
-                            if let Some((sel_bank, sel_idx)) = self.vram_viewer.tiles_selected {
-                                match Self::guess_tile_palette(
-                                    ppu,
-                                    sel_bank as usize,
-                                    sel_idx as usize,
-                                ) {
-                                    Some(GuessedPalette::Bg(pal)) => {
-                                        ui.label(format!("BG {}", pal));
-                                    }
-                                    Some(GuessedPalette::Obj(pal)) => {
-                                        ui.label(format!("OBJ {}", pal));
-                                    }
-                                    None => {
-                                        ui.label("");
-                                    }
-                                }
-                            } else {
-                                ui.label("--");
-                            }
-                            ui.end_row();
+                        ui.label("Source");
+                        if let Some(usage) = selected_usage {
+                            ui.label(usage.source.label());
+                        } else {
+                            ui.label("--");
                         }
+                        ui.end_row();
+
+                        ui.label("Palette");
+                        if let Some(usage) = selected_usage {
+                            let text = match (ppu.cgb, usage.source) {
+                                (true, TileUsageSource::Bg) => format!("BG {}", usage.palette),
+                                (true, TileUsageSource::Obj) => format!("OBJ {}", usage.palette),
+                                (false, TileUsageSource::Obj) => format!("OBP{}", usage.palette),
+                                (false, TileUsageSource::Bg) => "--".to_owned(),
+                            };
+                            ui.label(text);
+                        } else {
+                            ui.label("--");
+                        }
+                        ui.end_row();
+
+                        ui.label("X Flip");
+                        if let Some(usage) = selected_usage {
+                            ui.label(if usage.x_flip { "Yes" } else { "No" });
+                        } else {
+                            ui.label("--");
+                        }
+                        ui.end_row();
+
+                        ui.label("Y Flip");
+                        if let Some(usage) = selected_usage {
+                            ui.label(if usage.y_flip { "Yes" } else { "No" });
+                        } else {
+                            ui.label("--");
+                        }
+                        ui.end_row();
+
+                        ui.label("Priority");
+                        if let Some(usage) = selected_usage {
+                            ui.label(if usage.priority { "Yes" } else { "No" });
+                        } else {
+                            ui.label("--");
+                        }
+                        ui.end_row();
                     });
 
                 ui.add_space(12.0);
                 ui.separator();
                 ui.add_space(8.0);
 
-                ui.checkbox(&mut self.vram_viewer.tiles_show_paletted, "Show paletted");
+                ui.label("Display");
+                ui.horizontal_wrapped(|ui| {
+                    ui.selectable_value(
+                        &mut self.vram_viewer.tiles_display_mode,
+                        TilesDisplayMode::Paletted,
+                        "Paletted",
+                    );
+                    ui.selectable_value(
+                        &mut self.vram_viewer.tiles_display_mode,
+                        TilesDisplayMode::Grayscale,
+                        "Grayscale",
+                    );
+                    ui.add_enabled_ui(ppu.cgb, |ui| {
+                        ui.selectable_value(
+                            &mut self.vram_viewer.tiles_display_mode,
+                            TilesDisplayMode::PaletteUsage,
+                            "Palette usage",
+                        );
+                    });
+                });
+
+                if self.vram_viewer.tiles_display_mode == TilesDisplayMode::PaletteUsage {
+                    if ppu.cgb {
+                        ui.label(egui::RichText::new(
+                            "Shade still tracks color ID 0-3; hue shows the first palette usage found.",
+                        )
+                        .small()
+                        .weak());
+                        ui.add_space(6.0);
+                        Self::draw_tiles_palette_usage_legend(ui);
+                    } else {
+                        ui.label(
+                            egui::RichText::new("Palette usage view is only available in CGB mode.")
+                                .small()
+                                .weak(),
+                        );
+                    }
+                }
+
+                ui.add_space(8.0);
                 ui.checkbox(&mut self.vram_viewer.tiles_show_grid, "Grid");
             });
         });
     }
 
-    fn guess_tile_palette(
+    fn tile_pixel_color(
+        ppu: &ui::snapshot::PpuSnapshot,
+        color_idx: usize,
+        usage: Option<TileUsageSummary>,
+        display_mode: TilesDisplayMode,
+    ) -> u32 {
+        if !ppu.cgb {
+            let shade = (ppu.bgp >> (color_idx * 2)) & 0x03;
+            return VRAM_TILE_DMG_COLORS[shade as usize];
+        }
+
+        match display_mode {
+            TilesDisplayMode::Paletted => match usage {
+                Some(usage) => match usage.source {
+                    TileUsageSource::Bg => ppu.cgb_bg_colors[usage.palette][color_idx],
+                    TileUsageSource::Obj => ppu.cgb_ob_colors[usage.palette][color_idx],
+                },
+                None => VRAM_TILE_GRAYSCALE_COLORS[color_idx],
+            },
+            TilesDisplayMode::Grayscale => VRAM_TILE_GRAYSCALE_COLORS[color_idx],
+            TilesDisplayMode::PaletteUsage => match usage {
+                Some(usage) => Self::tile_usage_mode_color(usage.source, usage.palette, color_idx),
+                None => VRAM_TILE_UNUSED_USAGE_COLORS[color_idx],
+            },
+        }
+    }
+
+    fn tile_usage_mode_color(source: TileUsageSource, palette: usize, color_idx: usize) -> u32 {
+        Self::tile_usage_shade_color(Self::tile_usage_swatch_color(source, palette), color_idx)
+    }
+
+    fn tile_usage_swatch_color(source: TileUsageSource, palette: usize) -> u32 {
+        match source {
+            TileUsageSource::Bg => VRAM_TILE_BG_USAGE_SWATCHES[palette],
+            TileUsageSource::Obj => VRAM_TILE_OBJ_USAGE_SWATCHES[palette],
+        }
+    }
+
+    fn tile_usage_shade_color(swatch: u32, color_idx: usize) -> u32 {
+        let (red, green, blue) = Self::rgb_components(swatch);
+        let (hue, lightness, saturation) = Self::rgb_to_hsl(red, green, blue);
+        let target_lightness = match color_idx {
+            0 => 0.92,
+            1 => lightness,
+            2 => lightness * 0.62,
+            _ => lightness * 0.33,
+        }
+        .clamp(0.0, 1.0);
+        let (red, green, blue) = Self::hsl_to_rgb(hue, target_lightness, saturation);
+        Self::rgb_color(red, green, blue)
+    }
+
+    fn rgb_components(color: u32) -> (f32, f32, f32) {
+        (
+            ((color >> 16) & 0xFF) as f32 / 255.0,
+            ((color >> 8) & 0xFF) as f32 / 255.0,
+            (color & 0xFF) as f32 / 255.0,
+        )
+    }
+
+    fn rgb_color(red: f32, green: f32, blue: f32) -> u32 {
+        let red = (red.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let green = (green.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let blue = (blue.clamp(0.0, 1.0) * 255.0).round() as u32;
+        (red << 16) | (green << 8) | blue
+    }
+
+    fn rgb_to_hsl(red: f32, green: f32, blue: f32) -> (f32, f32, f32) {
+        let max = red.max(green).max(blue);
+        let min = red.min(green).min(blue);
+        let lightness = (max + min) * 0.5;
+        let delta = max - min;
+
+        if delta <= f32::EPSILON {
+            return (0.0, lightness, 0.0);
+        }
+
+        let saturation = delta / (1.0 - (2.0 * lightness - 1.0).abs());
+        let hue = if (max - red).abs() <= f32::EPSILON {
+            ((green - blue) / delta).rem_euclid(6.0)
+        } else if (max - green).abs() <= f32::EPSILON {
+            ((blue - red) / delta) + 2.0
+        } else {
+            ((red - green) / delta) + 4.0
+        } / 6.0;
+
+        (hue, lightness, saturation)
+    }
+
+    fn hsl_to_rgb(hue: f32, lightness: f32, saturation: f32) -> (f32, f32, f32) {
+        if saturation <= f32::EPSILON {
+            return (lightness, lightness, lightness);
+        }
+
+        let q = if lightness < 0.5 {
+            lightness * (1.0 + saturation)
+        } else {
+            lightness + saturation - lightness * saturation
+        };
+        let p = 2.0 * lightness - q;
+
+        (
+            Self::hue_to_rgb(p, q, hue + 1.0 / 3.0),
+            Self::hue_to_rgb(p, q, hue),
+            Self::hue_to_rgb(p, q, hue - 1.0 / 3.0),
+        )
+    }
+
+    fn hue_to_rgb(p: f32, q: f32, hue: f32) -> f32 {
+        let hue = hue.rem_euclid(1.0);
+        if hue < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * hue
+        } else if hue < 0.5 {
+            q
+        } else if hue < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - hue) * 6.0
+        } else {
+            p
+        }
+    }
+
+    fn effective_bg_tile_index(lcdc: u8, map_tile: u8) -> usize {
+        if lcdc & 0x10 == 0 {
+            ((map_tile as i8 as i16) + 256) as usize
+        } else {
+            map_tile as usize
+        }
+    }
+
+    fn find_tile_usage(
         ppu: &ui::snapshot::PpuSnapshot,
         bank: usize,
         tile_idx: usize,
-    ) -> Option<GuessedPalette> {
-        // Check BG maps first
+    ) -> Option<TileUsageSummary> {
         let map_bases = [0x1800_usize, 0x1C00_usize];
-        for &map_base in &map_bases {
-            for map_offset in 0..(32 * 32) {
-                let map_tile = ppu.vram0[map_base + map_offset];
-                let attr = ppu.vram1[map_base + map_offset];
-                let attr_bank = if attr & 0x08 != 0 { 1 } else { 0 };
 
-                let lcdc = ppu.lcdc;
-                let signed_mode = lcdc & 0x10 == 0;
-                let effective_tile = if signed_mode {
-                    // 8800 mode: base $9000 with signed offset
-                    // map value 0 → tile 256, value -128 (0x80) → tile 128
-                    ((map_tile as i8 as i32) + 256) as usize
-                } else {
-                    // 8000 mode: direct mapping to tiles 0-255
-                    map_tile as usize
-                };
+        if ppu.cgb {
+            for &map_base in &map_bases {
+                for map_offset in 0..(32 * 32) {
+                    let map_tile = ppu.vram0[map_base + map_offset];
+                    if Self::effective_bg_tile_index(ppu.lcdc, map_tile) != tile_idx {
+                        continue;
+                    }
 
-                if effective_tile == tile_idx && attr_bank == bank {
-                    return Some(GuessedPalette::Bg((attr & 0x07) as usize));
+                    let attr = ppu.vram1[map_base + map_offset];
+                    let attr_bank = if attr & 0x08 != 0 { 1 } else { 0 };
+                    if attr_bank != bank {
+                        continue;
+                    }
+
+                    return Some(TileUsageSummary {
+                        source: TileUsageSource::Bg,
+                        palette: (attr & 0x07) as usize,
+                        x_flip: attr & 0x20 != 0,
+                        y_flip: attr & 0x40 != 0,
+                        priority: attr & 0x80 != 0,
+                    });
                 }
             }
         }
 
-        // Check OAM entries
         let tall_sprites = ppu.lcdc & 0x04 != 0;
         for i in 0..40 {
             let base = i * 4;
+            if base + 3 >= ppu.oam.len() {
+                break;
+            }
             let oam_tile = ppu.oam[base + 2] as usize;
             let attr = ppu.oam[base + 3];
             let oam_bank = if ppu.cgb && attr & 0x08 != 0 { 1 } else { 0 };
 
-            // In 8x16 mode, the tile index has bit 0 ignored
             let (tile_match, tile_match_bottom) = if tall_sprites {
                 let top_tile = oam_tile & 0xFE;
                 let bottom_tile = oam_tile | 0x01;
@@ -5161,14 +5357,79 @@ impl VibeEmuApp {
                 let pal = if ppu.cgb {
                     (attr & 0x07) as usize
                 } else {
-                    // DMG: bit 4 selects OBP0 or OBP1
                     if attr & 0x10 != 0 { 1 } else { 0 }
                 };
-                return Some(GuessedPalette::Obj(pal));
+                return Some(TileUsageSummary {
+                    source: TileUsageSource::Obj,
+                    palette: pal,
+                    x_flip: attr & 0x20 != 0,
+                    y_flip: attr & 0x40 != 0,
+                    priority: attr & 0x80 != 0,
+                });
             }
         }
 
         None
+    }
+
+    fn draw_tiles_palette_usage_legend(ui: &mut egui::Ui) {
+        fn draw_usage_cell(ui: &mut egui::Ui, label: &str, color: u32) {
+            let fill = egui::Color32::from_rgb(
+                ((color >> 16) & 0xFF) as u8,
+                ((color >> 8) & 0xFF) as u8,
+                (color & 0xFF) as u8,
+            );
+            let luma = 0.2126 * f32::from(fill.r())
+                + 0.7152 * f32::from(fill.g())
+                + 0.0722 * f32::from(fill.b());
+            let text_color = if luma < 140.0 {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::BLACK
+            };
+
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 16.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 3.0, fill);
+            ui.painter().rect_stroke(
+                rect,
+                3.0,
+                egui::Stroke::new(1.0, egui::Color32::from_black_alpha(96)),
+                egui::StrokeKind::Middle,
+            );
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                label,
+                egui::FontId::monospace(8.0),
+                text_color,
+            );
+        }
+
+        fn draw_usage_row(ui: &mut egui::Ui, label: &str, source: TileUsageSource) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 1.0;
+                ui.add_sized(
+                    [30.0, 16.0],
+                    egui::Label::new(egui::RichText::new(label).strong()),
+                );
+                for palette in 0..8 {
+                    draw_usage_cell(
+                        ui,
+                        &palette.to_string(),
+                        VibeEmuApp::tile_usage_swatch_color(source, palette),
+                    );
+                }
+            });
+        }
+
+        ui.label(egui::RichText::new("Legend").strong());
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            draw_usage_row(ui, "BG", TileUsageSource::Bg);
+            draw_usage_row(ui, "OBJ", TileUsageSource::Obj);
+        });
+
+        ui.label(egui::RichText::new("0-7 = palette").small().weak());
     }
 
     fn draw_oam_tab(
@@ -6113,5 +6374,84 @@ fn main() {
         }),
     ) {
         error!("eframe error: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TileUsageSource, TileUsageSummary, VibeEmuApp};
+    use crate::ui::snapshot::PpuSnapshot;
+
+    fn test_ppu_snapshot() -> PpuSnapshot {
+        PpuSnapshot {
+            cgb: true,
+            lcdc: 0x91,
+            vram0: vec![0; 0x2000],
+            vram1: vec![0; 0x2000],
+            oam: vec![0; 160],
+            ..PpuSnapshot::default()
+        }
+    }
+
+    #[test]
+    fn find_tile_usage_reads_bg_map_attributes() {
+        let mut ppu = test_ppu_snapshot();
+        ppu.vram0[0x1800] = 42;
+        ppu.vram1[0x1800] = 0xED;
+
+        assert_eq!(
+            VibeEmuApp::find_tile_usage(&ppu, 1, 42),
+            Some(TileUsageSummary {
+                source: TileUsageSource::Bg,
+                palette: 5,
+                x_flip: true,
+                y_flip: true,
+                priority: true,
+            })
+        );
+    }
+
+    #[test]
+    fn find_tile_usage_prefers_bg_map_before_oam() {
+        let mut ppu = test_ppu_snapshot();
+        ppu.vram0[0x1800] = 17;
+        ppu.vram1[0x1800] = 0x03;
+        ppu.oam[2] = 17;
+        ppu.oam[3] = 0x84;
+
+        assert_eq!(
+            VibeEmuApp::find_tile_usage(&ppu, 0, 17),
+            Some(TileUsageSummary {
+                source: TileUsageSource::Bg,
+                palette: 3,
+                x_flip: false,
+                y_flip: false,
+                priority: false,
+            })
+        );
+    }
+
+    #[test]
+    fn find_tile_usage_falls_back_to_oam() {
+        let mut ppu = test_ppu_snapshot();
+        ppu.oam[2] = 10;
+        ppu.oam[3] = 0xCA;
+
+        assert_eq!(
+            VibeEmuApp::find_tile_usage(&ppu, 1, 10),
+            Some(TileUsageSummary {
+                source: TileUsageSource::Obj,
+                palette: 2,
+                x_flip: false,
+                y_flip: true,
+                priority: true,
+            })
+        );
+    }
+
+    #[test]
+    fn effective_bg_tile_index_uses_signed_addressing_when_requested() {
+        assert_eq!(VibeEmuApp::effective_bg_tile_index(0x00, 0x00), 256);
+        assert_eq!(VibeEmuApp::effective_bg_tile_index(0x10, 0x80), 128);
     }
 }
