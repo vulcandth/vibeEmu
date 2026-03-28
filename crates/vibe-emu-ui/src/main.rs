@@ -2252,13 +2252,14 @@ impl eframe::App for VibeEmuApp {
                             }
                             ui.close();
                         }
+
+                        if ui.button("Watchpoints").clicked() {
+                            self.show_watchpoints = !self.show_watchpoints;
+                            ui.close();
+                        }
                     }
                     if ui.button("VRAM Viewer").clicked() {
                         self.show_vram_viewer = !self.show_vram_viewer;
-                        ui.close();
-                    }
-                    if ui.button("Watchpoints").clicked() {
-                        self.show_watchpoints = !self.show_watchpoints;
                         ui.close();
                     }
                 });
@@ -2417,8 +2418,14 @@ impl eframe::App for VibeEmuApp {
             self.draw_vram_viewer_window(ctx);
         }
 
+        #[cfg(debug_assertions)]
         if self.show_watchpoints {
             self.draw_watchpoints_window(ctx);
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            self.show_watchpoints = false;
         }
 
         if self.show_options {
