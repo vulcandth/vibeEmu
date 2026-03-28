@@ -9,6 +9,7 @@ Commands executed:
 - `cargo test --release --test apu -- --include-ignored`
 - `cargo test --release --test apu_quirks -- --include-ignored`
 - `cargo test --release --test bgb_protocol -- --include-ignored`
+- `cargo test --release --test boot_handoff_state -- --include-ignored`
 - `cargo test --release --test bullygb_hacktix -- --include-ignored`
 - `cargo test --release --test cartridge -- --include-ignored`
 - `cargo test --release --test cgb_acid2_rom -- --include-ignored`
@@ -37,6 +38,7 @@ Commands executed:
 - `cargo test --release --test serial -- --include-ignored`
 - `cargo test --release --test strikethrough -- --include-ignored`
 - `cargo test --release --test timer -- --include-ignored`
+- `cargo test --release --test version_api -- --include-ignored`
 
 
 Combined exit code: 101
@@ -46,14 +48,22 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 1817 | 1928 | 0 | 0 | 3745 | 48.5% |
-| Integration Tests | 153 | 2 | 0 | 0 | 155 | 98.7% |
-| Unit Tests | 50 | 0 | 0 | 0 | 50 | 100.0% |
-| **Overall** | 2020 | 1930 | 0 | 0 | 3950 | 51.1% |
+| ROM Test Suites | 1935 | 1815 | 0 | 0 | 3750 | 51.6% |
+| Integration Tests | 154 | 2 | 0 | 0 | 156 | 98.7% |
+| Unit Tests | 70 | 0 | 0 | 0 | 70 | 100.0% |
+| Doc Tests | 16 | 0 | 0 | 0 | 16 | 100.0% |
+| **Overall** | 2175 | 1817 | 0 | 0 | 3992 | 54.5% |
 
 ## Detailed Results
 
 ### ROM Test Suites
+
+#### boot_handoff_state (2/2 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `cgb_no_boot_matches_bootrom_handoff` | ✅ Pass |
+| `dmg_no_boot_matches_bootrom_handoff` | ✅ Pass |
 
 #### bullygb_hacktix (2/2 passing, 100.0%)
 
@@ -151,7 +161,7 @@ Combined exit code: 101
 | `dmg_sound_11_regs_after_power` | ✅ Pass |
 | `dmg_sound_12_wave_write_while_on` | ✅ Pass |
 
-#### gambatte (1528/3429 passing, 44.6%)
+#### gambatte (1640/3429 passing, 47.8%)
 
 | Test | Result |
 | --- | --- |
@@ -172,6 +182,13 @@ Combined exit code: 101
 | `cgbpal_m3/cgbpal_write_m3start_ds_lcdoffset1_1_cgb04c_out01.gbc` | ✅ Pass |
 | `cgbpal_m3/cgbpal_write_m3start_lcdoffset1_1_cgb04c_out01.gbc` | ✅ Pass |
 | `display_startstate/irq_dmg08_cgb04c_outE1.gbc` | ✅ Pass |
+| `display_startstate/stat_1_cgb04c_out87.gbc` | ✅ Pass |
+| `display_startstate/stat_2_cgb04c_out84.gbc` | ✅ Pass |
+| `display_startstate/stat_scx2_1_cgb04c_out87.gbc` | ✅ Pass |
+| `display_startstate/stat_scx2_2_cgb04c_out84.gbc` | ✅ Pass |
+| `display_startstate/stat_scx3_1_cgb04c_out87.gbc` | ✅ Pass |
+| `display_startstate/stat_scx3_2_cgb04c_out84.gbc` | ✅ Pass |
+| `display_startstate/stat_scx5_2_cgb04c_out84.gbc` | ✅ Pass |
 | `div/start_stop1_inc_1_cgb04c_out00.gbc` | ✅ Pass |
 | `div/start_stop1_inc_2_cgb04c_out01.gbc` | ✅ Pass |
 | `div/start_stop2_inc_1_cgb04c_out00.gbc` | ✅ Pass |
@@ -339,10 +356,19 @@ Combined exit code: 101
 | `halt/late_m0irq_halt_m0stat_scx3_2a_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `halt/late_m0irq_halt_m0stat_scx3_3b_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `halt/late_m0irq_halt_m0stat_scx3_4b_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `halt/lycirq_m2stat_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `halt/m0int_m0stat_scx2_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `halt/m0int_m0stat_scx2_ds_1_cgb04c_out0.gbc` | ✅ Pass |
+| `halt/m0int_m0stat_scx3_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `halt/m0int_m0stat_scx3_ds_1_cgb04c_out0.gbc` | ✅ Pass |
+| `halt/m0int_m0stat_scx4_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `halt/m0int_m0stat_scx5_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `halt/m0irq_m0stat_scx2_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `halt/m0irq_m0stat_scx2_ds_1_cgb04c_out0.gbc` | ✅ Pass |
+| `halt/m0irq_m0stat_scx3_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `halt/m0irq_m0stat_scx3_ds_1_cgb04c_out0.gbc` | ✅ Pass |
+| `halt/m0irq_m0stat_scx4_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `halt/m0irq_m0stat_scx5_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `halt/m1int_ly_1_dmg08_cgb04c_out90.gbc` | ✅ Pass |
 | `halt/noime_ifandie_halt_lda_3c_dmg08_cgb04c_out3F.gbc` | ✅ Pass |
 | `halt/noime_ifandie_halt_sra_dmg08_cgb04c_outF1.gbc` | ✅ Pass |
@@ -376,6 +402,8 @@ Combined exit code: 101
 | `lcd_offset/offset1_lyc8fint_m1stat_1_cgb04c_outC4.gbc` | ✅ Pass |
 | `lcd_offset/offset1_lyc8fint_m1stat_2_cgb04c_outC1.gbc` | ✅ Pass |
 | `lcd_offset/offset1_lyc8fint_m1stat_ds_2_cgb04c_outC1.gbc` | ✅ Pass |
+| `lcd_offset/offset1_lyc98int_ly_count_1_cgb04c_out99.gbc` | ✅ Pass |
+| `lcd_offset/offset1_lyc98int_ly_count_2_cgb04c_out9A.gbc` | ✅ Pass |
 | `lcd_offset/offset1_lyc98int_ly_count_ds_1_cgb04c_out99.gbc` | ✅ Pass |
 | `lcd_offset/offset1_lyc99int_m0irq_count_scx1_ds_1_cgb04c_out90.gbc` | ✅ Pass |
 | `lcd_offset/offset1_lyc99int_m0irq_count_scx1_ds_2_cgb04c_out90.gbc` | ✅ Pass |
@@ -390,7 +418,6 @@ Combined exit code: 101
 | `lcd_offset/offset1_lyc99int_m2irq_count_2_cgb04c_out90.gbc` | ✅ Pass |
 | `lcd_offset/offset1_lyc99int_m2irq_count_ds_1_cgb04c_out98.gbc` | ✅ Pass |
 | `lcd_offset/offset1_lyc99int_m2stat_count_1_cgb04c_out91.gbc` | ✅ Pass |
-| `lcd_offset/offset1_lyc99int_m2stat_count_2_cgb04c_out90.gbc` | ✅ Pass |
 | `lcd_offset/offset1_lyc99int_m2stat_count_ds_1_cgb04c_out91.gbc` | ✅ Pass |
 | `lcd_offset/offset1_lyc99int_m3stat_count_ds_1_cgb04c_out90.gbc` | ✅ Pass |
 | `lcd_offset/offset2_lyc8fint_m1irq_1_cgb04c_outE0.gbc` | ✅ Pass |
@@ -413,19 +440,32 @@ Combined exit code: 101
 | `lcd_offset/offset3_lyc99int_m2irq_count_1_cgb04c_out98.gbc` | ✅ Pass |
 | `lcd_offset/offset3_lyc99int_m2stat_count_1_cgb04c_out91.gbc` | ✅ Pass |
 | `lcd_offset/offset3_lyc99int_m3stat_count_1_cgb04c_out90.gbc` | ✅ Pass |
-| `lcdirq_precedence/lcdirqprecedence_lycirq_ly91_lcdstat68_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `lcdirq_precedence/lcdirqprecedence_lycirq_ly44_lcdstat68_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lcdirq_precedence/lcdirqprecedence_m0irq_ly00_lcdstat48_lyc00_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lcdirq_precedence/lcdirqprecedence_m0irq_ly00_lcdstat48_lyc99_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `lcdirq_precedence/lcdirqprecedence_m0irq_ly00_lcdstat58_lyc00_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lcdirq_precedence/lcdirqprecedence_m0irq_ly00_lcdstat58_lyc99_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `lcdirq_precedence/lycirq_ly00_lcdstat50_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `lcdirq_precedence/lycirq_ly44_lcdstat50_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `lcdirq_precedence/lycirq_ly8f_lcdstat50_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `lcdirq_precedence/lycirq_ly91_lcdstat50_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lcdirq_precedence/lycirq_ly99_lcdstat50_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lcdirq_precedence/m0irq_ly00_lcdstat18_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `lcdirq_precedence/m0irq_ly44_lcdstat18_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `lcdirq_precedence/m0irq_ly44_lcdstat28_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `lcdirq_precedence/m0irq_ly44_lcdstat48_lyc43_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `lcdirq_precedence/m0irq_ly44_lcdstat48_lyc44_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `lcdirq_precedence/m0irq_ly44_lcdstat48_lyc45_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `lcdirq_precedence/m0irq_ly8f_lcdstat18_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `lcdirq_precedence/m1irq_lcdstat18_dmg08_cgb04c_out1.gbc` | ✅ Pass |
+| `lcdirq_precedence/m1irq_lcdstat30_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `lcdirq_precedence/m1irq_lcdstat50_lyc90_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `lcdirq_precedence/m1irq_lcdstat50_lyc91_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `lcdirq_precedence/m2irq_ly00_lcdstat28_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `lcdirq_precedence/m2irq_ly00_lcdstat30_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `lcdirq_precedence/m2irq_ly44_lcdstat30_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `lcdirq_precedence/m2irq_ly8f_lcdstat28_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `lcdirq_precedence/m2irq_ly8f_lcdstat30_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `ly0/lycint152_ly0stat_1_dmg08_cgb04c_outC1.gbc` | ✅ Pass |
 | `ly0/lycint152_ly0stat_3_dmg08_cgb04c_outC2.gbc` | ✅ Pass |
 | `ly0/lycint152_ly0stat_ds_1_cgb04c_outC1.gbc` | ✅ Pass |
@@ -481,7 +521,9 @@ Combined exit code: 101
 | `lyc153int_m2irq/lyc153int_m2irq_late_retrigger_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `lyc153int_m2irq/lyc153int_m2irq_late_retrigger_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lyc153int_m2irq/lyc153int_m2irq_late_retrigger_ds_2_cgb04c_out0.gbc` | ✅ Pass |
+| `lycEnable/early_ff41_response_1_cgb04c_out0.gbc` | ✅ Pass |
 | `lycEnable/early_ff41_response_2_cgb04c_out7.gbc` | ✅ Pass |
+| `lycEnable/early_ff45_response_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lycEnable/early_ff45_response_2_dmg08_cgb04c_out7.gbc` | ✅ Pass |
 | `lycEnable/ff40_disable_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lycEnable/ff40_disable_2_dmg08_cgb04c_out2.gbc` | ✅ Pass |
@@ -498,25 +540,27 @@ Combined exit code: 101
 | `lycEnable/ff45_enable_weirdpoint_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `lycEnable/ff45_enable_weirdpoint_4_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `lycEnable/ff45_enable_weirdpoint_ds_1_cgb04c_out3.gbc` | ✅ Pass |
+| `lycEnable/ff45_enable_weirdpoint_ds_3_cgb04c_out1.gbc` | ✅ Pass |
 | `lycEnable/ff45_enable_weirdpoint_ds_4_cgb04c_out3.gbc` | ✅ Pass |
 | `lycEnable/ff45_enable_weirdpoint_ds_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
-| `lycEnable/ff45_enable_weirdpoint_ds_lcdoffset1_4_cgb04c_out2.gbc` | ✅ Pass |
 | `lycEnable/ff45_enable_weirdpoint_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
+| `lycEnable/ff45_enable_weirdpoint_lcdoffset1_2_cgb04c_out0.gbc` | ✅ Pass |
 | `lycEnable/ff45_enable_weirdpoint_lcdoffset1_3_cgb04c_out2.gbc` | ✅ Pass |
 | `lycEnable/ff45_reenable_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `lycEnable/ff45_reenable_2_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `lycEnable/ff45_reenable_3_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `lycEnable/late_ff41_enable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `lycEnable/late_ff41_enable_3_dmg08_cgb04c_out0.gbc` | ✅ Pass |
-| `lycEnable/late_ff41_enable_ds_1_cgb04c_out3.gbc` | ✅ Pass |
 | `lycEnable/late_ff41_enable_ds_2_cgb04c_out1.gbc` | ✅ Pass |
 | `lycEnable/late_ff41_enable_ds_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
-| `lycEnable/late_ff41_enable_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
+| `lycEnable/late_ff41_enable_ds_lcdoffset1_2_cgb04c_out0.gbc` | ✅ Pass |
 | `lycEnable/late_ff41_enable_lcdoffset1_2_cgb04c_out0.gbc` | ✅ Pass |
 | `lycEnable/late_ff45_enable_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `lycEnable/late_ff45_enable_3_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `lycEnable/late_ff45_enable_ds_1_cgb04c_out3.gbc` | ✅ Pass |
 | `lycEnable/late_ff45_enable_ds_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
 | `lycEnable/late_ff45_enable_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
+| `lycEnable/late_ff45_enable_lcdoffset1_2_cgb04c_out0.gbc` | ✅ Pass |
 | `lycEnable/lcdoff_lycirqen_1_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `lycEnable/lcdoff_lycirqen_2_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lcdoff_lycirqen_3_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
@@ -530,6 +574,7 @@ Combined exit code: 101
 | `lycEnable/lyc0_ff45_enable_weirdpoint_3_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `lycEnable/lyc0_ff45_enable_weirdpoint_4_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `lycEnable/lyc0_late_ff45_enable_1_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
+| `lycEnable/lyc0_late_ff45_enable_3_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lyc0_m1disable_3_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lyc0_m1disable_ds_2_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lyc153_late_enable_m1disable_1_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
@@ -540,12 +585,12 @@ Combined exit code: 101
 | `lycEnable/lyc153_late_ff45_enable_1_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `lycEnable/lyc153_late_ff45_enable_5_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lyc153_late_ff45_enable_ds_1_cgb04c_outE2.gbc` | ✅ Pass |
+| `lycEnable/lyc153_late_ff45_enable_ds_3_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lyc153_late_ff45_enable_ds_6_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lyc153_late_ff45_enable_ds_lcdoffset1_2_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lyc153_late_ff45_enable_lcdoffset1_2_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lyc153_late_m1disable_1_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `lycEnable/lyc153_late_m1disable_3_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
-| `lycEnable/lyc153_m1disable_ds_1_cgb04c_outE2.gbc` | ✅ Pass |
 | `lycEnable/lyc153_m1disable_ds_2_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lyc_ff41_enable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `lycEnable/lyc_ff41_enable_2_dmg08_cgb04c_out2.gbc` | ✅ Pass |
@@ -558,10 +603,12 @@ Combined exit code: 101
 | `lycEnable/lyc_ff41_enable_ds_4_cgb04c_out2.gbc` | ✅ Pass |
 | `lycEnable/lyc_ff41_enable_ds_5_cgb04c_out2.gbc` | ✅ Pass |
 | `lycEnable/lyc_ff41_enable_ds_6_cgb04c_out2.gbc` | ✅ Pass |
+| `lycEnable/lyc_ff41_trigger_delay_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lycEnable/lyc_ff45_disable2_1_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `lycEnable/lyc_ff45_disable2_3_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `lycEnable/lyc_ff45_disable2_ds_1_cgb04c_out1.gbc` | ✅ Pass |
 | `lycEnable/lyc_ff45_disable2_ds_2_cgb04c_out3.gbc` | ✅ Pass |
+| `lycEnable/lyc_ff45_trigger_delay_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lycEnable/lyc_ff45_trigger_delay_ds_1_cgb04c_out0.gbc` | ✅ Pass |
 | `lycEnable/lycwirq_trigger_ly00_stat50_1_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycEnable/lycwirq_trigger_ly00_stat50_3_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
@@ -573,15 +620,19 @@ Combined exit code: 101
 | `lycEnable/lycwirq_trigger_ly94_stat50_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `lycint_ly/lycint_ly_1_dmg08_cgb04c_out5.gbc` | ✅ Pass |
 | `lycint_ly/lycint_ly_ds_1_cgb04c_out5.gbc` | ✅ Pass |
+| `lycint_lycflag/lycint_lycflag_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `lycint_lycflag/lycint_lycflag_3_dmg08_cgb04c_out4.gbc` | ✅ Pass |
 | `lycint_lycflag/lycint_lycflag_ds_1_cgb04c_out0.gbc` | ✅ Pass |
 | `lycint_lycflag/lycint_lycflag_ds_3_cgb04c_out4.gbc` | ✅ Pass |
 | `lycint_lycirq/lycint_lycirq_1_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `lycint_lycirq/lycint_lycirq_2_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `lycint_m0stat/lycint_m0stat_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lycint_m0stat/lycint_m0stat_ds_1_cgb04c_out0.gbc` | ✅ Pass |
 | `lycm2int/lyc0m2int_m2irq_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `lycm2int/lyc0m2int_stat_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `lycm2int/lycm2int_m2irq_1_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `lywrite/lywrite77_ly44_m3_ly_dmg08_cgb04c_out44.gbc` | ✅ Pass |
+| `lywrite/lywrite77_ly44_m3_stat_dmg08_cgb04c_outC7.gbc` | ✅ Pass |
 | `lywrite/lywrite77_ly97_ly_dmg08_cgb04c_out97.gbc` | ✅ Pass |
 | `lywrite/lywrite77_ly97_stat_dmg08_cgb04c_outC5.gbc` | ✅ Pass |
 | `m0enable/disable_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
@@ -601,6 +652,7 @@ Combined exit code: 101
 | `m0enable/disable_scx7_3_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m0enable/enable_after_lyc_during_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m0enable/enable_after_lyc_during_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `m0enable/enable_after_lyc_prior_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m0enable/enable_after_lyc_prior_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m0enable/enable_after_m2_during_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m0enable/enable_after_m2_during_2_dmg08_cgb04c_out2.gbc` | ✅ Pass |
@@ -619,8 +671,9 @@ Combined exit code: 101
 | `m0enable/late_enable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m0enable/late_enable_3_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m0enable/late_enable_ds_1_cgb04c_out3.gbc` | ✅ Pass |
+| `m0enable/late_enable_ds_2_cgb04c_out1.gbc` | ✅ Pass |
 | `m0enable/late_enable_ds_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
-| `m0enable/late_enable_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
+| `m0enable/late_enable_ds_lcdoffset1_2_cgb04c_out0.gbc` | ✅ Pass |
 | `m0enable/late_enable_lcdoffset1_2_cgb04c_out0.gbc` | ✅ Pass |
 | `m0enable/lycdisable_ff41_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m0enable/lycdisable_ff41_3_dmg08_cgb04c_out0.gbc` | ✅ Pass |
@@ -654,24 +707,29 @@ Combined exit code: 101
 | `m0enable/m0_enable_ds_6_cgb04c_out2.gbc` | ✅ Pass |
 | `m0enable/m0_enable_ds_7_cgb04c_out2.gbc` | ✅ Pass |
 | `m0enable/m0_enable_ds_8_cgb04c_out2.gbc` | ✅ Pass |
+| `m0enable/m0_trigger_delay_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m0enable/reenable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m0enable/reenable_2_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m0enable/reenable_3_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m0int_m0irq/m0int_m0irq_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m0int_m0irq/m0int_m0irq_2_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m0int_m0stat/m0int_m0stat_ds_1_cgb04c_out0.gbc` | ✅ Pass |
+| `m0int_m0stat/m0int_m0stat_scx3_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m0int_m0stat/m0int_m0stat_scx5_ds_1_cgb04c_out0.gbc` | ✅ Pass |
 | `m0int_m3stat/m0int_m3stat_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `m0int_m3stat/m0int_m3stat_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m0int_m3stat/m0int_m3stat_ds_1_cgb04c_out3.gbc` | ✅ Pass |
 | `m0int_m3stat/m0int_m3stat_ds_2_cgb04c_out0.gbc` | ✅ Pass |
-| `m1/ly143_late_m0enable_ds_1_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/ly143_late_m0enable_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/ly143_late_m0enable_ds_2_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/ly143_late_m0enable_ds_lcdoffset1_1_cgb04c_out3.gbc` | ✅ Pass |
-| `m1/ly143_late_m0enable_lcdoffset1_1_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/ly143_late_m0enable_ds_lcdoffset1_2_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/ly143_late_m0enable_lcdoffset1_2_cgb04c_out1.gbc` | ✅ Pass |
+| `m1/ly143_late_m2enable_2_dmg08_out3_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/ly143_late_m2enable_ds_2_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/ly143_late_m2enable_ds_lcdoffset1_2_cgb04c_out1.gbc` | ✅ Pass |
+| `m1/lyc143_late_m0enable_lycdisable_1_dmg08_cgb04c_out1.gbc` | ✅ Pass |
+| `m1/lyc143_late_m0enable_lycdisable_2_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/lyc143_late_m0enable_lycdisable_ds_1_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/lyc143_late_m0enable_lycdisable_ds_2_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/lyc143_late_m2enable_lycdisable_ds_2_cgb04c_out1.gbc` | ✅ Pass |
@@ -679,16 +737,30 @@ Combined exit code: 101
 | `m1/lyc147_ly148_push_m1irq_late_enable_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m1/lyc148_ly148_m1irq_late_enable_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m1/lyc148_ly148_push_m1irq_late_enable_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `m1/lycint143_m1irq_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m1/lycint143_m1irq_ds_1_cgb04c_out0.gbc` | ✅ Pass |
+| `m1/lycint143_m1irq_ifw_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m1/lycint143_m1irq_ifw_ds_2_cgb04c_out0.gbc` | ✅ Pass |
+| `m1/lycint143_m1irq_late_retrigger_2_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/lycint143_m1irq_late_retrigger_ds_2_cgb04c_out1.gbc` | ✅ Pass |
+| `m1/lycint_m1stat_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m1/lycint_m1stat_2_dmg08_cgb04c_out1.gbc` | ✅ Pass |
+| `m1/lycint_vblankintirq_1_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/lycint_vblankintirq_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m1/lycint_vblankirq_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `m1/lycint_vblankirq_2_dmg08_cgb04c_out1.gbc` | ✅ Pass |
+| `m1/lycint_vblankirq_late_retrigger_1_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/lycint_vblankirq_late_retrigger_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m1/lycint_vblankirq_late_retrigger_ds_2_cgb04c_out0.gbc` | ✅ Pass |
+| `m1/m1irq_disable_2_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m1irq_disable_ds_1_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/m1irq_disable_ds_2_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_enable_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_enable_2_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_enable_3_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_enable_4_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_enable_after_lyc144_1_dmg08_cgb04c_out1.gbc` | ✅ Pass |
+| `m1/m1irq_enable_after_lyc144_3_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m1irq_enable_after_lyc153_cgb04c_out2.gbc` | ✅ Pass |
 | `m1/m1irq_enable_ds_1_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m1irq_enable_ds_2_cgb04c_out3.gbc` | ✅ Pass |
@@ -696,23 +768,31 @@ Combined exit code: 101
 | `m1/m1irq_enable_ds_4_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m1irq_late_enable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m1/m1irq_late_enable_3_dmg08_cgb04c_out0.gbc` | ✅ Pass |
-| `m1/m1irq_late_enable_ds_1_cgb04c_out2.gbc` | ✅ Pass |
 | `m1/m1irq_late_enable_ds_2_cgb04c_out0.gbc` | ✅ Pass |
 | `m1/m1irq_late_enable_ds_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
-| `m1/m1irq_late_enable_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
+| `m1/m1irq_late_enable_ds_lcdoffset1_2_cgb04c_out0.gbc` | ✅ Pass |
 | `m1/m1irq_late_enable_lcdoffset1_2_cgb04c_out0.gbc` | ✅ Pass |
-| `m1/m1irq_m0disable_ds_1_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_m0disable_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_m0disable_3_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `m1/m1irq_m0disable_ds_2_cgb04c_out1.gbc` | ✅ Pass |
+| `m1/m1irq_m0enable_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_m0enable_2_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_m0enable_3_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m1irq_m0enable_ds_1_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m1irq_m0enable_ds_2_cgb04c_out3.gbc` | ✅ Pass |
-| `m1/m1irq_m2disable_lycdisable_ds_1_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_m2disable_lycdisable_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m1irq_m2disable_lycdisable_ds_2_cgb04c_out1.gbc` | ✅ Pass |
+| `m1/m1irq_m2enable_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_m2enable_2_dmg08_cgb04c_out3.gbc` | ✅ Pass |
+| `m1/m1irq_m2enable_3_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m1irq_m2enable_ds_1_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m1irq_m2enable_ds_2_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m1irq_m2enable_lyc_ds_1_cgb04c_out1.gbc` | ✅ Pass |
+| `m1/m2m1irq_ifw_1_dmg08_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m2m1irq_ifw_3_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m1/m2m1irq_ifw_ds_1_cgb04c_out3.gbc` | ✅ Pass |
 | `m1/m2m1irq_ifw_ds_3_cgb04c_out0.gbc` | ✅ Pass |
+| `m1/vblankint_lcd147++int_m1irq_enable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/disable_2_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/disable_by_m1enable_ly0_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/disable_by_m1enable_ly0_2_dmg08_cgb04c_out2.gbc` | ✅ Pass |
@@ -726,7 +806,6 @@ Combined exit code: 101
 | `m2enable/enable_after_lycint_disable_1_dmg08_cgb04c_out1.gbc` | ✅ Pass |
 | `m2enable/late_enable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/late_enable_after_lycint_1_dmg08_cgb04c_out0.gbc` | ✅ Pass |
-| `m2enable/late_enable_after_lycint_disable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/late_enable_ds_1_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/late_enable_ds_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/late_enable_lcdoffset2_1_cgb04c_out2.gbc` | ✅ Pass |
@@ -735,21 +814,27 @@ Combined exit code: 101
 | `m2enable/late_enable_ly0_ds_1_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/late_enable_ly0_ds_lcdoffset1_1_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/late_enable_ly0_lcdoffset2_1_cgb04c_out2.gbc` | ✅ Pass |
-| `m2enable/late_enable_m0disable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/late_enable_m0disable_ds_1_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/late_enable_m1disable_ly0_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/late_enable_m1disable_ly0_ds_1_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/late_m1disable_ly0_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/late_m1disable_ly0_3_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m2enable/lyc0_late_m2enable_lycdisable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `m2enable/lyc0_late_m2enable_lycdisable_3_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m2enable/lyc1_late_m2enable_lycdisable_ds_1_cgb04c_out2.gbc` | ✅ Pass |
+| `m2enable/lyc1_late_m2enable_lycdisable_ds_2_cgb04c_out0.gbc` | ✅ Pass |
 | `m2enable/lyc1_late_m2enable_lycdisable_ds_3_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/lyc1_m2irq_late_lyc255_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `m2enable/lyc1_m2irq_late_lyc255_3_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m2enable/lyc1_m2irq_late_lyc255_ds_1_cgb04c_out2.gbc` | ✅ Pass |
 | `m2enable/lyc1_m2irq_late_lycdisable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `m2enable/lyc1_m2irq_late_lycdisable_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m2enable/lyc1_m2irq_late_lycdisable_ds_1_cgb04c_out2.gbc` | ✅ Pass |
+| `m2enable/lyc1_m2irq_late_lycdisable_ds_2_cgb04c_out0.gbc` | ✅ Pass |
+| `m2enable/m2_late_m0disable_1_dmg08_cgb04c_out2.gbc` | ✅ Pass |
+| `m2enable/m2_late_m0disable_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `m2enable/m2_late_m0disable_ds_1_cgb04c_out2.gbc` | ✅ Pass |
-| `m2enable/m2_late_m1disable_ly0_ds_1_cgb04c_out2.gbc` | ✅ Pass |
+| `m2enable/m2_late_m0disable_ds_2_cgb04c_out0.gbc` | ✅ Pass |
 | `m2enable/m2_late_m1disable_ly0_ds_2_cgb04c_out0.gbc` | ✅ Pass |
 | `m2int_m0irq/m2int_m0irq_2_dmg08_cgb04c_out2.gbc` | ✅ Pass |
 | `m2int_m0irq/m2int_m0irq_ds_2_cgb04c_out3.gbc` | ✅ Pass |
@@ -834,11 +919,21 @@ Combined exit code: 101
 | `miscmstatirq/lycstatwirq_trigger_m0_early_ly44_lyc44_08_40_6_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `miscmstatirq/lycstatwirq_trigger_m0_early_ly44_lyc44_08_40_7_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `miscmstatirq/lycstatwirq_trigger_m0_early_ly44_lyc44_08_40_8_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
+| `miscmstatirq/lycstatwirq_trigger_m0_early_ly44_lyc44_08_40_9_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
+| `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_1_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
+| `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_2_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
+| `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_3_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
+| `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_4_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_ds_1_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_ds_2_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_ds_4_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_00_40_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_00_48_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
+| `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_08_40_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
+| `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_08_48_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
+| `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_08_ff_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
+| `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_b7_40_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
+| `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_b7_f7_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_bf_40_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_bf_ff_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/lycwirq_trigger_m0_early_ly44_1_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
@@ -849,6 +944,11 @@ Combined exit code: 101
 | `miscmstatirq/lycwirq_trigger_m0_early_ly44_6_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `miscmstatirq/lycwirq_trigger_m0_early_ly44_7_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `miscmstatirq/lycwirq_trigger_m0_early_ly44_8_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
+| `miscmstatirq/lycwirq_trigger_m0_early_ly44_9_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
+| `miscmstatirq/lycwirq_trigger_m0_late_ly44_1_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
+| `miscmstatirq/lycwirq_trigger_m0_late_ly44_2_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
+| `miscmstatirq/lycwirq_trigger_m0_late_ly44_3_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
+| `miscmstatirq/lycwirq_trigger_m0_late_ly44_4_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/lycwirq_trigger_m0_late_ly44_ds_1_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/lycwirq_trigger_m0_late_ly44_ds_2_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/lycwirq_trigger_m0_late_ly44_ds_3_cgb04c_outE0.gbc` | ✅ Pass |
@@ -860,13 +960,19 @@ Combined exit code: 101
 | `miscmstatirq/m0statwirq_scx2_1_dmg08_out0.gb` | ✅ Pass |
 | `miscmstatirq/m0statwirq_scx3_1_dmg08_out0.gb` | ✅ Pass |
 | `miscmstatirq/m0statwirq_scx5_1_dmg08_out0.gb` | ✅ Pass |
+| `miscmstatirq/m0statwirq_trigger_00_08_dmg08_out2_cgb04c_out2.gbc` | ✅ Pass |
 | `miscmstatirq/m0statwirq_trigger_00_ff_dmg08_out2_cgb04c_out2.gbc` | ✅ Pass |
 | `miscmstatirq/m0statwirq_trigger_08_00_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `miscmstatirq/m0statwirq_trigger_08_08_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `miscmstatirq/m0statwirq_trigger_08_f7_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `miscmstatirq/m0statwirq_trigger_08_ff_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `miscmstatirq/m0statwirq_trigger_f7_08_dmg08_out2_cgb04c_out2.gbc` | ✅ Pass |
+| `miscmstatirq/m0statwirq_trigger_f7_ff_dmg08_out2_cgb04c_out2.gbc` | ✅ Pass |
 | `miscmstatirq/m0statwirq_trigger_ff_00_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `miscmstatirq/m0statwirq_trigger_ff_08_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `miscmstatirq/m0statwirq_trigger_ff_f7_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `miscmstatirq/m0statwirq_trigger_ff_ff_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `miscmstatirq/m0statwirq_trigger_ly44_lyc44_00_08_dmg08_cgb04c_outE2.gbc` | ✅ Pass |
 | `miscmstatirq/m0statwirq_trigger_ly44_lyc44_40_08_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/m0statwirq_trigger_ly44_lyc44_40_48_dmg08_cgb04c_outE0.gbc` | ✅ Pass |
 | `miscmstatirq/m1statwirq_4_dmg08_out0.gb` | ✅ Pass |
@@ -892,8 +998,11 @@ Combined exit code: 101
 | `miscmstatirq/m1statwirq_trigger_ly94_lyc94_40_50_ds_2_cgb04c_outE2.gbc` | ✅ Pass |
 | `miscmstatirq/m2disable_dmg08_cgb_dmg08_out0.gb` | ✅ Pass |
 | `miscmstatirq/m2statwirq_trigger_00_00_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `miscmstatirq/m2statwirq_trigger_00_df_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `miscmstatirq/m2statwirq_trigger_20_00_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `miscmstatirq/m2statwirq_trigger_20_20_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `miscmstatirq/m2statwirq_trigger_20_df_dmg08_cgb04c_out0.gbc` | ✅ Pass |
+| `miscmstatirq/m2statwirq_trigger_20_ff_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `miscmstatirq/m2statwirq_trigger_df_00_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `miscmstatirq/m2statwirq_trigger_df_df_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `miscmstatirq/m2statwirq_trigger_ff_00_dmg08_cgb04c_out0.gbc` | ✅ Pass |
@@ -943,7 +1052,7 @@ Combined exit code: 101
 | `oamdma/late_sp39x_ds_1_cgb04c_out0.gbc` | ✅ Pass |
 | `oamdma/late_sp39y_ds_2_cgb04c_out0.gbc` | ✅ Pass |
 | `oamdma/oamdma_busydelay_1_dmg08_cgb04c_out5.gbc` | ✅ Pass |
-| `oamdma/oamdma_late_speedchange_stat_1_cgb04c_out0.gbc` | ✅ Pass |
+| `oamdma/oamdma_late_speedchange_stat_2_cgb04c_out3.gbc` | ✅ Pass |
 | `oamdma/oamdma_src0000_busypopFE9F_dmg08_cgb04c_out6576FFFF.gbc` | ✅ Pass |
 | `oamdma/oamdma_src0000_busypopFEFF_dmg08_cgb04c_out6576FFEF.gbc` | ✅ Pass |
 | `oamdma/oamdma_src0000_busypopFF7F_dmg08_cgb04c_out6576FFAA.gbc` | ✅ Pass |
@@ -1271,8 +1380,11 @@ Combined exit code: 101
 | `speedchange/speedchange_ly44_m3_nopx2_m3stat_scx1_2_cgb04c_outC0.gbc` | ✅ Pass |
 | `speedchange/speedchange_ly44_m3_nopx3_m3stat_2_cgb04c_outC0.gbc` | ✅ Pass |
 | `speedchange/speedchange_ly44_m3_nopx3_m3stat_scx1_2_cgb04c_outC0.gbc` | ✅ Pass |
-| `speedchange/speedchange_ly44_m3_nopx4_m3stat_2_cgb04c_outC0.gbc` | ✅ Pass |
+| `speedchange/speedchange_ly44_m3_nopx4_m3stat_1_cgb04c_outC3.gbc` | ✅ Pass |
+| `speedchange/speedchange_ly44_m3_nopx4_m3stat_scx1_1_cgb04c_outC3.gbc` | ✅ Pass |
 | `speedchange/speedchange_ly44_m3_nopx4_m3stat_scx1_2_cgb04c_outC0.gbc` | ✅ Pass |
+| `speedchange/speedchange_ly44_m3_stat_2_cgb04c_outC2.gbc` | ✅ Pass |
+| `speedchange/speedchange_ly44_m3_stat_cgb04c_outC0.gbc` | ✅ Pass |
 | `speedchange/speedchange_ly97_stat_cgb04c_outC0.gbc` | ✅ Pass |
 | `speedchange/speedchange_tima01_1_cgb04c_out07.gbc` | ✅ Pass |
 | `speedchange/speedchange_tima01_nop_1_cgb04c_out07.gbc` | ✅ Pass |
@@ -1558,6 +1670,16 @@ Combined exit code: 101
 | `tima/tc01_nop_div_write_start_1_dmg08_cgb04c_outF1.gbc` | ✅ Pass |
 | `tima/tc01_nop_div_write_start_2_dmg08_cgb04c_outF2.gbc` | ✅ Pass |
 | `tima/tc01_tma_next_1_dmg08_cgb04c_outF0.gbc` | ✅ Pass |
+| `undef_ops/undef_op_d3_dmg08_cgb04c_out01.gbc` | ✅ Pass |
+| `undef_ops/undef_op_db_dmg08_cgb04c_out01.gbc` | ✅ Pass |
+| `undef_ops/undef_op_e3_dmg08_cgb04c_out01.gbc` | ✅ Pass |
+| `undef_ops/undef_op_e4_dmg08_cgb04c_out01.gbc` | ✅ Pass |
+| `undef_ops/undef_op_eb_dmg08_cgb04c_out01.gbc` | ✅ Pass |
+| `undef_ops/undef_op_ec_dmg08_cgb04c_out01.gbc` | ✅ Pass |
+| `undef_ops/undef_op_ed_dmg08_cgb04c_out01.gbc` | ✅ Pass |
+| `undef_ops/undef_op_f4_dmg08_cgb04c_out01.gbc` | ✅ Pass |
+| `undef_ops/undef_op_fc_dmg08_cgb04c_out01.gbc` | ✅ Pass |
+| `undef_ops/undef_op_fd_dmg08_cgb04c_out01.gbc` | ✅ Pass |
 | `vram_m3/10spritesprline_postread_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `vram_m3/postread_2_dmg08_cgb04c_out0.gbc` | ✅ Pass |
 | `vram_m3/postread_ds_2_cgb04c_out0.gbc` | ✅ Pass |
@@ -1760,16 +1882,9 @@ Combined exit code: 101
 | `cgbpal_m3/cgbpal_write_m3start_ds_lcdoffset1_2_cgb04c_out00.gbc` | ❌ Fail |
 | `cgbpal_m3/cgbpal_write_m3start_lcdoffset1_2_cgb04c_out00.gbc` | ❌ Fail |
 | `display_startstate/ly_dmg08_out00_cgb04c_out90.gbc` | ❌ Fail |
-| `display_startstate/stat_1_cgb04c_out87.gbc` | ❌ Fail |
 | `display_startstate/stat_1_dmg08_out85.gb` | ❌ Fail |
-| `display_startstate/stat_2_cgb04c_out84.gbc` | ❌ Fail |
 | `display_startstate/stat_2_dmg08_out84.gb` | ❌ Fail |
-| `display_startstate/stat_scx2_1_cgb04c_out87.gbc` | ❌ Fail |
-| `display_startstate/stat_scx2_2_cgb04c_out84.gbc` | ❌ Fail |
-| `display_startstate/stat_scx3_1_cgb04c_out87.gbc` | ❌ Fail |
-| `display_startstate/stat_scx3_2_cgb04c_out84.gbc` | ❌ Fail |
 | `display_startstate/stat_scx5_1_cgb04c_out87.gbc` | ❌ Fail |
-| `display_startstate/stat_scx5_2_cgb04c_out84.gbc` | ❌ Fail |
 | `div/start_inc_1_cgb04c_out1E.gbc` | ❌ Fail |
 | `div/start_inc_1_dmg08_outAB.gb` | ❌ Fail |
 | `div/start_inc_2_cgb04c_out1F.gbc` | ❌ Fail |
@@ -2016,32 +2131,23 @@ Combined exit code: 101
 | `halt/late_m0irq_halt_m0stat_scx3_2b_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `halt/late_m0irq_halt_m0stat_scx3_3a_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `halt/late_m0irq_halt_m0stat_scx3_4a_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `halt/lycirq_m2stat_1_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `halt/lycirq_m2stat_2_dmg08_out2_cgb04c_out3.gbc` | ❌ Fail |
 | `halt/lycirq_m2stat_3_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `halt/m0int_m0stat_scx2_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `halt/m0int_m0stat_scx2_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `halt/m0int_m0stat_scx2_ds_2_cgb04c_out2.gbc` | ❌ Fail |
-| `halt/m0int_m0stat_scx3_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `halt/m0int_m0stat_scx3_2_dmg08_out0_cgb04c_out2.gbc` | ❌ Fail |
 | `halt/m0int_m0stat_scx3_3_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `halt/m0int_m0stat_scx3_ds_2_cgb04c_out2.gbc` | ❌ Fail |
-| `halt/m0int_m0stat_scx4_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `halt/m0int_m0stat_scx4_2_dmg08_out0_cgb04c_out2.gbc` | ❌ Fail |
 | `halt/m0int_m0stat_scx4_3_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `halt/m0int_m0stat_scx5_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `halt/m0int_m0stat_scx5_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `halt/m0irq_m0stat_scx2_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `halt/m0irq_m0stat_scx2_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `halt/m0irq_m0stat_scx2_ds_2_cgb04c_out2.gbc` | ❌ Fail |
-| `halt/m0irq_m0stat_scx3_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `halt/m0irq_m0stat_scx3_2_dmg08_out0_cgb04c_out2.gbc` | ❌ Fail |
 | `halt/m0irq_m0stat_scx3_3_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `halt/m0irq_m0stat_scx3_ds_2_cgb04c_out2.gbc` | ❌ Fail |
-| `halt/m0irq_m0stat_scx4_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `halt/m0irq_m0stat_scx4_2_dmg08_out0_cgb04c_out2.gbc` | ❌ Fail |
 | `halt/m0irq_m0stat_scx4_3_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `halt/m0irq_m0stat_scx5_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `halt/m0irq_m0stat_scx5_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `halt/m1int_ly_2_dmg08_out90_cgb04c_out91.gbc` | ❌ Fail |
 | `halt/m1int_ly_3_dmg08_cgb04c_out91.gbc` | ❌ Fail |
@@ -2069,14 +2175,13 @@ Combined exit code: 101
 | `irq_precedence/late_m0irq_vs_tima_scx3_halt_1_dmg08_cgb04c_out4.gbc` | ❌ Fail |
 | `irq_precedence/late_m0irq_vs_tima_scx3_halt_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `lcd_offset/offset1_lyc8fint_m1stat_ds_1_cgb04c_outC0.gbc` | ❌ Fail |
-| `lcd_offset/offset1_lyc98int_ly_count_1_cgb04c_out99.gbc` | ❌ Fail |
-| `lcd_offset/offset1_lyc98int_ly_count_2_cgb04c_out9A.gbc` | ❌ Fail |
 | `lcd_offset/offset1_lyc98int_ly_count_ds_2_cgb04c_out9A.gbc` | ❌ Fail |
 | `lcd_offset/offset1_lyc98int_ly_count_ds_3_cgb04c_out9A.gbc` | ❌ Fail |
 | `lcd_offset/offset1_lyc99int_m0irq_count_scx2_ds_1_cgb04c_out90.gbc` | ❌ Fail |
 | `lcd_offset/offset1_lyc99int_m0stat_count_scx2_ds_1_cgb04c_out90.gbc` | ❌ Fail |
 | `lcd_offset/offset1_lyc99int_m0stat_count_scx3_1_cgb04c_out90.gbc` | ❌ Fail |
 | `lcd_offset/offset1_lyc99int_m2irq_count_ds_2_cgb04c_out91.gbc` | ❌ Fail |
+| `lcd_offset/offset1_lyc99int_m2stat_count_2_cgb04c_out90.gbc` | ❌ Fail |
 | `lcd_offset/offset1_lyc99int_m2stat_count_ds_2_cgb04c_out90.gbc` | ❌ Fail |
 | `lcd_offset/offset1_lyc99int_m3stat_count_ds_2_cgb04c_out90.gbc` | ❌ Fail |
 | `lcd_offset/offset2_lyc98int_ly_count_2_cgb04c_out9A.gbc` | ❌ Fail |
@@ -2089,23 +2194,10 @@ Combined exit code: 101
 | `lcd_offset/offset3_lyc99int_m2stat_count_2_cgb04c_out90.gbc` | ❌ Fail |
 | `lcd_offset/offset3_lyc99int_m3stat_count_2_cgb04c_out90.gbc` | ❌ Fail |
 | `lcdirq_precedence/lcdirqprecedence_lycirq_ly44_lcdstat58_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `lcdirq_precedence/lcdirqprecedence_lycirq_ly44_lcdstat68_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `lcdirq_precedence/lcdirqprecedence_lycirq_ly90_lcdstat68_dmg08_cgb04c_out1.gbc` | ❌ Fail |
+| `lcdirq_precedence/lcdirqprecedence_lycirq_ly91_lcdstat68_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `lcdirq_precedence/lycirq_ly44_lcdstat48_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `lcdirq_precedence/lycirq_ly44_lcdstat50_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `lcdirq_precedence/lycirq_ly8f_lcdstat50_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `lcdirq_precedence/m0irq_ly44_lcdstat18_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `lcdirq_precedence/m0irq_ly44_lcdstat28_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `lcdirq_precedence/m0irq_ly44_lcdstat48_lyc43_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `lcdirq_precedence/m0irq_ly44_lcdstat48_lyc45_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `lcdirq_precedence/m0irq_ly8f_lcdstat18_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `lcdirq_precedence/m1irq_lcdstat18_dmg08_cgb04c_out1.gbc` | ❌ Fail |
-| `lcdirq_precedence/m1irq_lcdstat30_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `lcdirq_precedence/m1irq_lcdstat50_lyc8f_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `lcdirq_precedence/m1irq_lcdstat50_lyc90_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `lcdirq_precedence/m1irq_lcdstat50_lyc91_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `lcdirq_precedence/m2irq_ly44_lcdstat30_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `lcdirq_precedence/m2irq_ly8f_lcdstat30_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `ly0/lycint152_ly0stat_2_dmg08_cgb04c_outC0.gbc` | ❌ Fail |
 | `ly0/lycint152_ly153_2_dmg08_cgb04c_out99.gbc` | ❌ Fail |
 | `ly0/lycint152_ly153_3_dmg08_cgb04c_out00.gbc` | ❌ Fail |
@@ -2128,35 +2220,30 @@ Combined exit code: 101
 | `lyc0int_m0irq/lyc0int_m0irq_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `lyc0int_m0irq/lyc0int_m0irq_ds_2_cgb04c_out2.gbc` | ❌ Fail |
 | `lyc153int_m2irq/lyc153int_m2irq_late_retrigger_ds_1_cgb04c_out2.gbc` | ❌ Fail |
-| `lycEnable/early_ff41_response_1_cgb04c_out0.gbc` | ❌ Fail |
-| `lycEnable/early_ff45_response_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `lycEnable/ff41_disable_2_dmg08_out0_cgb04c_out2.gbc` | ❌ Fail |
 | `lycEnable/ff41_disable_3_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `lycEnable/ff45_disable_2_dmg08_out1_cgb04c_out3.gbc` | ❌ Fail |
 | `lycEnable/ff45_enable_weirdpoint_2_dmg08_out3_cgb04c_out1.gbc` | ❌ Fail |
 | `lycEnable/ff45_enable_weirdpoint_3_dmg08_out1_cgb04c_out3.gbc` | ❌ Fail |
 | `lycEnable/ff45_enable_weirdpoint_ds_2_cgb04c_out1.gbc` | ❌ Fail |
-| `lycEnable/ff45_enable_weirdpoint_ds_3_cgb04c_out1.gbc` | ❌ Fail |
 | `lycEnable/ff45_enable_weirdpoint_ds_lcdoffset1_2_cgb04c_out0.gbc` | ❌ Fail |
 | `lycEnable/ff45_enable_weirdpoint_ds_lcdoffset1_3_cgb04c_out0.gbc` | ❌ Fail |
-| `lycEnable/ff45_enable_weirdpoint_lcdoffset1_2_cgb04c_out0.gbc` | ❌ Fail |
+| `lycEnable/ff45_enable_weirdpoint_ds_lcdoffset1_4_cgb04c_out2.gbc` | ❌ Fail |
 | `lycEnable/late_ff41_enable_2_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
 | `lycEnable/late_ff41_enable_after_m2int_disable_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `lycEnable/late_ff41_enable_after_m2int_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `lycEnable/late_ff41_enable_ds_lcdoffset1_2_cgb04c_out0.gbc` | ❌ Fail |
+| `lycEnable/late_ff41_enable_ds_1_cgb04c_out3.gbc` | ❌ Fail |
+| `lycEnable/late_ff41_enable_lcdoffset1_1_cgb04c_out2.gbc` | ❌ Fail |
 | `lycEnable/late_ff45_enable_2_dmg08_out3_cgb04c_out1.gbc` | ❌ Fail |
-| `lycEnable/late_ff45_enable_3_dmg08_cgb04c_out1.gbc` | ❌ Fail |
 | `lycEnable/late_ff45_enable_after_m2int_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `lycEnable/late_ff45_enable_ds_2_cgb04c_out1.gbc` | ❌ Fail |
 | `lycEnable/late_ff45_enable_ds_lcdoffset1_2_cgb04c_out0.gbc` | ❌ Fail |
-| `lycEnable/late_ff45_enable_lcdoffset1_2_cgb04c_out0.gbc` | ❌ Fail |
 | `lycEnable/lcdoff_lycirqen_4_dmg08_outE2_cgb04c_outE0.gbc` | ❌ Fail |
 | `lycEnable/lyc0_ff41_disable_1_dmg08_outE2_cgb04c_outE0.gbc` | ❌ Fail |
 | `lycEnable/lyc0_ff41_disable_ds_1_cgb04c_outE0.gbc` | ❌ Fail |
 | `lycEnable/lyc0_ff45_disable_2_dmg08_outE0_cgb04c_outE2.gbc` | ❌ Fail |
 | `lycEnable/lyc0_ff45_disable_ds_1_cgb04c_outE0.gbc` | ❌ Fail |
 | `lycEnable/lyc0_late_ff45_enable_2_dmg08_outE2_cgb04c_outE0.gbc` | ❌ Fail |
-| `lycEnable/lyc0_late_ff45_enable_3_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
 | `lycEnable/lyc0_m1disable_1_dmg08_cgb04c_outE2.gbc` | ❌ Fail |
 | `lycEnable/lyc0_m1disable_2_dmg08_outE2_cgb04c_outE0.gbc` | ❌ Fail |
 | `lycEnable/lyc0_m1disable_ds_1_cgb04c_outE2.gbc` | ❌ Fail |
@@ -2170,16 +2257,14 @@ Combined exit code: 101
 | `lycEnable/lyc153_late_ff45_enable_3_dmg08_outE0_cgb04c_outE2.gbc` | ❌ Fail |
 | `lycEnable/lyc153_late_ff45_enable_4_dmg08_outE2_cgb04c_outE0.gbc` | ❌ Fail |
 | `lycEnable/lyc153_late_ff45_enable_ds_2_cgb04c_outE0.gbc` | ❌ Fail |
-| `lycEnable/lyc153_late_ff45_enable_ds_3_cgb04c_outE0.gbc` | ❌ Fail |
 | `lycEnable/lyc153_late_ff45_enable_ds_4_cgb04c_outE2.gbc` | ❌ Fail |
 | `lycEnable/lyc153_late_ff45_enable_ds_5_cgb04c_outE2.gbc` | ❌ Fail |
 | `lycEnable/lyc153_late_ff45_enable_ds_lcdoffset1_1_cgb04c_outE2.gbc` | ❌ Fail |
 | `lycEnable/lyc153_late_ff45_enable_lcdoffset1_1_cgb04c_outE2.gbc` | ❌ Fail |
 | `lycEnable/lyc153_late_m1disable_2_dmg08_outE2_cgb04c_outE0.gbc` | ❌ Fail |
-| `lycEnable/lyc_ff41_trigger_delay_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
+| `lycEnable/lyc153_m1disable_ds_1_cgb04c_outE2.gbc` | ❌ Fail |
 | `lycEnable/lyc_ff41_trigger_delay_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `lycEnable/lyc_ff45_disable2_2_dmg08_out1_cgb04c_out3.gbc` | ❌ Fail |
-| `lycEnable/lyc_ff45_trigger_delay_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `lycEnable/lyc_ff45_trigger_delay_2_dmg08_out0_cgb04c_out2.gbc` | ❌ Fail |
 | `lycEnable/lyc_ff45_trigger_delay_3_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `lycEnable/lyc_ff45_trigger_delay_ds_2_cgb04c_out2.gbc` | ❌ Fail |
@@ -2187,13 +2272,10 @@ Combined exit code: 101
 | `lycEnable/lycwirq_trigger_ly00_stat50_ds_lcdoffset1_2_cgb04c_outE2.gbc` | ❌ Fail |
 | `lycint_ly/lycint_ly_2_dmg08_cgb04c_out6.gbc` | ❌ Fail |
 | `lycint_ly/lycint_ly_ds_2_cgb04c_out6.gbc` | ❌ Fail |
-| `lycint_lycflag/lycint_lycflag_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `lycint_lycflag/lycint_lycflag_2_dmg08_cgb04c_out6.gbc` | ❌ Fail |
-| `lycint_lycflag/lycint_lycflag_3_dmg08_cgb04c_out4.gbc` | ❌ Fail |
 | `lycint_lycflag/lycint_lycflag_4_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `lycint_lycflag/lycint_lycflag_ds_2_cgb04c_out6.gbc` | ❌ Fail |
 | `lycint_lycflag/lycint_lycflag_ds_4_cgb04c_out2.gbc` | ❌ Fail |
-| `lycint_m0stat/lycint_m0stat_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `lycint_m0stat/lycint_m0stat_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `lycint_m0stat/lycint_m0stat_ds_2_cgb04c_out2.gbc` | ❌ Fail |
 | `lycm2int/lyc0m2int_m2irq_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
@@ -2202,7 +2284,6 @@ Combined exit code: 101
 | `lycm2int/lycm2int_m2irq_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `lycm2int/m2irq_before_lycint_1_dmg08_cgb04c_out1.gbc` | ❌ Fail |
 | `lycm2int/m2irq_before_lycint_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `lywrite/lywrite77_ly44_m3_stat_dmg08_cgb04c_outC7.gbc` | ❌ Fail |
 | `m0enable/disable_2_dmg08_out0_cgb04c_out2.gbc` | ❌ Fail |
 | `m0enable/disable_scx1_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `m0enable/disable_scx2_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
@@ -2210,11 +2291,9 @@ Combined exit code: 101
 | `m0enable/disable_scx5_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `m0enable/disable_scx5_ds_2_cgb04c_out3.gbc` | ❌ Fail |
 | `m0enable/disable_scx7_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `m0enable/enable_after_lyc_prior_1_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `m0enable/enable_wxA6_2x_spxA7_1_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `m0enable/late_enable_2_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
-| `m0enable/late_enable_ds_2_cgb04c_out1.gbc` | ❌ Fail |
-| `m0enable/late_enable_ds_lcdoffset1_2_cgb04c_out0.gbc` | ❌ Fail |
+| `m0enable/late_enable_lcdoffset1_1_cgb04c_out2.gbc` | ❌ Fail |
 | `m0enable/lycdisable_ff41_2_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
 | `m0enable/lycdisable_ff41_scx1_2_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m0enable/lycdisable_ff41_scx2_2_dmg08_cgb04c_out0.gbc` | ❌ Fail |
@@ -2226,75 +2305,48 @@ Combined exit code: 101
 | `m0enable/lycdisable_ff45_scx2_3_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m0enable/lycdisable_ff45_scx3_2_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
 | `m0enable/lycdisable_ff45_scx3_3_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `m0enable/m0_trigger_delay_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m0enable/m0_trigger_delay_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `m0int_m0stat/m0int_m0stat_ds_2_cgb04c_out2.gbc` | ❌ Fail |
 | `m0int_m0stat/m0int_m0stat_scx2_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m0int_m0stat/m0int_m0stat_scx2_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `m0int_m0stat/m0int_m0stat_scx3_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m0int_m0stat/m0int_m0stat_scx3_2_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `m0int_m0stat/m0int_m0stat_scx5_ds_2_cgb04c_out2.gbc` | ❌ Fail |
-| `m1/ly143_late_m0enable_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/ly143_late_m0enable_2_dmg08_out3_cgb04c_out1.gbc` | ❌ Fail |
-| `m1/ly143_late_m0enable_ds_lcdoffset1_2_cgb04c_out1.gbc` | ❌ Fail |
+| `m1/ly143_late_m0enable_ds_1_cgb04c_out3.gbc` | ❌ Fail |
+| `m1/ly143_late_m0enable_lcdoffset1_1_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/ly143_late_m2enable_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/ly143_late_m2enable_2_dmg08_out3_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/ly143_late_m2enable_ds_1_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/ly143_late_m2enable_ds_lcdoffset1_1_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/lyc143_late_m0enable_lycdisable_1_dmg08_cgb04c_out1.gbc` | ❌ Fail |
-| `m1/lyc143_late_m0enable_lycdisable_2_dmg08_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/lyc143_late_m0enable_lycdisable_3_dmg08_out3_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/lyc143_late_m2enable_lycdisable_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/lyc143_late_m2enable_lycdisable_2_dmg08_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/lyc143_late_m2enable_lycdisable_3_dmg08_out3_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/lyc143_late_m2enable_lycdisable_ds_1_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/lycint143_m1irq_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m1/lycint143_m1irq_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/lycint143_m1irq_ds_2_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/lycint143_m1irq_ifw_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/lycint143_m1irq_ifw_2_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m1/lycint143_m1irq_ifw_ds_1_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/lycint143_m1irq_late_retrigger_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/lycint143_m1irq_late_retrigger_2_dmg08_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/lycint143_m1irq_late_retrigger_ds_1_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/lycint_m1intirq_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/lycint_m1intirq_2_dmg08_cgb04c_out1.gbc` | ❌ Fail |
-| `m1/lycint_m1stat_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `m1/lycint_vblankintirq_1_dmg08_cgb04c_out1.gbc` | ❌ Fail |
-| `m1/lycint_vblankirq_2_dmg08_cgb04c_out1.gbc` | ❌ Fail |
-| `m1/lycint_vblankirq_late_retrigger_1_dmg08_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/lycint_vblankirq_late_retrigger_ds_1_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/m1irq_disable_1_dmg08_out3_cgb04c_out1.gbc` | ❌ Fail |
-| `m1/m1irq_disable_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m1irq_enable_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m1irq_enable_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m1irq_enable_3_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m1irq_enable_4_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m1irq_enable_after_lyc144_1_dmg08_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/m1irq_enable_after_lyc144_2_dmg08_out1_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m1irq_enable_after_lyc144_3_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/m1irq_late_enable_2_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
-| `m1/m1irq_late_enable_ds_lcdoffset1_2_cgb04c_out0.gbc` | ❌ Fail |
-| `m1/m1irq_m0disable_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
+| `m1/m1irq_late_enable_ds_1_cgb04c_out2.gbc` | ❌ Fail |
+| `m1/m1irq_late_enable_lcdoffset1_1_cgb04c_out2.gbc` | ❌ Fail |
 | `m1/m1irq_m0disable_2_dmg08_out3_cgb04c_out1.gbc` | ❌ Fail |
-| `m1/m1irq_m0disable_3_dmg08_cgb04c_out1.gbc` | ❌ Fail |
-| `m1/m1irq_m0enable_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m1irq_m0enable_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m1irq_m0enable_3_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m1irq_m2disable_lycdisable_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
+| `m1/m1irq_m0disable_ds_1_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/m1irq_m2disable_lycdisable_2_dmg08_out3_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/m1irq_m2disable_lycdisable_3_dmg08_cgb04c_out1.gbc` | ❌ Fail |
-| `m1/m1irq_m2enable_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m1irq_m2enable_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m1irq_m2enable_3_dmg08_cgb04c_out3.gbc` | ❌ Fail |
+| `m1/m1irq_m2disable_lycdisable_ds_1_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/m1irq_m2enable_lyc_1_dmg08_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/m1irq_m2enable_lyc_2_dmg08_out1_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/m1irq_m2enable_lyc_3_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/m1irq_m2enable_lyc_ds_2_cgb04c_out3.gbc` | ❌ Fail |
-| `m1/m2m1irq_ifw_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `m1/m2m1irq_ifw_2_dmg08_cgb04c_out1.gbc` | ❌ Fail |
 | `m1/m2m1irq_ifw_ds_2_cgb04c_out1.gbc` | ❌ Fail |
-| `m1/vblankint_lcd147++int_m1irq_enable_1_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `m2enable/disable_1_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/disable_ly0_1_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/enable_after_lycint_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
@@ -2303,6 +2355,7 @@ Combined exit code: 101
 | `m2enable/late_enable_after_lycint_2_dmg08_out0_cgb04c_out2.gbc` | ❌ Fail |
 | `m2enable/late_enable_after_lycint_3_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/late_enable_after_lycint_4_dmg08_cgb04c_out0.gbc` | ❌ Fail |
+| `m2enable/late_enable_after_lycint_disable_1_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `m2enable/late_enable_after_lycint_disable_2_dmg08_out0_cgb04c_out2.gbc` | ❌ Fail |
 | `m2enable/late_enable_after_lycint_disable_3_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/late_enable_ds_2_cgb04c_out0.gbc` | ❌ Fail |
@@ -2313,6 +2366,7 @@ Combined exit code: 101
 | `m2enable/late_enable_ly0_ds_2_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/late_enable_ly0_ds_lcdoffset1_2_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/late_enable_ly0_lcdoffset2_2_cgb04c_out0.gbc` | ❌ Fail |
+| `m2enable/late_enable_m0disable_1_dmg08_cgb04c_out2.gbc` | ❌ Fail |
 | `m2enable/late_enable_m0disable_2_dmg08_out0_cgb04c_out2.gbc` | ❌ Fail |
 | `m2enable/late_enable_m0disable_3_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/late_enable_m0disable_ds_2_cgb04c_out0.gbc` | ❌ Fail |
@@ -2321,20 +2375,13 @@ Combined exit code: 101
 | `m2enable/late_enable_m1disable_ly0_ds_2_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/late_m1disable_ly0_2_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/lyc0_late_m2enable_lycdisable_2_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
-| `m2enable/lyc0_late_m2enable_lycdisable_3_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/lyc0_late_m2enable_lycdisable_ds_1_cgb04c_out2.gbc` | ❌ Fail |
 | `m2enable/lyc0_late_m2enable_lycdisable_ds_2_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/lyc1_late_m2enable_lycdisable_1_dmg08_out0_cgb04c_out2.gbc` | ❌ Fail |
 | `m2enable/lyc1_late_m2enable_lycdisable_2_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `m2enable/lyc1_late_m2enable_lycdisable_ds_2_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/lyc1_m2irq_late_lyc255_2_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
-| `m2enable/lyc1_m2irq_late_lyc255_3_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m2enable/lyc1_m2irq_late_lyc255_ds_2_cgb04c_out0.gbc` | ❌ Fail |
-| `m2enable/lyc1_m2irq_late_lycdisable_2_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `m2enable/lyc1_m2irq_late_lycdisable_ds_2_cgb04c_out0.gbc` | ❌ Fail |
-| `m2enable/m2_late_m0disable_1_dmg08_cgb04c_out2.gbc` | ❌ Fail |
-| `m2enable/m2_late_m0disable_2_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `m2enable/m2_late_m0disable_ds_2_cgb04c_out0.gbc` | ❌ Fail |
+| `m2enable/m2_late_m1disable_ly0_ds_1_cgb04c_out2.gbc` | ❌ Fail |
 | `m2int_m0irq/m2int_m0irq_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `m2int_m0irq/m2int_m0irq_ds_1_cgb04c_out1.gbc` | ❌ Fail |
 | `m2int_m0irq/m2int_m0irq_scx2_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
@@ -2388,22 +2435,7 @@ Combined exit code: 101
 | `miscmstatirq/lycstatwirq_trigger_bf_ff_dmg08_out2_cgb04c_out2.gbc` | ❌ Fail |
 | `miscmstatirq/lycstatwirq_trigger_ly00_10_50_ds_lcdoffset1_2_cgb04c_outE2.gbc` | ❌ Fail |
 | `miscmstatirq/lycstatwirq_trigger_ly00_10_50_lcdoffset3_2_cgb04c_outE2.gbc` | ❌ Fail |
-| `miscmstatirq/lycstatwirq_trigger_m0_early_ly44_lyc44_08_40_9_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
-| `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_1_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
-| `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_2_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
-| `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_3_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
-| `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_4_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
 | `miscmstatirq/lycstatwirq_trigger_m0_late_ly44_lyc44_08_40_ds_3_cgb04c_outE2.gbc` | ❌ Fail |
-| `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_08_40_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
-| `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_08_48_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
-| `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_08_ff_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
-| `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_b7_40_dmg08_cgb04c_outE2.gbc` | ❌ Fail |
-| `miscmstatirq/lycstatwirq_trigger_m0_ly44_lyc44_b7_f7_dmg08_cgb04c_outE2.gbc` | ❌ Fail |
-| `miscmstatirq/lycwirq_trigger_m0_early_ly44_9_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
-| `miscmstatirq/lycwirq_trigger_m0_late_ly44_1_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
-| `miscmstatirq/lycwirq_trigger_m0_late_ly44_2_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
-| `miscmstatirq/lycwirq_trigger_m0_late_ly44_3_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
-| `miscmstatirq/lycwirq_trigger_m0_late_ly44_4_dmg08_cgb04c_outE0.gbc` | ❌ Fail |
 | `miscmstatirq/lycwirq_trigger_m0_late_ly44_lyc45_1_dmg08_cgb04c_outE2.gbc` | ❌ Fail |
 | `miscmstatirq/lycwirq_trigger_m0_late_ly44_lyc45_2_dmg08_cgb04c_outE2.gbc` | ❌ Fail |
 | `miscmstatirq/lycwirq_trigger_m0_late_ly44_lyc45_3_dmg08_cgb04c_outE2.gbc` | ❌ Fail |
@@ -2417,15 +2449,9 @@ Combined exit code: 101
 | `miscmstatirq/m0statwirq_scx3_2_dmg08_out2.gb` | ❌ Fail |
 | `miscmstatirq/m0statwirq_scx5_2_dmg08_out2.gb` | ❌ Fail |
 | `miscmstatirq/m0statwirq_trigger_00_00_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
-| `miscmstatirq/m0statwirq_trigger_00_08_dmg08_out2_cgb04c_out2.gbc` | ❌ Fail |
 | `miscmstatirq/m0statwirq_trigger_00_f7_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
-| `miscmstatirq/m0statwirq_trigger_08_f7_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `miscmstatirq/m0statwirq_trigger_08_ff_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `miscmstatirq/m0statwirq_trigger_f7_00_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
-| `miscmstatirq/m0statwirq_trigger_f7_08_dmg08_out2_cgb04c_out2.gbc` | ❌ Fail |
 | `miscmstatirq/m0statwirq_trigger_f7_f7_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
-| `miscmstatirq/m0statwirq_trigger_f7_ff_dmg08_out2_cgb04c_out2.gbc` | ❌ Fail |
-| `miscmstatirq/m0statwirq_trigger_ly44_lyc44_00_08_dmg08_cgb04c_outE2.gbc` | ❌ Fail |
 | `miscmstatirq/m1statwirq_1_dmg08_out3.gb` | ❌ Fail |
 | `miscmstatirq/m1statwirq_2_dmg08_out3.gb` | ❌ Fail |
 | `miscmstatirq/m1statwirq_3_dmg08_out2.gb` | ❌ Fail |
@@ -2435,10 +2461,7 @@ Combined exit code: 101
 | `miscmstatirq/m1statwirq_trigger_ef_ef_dmg08_out2_cgb04c_out0.gbc` | ❌ Fail |
 | `miscmstatirq/m1statwirq_trigger_ly94_lyc94_40_50_2_dmg08_outE0_cgb04c_outE2.gbc` | ❌ Fail |
 | `miscmstatirq/m2statwirq_trigger_00_20_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `miscmstatirq/m2statwirq_trigger_00_df_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `miscmstatirq/m2statwirq_trigger_00_ff_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `miscmstatirq/m2statwirq_trigger_20_df_dmg08_cgb04c_out0.gbc` | ❌ Fail |
-| `miscmstatirq/m2statwirq_trigger_20_ff_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `miscmstatirq/m2statwirq_trigger_df_20_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `miscmstatirq/m2statwirq_trigger_df_ff_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `oam_access/10spritesprline_postread_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
@@ -2476,7 +2499,7 @@ Combined exit code: 101
 | `oamdma/late_sp39y_ds_1_cgb04c_out3.gbc` | ❌ Fail |
 | `oamdma/oamdma_late_halt_stat_1_dmg08_cgb04c_out0.gbc` | ❌ Fail |
 | `oamdma/oamdma_late_halt_stat_2_dmg08_cgb04c_out3.gbc` | ❌ Fail |
-| `oamdma/oamdma_late_speedchange_stat_2_cgb04c_out3.gbc` | ❌ Fail |
+| `oamdma/oamdma_late_speedchange_stat_1_cgb04c_out0.gbc` | ❌ Fail |
 | `oamdma/oamdma_src0000_busycallAFFF_dmg08_cgb04c_outFF8F.gbc` | ❌ Fail |
 | `oamdma/oamdma_src0000_busyint0002_dmg08_cgb04c_outFF941234.gbc` | ❌ Fail |
 | `oamdma/oamdma_src0000_busypop7FFF_dmg08_cgb04c_out657665AA.gbc` | ❌ Fail |
@@ -3102,11 +3125,8 @@ Combined exit code: 101
 | `speedchange/speedchange_ly44_m3_nopx2_m3stat_scx1_1_cgb04c_outC3.gbc` | ❌ Fail |
 | `speedchange/speedchange_ly44_m3_nopx3_m3stat_1_cgb04c_outC3.gbc` | ❌ Fail |
 | `speedchange/speedchange_ly44_m3_nopx3_m3stat_scx1_1_cgb04c_outC3.gbc` | ❌ Fail |
-| `speedchange/speedchange_ly44_m3_nopx4_m3stat_1_cgb04c_outC3.gbc` | ❌ Fail |
-| `speedchange/speedchange_ly44_m3_nopx4_m3stat_scx1_1_cgb04c_outC3.gbc` | ❌ Fail |
+| `speedchange/speedchange_ly44_m3_nopx4_m3stat_2_cgb04c_outC0.gbc` | ❌ Fail |
 | `speedchange/speedchange_ly44_m3_stat_1_cgb04c_outC0.gbc` | ❌ Fail |
-| `speedchange/speedchange_ly44_m3_stat_2_cgb04c_outC2.gbc` | ❌ Fail |
-| `speedchange/speedchange_ly44_m3_stat_cgb04c_outC0.gbc` | ❌ Fail |
 | `speedchange/speedchange_ly97_ly_cgb04c_out8C.gbc` | ❌ Fail |
 | `speedchange/speedchange_tima00_1a_cgb04c_out80.gbc` | ❌ Fail |
 | `speedchange/speedchange_tima00_1b_cgb04c_out81.gbc` | ❌ Fail |
@@ -3366,16 +3386,6 @@ Combined exit code: 101
 | `tima/tc01_late_tima_tma_3_dmg08_cgb04c_out11.gbc` | ❌ Fail |
 | `tima/tc01_late_tma_2_dmg08_cgb04c_outF1.gbc` | ❌ Fail |
 | `tima/tc01_tma_next_2_dmg08_cgb04c_outF1.gbc` | ❌ Fail |
-| `undef_ops/undef_op_d3_dmg08_cgb04c_out01.gbc` | ❌ Fail |
-| `undef_ops/undef_op_db_dmg08_cgb04c_out01.gbc` | ❌ Fail |
-| `undef_ops/undef_op_e3_dmg08_cgb04c_out01.gbc` | ❌ Fail |
-| `undef_ops/undef_op_e4_dmg08_cgb04c_out01.gbc` | ❌ Fail |
-| `undef_ops/undef_op_eb_dmg08_cgb04c_out01.gbc` | ❌ Fail |
-| `undef_ops/undef_op_ec_dmg08_cgb04c_out01.gbc` | ❌ Fail |
-| `undef_ops/undef_op_ed_dmg08_cgb04c_out01.gbc` | ❌ Fail |
-| `undef_ops/undef_op_f4_dmg08_cgb04c_out01.gbc` | ❌ Fail |
-| `undef_ops/undef_op_fc_dmg08_cgb04c_out01.gbc` | ❌ Fail |
-| `undef_ops/undef_op_fd_dmg08_cgb04c_out01.gbc` | ❌ Fail |
 | `vram_m3/10spritesprline_postread_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `vram_m3/postread_1_dmg08_cgb04c_out3.gbc` | ❌ Fail |
 | `vram_m3/postread_ds_1_cgb04c_out3.gbc` | ❌ Fail |
@@ -3700,13 +3710,16 @@ Combined exit code: 101
 | `mem_timing_read` | ✅ Pass |
 | `mem_timing_write` | ✅ Pass |
 
-#### mmu (13/13 passing, 100.0%)
+#### mmu (16/16 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
 | `boot_rom_disable` | ✅ Pass |
 | `cartridge_ram_access` | ✅ Pass |
 | `cgb_boot_rom_mapping` | ✅ Pass |
+| `cgb_rev_c_unusable_oam_aliases_by_masked_bits` | ✅ Pass |
+| `cgb_rev_d_unusable_oam_is_fully_addressable` | ✅ Pass |
+| `cgb_rev_e_unusable_oam_reads_address_pattern` | ✅ Pass |
 | `dmg_post_boot_vram_matches_real_boot_rom` | ✅ Pass |
 | `hdma_wait_loop_observes_idle_ff55` | ✅ Pass |
 | `mbc1_ram_enable` | ✅ Pass |
@@ -3814,11 +3827,11 @@ Combined exit code: 101
 | --- | --- |
 | `blargg_oam_bug_rom_singles_dmg` | ✅ Pass |
 
-#### prehistorik_probe (1/1 passing, 100.0%)
+#### prehistorik_probe (0/1 passing, 0.0%)
 
 | Test | Result |
 | --- | --- |
-| `prehistorik_capture_probe` | ✅ Pass |
+| `prehistorik_capture_probe` | ❌ Fail |
 
 #### rtc_invalid_banks_test (1/1 passing, 100.0%)
 
@@ -3826,7 +3839,7 @@ Combined exit code: 101
 | --- | --- |
 | `rtc_invalid_banks_png` | ✅ Pass |
 
-#### same_suite (73/78 passing, 93.6%)
+#### same_suite (75/78 passing, 96.2%)
 
 | Test | Result |
 | --- | --- |
@@ -3838,6 +3851,8 @@ Combined exit code: 101
 | `same_suite__apu__channel_1__channel_1_extra_length_clocking_cgb0B_gb` | ✅ Pass |
 | `same_suite__apu__channel_1__channel_1_freq_change_gb` | ✅ Pass |
 | `same_suite__apu__channel_1__channel_1_freq_change_timing_A_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_freq_change_timing_cgb0BC_gb` | ✅ Pass |
+| `same_suite__apu__channel_1__channel_1_freq_change_timing_cgbDE_gb` | ✅ Pass |
 | `same_suite__apu__channel_1__channel_1_nrx2_glitch_gb` | ✅ Pass |
 | `same_suite__apu__channel_1__channel_1_nrx2_speed_change_gb` | ✅ Pass |
 | `same_suite__apu__channel_1__channel_1_restart_gb` | ✅ Pass |
@@ -3903,8 +3918,6 @@ Combined exit code: 101
 | `same_suite__dma__hdma_mode0_gb` | ✅ Pass |
 | `same_suite__interrupt__ei_delay_halt_gb` | ✅ Pass |
 | `same_suite__ppu__blocking_bgpi_increase_gb` | ✅ Pass |
-| `same_suite__apu__channel_1__channel_1_freq_change_timing_cgb0BC_gb` | ❌ Fail |
-| `same_suite__apu__channel_1__channel_1_freq_change_timing_cgbDE_gb` | ❌ Fail |
 | `same_suite__apu__channel_3__channel_3_extra_length_clocking_cgbB_gb` | ❌ Fail |
 | `same_suite__sgb__command_mlt_req_1_incrementing_gb` | ❌ Fail |
 | `same_suite__sgb__command_mlt_req_gb` | ❌ Fail |
@@ -4113,10 +4126,16 @@ Combined exit code: 101
 | `tima_write_during_reload_ignored` | ✅ Pass |
 | `tma_write_same_cycle_overflow` | ✅ Pass |
 
+#### version_api (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `exposes_core_crate_version` | ✅ Pass |
+
 
 ### Unit Tests
 
-#### apu (5/5 passing, 100.0%)
+#### apu (9/9 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
@@ -4125,8 +4144,12 @@ Combined exit code: 101
 | `apu::tests::dc_filter_converges_to_zero` | ✅ Pass |
 | `apu::tests::dc_filter_reduces_constant_input` | ✅ Pass |
 | `apu::tests::dc_filter_reset_when_all_dacs_off` | ✅ Pass |
+| `apu::tests::square_clock_2mhz_batches_multiple_edges` | ✅ Pass |
+| `apu::tests::square_clock_2mhz_consumes_remainder_after_batch` | ✅ Pass |
+| `apu::tests::wave_step_batches_to_exact_boundary` | ✅ Pass |
+| `apu::tests::wave_step_clears_just_read_after_remainder` | ✅ Pass |
 
-#### cartridge (7/7 passing, 100.0%)
+#### cartridge (19/19 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
@@ -4137,6 +4160,31 @@ Combined exit code: 101
 | `cartridge::tests::rtc_halt_preserves_subseconds` | ✅ Pass |
 | `cartridge::tests::rtc_seconds_write_resets_phase` | ✅ Pass |
 | `cartridge::tests::rtc_ticks_through_invalid_values` | ✅ Pass |
+| `cartridge::tests::tpp1_control_register_readback` | ✅ Pass |
+| `cartridge::tests::tpp1_features_battery_and_rtc` | ✅ Pass |
+| `cartridge::tests::tpp1_header_detected` | ✅ Pass |
+| `cartridge::tests::tpp1_initial_state` | ✅ Pass |
+| `cartridge::tests::tpp1_ram_size_parsing` | ✅ Pass |
+| `cartridge::tests::tpp1_rom_banking` | ✅ Pass |
+| `cartridge::tests::tpp1_rtc_full_rollover` | ✅ Pass |
+| `cartridge::tests::tpp1_rtc_latch_and_readback` | ✅ Pass |
+| `cartridge::tests::tpp1_rtc_serialize_roundtrip` | ✅ Pass |
+| `cartridge::tests::tpp1_rtc_ticks_seconds` | ✅ Pass |
+| `cartridge::tests::tpp1_rumble_speed_clamped` | ✅ Pass |
+| `cartridge::tests::tpp1_sram_read_write` | ✅ Pass |
+
+#### gameboy (2/2 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `gameboy::tests::reset_power_on_preserves_cart_and_boot_rom` | ✅ Pass |
+| `gameboy::tests::reset_preserves_cart_and_boot_rom` | ✅ Pass |
+
+#### ppu::lcd_off_frame_timing_tests::lcd_off_keeps_frame_cadence (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::lcd_off_frame_timing_tests::lcd_off_keeps_frame_cadence` | ✅ Pass |
 
 #### ppu::mode3_timing_tests::dmg_mode3_cycles_mooneye_intr2_patterns (1/1 passing, 100.0%)
 
@@ -4252,6 +4300,12 @@ Combined exit code: 101
 | --- | --- |
 | `ppu::mode3_timing_tests::dmg_mode3_cycles_two_sprites_x0` | ✅ Pass |
 
+#### ppu::step_fast_path_tests::oam_fast_path_advances_without_contention (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::step_fast_path_tests::oam_fast_path_advances_without_contention` | ✅ Pass |
+
 #### serial (16/16 passing, 100.0%)
 
 | Test | Result |
@@ -4280,3 +4334,77 @@ Combined exit code: 101
 | `watchpoints::tests::read_watchpoint_hits_and_records_details` | ✅ Pass |
 | `watchpoints::tests::suspended_disables_hits` | ✅ Pass |
 | `watchpoints::tests::value_match_filters_hits` | ✅ Pass |
+
+
+### Doc Tests
+
+#### crates/vibe-emu-core/src/apu.rs (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates/vibe-emu-core/src/apu.rs - apu::Apu::enable_output (line 1123)` | ✅ Pass |
+
+#### crates/vibe-emu-core/src/audio_queue.rs (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates/vibe-emu-core/src/audio_queue.rs - audio_queue::audio_queue (line 68)` | ✅ Pass |
+
+#### crates/vibe-emu-core/src/cartridge.rs (3/3 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates/vibe-emu-core/src/cartridge.rs - cartridge::Cartridge::from_bytes (line 805)` | ✅ Pass |
+| `crates/vibe-emu-core/src/cartridge.rs - cartridge::Cartridge::from_bytes_with_ram (line 709)` | ✅ Pass |
+| `crates/vibe-emu-core/src/cartridge.rs - cartridge::Cartridge::from_file (line 733) - compile` | ✅ Pass |
+
+#### crates/vibe-emu-core/src/diagnostics.rs (2/2 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates/vibe-emu-core/src/diagnostics.rs - diagnostics::LogSink (line 19)` | ✅ Pass |
+| `crates/vibe-emu-core/src/diagnostics.rs - diagnostics::try_set_log_sink (line 44)` | ✅ Pass |
+
+#### crates/vibe-emu-core/src/gameboy.rs (2/2 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates/vibe-emu-core/src/gameboy.rs - gameboy::GameBoy::new (line 115)` | ✅ Pass |
+| `crates/vibe-emu-core/src/gameboy.rs - gameboy::GameBoy::reset (line 148)` | ✅ Pass |
+
+#### crates/vibe-emu-core/src/input.rs (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates/vibe-emu-core/src/input.rs - input::Input::update_state (line 49)` | ✅ Pass |
+
+#### crates/vibe-emu-core/src/lib.rs (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates/vibe-emu-core/src/lib.rs - VERSION (line 18)` | ✅ Pass |
+
+#### crates/vibe-emu-core/src/mmu.rs (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates/vibe-emu-core/src/mmu.rs - mmu::Mmu::load_cart (line 533)` | ✅ Pass |
+
+#### crates/vibe-emu-core/src/serial.rs (2/2 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates/vibe-emu-core/src/serial.rs - serial::LinkPort (line 36)` | ✅ Pass |
+| `crates/vibe-emu-core/src/serial.rs - serial::NullLinkPort::new (line 92)` | ✅ Pass |
+
+#### crates/vibe-emu-core/src/timer.rs (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates/vibe-emu-core/src/timer.rs - timer::Timer::step (line 101)` | ✅ Pass |
+
+#### crates/vibe-emu-core/src/watchpoints.rs (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates/vibe-emu-core/src/watchpoints.rs - watchpoints::WatchpointEngine (line 74)` | ✅ Pass |
