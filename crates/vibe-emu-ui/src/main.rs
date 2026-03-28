@@ -5586,8 +5586,9 @@ impl VibeEmuApp {
             ui.vertical(|ui| {
                 ui.heading("Sprites");
 
-                let cell_w = 24.0;
-                let cell_h = if is_8x16 { 48.0 } else { 28.0 };
+                let sprites_scale = 2.0;
+                let cell_w = 24.0 * sprites_scale;
+                let cell_h = if is_8x16 { 48.0 } else { 28.0 } * sprites_scale;
                 let cols = 10;
                 let rows = 4;
                 let grid_w = cols as f32 * cell_w;
@@ -5623,10 +5624,10 @@ impl VibeEmuApp {
                     }
 
                     if let Some(tex) = &self.vram_viewer.oam_sprite_textures[i] {
-                        let sprite_w = 8.0 * 2.0;
-                        let sprite_h_scaled = sprite_h as f32 * 2.0;
+                        let sprite_w = 8.0 * 2.0 * sprites_scale;
+                        let sprite_h_scaled = sprite_h as f32 * 2.0 * sprites_scale;
                         let sprite_rect = egui::Rect::from_center_size(
-                            cell_rect.center() + egui::vec2(0.0, 4.0),
+                            cell_rect.center() + egui::vec2(0.0, 4.0 * sprites_scale),
                             egui::vec2(sprite_w, sprite_h_scaled),
                         );
                         painter.image(
@@ -5638,7 +5639,7 @@ impl VibeEmuApp {
 
                         if is_offscreen {
                             let center = sprite_rect.center();
-                            let size = 6.0;
+                            let size = 6.0 * sprites_scale;
                             painter.line_segment(
                                 [
                                     center - egui::vec2(size, size),
@@ -5656,12 +5657,13 @@ impl VibeEmuApp {
                         }
                     }
 
-                    let label_pos = egui::pos2(cell_rect.center().x, cell_rect.top() + 6.0);
+                    let label_pos =
+                        egui::pos2(cell_rect.center().x, cell_rect.top() + 6.0 * sprites_scale);
                     painter.text(
                         label_pos,
                         egui::Align2::CENTER_CENTER,
                         format!("{:02}", i),
-                        egui::FontId::monospace(8.0),
+                        egui::FontId::monospace(8.0 * sprites_scale),
                         egui::Color32::DARK_GRAY,
                     );
                 }
