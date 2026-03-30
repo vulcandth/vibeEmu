@@ -18,7 +18,7 @@ default = ["mobile-bundled"]
 vibe-emu-core.workspace = true
 vibe-emu-mobile = { path = "../vibe-emu-mobile" }
 clap = { version = "4.5.58", features = ["derive"] }
-eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "wgpu", "wayland", "x11"] }
+eframe = { version = "0.34.1", default-features = false, features = ["default_fonts", "glow", "wgpu", "wayland", "x11"] }
 cpal = "0.17"
 png = "0.18"
 log = "0.4"
