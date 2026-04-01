@@ -869,7 +869,7 @@ Public License instead of this License.  But first, please read
 ### Apache License 2.0
 
 Used by:
-- [cc 1.2.57](https://github.com/rust-lang/cc-rs)
+- [cc 1.2.58](https://github.com/rust-lang/cc-rs)
 - [find-msvc-tools 0.1.9](https://github.com/rust-lang/cc-rs)
 
 ```text

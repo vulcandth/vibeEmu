@@ -1083,7 +1083,7 @@ Used by:
 ### Apache License 2.0
 
 Used by:
-- [cc 1.2.57](https://github.com/rust-lang/cc-rs)
+- [cc 1.2.58](https://github.com/rust-lang/cc-rs)
 - [find-msvc-tools 0.1.9](https://github.com/rust-lang/cc-rs)
 - [socket2 0.6.3](https://github.com/rust-lang/socket2)
 
@@ -1298,9 +1298,9 @@ limitations under the License.
 Used by:
 - [libc 0.2.183](https://github.com/rust-lang/libc)
 - [proc-macro2 1.0.106](https://github.com/dtolnay/proc-macro2)
-- [quote 1.0.44](https://github.com/dtolnay/quote)
+- [quote 1.0.45](https://github.com/dtolnay/quote)
 - [shlex 1.3.0](https://github.com/comex/rust-shlex)
-- [syn 2.0.114](https://github.com/dtolnay/syn)
+- [syn 2.0.117](https://github.com/dtolnay/syn)
 - [thiserror-impl 2.0.18](https://github.com/dtolnay/thiserror)
 - [thiserror 2.0.18](https://github.com/dtolnay/thiserror)
 - [unicode-ident 1.0.22](https://github.com/dtolnay/unicode-ident)
