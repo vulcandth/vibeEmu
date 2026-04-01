@@ -1638,7 +1638,7 @@ impl VibeEmuApp {
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
-        if ctx.wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
 
@@ -2136,13 +2136,25 @@ impl VibeEmuApp {
 }
 
 impl eframe::App for VibeEmuApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_input(ctx);
         self.handle_file_drop(ctx);
         self.poll_frames();
         self.update_texture(ctx);
 
-        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+        if let Some(path) = self.pending_rom_load.take() {
+            self.load_rom(path);
+        }
+
+        if !self.paused {
+            ctx.request_repaint();
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+
+        egui::Panel::top("menu_bar").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Open ROM...").clicked() {
@@ -2277,7 +2289,7 @@ impl eframe::App for VibeEmuApp {
                             }
                         }
                         if self.selected_window_scale != prev_scale {
-                            self.apply_window_scale(ctx);
+                            self.apply_window_scale(&ctx);
                             self.persist_runtime_settings();
                         }
                     });
@@ -2305,18 +2317,12 @@ impl eframe::App for VibeEmuApp {
             });
         });
 
-        if let Some(path) = self.pending_rom_load.take() {
-            self.load_rom(path);
-        }
-
-        // Status bar at the bottom
-        egui::TopBottomPanel::bottom("status_bar")
-            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(4.0))
-            .show(ctx, |ui| {
+        egui::Panel::bottom("status_bar")
+            .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(4.0))
+            .show_inside(ui, |ui| {
                 let total_width = ui.available_width();
 
                 ui.horizontal(|ui| {
-                    // Emulation status (left side, always visible)
                     let status_text = if self.paused {
                         ("⏸ Paused", egui::Color32::YELLOW)
                     } else if self.fast_forward {
@@ -2347,13 +2353,10 @@ impl eframe::App for VibeEmuApp {
                         }
                     }
 
-                    // Calculate space needed for FPS (approximate)
                     let fps_text = format!("{:.1} FPS", self.current_fps);
                     let fps_reserve = 80.0;
-
                     let remaining = total_width - ui.min_rect().width() - fps_reserve - 30.0;
 
-                    // ROM name only if there's enough room
                     if remaining > 60.0
                         && let Some(path) = &self.current_rom_path
                         && let Some(name) = path.file_name().and_then(|n| n.to_str())
@@ -2367,7 +2370,6 @@ impl eframe::App for VibeEmuApp {
                         );
                     }
 
-                    // FPS counter (right-aligned)
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(fps_text);
                     });
@@ -2376,7 +2378,7 @@ impl eframe::App for VibeEmuApp {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 let available = ui.available_size();
                 let scale = (available.x / GB_WIDTH)
                     .min(available.y / GB_HEIGHT)
@@ -2406,7 +2408,7 @@ impl eframe::App for VibeEmuApp {
 
         #[cfg(debug_assertions)]
         if self.show_debugger {
-            self.draw_debugger_window(ctx);
+            self.draw_debugger_window(&ctx);
         }
 
         #[cfg(not(debug_assertions))]
@@ -2415,12 +2417,12 @@ impl eframe::App for VibeEmuApp {
         }
 
         if self.show_vram_viewer {
-            self.draw_vram_viewer_window(ctx);
+            self.draw_vram_viewer_window(&ctx);
         }
 
         #[cfg(debug_assertions)]
         if self.show_watchpoints {
-            self.draw_watchpoints_window(ctx);
+            self.draw_watchpoints_window(&ctx);
         }
 
         #[cfg(not(debug_assertions))]
@@ -2429,19 +2431,15 @@ impl eframe::App for VibeEmuApp {
         }
 
         if self.show_options {
-            self.draw_options_window(ctx);
+            self.draw_options_window(&ctx);
         }
 
         if self.show_about {
-            self.draw_about_window(ctx);
+            self.draw_about_window(&ctx);
         }
 
         if self.legal_document.is_some() {
-            self.draw_legal_window(ctx);
-        }
-
-        if !self.paused {
-            ctx.request_repaint();
+            self.draw_legal_window(&ctx);
         }
     }
 
@@ -2461,19 +2459,19 @@ impl VibeEmuApp {
             egui::ViewportBuilder::default()
                 .with_title(format!("About {APP_NAME}"))
                 .with_inner_size([560.0, 520.0]),
-            |ctx, class| {
-                if ctx.input(|i| i.viewport().close_requested()) {
+            |ui, class| {
+                if ui.ctx().input(|i| i.viewport().close_requested()) {
                     self.show_about = false;
                 }
 
                 match class {
-                    egui::ViewportClass::Embedded => {
-                        egui::Window::new(format!("About {APP_NAME}")).show(ctx, |ui| {
+                    egui::ViewportClass::EmbeddedWindow => {
+                        egui::Frame::NONE.show(ui, |ui| {
                             self.draw_about_content(ui);
                         });
                     }
                     _ => {
-                        egui::CentralPanel::default().show(ctx, |ui| {
+                        egui::CentralPanel::default().show_inside(ui, |ui| {
                             self.draw_about_content(ui);
                         });
                     }
@@ -2556,19 +2554,19 @@ impl VibeEmuApp {
             egui::ViewportBuilder::default()
                 .with_title(document.title())
                 .with_inner_size([760.0, 640.0]),
-            |ctx, class| {
-                if ctx.input(|i| i.viewport().close_requested()) {
+            |ui, class| {
+                if ui.ctx().input(|i| i.viewport().close_requested()) {
                     self.legal_document = None;
                 }
 
                 match class {
-                    egui::ViewportClass::Embedded => {
-                        egui::Window::new(document.title()).show(ctx, |ui| {
+                    egui::ViewportClass::EmbeddedWindow => {
+                        egui::Frame::NONE.show(ui, |ui| {
                             self.draw_legal_content(ui, document);
                         });
                     }
                     _ => {
-                        egui::CentralPanel::default().show(ctx, |ui| {
+                        egui::CentralPanel::default().show_inside(ui, |ui| {
                             self.draw_legal_content(ui, document);
                         });
                     }
@@ -2608,20 +2606,22 @@ impl VibeEmuApp {
             egui::ViewportBuilder::default()
                 .with_title("Options")
                 .with_inner_size([400.0, 380.0]),
-            |ctx, class| {
-                if ctx.input(|i| i.viewport().close_requested()) {
+            |ui, class| {
+                if ui.ctx().input(|i| i.viewport().close_requested()) {
                     self.show_options = false;
                 }
 
                 match class {
-                    egui::ViewportClass::Embedded => {
-                        egui::Window::new("Options").show(ctx, |ui| {
-                            self.draw_options_content(ui, ctx);
+                    egui::ViewportClass::EmbeddedWindow => {
+                        let ctx = ui.ctx().clone();
+                        egui::Frame::NONE.show(ui, |ui| {
+                            self.draw_options_content(ui, &ctx);
                         });
                     }
                     _ => {
-                        egui::CentralPanel::default().show(ctx, |ui| {
-                            self.draw_options_content(ui, ctx);
+                        let ctx = ui.ctx().clone();
+                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                            self.draw_options_content(ui, &ctx);
                         });
                     }
                 }
@@ -2899,19 +2899,19 @@ impl VibeEmuApp {
             egui::ViewportBuilder::default()
                 .with_title("Debugger")
                 .with_inner_size([750.0, 550.0]),
-            |ctx, class| {
-                if ctx.input(|i| i.viewport().close_requested()) {
+            |ui, class| {
+                if ui.ctx().input(|i| i.viewport().close_requested()) {
                     self.show_debugger = false;
                 }
 
                 match class {
-                    egui::ViewportClass::Embedded => {
-                        egui::Window::new("Debugger").show(ctx, |ui| {
+                    egui::ViewportClass::EmbeddedWindow => {
+                        egui::Frame::NONE.show(ui, |ui| {
                             self.draw_debugger_content(ui);
                         });
                     }
                     _ => {
-                        egui::CentralPanel::default().show(ctx, |ui| {
+                        egui::CentralPanel::default().show_inside(ui, |ui| {
                             self.draw_debugger_content(ui);
                         });
                     }
@@ -3794,19 +3794,19 @@ impl VibeEmuApp {
             egui::ViewportBuilder::default()
                 .with_title("Watchpoints")
                 .with_inner_size([400.0, 300.0]),
-            |ctx, class| {
-                if ctx.input(|i| i.viewport().close_requested()) {
+            |ui, class| {
+                if ui.ctx().input(|i| i.viewport().close_requested()) {
                     self.show_watchpoints = false;
                 }
 
                 match class {
-                    egui::ViewportClass::Embedded => {
-                        egui::Window::new("Watchpoints").show(ctx, |ui| {
+                    egui::ViewportClass::EmbeddedWindow => {
+                        egui::Frame::NONE.show(ui, |ui| {
                             self.draw_watchpoints_content(ui);
                         });
                     }
                     _ => {
-                        egui::CentralPanel::default().show(ctx, |ui| {
+                        egui::CentralPanel::default().show_inside(ui, |ui| {
                             self.draw_watchpoints_content(ui);
                         });
                     }
@@ -4258,20 +4258,22 @@ impl VibeEmuApp {
             egui::ViewportBuilder::default()
                 .with_title("VRAM Viewer")
                 .with_inner_size([860.0, 500.0]),
-            |ctx, class| {
-                if ctx.input(|i| i.viewport().close_requested()) {
+            |ui, class| {
+                if ui.ctx().input(|i| i.viewport().close_requested()) {
                     self.show_vram_viewer = false;
                 }
 
                 match class {
-                    egui::ViewportClass::Embedded => {
-                        egui::Window::new("VRAM Viewer").show(ctx, |ui| {
-                            self.draw_vram_viewer_content(ui, ctx, ppu_snapshot.as_ref());
+                    egui::ViewportClass::EmbeddedWindow => {
+                        let ctx = ui.ctx().clone();
+                        egui::Frame::NONE.show(ui, |ui| {
+                            self.draw_vram_viewer_content(ui, &ctx, ppu_snapshot.as_ref());
                         });
                     }
                     _ => {
-                        egui::CentralPanel::default().show(ctx, |ui| {
-                            self.draw_vram_viewer_content(ui, ctx, ppu_snapshot.as_ref());
+                        let ctx = ui.ctx().clone();
+                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                            self.draw_vram_viewer_content(ui, &ctx, ppu_snapshot.as_ref());
                         });
                     }
                 }
@@ -6232,7 +6234,7 @@ fn main() {
         GB_WIDTH * scale,
         GB_HEIGHT * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
     ];
-    let mut wgpu_setup = egui_wgpu::WgpuSetupCreateNew::default();
+    let mut wgpu_setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
 
     // Lavapipe (software Vulkan on Linux VMs) doesn't fully implement
     // VK_EXT_debug_utils, which wgpu requests when the DEBUG flag is set.
@@ -6245,59 +6247,61 @@ fn main() {
     // black screen. Prefer the GL (llvmpipe) adapter when the only Vulkan
     // adapter is a software/CPU device, since llvmpipe handles surfaces
     // correctly via EGL even on old Mesa. Real GPUs still get Vulkan.
-    wgpu_setup.native_adapter_selector = Some(Arc::new(|adapters, surface| {
-        let mut ranked: Vec<_> = adapters.iter().collect();
+    wgpu_setup.native_adapter_selector = Some(Arc::new(
+        |adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'_>>| {
+            let mut ranked: Vec<_> = adapters.iter().collect();
 
-        ranked.sort_by_key(|a| {
-            let info = a.get_info();
-            let is_software = info.device_type == wgpu::DeviceType::Cpu;
+            ranked.sort_by_key(|a| {
+                let info = a.get_info();
+                let is_software = info.device_type == wgpu::DeviceType::Cpu;
 
-            let has_surface_formats = surface
-                .map(|s| !s.get_capabilities(a).formats.is_empty())
-                .unwrap_or(true);
+                let has_surface_formats = surface
+                    .map(|s| !s.get_capabilities(a).formats.is_empty())
+                    .unwrap_or(true);
 
-            // (primary key, secondary key) — lower is better
-            let backend_rank = match (info.backend, is_software) {
-                (wgpu::Backend::Vulkan, false) => 0,
-                (wgpu::Backend::Metal, _) => 0,
-                (wgpu::Backend::Dx12, false) => 0,
-                (wgpu::Backend::Gl, _) => 1,
-                (wgpu::Backend::Vulkan, true) => 2,
-                (wgpu::Backend::Dx12, true) => 2,
-                _ => 3,
-            };
+                // (primary key, secondary key) — lower is better
+                let backend_rank = match (info.backend, is_software) {
+                    (wgpu::Backend::Vulkan, false) => 0,
+                    (wgpu::Backend::Metal, _) => 0,
+                    (wgpu::Backend::Dx12, false) => 0,
+                    (wgpu::Backend::Gl, _) => 1,
+                    (wgpu::Backend::Vulkan, true) => 2,
+                    (wgpu::Backend::Dx12, true) => 2,
+                    _ => 3,
+                };
 
-            // Adapters without surface formats are unusable for presentation
-            let format_penalty: u8 = if has_surface_formats { 0 } else { 10 };
-            backend_rank + format_penalty
-        });
+                // Adapters without surface formats are unusable for presentation
+                let format_penalty: u8 = if has_surface_formats { 0 } else { 10 };
+                backend_rank + format_penalty
+            });
 
-        for a in &ranked {
-            let info = a.get_info();
-            log::debug!(
-                "wgpu adapter candidate: {:?} backend={:?} type={:?}",
-                info.name,
-                info.backend,
-                info.device_type
-            );
-        }
+            for a in &ranked {
+                let info = a.get_info();
+                log::debug!(
+                    "wgpu adapter candidate: {:?} backend={:?} type={:?}",
+                    info.name,
+                    info.backend,
+                    info.device_type
+                );
+            }
 
-        let selected = ranked
-            .first()
-            .map(|a| (*a).clone())
-            .ok_or_else(|| "No suitable wgpu adapter found".to_owned());
+            let selected = ranked
+                .first()
+                .map(|a| (*a).clone())
+                .ok_or_else(|| "No suitable wgpu adapter found".to_owned());
 
-        if let Ok(ref adapter) = selected {
-            let info = adapter.get_info();
-            log::info!(
-                "Selected wgpu adapter: {:?} ({:?})",
-                info.name,
-                info.backend
-            );
-        }
+            if let Ok(ref adapter) = selected {
+                let info = adapter.get_info();
+                log::info!(
+                    "Selected wgpu adapter: {:?} ({:?})",
+                    info.name,
+                    info.backend
+                );
+            }
 
-        selected
-    }));
+            selected
+        },
+    ));
 
     // Probe whether wgpu would land on a GL-backend software/virtual GPU.
     // In that scenario (e.g. VMware SVGA3D, llvmpipe) the wgpu GL present
@@ -6305,11 +6309,13 @@ fn main() {
     // black screen on old Mesa. The glow renderer drives OpenGL directly
     // through glutin and works reliably in these environments.
     let renderer = {
-        let probe_instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let probe_instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu_setup.instance_descriptor.backends,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
-        let adapters = probe_instance.enumerate_adapters(wgpu_setup.instance_descriptor.backends);
+        let adapters = pollster::block_on(
+            probe_instance.enumerate_adapters(wgpu_setup.instance_descriptor.backends),
+        );
 
         let best_is_gl_software = adapters
             .iter()

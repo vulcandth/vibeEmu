@@ -251,7 +251,7 @@ impl EmulatorHandle {
     }
 
     fn save(&mut self) {
-        let _ = self.gb.mmu.save_cart_ram();
+        self.gb.mmu.save_cart_ram();
     }
 
     fn boot_rom_configured(&self, cgb: bool) -> bool {
@@ -504,7 +504,7 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_drainAudio(
     handle: jlong,
     out: JShortArray,
 ) -> jint {
-    match catch_unwind(AssertUnwindSafe(|| unsafe {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
         let Some(handle) = handle_from_jlong(handle) else {
             return 0;
         };
@@ -533,10 +533,8 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_drainAudio(
 
         let _ = env.set_short_array_region(&out, 0, &samples);
         (samples.len() / 2) as jint
-    })) {
-        Ok(value) => value,
-        Err(_) => 0,
-    }
+    }))
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
@@ -561,7 +559,7 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_saveRam(
 ) {
     protect_void(|| unsafe {
         if let Some(handle) = handle_from_jlong(handle) {
-            let _ = handle.gb.mmu.save_cart_ram();
+            handle.gb.mmu.save_cart_ram();
         }
     });
 }
