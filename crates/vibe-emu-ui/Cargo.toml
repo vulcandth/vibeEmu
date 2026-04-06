@@ -26,7 +26,7 @@ log = "0.4"
 env_logger = "0.11"
 crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }
-toml = "1.1.0"
+toml = "1.1.2"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 gilrs = "0.11"
