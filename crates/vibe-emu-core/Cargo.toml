@@ -36,7 +36,7 @@ cpu-trace = []
 once_cell = "1"
 tempfile = "3"
 reqwest = { version = "0.13.2", features = ["blocking", "gzip"] }
-zip = "8.4.0"
+zip = "8.5.1"
 png = "0.18"
 libtest-mimic = "0.8.2"
 
