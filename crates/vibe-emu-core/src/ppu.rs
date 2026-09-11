@@ -5549,7 +5549,11 @@ impl Ppu {
                 }
             }
             0xFF43 => {
-                if self.should_record_mode3_reg_event() {
+                // SCX is sampled by the fetcher; writing the current value does
+                // not restart it or change the pixel coordinates. In particular,
+                // repeated scroll writes must not turn a static sprite-heavy
+                // scanline into a different background fetch schedule.
+                if self.scx != val && self.should_record_mode3_reg_event() {
                     self.record_mode3_scx_event(self.mode_clock, val);
                 }
                 if trace_scx_writes_enabled()

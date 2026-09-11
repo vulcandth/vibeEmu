@@ -3,6 +3,55 @@ use vibe_emu_core::{
     ppu::Ppu,
 };
 
+// Rewriting SCX without changing its value must leave both the background
+// coordinates and sprite output alone, including while OBJ fetches stall the
+// pixel pipeline. Games can repeat the same scroll write on every scanline.
+#[test]
+fn unchanged_scx_writes_with_sprites_preserve_pixels() {
+    for model in [Model::default(), Model::Cgb(CgbRevision::default())] {
+        for fine_scroll in 0..8 {
+            let render = |repeat_write: bool| {
+                let mut ppu = Ppu::new(model);
+                if model.is_cgb() {
+                    ppu.apply_dmg_compatibility_palettes();
+                }
+                ppu.write_reg(0xFF40, 0x97); // BG and 8x16 OBJs, unsigned tiles
+                ppu.write_reg(0xFF47, 0xE4);
+                ppu.write_reg(0xFF48, 0xE4);
+                ppu.write_reg(0xFF43, 160 + fine_scroll);
+                for tile in 1..=32 {
+                    for row in 0..8 {
+                        ppu.vram[0][tile * 16 + row * 2] = (tile as u8).rotate_left(row as u32);
+                        ppu.vram[0][tile * 16 + row * 2 + 1] = !(tile as u8);
+                    }
+                }
+                for col in 0..32 {
+                    ppu.vram[0][0x1800 + col] = col as u8 + 1;
+                }
+                for (i, x) in [78, 86, 94, 102, 126, 134, 142].into_iter().enumerate() {
+                    ppu.oam[i * 4..i * 4 + 4].copy_from_slice(&[16, x, 2, 0]);
+                }
+                ppu.skip_startup_for_test();
+                let mut interrupts = 0;
+                ppu.step(456 + 80, &mut interrupts); // second line, start of mode 3
+                assert_eq!(ppu.mode(), 3);
+                for dot in 1..=300 {
+                    ppu.step(1, &mut interrupts);
+                    if repeat_write && [12, 40, 80, 120, 160].contains(&dot) {
+                        ppu.write_reg(0xFF43, 160 + fine_scroll);
+                    }
+                }
+                ppu.framebuffer[160..320].to_vec()
+            };
+            assert_eq!(
+                render(true),
+                render(false),
+                "unchanged SCX, {model:?}, fine scroll {fine_scroll}"
+            );
+        }
+    }
+}
+
 #[test]
 fn register_access() {
     let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
