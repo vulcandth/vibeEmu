@@ -20,4 +20,4 @@ default = ["mobile-bundled"]
 [dependencies]
 vibe-emu-core.workspace = true
 vibe-emu-mobile = { path = "../vibe-emu-mobile", default-features = false }
-jni = "0.21"
+jni = "0.22"
