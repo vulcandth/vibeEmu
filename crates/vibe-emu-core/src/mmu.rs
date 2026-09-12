@@ -1293,6 +1293,7 @@ impl Mmu {
 
     /// Write to VRAM bypassing mode checks (used by DMA transfers)
     fn vram_dma_write(&mut self, addr: u16, val: u8) {
+        self.ppu.invalidate_mode3_obj_data();
         self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize] = val;
     }
 

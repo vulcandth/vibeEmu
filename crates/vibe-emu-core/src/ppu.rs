@@ -452,6 +452,7 @@ pub struct Ppu {
     mode3_bg_fifo: u8,
     mode3_fetcher_state: u8,
     mode3_obj_fetch_active: bool,
+    mode3_obj_data_stable: bool,
     mode3_obj_fetch_stage: u8,
     mode3_obj_fetch_sprite_index: usize,
     mode3_render_delay: u16,
@@ -1402,6 +1403,7 @@ impl Ppu {
             mode3_bg_fifo: 8,
             mode3_fetcher_state: 0,
             mode3_obj_fetch_active: false,
+            mode3_obj_data_stable: false,
             mode3_obj_fetch_stage: 0,
             mode3_obj_fetch_sprite_index: 0,
             mode3_render_delay: 0,
@@ -1584,6 +1586,13 @@ impl Ppu {
     /// Override whether VRAM reads during rendering return 0x00 (blocked) or real data.
     pub fn set_render_vram_blocked(&mut self, blocked: bool) {
         self.render_vram_blocked = blocked;
+        if blocked {
+            self.invalidate_mode3_obj_data();
+        }
+    }
+
+    pub(crate) fn invalidate_mode3_obj_data(&mut self) {
+        self.mode3_obj_data_stable = false;
     }
 
     fn vram_read_for_render(&self, bank: usize, addr: usize) -> u8 {
@@ -1618,6 +1627,7 @@ impl Ppu {
         self.mode3_wy_base = self.wy;
         self.mode3_wy_event_count = 0;
         self.mode3_obj_fetch_base = 0;
+        self.mode3_obj_data_stable = !self.render_vram_blocked;
         self.mode3_obj_fetch_event_count = 0;
         self.mode3_pop_event_count = 0;
         self.dmg_line_lcdc_at_pixel.fill(self.mode3_lcdc_base);
@@ -3496,7 +3506,51 @@ impl Ppu {
         !self.cgb() && (1..=0xA0).contains(&self.oam_dma_current_dest)
     }
 
+    fn complete_stable_obj_rows(&mut self) {
+        if !self.is_dmg_mode()
+            || !self.mode3_obj_data_stable
+            || (self.mode3_lcdc_base & 0x02) == 0
+            || self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+                .iter()
+                .any(|ev| ((self.mode3_lcdc_base ^ ev.val) & 0x06) != 0)
+        {
+            return;
+        }
+
+        // With unchanged OBJ controls and no DMA/VRAM contention, every
+        // selected visible OBJ has an unambiguous row. Decode it at the end
+        // of transfer, before HBlank can modify memory. The simplified live
+        // fetch model can otherwise leave right-edge rows unfinished when
+        // the independently computed Mode 3 duration expires. Its progress
+        // must not decide visibility on a stable line, nor extend Mode 3.
+        // Lines with size/enable changes or DMA retain the timed fetch data.
+        for idx in 0..self.sprite_count {
+            let sprite = self.line_sprites[idx];
+            if sprite.x <= -8 || sprite.x >= SCREEN_WIDTH as i16 {
+                continue;
+            }
+            let base = sprite.oam_index * 4;
+            let tile = self.oam[base + 2];
+            let flags = self.oam[base + 3];
+            let addr =
+                self.compute_obj_row_addr_from_lcdc(sprite.y, tile, flags, self.mode3_lcdc_base);
+            let lo = self.vram_read_for_render(0, addr);
+            let hi = self.vram_read_for_render(0, addr + 1);
+            let sprite = &mut self.line_sprites[idx];
+            sprite.tile = tile;
+            sprite.flags = flags;
+            sprite.obj_row_addr = addr as u16;
+            sprite.obj_row_valid = true;
+            sprite.obj_lo = lo;
+            sprite.obj_hi = hi;
+            sprite.obj_data_valid = true;
+        }
+    }
+
     fn mode3_latch_sprite_attributes(&mut self) {
+        if (1..=0xA0).contains(&self.oam_dma_current_dest) {
+            self.invalidate_mode3_obj_data();
+        }
         let obj_fetch_active_before = self.mode3_obj_fetch_active;
         // Use the same simplified DMG pipeline model as
         // `dmg_compute_mode3_cycles_for_line` to decide *when* an object match
@@ -3652,20 +3706,22 @@ impl Ppu {
                             } + self.dmg_obj_size_fetch_t_compat_adjust();
                             let sample_t =
                                 (self.mode_clock as i16 + low_bias).clamp(0, max_t) as u16;
-                            let size_16 = if obj_size_tuning.fetch_use_live_lcdc {
+                            let mut size_16 = if obj_size_tuning.fetch_use_live_lcdc {
                                 (self.lcdc & 0x04) != 0
                             } else {
                                 (self.dmg_lcdc_for_mode3_t(sample_t) & 0x04) != 0
                             };
-                            let mut size_16 = size_16;
-                            if (self.scx & 0x07) == 3 && idx > 0 && !size_16 {
-                                size_16 = true;
-                            }
-                            if self.cgb()
-                                && self.dmg_compat
-                                && (self.scx & 0x07) >= 4
+                            // Fine-scroll alignment of a size transition only
+                            // applies after LCDC.2 actually changed. SCX alone
+                            // must never turn a stable 8x8 OBJ into an 8x16 OBJ.
+                            let size_changed = self.mode3_lcdc_events
+                                [..self.mode3_lcdc_event_count]
+                                .iter()
+                                .any(|ev| ((self.mode3_lcdc_base ^ ev.val) & 0x04) != 0);
+                            if size_changed
                                 && idx > 0
-                                && !size_16
+                                && ((self.scx & 0x07) == 3
+                                    || (self.is_cgb_dmg_compat_mode() && (self.scx & 0x07) >= 4))
                             {
                                 size_16 = true;
                             }
@@ -6615,6 +6671,7 @@ impl Ppu {
                     self.mode3_latch_sprite_attributes();
                     let target = self.mode3_target_cycles;
                     if self.mode_clock >= target {
+                        self.complete_stable_obj_rows();
                         self.mode_clock -= target;
                         if self.is_dmg_mode() {
                             let obj_toggle_line = self.is_dmg_mode()
@@ -8160,6 +8217,46 @@ impl Default for Ppu {
 #[cfg(test)]
 mod mode3_timing_tests {
     use super::*;
+
+    #[test]
+    fn stable_obj_rows_leave_dynamic_fetches_untouched() {
+        for model in [Model::default(), Model::Cgb(CgbRevision::default())] {
+            for change in 0..5 {
+                let mut ppu = Ppu::new(model);
+                if model.is_cgb() {
+                    ppu.apply_dmg_compatibility_palettes();
+                }
+                ppu.write_reg(0xFF40, 0x93);
+                ppu.oam[..4].copy_from_slice(&[16, 167, 1, 0]);
+                ppu.vram[0][16] = 0xFF;
+                ppu.skip_startup_for_test();
+                let mut interrupts = 0;
+                ppu.step(80, &mut interrupts);
+                assert_eq!(ppu.mode(), MODE_TRANSFER);
+                match change {
+                    0 => {} // Stable row can be decoded even before a timed fetch.
+                    1 => {
+                        ppu.oam_dma_current_dest = 1;
+                        ppu.step(1, &mut interrupts);
+                        ppu.oam_dma_current_dest = 0xA1;
+                    }
+                    2 => {
+                        ppu.set_render_vram_blocked(true);
+                        ppu.set_render_vram_blocked(false);
+                    }
+                    3 => ppu.write_reg(0xFF40, 0x97), // OBJ size changed.
+                    4 => ppu.write_reg(0xFF40, 0x91), // OBJ disabled.
+                    _ => unreachable!(),
+                }
+                ppu.complete_stable_obj_rows();
+                assert_eq!(
+                    ppu.line_sprites[0].obj_data_valid,
+                    change == 0,
+                    "{model:?}, change={change}"
+                );
+            }
+        }
+    }
 
     fn dmg_mode3_cycles_with_single_sprite_at_oam_x(oam_x: u8) -> u16 {
         let mut ppu = Ppu::new(Model::default());

@@ -3,6 +3,93 @@ use vibe_emu_core::{
     ppu::Ppu,
 };
 
+#[test]
+fn sprite_tiles_do_not_depend_on_background_scroll() {
+    for model in [Model::default(), Model::Cgb(CgbRevision::default())] {
+        for scx in 0..8 {
+            for flags in [0, 0x20, 0x40, 0x60] {
+                let mut ppu = Ppu::new(model);
+                if model.is_cgb() {
+                    ppu.apply_dmg_compatibility_palettes();
+                }
+                ppu.write_reg(0xFF40, 0x93); // 8x8 sprites, BG enabled
+                ppu.write_reg(0xFF47, 0);
+                ppu.write_reg(0xFF48, 0xE4);
+                ppu.write_reg(0xFF43, scx);
+                // Tile 0 is transparent; tile 1 is solid color 1. An 8x8 OBJ
+                // must retain the odd tile index at every scroll position.
+                for row in 0..8 {
+                    ppu.vram[0][16 + row * 2] = 0xFF;
+                }
+                for (i, x) in [48, 80, 112].into_iter().enumerate() {
+                    ppu.oam[i * 4..i * 4 + 4].copy_from_slice(&[16, x, 1, flags]);
+                }
+                ppu.skip_startup_for_test();
+                let mut interrupts = 0;
+                for y in 0..8 {
+                    ppu.step(456, &mut interrupts);
+                    let color = if model.is_cgb() {
+                        ppu.ob_palette_color(0, 1)
+                    } else {
+                        0x008BAC0F
+                    };
+                    for x in [40, 72, 104] {
+                        assert!(
+                            ppu.framebuffer[y * 160 + x..y * 160 + x + 8]
+                                .iter()
+                                .all(|&pixel| pixel == color),
+                            "{model:?}, SCX={scx}, flags={flags:#04x}, x={x}, y={y}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn visible_sprites_are_not_dropped_by_fetch_timing() {
+    for model in [Model::default(), Model::Cgb(CgbRevision::default())] {
+        for scx in 0..8 {
+            for count in [1, 2, 7, 10] {
+                for first_x in 1..168u8 {
+                    let mut ppu = Ppu::new(model);
+                    if model.is_cgb() {
+                        ppu.apply_dmg_compatibility_palettes();
+                    }
+                    ppu.write_reg(0xFF40, 0x87); // 8x16 OBJs, BG color 0
+                    ppu.write_reg(0xFF47, 0);
+                    ppu.write_reg(0xFF48, 0xE4);
+                    ppu.write_reg(0xFF43, scx);
+                    for row in 0..16 {
+                        ppu.vram[0][32 + row * 2] = 0xFF;
+                    }
+                    for i in 0..count {
+                        let x = first_x + i as u8 * 8;
+                        ppu.oam[i * 4..i * 4 + 4].copy_from_slice(&[16, x, 2, 0]);
+                    }
+                    ppu.skip_startup_for_test();
+                    let mut interrupts = 0;
+                    ppu.step(456, &mut interrupts);
+                    let color = if model.is_cgb() {
+                        ppu.ob_palette_color(0, 1)
+                    } else {
+                        0x008BAC0F
+                    };
+                    for x in (first_x as usize).saturating_sub(8)
+                        ..(first_x as usize + count * 8 - 8).min(160)
+                    {
+                        assert_eq!(
+                            ppu.framebuffer[x], color,
+                            "{model:?}, SCX={scx}, count={count}, OAM X={first_x}, pixel={x}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Rewriting SCX without changing its value must leave both the background
 // coordinates and sprite output alone, including while OBJ fetches stall the
 // pixel pipeline. Games can repeat the same scroll write on every scanline.
