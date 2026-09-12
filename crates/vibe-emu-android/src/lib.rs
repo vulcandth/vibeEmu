@@ -7,7 +7,7 @@ use std::{
 };
 
 use jni::{
-    JNIEnv,
+    EnvUnowned,
     objects::{JByteArray, JClass, JIntArray, JShortArray, JString},
     sys::{JNI_FALSE, JNI_TRUE, jboolean, jint, jlong},
 };
@@ -309,7 +309,7 @@ fn protect_void<F: FnOnce()>(f: F) {
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_create(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     emulationMode: jint,
 ) -> jlong {
@@ -323,27 +323,30 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_create(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_setDmgNeutralPalette(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     handle: jlong,
     enabled: jboolean,
 ) {
     protect_void(|| unsafe {
         if let Some(handle) = handle_from_jlong(handle) {
-            handle.set_dmg_neutral_palette(enabled != 0);
+            handle.set_dmg_neutral_palette(enabled);
         }
     });
 }
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_setBootRom(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     handle: jlong,
     mode: jint,
     data: JByteArray,
 ) {
     protect_void(|| unsafe {
+        // The JVM supplies an attached environment for this native call.
+        let mut guard = jni::AttachGuard::from_unowned(env.as_raw());
+        let env = guard.borrow_env_mut();
         let Some(handle) = handle_from_jlong(handle) else {
             return;
         };
@@ -359,7 +362,7 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_setBootRom(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_clearBootRom(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     handle: jlong,
     mode: jint,
@@ -374,7 +377,7 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_clearBootRom(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_destroy(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     handle: jlong,
 ) {
@@ -393,27 +396,30 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_destroy(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_enableMobileAdapter(
-    mut env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     handle: jlong,
     configPath: JString,
 ) -> jboolean {
     protect_bool(|| unsafe {
+        // The JVM supplies an attached environment for this native call.
+        let mut guard = jni::AttachGuard::from_unowned(env.as_raw());
+        let env = guard.borrow_env_mut();
         let Some(handle) = handle_from_jlong(handle) else {
             return false;
         };
 
-        let Ok(path_str) = env.get_string(&configPath) else {
+        let Ok(path_str) = configPath.mutf8_chars(env) else {
             return false;
         };
 
-        handle.enable_mobile_adapter(PathBuf::from(path_str.to_string_lossy().into_owned()))
+        handle.enable_mobile_adapter(PathBuf::from(path_str.to_str().into_owned()))
     })
 }
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_disableMobileAdapter(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     handle: jlong,
 ) {
@@ -426,12 +432,15 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_disableMobileAdapt
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_loadRom(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     handle: jlong,
     rom: JByteArray,
 ) -> jboolean {
     protect_bool(|| unsafe {
+        // The JVM supplies an attached environment for this native call.
+        let mut guard = jni::AttachGuard::from_unowned(env.as_raw());
+        let env = guard.borrow_env_mut();
         let bytes = match env.convert_byte_array(rom) {
             Ok(bytes) => bytes,
             Err(_) => return false,
@@ -447,32 +456,38 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_loadRom(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_loadRomFile(
-    mut env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     handle: jlong,
     path: JString,
 ) -> jboolean {
     protect_bool(|| unsafe {
+        // The JVM supplies an attached environment for this native call.
+        let mut guard = jni::AttachGuard::from_unowned(env.as_raw());
+        let env = guard.borrow_env_mut();
         let Some(handle) = handle_from_jlong(handle) else {
             return false;
         };
 
-        let Ok(path_str) = env.get_string(&path) else {
+        let Ok(path_str) = path.mutf8_chars(env) else {
             return false;
         };
 
-        handle.load_rom_from_file(PathBuf::from(path_str.to_string_lossy().into_owned()))
+        handle.load_rom_from_file(PathBuf::from(path_str.to_str().into_owned()))
     })
 }
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_runFrame(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     handle: jlong,
     buffer: JIntArray,
 ) -> jboolean {
     protect_bool(|| unsafe {
+        // The JVM supplies an attached environment for this native call.
+        let mut guard = jni::AttachGuard::from_unowned(env.as_raw());
+        let env = guard.borrow_env_mut();
         let Some(handle) = handle_from_jlong(handle) else {
             return false;
         };
@@ -481,8 +496,8 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_runFrame(
             return false;
         }
 
-        let len = match env.get_array_length(&buffer) {
-            Ok(len) => len as usize,
+        let len = match buffer.len(env) {
+            Ok(len) => len,
             Err(_) => return false,
         };
         if len < FB_PIXELS {
@@ -493,24 +508,27 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_runFrame(
             *dst = (0xFF00_0000u32 | src) as i32;
         }
 
-        env.set_int_array_region(&buffer, 0, &handle.argb).is_ok()
+        buffer.set_region(env, 0, &handle.argb).is_ok()
     })
 }
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_drainAudio(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     handle: jlong,
     out: JShortArray,
 ) -> jint {
     catch_unwind(AssertUnwindSafe(|| unsafe {
+        // The JVM supplies an attached environment for this native call.
+        let mut guard = jni::AttachGuard::from_unowned(env.as_raw());
+        let env = guard.borrow_env_mut();
         let Some(handle) = handle_from_jlong(handle) else {
             return 0;
         };
 
-        let max_len = match env.get_array_length(&out) {
-            Ok(len) => len as usize,
+        let max_len = match out.len(env) {
+            Ok(len) => len,
             Err(_) => return 0,
         };
         if max_len < 2 {
@@ -531,7 +549,7 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_drainAudio(
             return 0;
         }
 
-        let _ = env.set_short_array_region(&out, 0, &samples);
+        let _ = out.set_region(env, 0, &samples);
         (samples.len() / 2) as jint
     }))
     .unwrap_or_default()
@@ -539,7 +557,7 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_drainAudio(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_setInput(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     handle: jlong,
     state: jint,
@@ -553,7 +571,7 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_setInput(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_saveRam(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     handle: jlong,
 ) {
@@ -566,7 +584,7 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_saveRam(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_reset(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     handle: jlong,
 ) {

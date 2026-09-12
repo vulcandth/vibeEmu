@@ -129,7 +129,11 @@ jobs:
           echo "sccache installed"
 
       - name: Set RUSTC_WRAPPER
-        run: echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+        shell: bash
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          fi
 
       - name: Cache sccache
         uses: actions/cache@v4
@@ -149,7 +153,12 @@ jobs:
         if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux'
         run: cargo fmt --all -- --check
 
+      - name: Lint workspace (including Android JNI)
+        if: matrix.crate == 'vibe-emu-core' && runner.os == 'Linux'
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
       - name: Lint
+        if: matrix.crate != 'vibe-emu-core' || runner.os != 'Linux'
         run: cargo clippy -p ${{ matrix.crate }} --all-targets -- -D warnings
 
       - name: Test debug
@@ -233,13 +242,21 @@ jobs:
       - name: Install cargo-about
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-about
+          tool: cargo-about@0.8.4
 
       - name: Ensure THIRD_PARTY_LICENSES.md is current
         run: |
           output="$RUNNER_TEMP/licenses.md"
-          cargo about generate --config about.toml about.hbs -o "$output"
+          cargo about generate --locked --config about.toml about.hbs -o "$output"
           git diff --no-index -- THIRD_PARTY_LICENSES.md "$output"
+
+      - name: Upload regenerated license report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: third-party-licenses
+          path: ${{ runner.temp }}/licenses.md
+          retention-days: 7
 
   android-build:
     name: android / assembleDebug

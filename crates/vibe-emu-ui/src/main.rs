@@ -5365,8 +5365,10 @@ impl VibeEmuApp {
             if (tile_match || tile_match_bottom) && oam_bank == bank {
                 let pal = if ppu.cgb {
                     (attr & 0x07) as usize
+                } else if attr & 0x10 != 0 {
+                    1
                 } else {
-                    if attr & 0x10 != 0 { 1 } else { 0 }
+                    0
                 };
                 return Some(TileUsageSummary {
                     source: TileUsageSource::Obj,
