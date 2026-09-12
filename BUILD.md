@@ -307,3 +307,21 @@ Then commit updated files under `gfx/` before running release workflows.
 - [Rust Installation Guide](https://www.rust-lang.org/tools/install)
 - [Cargo Book](https://doc.rust-lang.org/cargo/)
 - [vibeEmu README](README.md)
+
+## Dependency updates and license report
+
+After updating dependency manifests, run `cargo update` and validate with
+`cargo deny --locked check`. The audit includes test dependencies used to
+fetch and unpack ROMs.
+
+CI compares the checked-in license report against cargo-about 0.8.4. Use the
+same version locally and commit the regenerated report with dependency updates:
+
+```bash
+cargo install cargo-about --version 0.8.4 --locked
+cargo about generate --locked --config about.toml about.hbs -o THIRD_PARTY_LICENSES.md
+```
+
+Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo test`, and `cargo test --release` before submitting dependency updates.
+The gambatte suite remains an explicit opt-in via `cargo gambatte_test`.
