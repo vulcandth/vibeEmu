@@ -247,13 +247,9 @@ impl MobileHost for StdMobileHost {
         };
 
         match &mut self.conns[idx] {
-            ConnState::Tcp(socket, state) => {
-                if socket.listen(1).is_ok() {
-                    *state = TcpState::Listening;
-                    true
-                } else {
-                    false
-                }
+            ConnState::Tcp(socket, state) if socket.listen(1).is_ok() => {
+                *state = TcpState::Listening;
+                true
             }
             _ => false,
         }

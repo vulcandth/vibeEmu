@@ -363,7 +363,7 @@ fn load_window_icon() -> Option<egui::IconData> {
     match reader.info().color_type {
         png::ColorType::Rgba => rgba.extend_from_slice(data),
         png::ColorType::Rgb => {
-            for chunk in data.chunks_exact(3) {
+            for chunk in data.as_chunks::<3>().0 {
                 rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 0xFF]);
             }
         }
@@ -373,7 +373,7 @@ fn load_window_icon() -> Option<egui::IconData> {
             }
         }
         png::ColorType::GrayscaleAlpha => {
-            for chunk in data.chunks_exact(2) {
+            for chunk in data.as_chunks::<2>().0 {
                 rgba.extend_from_slice(&[chunk[0], chunk[0], chunk[0], chunk[1]]);
             }
         }
@@ -3780,7 +3780,7 @@ impl VibeEmuApp {
             .id_salt("stack_view")
             .max_height(100.0)
             .show(ui, |ui| {
-                for (i, chunk) in bytes.chunks_exact(2).take(16).enumerate() {
+                for (i, chunk) in bytes.as_chunks::<2>().0.iter().take(16).enumerate() {
                     let addr = base.wrapping_add((i as u16) * 2);
                     let val = (chunk[1] as u16) << 8 | (chunk[0] as u16);
                     ui.monospace(format!("{addr:04X}: {val:04X}"));
@@ -4428,7 +4428,9 @@ impl VibeEmuApp {
             }
 
             let pixels: Vec<egui::Color32> = rgba
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|c| egui::Color32::from_rgb(c[0], c[1], c[2]))
                 .collect();
             let image = egui::ColorImage::new([IMG_W, IMG_H], pixels);
@@ -4458,7 +4460,7 @@ impl VibeEmuApp {
                     );
 
                     if self.vram_viewer.bg_show_grid {
-                        let grid_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(80));
+                        let grid_stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(80));
                         for i in 1..MAP_W {
                             let x = rect.min.x + (i as f32) * 8.0 * scale;
                             painter.line_segment(
@@ -4481,7 +4483,7 @@ impl VibeEmuApp {
                         let vp_w = 160.0;
                         let vp_h = 144.0;
                         let map_size = 256.0;
-                        let stroke = egui::Stroke::new(1.5, egui::Color32::RED);
+                        let stroke = egui::Stroke::new(1.5_f32, egui::Color32::RED);
 
                         let x_wraps = scx + vp_w > map_size;
                         let y_wraps = scy + vp_h > map_size;
@@ -4559,7 +4561,7 @@ impl VibeEmuApp {
                         painter.rect_stroke(
                             sel_rect,
                             0.0,
-                            egui::Stroke::new(2.0, egui::Color32::YELLOW),
+                            egui::Stroke::new(2.0_f32, egui::Color32::YELLOW),
                             egui::StrokeKind::Middle,
                         );
                     }
@@ -4672,7 +4674,9 @@ impl VibeEmuApp {
                     }
 
                     let pixels: Vec<egui::Color32> = preview_buf
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .map(|c| egui::Color32::from_rgb(c[0], c[1], c[2]))
                         .collect();
                     let image = egui::ColorImage::new([8, 8], pixels);
@@ -4915,7 +4919,9 @@ impl VibeEmuApp {
             }
 
             let pixels: Vec<egui::Color32> = buf
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|c| egui::Color32::from_rgb(c[0], c[1], c[2]))
                 .collect();
             let image = egui::ColorImage::new([img_w, img_h], pixels);
@@ -4947,7 +4953,7 @@ impl VibeEmuApp {
                     );
 
                     if self.vram_viewer.tiles_show_grid {
-                        let grid_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(80));
+                        let grid_stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(80));
                         let total_cols = TILES_PER_ROW * banks;
                         for i in 1..total_cols {
                             let x = rect.min.x + (i as f32) * 8.0 * scale;
@@ -4977,7 +4983,7 @@ impl VibeEmuApp {
                         painter.rect_stroke(
                             sel_rect,
                             0.0,
-                            egui::Stroke::new(2.0, egui::Color32::YELLOW),
+                            egui::Stroke::new(2.0_f32, egui::Color32::YELLOW),
                             egui::StrokeKind::Middle,
                         );
                     }
@@ -5042,7 +5048,7 @@ impl VibeEmuApp {
                     }
 
                     let pixels: Vec<egui::Color32> = preview_buf
-                        .chunks_exact(4)
+                        .as_chunks::<4>().0.iter()
                         .map(|c| egui::Color32::from_rgb(c[0], c[1], c[2]))
                         .collect();
                     let image = egui::ColorImage::new([8, 8], pixels);
@@ -5404,7 +5410,7 @@ impl VibeEmuApp {
             ui.painter().rect_stroke(
                 rect,
                 3.0,
-                egui::Stroke::new(1.0, egui::Color32::from_black_alpha(96)),
+                egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(96)),
                 egui::StrokeKind::Middle,
             );
             ui.painter().text(
@@ -5649,14 +5655,14 @@ impl VibeEmuApp {
                                     center - egui::vec2(size, size),
                                     center + egui::vec2(size, size),
                                 ],
-                                egui::Stroke::new(2.0, egui::Color32::RED),
+                                egui::Stroke::new(2.0_f32, egui::Color32::RED),
                             );
                             painter.line_segment(
                                 [
                                     center + egui::vec2(-size, size),
                                     center + egui::vec2(size, -size),
                                 ],
-                                egui::Stroke::new(2.0, egui::Color32::RED),
+                                egui::Stroke::new(2.0_f32, egui::Color32::RED),
                             );
                         }
                     }
@@ -5676,14 +5682,14 @@ impl VibeEmuApp {
                     let x = rect.left() + col as f32 * cell_w;
                     painter.line_segment(
                         [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                        egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+                        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(80)),
                     );
                 }
                 for row in 0..=rows {
                     let y = rect.top() + row as f32 * cell_h;
                     painter.line_segment(
                         [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-                        egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+                        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(80)),
                     );
                 }
 
@@ -5732,7 +5738,7 @@ impl VibeEmuApp {
                 screen_painter.rect_stroke(
                     sprite_screen_rect,
                     0.0,
-                    egui::Stroke::new(1.0, egui::Color32::YELLOW),
+                    egui::Stroke::new(1.0_f32, egui::Color32::YELLOW),
                     egui::StrokeKind::Middle,
                 );
 
@@ -5866,7 +5872,7 @@ impl VibeEmuApp {
                         ui.painter().rect_stroke(
                             rect,
                             0.0,
-                            egui::Stroke::new(1.0, stroke_color),
+                            egui::Stroke::new(1.0_f32, stroke_color),
                             egui::StrokeKind::Middle,
                         );
                     }
@@ -5910,7 +5916,7 @@ impl VibeEmuApp {
                         ui.painter().rect_stroke(
                             rect,
                             0.0,
-                            egui::Stroke::new(1.0, stroke_color),
+                            egui::Stroke::new(1.0_f32, stroke_color),
                             egui::StrokeKind::Middle,
                         );
                     }
@@ -5949,7 +5955,7 @@ impl VibeEmuApp {
                 columns[2].painter().rect_stroke(
                     rect,
                     0.0,
-                    egui::Stroke::new(1.0, egui::Color32::WHITE),
+                    egui::Stroke::new(1.0_f32, egui::Color32::WHITE),
                     egui::StrokeKind::Middle,
                 );
 

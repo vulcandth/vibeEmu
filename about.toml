@@ -40,3 +40,19 @@ checksum = "b9d2c1d909aa149996fd4c91dcb92b2362a04431640c1d200959da94caf8cde1"
 path = "fonts/Hack-Regular.txt"
 license = "MIT"
 checksum = "47c0cccbeec7e8614548cc485588b28149e7874188df5f41b36efebcee285c87"
+
+# rfd bundles a second MIT notice for its portal window-identifier code.
+# Explicitly retain both notices; automatic harvesting can select a different
+# file on Windows and Linux, producing inconsistent license reports.
+[rfd.clarify]
+license = "MIT"
+
+[[rfd.clarify.files]]
+path = "LICENSE"
+license = "MIT"
+checksum = "65fc947f4bac882a2cd104ef73c246b1b037059df9f2b3a58b7f77f0b9e56071"
+
+[[rfd.clarify.files]]
+path = "src/backend/xdg_desktop_portal/window_identifier/LICENSE"
+license = "MIT"
+checksum = "ae26bc7b1bc91fb8648f6a298decbb1a77090a56c9d04e2c23b8365e5f54acb5"

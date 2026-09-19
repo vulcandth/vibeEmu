@@ -4875,14 +4875,9 @@ impl Ppu {
                         true
                     }
                 }
-                5 => {
-                    if is_read {
-                        self.dmg_startup_cycle
-                            .is_none_or(|cycle| cycle < DMG_STAGE5_LY2_TICK)
-                    } else {
-                        true
-                    }
-                }
+                5 if is_read => self
+                    .dmg_startup_cycle
+                    .is_none_or(|cycle| cycle < DMG_STAGE5_LY2_TICK),
                 _ => true,
             };
             #[cfg(feature = "ppu-trace")]
@@ -5459,13 +5454,7 @@ impl Ppu {
                     0xFF
                 }
             }
-            0xFF6C => {
-                if self.cgb() {
-                    self.opri | 0xFE
-                } else {
-                    0xFF
-                }
-            }
+            0xFF6C if self.cgb() => self.opri | 0xFE,
             _ => 0xFF,
         };
 
@@ -5770,10 +5759,8 @@ impl Ppu {
                     }
                 }
             }
-            0xFF6C => {
-                if self.cgb() {
-                    self.opri = val & 0x01;
-                }
+            0xFF6C if self.cgb() => {
+                self.opri = val & 0x01;
             }
             _ => {}
         }
@@ -6428,18 +6415,17 @@ impl Ppu {
                         return false;
                     }
                 }
-                MODE_OAM => {
+                MODE_OAM
                     if !self.dmg_oam_dma_contention_active()
-                        && self.mode_clock.saturating_add(remaining) < MODE2_CYCLES
-                    {
-                        self.mode_clock += remaining;
-                        self.oam_scan_advance();
-                        #[cfg(feature = "ppu-trace")]
-                        if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
-                            *timer += remaining as u64;
-                        }
-                        return false;
+                        && self.mode_clock.saturating_add(remaining) < MODE2_CYCLES =>
+                {
+                    self.mode_clock += remaining;
+                    self.oam_scan_advance();
+                    #[cfg(feature = "ppu-trace")]
+                    if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+                        *timer += remaining as u64;
                     }
+                    return false;
                 }
                 _ => {}
             }
@@ -6470,12 +6456,10 @@ impl Ppu {
                             increment = next_event.min(remaining);
                         }
                     }
-                    MODE_OAM => {
-                        if !self.dmg_oam_dma_contention_active() {
-                            let next_event = MODE2_CYCLES.saturating_sub(self.mode_clock);
-                            if next_event > 0 {
-                                increment = next_event.min(remaining);
-                            }
+                    MODE_OAM if !self.dmg_oam_dma_contention_active() => {
+                        let next_event = MODE2_CYCLES.saturating_sub(self.mode_clock);
+                        if next_event > 0 {
+                            increment = next_event.min(remaining);
                         }
                     }
                     _ => {}

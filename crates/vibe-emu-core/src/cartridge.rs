@@ -1194,15 +1194,7 @@ impl Cartridge {
             (MbcState::Mbc1 { mode, .. }, 0x6000..=0x7FFF) => {
                 *mode = val & 0x01;
             }
-            (
-                MbcState::Mbc1 {
-                    ram_enable,
-                    ram_bank: _,
-                    mode: _,
-                    ..
-                },
-                0xA000..=0xBFFF,
-            ) => {
+            (MbcState::Mbc1 { ram_enable, .. }, 0xA000..=0xBFFF) => {
                 if *ram_enable {
                     // For small RAM sizes (e.g. 2KB/8KB), MBC1 always maps to the
                     // single available bank regardless of bank register writes.

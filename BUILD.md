@@ -322,6 +322,10 @@ cargo install cargo-about --version 0.8.4 --locked
 cargo about generate --locked --config about.toml about.hbs -o THIRD_PARTY_LICENSES.md
 ```
 
+Keep the explicit license-file clarifications in `about.toml` when updating
+dependencies. In particular, `rfd` bundles two MIT notices; listing both avoids
+platform-dependent file selection and preserves both copyright notices.
+
 Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`,
 `cargo test`, and `cargo test --release` before submitting dependency updates.
 The gambatte suite remains an explicit opt-in via `cargo gambatte_test`.
