@@ -88,13 +88,13 @@ fn ensure_gb_emulator_shootout_cpp_test_roms(dir: &Path) {
 
     if !rom_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/cpp/rtc-invalid-banks-test.gb",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/cpp/rtc-invalid-banks-test.gb",
             &rom_path,
         );
     }
     if !png_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/cpp/rtc-invalid-banks-test.png",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/cpp/rtc-invalid-banks-test.png",
             &png_path,
         );
     }
@@ -104,21 +104,22 @@ fn ensure_gb_emulator_shootout_cpp_test_roms(dir: &Path) {
 
     if !latch_rom_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/cpp/latch-rtc-test.gb",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/cpp/latch-rtc-test.gb",
             &latch_rom_path,
         );
     }
     if !latch_png_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/cpp/latch-rtc-test.png",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/cpp/latch-rtc-test.png",
             &latch_png_path,
         );
     }
 }
 
 fn ensure_hacktix_test_roms(dir: &Path) {
-    // Hacktix ROMs are hosted in GBEmulatorShootout and not included in the c-sp bundle.
-    // Keep them under test_roms/hacktix/ to avoid collisions.
+    // Upstream renamed Hacktix to Ashiepaws. Keep the existing local cache path,
+    // but fetch from the new upstream path at the same pinned revision as the
+    // other GBEmulatorShootout assets, so future moves cannot break clean CI.
     let base = dir.join("hacktix");
 
     let rom_path = base.join("strikethrough.gb");
@@ -126,13 +127,13 @@ fn ensure_hacktix_test_roms(dir: &Path) {
 
     if !rom_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/hacktix/strikethrough.gb",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/ashiepaws/strikethrough.gb",
             &rom_path,
         );
     }
     if !png_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/hacktix/strikethrough.png",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/ashiepaws/strikethrough.png",
             &png_path,
         );
     }
@@ -198,13 +199,13 @@ fn ensure_daid_test_roms(dir: &Path) {
 
     if !rom_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/speed_switch_timing_div.gbc",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/speed_switch_timing_div.gbc",
             &rom_path,
         );
     }
     if !png_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/speed_switch_timing_div.png",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/speed_switch_timing_div.png",
             &png_path,
         );
     }
@@ -212,7 +213,7 @@ fn ensure_daid_test_roms(dir: &Path) {
     let ly_rom_path = base.join("speed_switch_timing_ly.gbc");
     if !ly_rom_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/speed_switch_timing_ly.gbc",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/speed_switch_timing_ly.gbc",
             &ly_rom_path,
         );
     }
@@ -221,13 +222,13 @@ fn ensure_daid_test_roms(dir: &Path) {
     let stat_png_path = base.join("speed_switch_timing_stat.png");
     if !stat_rom_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/speed_switch_timing_stat.gbc",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/speed_switch_timing_stat.gbc",
             &stat_rom_path,
         );
     }
     if !stat_png_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/speed_switch_timing_stat.png",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/speed_switch_timing_stat.png",
             &stat_png_path,
         );
     }
@@ -237,19 +238,19 @@ fn ensure_daid_test_roms(dir: &Path) {
     let stop_cgb_png_path = base.join("stop_instr.gbc.png");
     if !stop_rom_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/stop_instr.gb",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/stop_instr.gb",
             &stop_rom_path,
         );
     }
     if !stop_dmg_png_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/stop_instr.dmg.png",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/stop_instr.dmg.png",
             &stop_dmg_png_path,
         );
     }
     if !stop_cgb_png_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/stop_instr.gbc.png",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/stop_instr.gbc.png",
             &stop_cgb_png_path,
         );
     }
@@ -258,13 +259,13 @@ fn ensure_daid_test_roms(dir: &Path) {
     let stop_mode3_png_path = base.join("stop_instr_gbc_mode3.png");
     if !stop_mode3_rom_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/stop_instr_gbc_mode3.gb",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/stop_instr_gbc_mode3.gb",
             &stop_mode3_rom_path,
         );
     }
     if !stop_mode3_png_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/stop_instr_gbc_mode3.png",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/stop_instr_gbc_mode3.png",
             &stop_mode3_png_path,
         );
     }
@@ -274,19 +275,19 @@ fn ensure_daid_test_roms(dir: &Path) {
     let scanline_bgp_dmg_png_path = base.join("ppu_scanline_bgp_0.dmg.png");
     if !scanline_bgp_rom_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/ppu_scanline_bgp.gb",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/ppu_scanline_bgp.gb",
             &scanline_bgp_rom_path,
         );
     }
     if !scanline_bgp_gbc_png_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/ppu_scanline_bgp.gbc.png",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/ppu_scanline_bgp.gbc.png",
             &scanline_bgp_gbc_png_path,
         );
     }
     if !scanline_bgp_dmg_png_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/main/testroms/daid/ppu_scanline_bgp_0.dmg.png",
+            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/ppu_scanline_bgp_0.dmg.png",
             &scanline_bgp_dmg_png_path,
         );
     }
