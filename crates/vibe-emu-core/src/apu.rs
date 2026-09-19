@@ -59,7 +59,7 @@ const VOLUME_FACTOR: i16 = 64;
 /// Three byte-wide sample latches, newest in the low byte. Packing them makes
 /// each pipeline advance a single word load/store on 32-bit hosts as well.
 #[derive(Default)]
-#[cfg_attr(test, derive(Debug, PartialEq))]
+#[cfg_attr(test, derive(Debug, PartialEq, Clone))]
 struct OutputPipeline(u32);
 
 impl OutputPipeline {
@@ -183,7 +183,7 @@ impl Envelope {
 
 #[derive(Default)]
 // Handles Channel 1 frequency sweep logic. See TODO.md #257.
-#[cfg_attr(test, derive(Debug, PartialEq))]
+#[cfg_attr(test, derive(Debug, PartialEq, Clone))]
 struct Sweep {
     period: u8,
     negate: bool,
@@ -230,7 +230,7 @@ impl Sweep {
 }
 
 #[derive(Default)]
-#[cfg_attr(test, derive(Debug, PartialEq))]
+#[cfg_attr(test, derive(Debug, PartialEq, Clone))]
 struct SquareChannel {
     enabled: bool,
     dac_enabled: bool,
@@ -479,7 +479,7 @@ impl SquareChannel {
     }
 }
 
-#[cfg_attr(test, derive(Debug, PartialEq))]
+#[cfg_attr(test, derive(Debug, PartialEq, Clone))]
 struct WaveChannel {
     enabled: bool,
     dac_enabled: bool,
@@ -697,7 +697,7 @@ impl WaveChannel {
 }
 
 #[derive(Default)]
-#[cfg_attr(test, derive(Debug, PartialEq))]
+#[cfg_attr(test, derive(Debug, PartialEq, Clone))]
 struct NoiseChannel {
     enabled: bool,
     dac_enabled: bool,
@@ -884,6 +884,9 @@ pub struct Apu {
     /// Dots before the next square/wave edge, with their output latches settled.
     /// Public timing/register entry points invalidate this conservative deadline.
     quiet_dots: u16,
+    /// Square/wave ticks already elapsed within the quiet deadline. Their
+    /// outputs cannot change; materialize counters before an event or access.
+    deferred_waveform_ticks: u16,
     /// Tracks 2 MHz ticks pre-stepped to compensate for write-before-tick ordering.
     /// Our CPU does write→tick, but hardware steps APU before each bus access.
     wave_prestep_deficit: i32,
@@ -978,6 +981,7 @@ pub struct ApuBootSnapshot {
 
 impl Apu {
     pub(crate) fn apply_post_boot_state(&mut self) {
+        self.synchronize_waveforms();
         self.quiet_dots = 0;
         self.regs[0x01] = 0x80;
         self.regs[0x03] = 0xC1;
@@ -1534,6 +1538,7 @@ impl Apu {
             apu_enable_tick: 0,
             mhz2_residual: 0,
             quiet_dots: 0,
+            deferred_waveform_ticks: 0,
             wave_prestep_deficit: 0,
             model: Model::default(),
             ch1_env_clock: EnvelopeClock::default(),
@@ -1622,6 +1627,7 @@ impl Apu {
 
     /// Read an APU register at `addr`.
     pub fn read_reg(&mut self, addr: u16) -> u8 {
+        self.synchronize_waveforms();
         self.quiet_dots = 0;
         if addr == 0xFF26 {
             // Process any pending sweep calculation before reading channel status
@@ -1709,6 +1715,7 @@ impl Apu {
     ///
     /// `prev_div` is the 16-bit internal divider value before the write.
     pub fn on_div_reset(&mut self, prev_div: u16, double_speed: bool) {
+        self.synchronize_waveforms();
         self.quiet_dots = 0;
         // APU frame sequencer is clocked by DIV bit 4 in single-speed and DIV
         // bit 5 in double-speed. Our `prev_div` is the internal 16-bit divider
@@ -1772,6 +1779,7 @@ impl Apu {
 
     /// Advance the frame sequencer by explicit divider `steps`.
     pub fn tick_frame_sequencer_steps(&mut self, div_prev: u16, steps: u16, double_speed: bool) {
+        self.synchronize_waveforms();
         self.quiet_dots = 0;
         if self.nr52 & 0x80 == 0 || steps == 0 {
             return;
@@ -1840,6 +1848,7 @@ impl Apu {
 
     /// Write an APU register at `addr`.
     pub fn write_reg(&mut self, addr: u16, mut val: u8) {
+        self.synchronize_waveforms();
         self.quiet_dots = 0;
         if self.nr52 & 0x80 == 0 && addr != 0xFF26 && !(0xFF30..=0xFF3F).contains(&addr) {
             // On DMG, NR11/NR21/NR31/NR41 length writes are allowed even when APU is off
@@ -2760,6 +2769,7 @@ impl Apu {
 
     /// Advance the APU audio pipeline by explicit divider `ticks`.
     pub fn tick_steps(&mut self, _div_prev: u16, ticks: u16, double_speed: bool) {
+        self.synchronize_waveforms();
         self.quiet_dots = 0;
         let speed_changed = self.double_speed != double_speed;
         // Store the current CPU speed so trigger_square can select the
@@ -2884,7 +2894,53 @@ impl Apu {
         self.advance_bugged_read(ticks);
     }
 
-    fn clock_noise_channel_2mhz(&mut self, mut cycles: i32) {
+    #[inline(always)]
+    fn clock_noise_channel_2mhz(&mut self, cycles: i32) {
+        if cycles <= 0 {
+            return;
+        }
+        if self.ch4.dmg_delayed_start == 0 {
+            if !self.ch4.enabled && self.cgb_mode() {
+                self.ch4.alignment = self.ch4.alignment.wrapping_add(cycles);
+                return;
+            }
+            if !self.ch4.pending_disable && self.ch4.counter_countdown > 0 {
+                let remaining = cycles - self.ch4.counter_countdown;
+                if remaining < 0 {
+                    self.ch4.alignment = self.ch4.alignment.wrapping_add(cycles);
+                    self.ch4.counter_countdown = -remaining;
+                    self.ch4.timer = -remaining;
+                    self.ch4.countdown_reloaded = false;
+                    return;
+                }
+                let period = self.ch4.base_divisor();
+                if self.ch4.delta == 0 && remaining < period {
+                    // Handle the common tick with exactly one prescaler edge.
+                    // Recognize the selected counter bit's rising edge directly;
+                    // bits 14/15 never rise in the 14-bit ripple counter.
+                    let counter = (self.ch4.counter + 1) & 0x3fff;
+                    let bit = 1 << (self.regs[NR43_IDX] >> 4);
+                    if counter & (bit * 2 - 1) == bit {
+                        self.ch4.advance_lfsr();
+                    }
+                    self.ch4.counter = counter;
+                    self.ch4.alignment = self.ch4.alignment.wrapping_add(cycles);
+                    self.ch4.counter_countdown = period - remaining;
+                    self.ch4.timer = self.ch4.counter_countdown;
+                    self.ch4.countdown_reloaded = remaining == 0;
+                    if self.ch4.enabled && self.ch4.dac_enabled {
+                        self.ch4.sample_suppressed = false;
+                    }
+                    return;
+                }
+            }
+        }
+        self.clock_noise_channel_2mhz_slow(cycles);
+    }
+
+    // Preserve the general event loop for delayed starts, disable boundaries,
+    // divisor glitches, and batches containing several prescaler edges.
+    fn clock_noise_channel_2mhz_slow(&mut self, mut cycles: i32) {
         if cycles <= 0 {
             return;
         }
@@ -3151,7 +3207,8 @@ impl Apu {
             }
         } else {
             countdown += self.noise_alignment_offset(base);
-            if ((self.ch4.alignment + 1) & 3) < 2 {
+            // Only the low phase bits matter, including across signed wrap.
+            if (self.ch4.alignment.wrapping_add(1) & 3) < 2 {
                 if self.ch4.divisor == 1 {
                     countdown -= 2;
                     self.ch4.delta = 2;
@@ -3556,33 +3613,27 @@ impl Apu {
         (ticks.max(0) * 2) as u16
     }
 
+    /// Apply elapsed ticks only after leaving an interval with constant output.
+    /// The deadline guarantees no waveform edge, delay, or wave-RAM commit can
+    /// occur here, so one batch is equivalent to the original individual calls.
+    #[inline]
+    fn synchronize_waveforms(&mut self) {
+        let ticks = self.deferred_waveform_ticks;
+        if ticks != 0 {
+            self.deferred_waveform_ticks = 0;
+            self.ch1.clock_2mhz(i32::from(ticks));
+            self.ch2.clock_2mhz(i32::from(ticks));
+            self.ch3.step(u32::from(ticks), &self.wave_ram);
+        }
+    }
+
+    #[inline(always)]
     fn advance_quiet(&mut self, dots: u16) {
         self.quiet_dots -= dots;
         let ticks = i32::from(dots / 2);
         if self.nr52 & 0x80 != 0 {
             self.lf_div ^= (ticks & 1) as u8;
-            for ch in [&mut self.ch1, &mut self.ch2] {
-                ch.just_reloaded = false;
-                if ch.enabled && ch.dac_enabled {
-                    ch.delay = 0;
-                    ch.sample_countdown -= ticks;
-                }
-            }
-            self.ch3.tick_count = 0;
-            self.ch3.did_tick = false;
-            self.ch3.wave_position.set(self.ch3.current_sample_index);
-            self.ch3
-                .wave_ram_access_index
-                .set(self.ch3.current_sample_index >> 1);
-            self.ch3.wave_form_just_read.set(false);
-            let wave_active = self.ch3.enabled && self.ch3.dac_enabled;
-            self.ch3.wave_ram_locked.set(wave_active);
-            if !wave_active {
-                self.ch3.sample_suppressed.set(true);
-                self.ch3.pending_reset = false;
-            }
-            self.ch3.sample_countdown = (self.ch3.sample_countdown - ticks).max(0);
-            self.ch3.timer = self.ch3.sample_countdown;
+            self.deferred_waveform_ticks += dots / 2;
             // Noise's small prescaler often expires every M-cycle. Keeping it
             // independent avoids rebuilding the square/wave deadline each time.
             self.clock_noise_channel_2mhz(ticks);
@@ -3600,6 +3651,7 @@ impl Apu {
 
     /// Advance the audio sample pipeline by `cycles` CPU cycles.
     pub fn step(&mut self, cycles: u16) {
+        self.synchronize_waveforms();
         self.quiet_dots = 0;
         // Advance square channels at 2 MHz: 1 tick per 2 CPU cycles (accumulated)
         self.mhz2_residual += cycles as i32;
@@ -3653,6 +3705,16 @@ impl Apu {
             self.sample_timer_accum %= sample_period;
             return;
         }
+        if self.sample_timer_accum >= sample_period {
+            self.emit_audio_samples();
+        }
+    }
+
+    // Sample production is much less frequent than the emulated CPU ticks.
+    // Keep mixing/filtering/queue work outside the inlined clock update.
+    #[inline(never)]
+    fn emit_audio_samples(&mut self) {
+        let sample_period = u64::from(CPU_CLOCK_HZ);
         while self.sample_timer_accum >= sample_period {
             self.sample_timer_accum -= sample_period;
             let (left, right) = self.mix_output();
@@ -3853,7 +3915,11 @@ impl Apu {
 
     /// Current period timer for channel 3.
     pub fn ch3_timer(&self) -> i32 {
-        self.ch3.timer
+        if self.deferred_waveform_ticks == 0 {
+            self.ch3.timer
+        } else {
+            (self.ch3.sample_countdown - i32::from(self.deferred_waveform_ticks)).max(0)
+        }
     }
 
     /// Current playback position within wave RAM for channel 3.
@@ -3973,15 +4039,26 @@ mod tests {
     use super::*;
 
     fn assert_same_apu_state(actual: &Apu, expected: &Apu) {
+        // Project the deferred representation without flushing the real APU:
+        // subsequent ticks must exercise accumulation across multiple calls.
+        let mut ch1 = actual.ch1.clone();
+        let mut ch2 = actual.ch2.clone();
+        let mut ch3 = actual.ch3.clone();
+        if actual.deferred_waveform_ticks != 0 {
+            ch1.clock_2mhz(i32::from(actual.deferred_waveform_ticks));
+            ch2.clock_2mhz(i32::from(actual.deferred_waveform_ticks));
+            ch3.step(u32::from(actual.deferred_waveform_ticks), &actual.wave_ram);
+        }
+        assert_eq!(ch1, expected.ch1);
+        assert_eq!(ch2, expected.ch2);
+        assert_eq!(ch3, expected.ch3);
+        assert_eq!(actual.ch3_timer(), expected.ch3_timer());
         macro_rules! check {
             ($($field:ident),* $(,)?) => { $(
                 assert_eq!(actual.$field, expected.$field, stringify!($field));
             )* };
         }
         check!(
-            ch1,
-            ch2,
-            ch3,
             ch4,
             wave_ram,
             nr50,
@@ -4036,6 +4113,77 @@ mod tests {
     }
 
     #[test]
+    fn deferred_waveforms_survive_frozen_divider_and_counter_wrap() {
+        let mut actual = Apu::new(Model::Cgb(CgbRevision::RevE));
+        let mut expected = Apu::new(Model::Cgb(CgbRevision::RevE));
+        for apu in [&mut actual, &mut expected] {
+            apu.cpu_cycles = u64::MAX - 7;
+            apu.lf_div_counter = u64::MAX - 7;
+        }
+        let mut max_deferred = 0;
+        // A frozen CPU divider permits a full u16-sized quiet interval. The
+        // wave timer getter must project state without flushing that interval.
+        for _ in 0..40_000 {
+            actual.run_cpu_tick_steps(2, 0, 0, 0, 2, false);
+            expected.step(2);
+            expected.tick_steps(0, 2, false);
+            max_deferred = max_deferred.max(actual.deferred_waveform_ticks);
+            assert_same_apu_state(&actual, &expected);
+        }
+        assert_eq!(max_deferred, u16::MAX / 2);
+        actual.write_reg(0xff26, 0);
+        expected.write_reg(0xff26, 0);
+        assert_eq!(actual.deferred_waveform_ticks, 0);
+        assert_same_apu_state(&actual, &expected);
+    }
+
+    #[test]
+    fn noise_fast_ticks_match_event_loop() {
+        for model in [Model::Dmg(DmgRevision::RevB), Model::Cgb(CgbRevision::RevE)] {
+            let mut actual = Apu::new(model);
+            let mut expected = Apu::new(model);
+            for nr43 in 0..=255u8 {
+                for phase in 0..32u16 {
+                    for cycles in [0, 1, 2, 3, 4, 7, 16, 61, 257] {
+                        let bit = 1u16 << (nr43 >> 4);
+                        actual.regs[NR43_IDX] = nr43;
+                        actual.ch4 = NoiseChannel {
+                            enabled: phase & 1 != 0,
+                            dac_enabled: phase & 2 != 0,
+                            divisor: nr43 & 7,
+                            clock_shift: nr43 >> 4,
+                            narrow: nr43 & 8 != 0,
+                            // Include selected-bit rises, falls, and counter wrap.
+                            counter: i32::from(bit.wrapping_sub(phase / 4) & 0x3fff),
+                            counter_countdown: i32::from(phase / 4) - 1,
+                            delta: if phase & 4 != 0 {
+                                0
+                            } else {
+                                i32::from(phase % 5) - 2
+                            },
+                            alignment: i32::MAX - 3,
+                            lfsr: phase.wrapping_mul(997) & 0x7fff,
+                            pending_disable: phase % 7 == 0,
+                            dmg_delayed_start: if phase % 11 == 0 { 3 } else { 0 },
+                            sample_suppressed: phase & 8 != 0,
+                            current_volume: 11,
+                            ..NoiseChannel::default()
+                        };
+                        expected.regs[NR43_IDX] = nr43;
+                        expected.ch4 = actual.ch4.clone();
+                        actual.clock_noise_channel_2mhz(cycles);
+                        expected.clock_noise_channel_2mhz_slow(cycles);
+                        assert_eq!(
+                            actual.ch4, expected.ch4,
+                            "{model:?} NR43={nr43:02x} phase={phase} cycles={cycles}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn quiet_intervals_match_full_stepping() {
         for model in [
             Model::Dmg(DmgRevision::Rev0),
@@ -4063,6 +4211,7 @@ mod tests {
                 let mut dot_div = 0xfff0u16;
                 let mut random = 0x12345678u32;
                 let mut quiet_steps = 0;
+                let mut max_deferred = 0;
                 for iteration in 0..30_000 {
                     let double_speed = model.is_cgb() && iteration / 997 % 2 != 0;
                     if iteration % 4096 == 0 {
@@ -4164,6 +4313,7 @@ mod tests {
                     if dots != 0 && before.checked_sub(dots) == Some(actual.quiet_dots) {
                         quiet_steps += 1;
                     }
+                    max_deferred = max_deferred.max(actual.deferred_waveform_ticks);
                     cpu_div = cpu_div.wrapping_add(cpu_steps);
                     dot_div = dot_div.wrapping_add(dot_steps);
                     assert_same_apu_state(&actual, &expected);
@@ -4180,6 +4330,10 @@ mod tests {
                         }
                     }
                 }
+                assert!(
+                    max_deferred > 16,
+                    "multiple ticks were not deferred: {model:?}, {rate}"
+                );
                 assert!(
                     quiet_steps > 100,
                     "deadline path not exercised: {model:?}, {rate}"
