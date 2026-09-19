@@ -51,13 +51,6 @@ aims for cycle-accurate emulation of the CPU, MMU, PPU, and APU.
 - Optional tracing features behind feature flags (`ppu-trace`, `apu-trace`,
   `cpu-trace`)
 
-Audio output stays connected across software APU power cycles (`NR52`): the
-existing consumer receives silence while powered off and resumes on power-on.
-The mixer distinguishes a disabled DAC (analog silence) from an enabled DAC
-receiving digital zero (a positive DC offset), including the audible transitions
-used by sample players. DAC attack and decay are currently instantaneous
-approximations; the output high-pass filter removes steady DC offsets.
-
 ## Usage
 
 Add `vibe-emu-core` to your `Cargo.toml`:

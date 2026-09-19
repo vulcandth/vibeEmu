@@ -1365,12 +1365,12 @@ impl Apu {
         }
         self.nr50 = 0;
         self.nr51 = 0;
-        // NR52 controls emulated hardware, not the frontend's audio stream.
-        // Keep the queue, host sample phase, and playback-speed setting so
-        // powering the APU back on resumes audio through the same consumer.
+        self.disable_output();
+        self.sample_timer_accum = 0;
         self.pcm_samples = [0; 4];
         self.pcm_active = [false; 4];
         self.pcm_mask = [0xFF; 2];
+        self.speed_factor = 1.0;
         self.hp_coef = Apu::calc_hp_coef(self.sample_rate);
         self.hp_prev_input_left = 0.0;
         self.hp_prev_output_left = 0.0;
@@ -3620,19 +3620,10 @@ impl Apu {
         let out3 = self.ch3.current_sample();
         let out4 = self.ch4.current_sample();
 
-        // Digital zero is a positive analog level only while the DAC is on.
-        // A disabled DAC contributes analog zero, even if another DAC keeps
-        // the mixer/HPF connected. Gate on DAC state, not channel activity:
-        // inactive channels still drive digital zero into their enabled DACs.
-        // This preserves the DC-offset edges used by DAC-switching sample
-        // players. Analog DAC attack/decay is approximated as instantaneous.
-        let dac_output = |sample: u8, enabled: bool| {
-            if enabled { 8 - sample as i16 } else { 0 }
-        };
-        let ch1 = dac_output(out1, self.ch1.dac_enabled);
-        let ch2 = dac_output(out2, self.ch2.dac_enabled);
-        let ch3 = dac_output(out3, self.ch3.dac_enabled);
-        let ch4 = dac_output(out4, self.ch4.dac_enabled);
+        let ch1 = 8 - out1 as i16;
+        let ch2 = 8 - out2 as i16;
+        let ch3 = 8 - out3 as i16;
+        let ch4 = 8 - out4 as i16;
 
         let mut left = 0i16;
         let mut right = 0i16;
