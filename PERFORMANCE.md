@@ -18,7 +18,10 @@ The default workload runs 300 warmup frames and then measures 1,800 frames.
 Audio mode exercises the mixer, high-pass filter, and queue at 48 kHz; silent
 mode still emulates the APU but has no output consumer. ROM bytes are loaded
 without reading or writing save files or synchronizing the RTC to wall time.
-Hardware model selection follows the cartridge header.
+Hardware model selection follows the cartridge header. The runner uses
+`Cpu::step_with_halt_batch`, bounded by the remaining frame budget. Desktop and
+Android normal execution use the same API with a 256-dot cap; debugger stepping
+continues to use `Cpu::step`.
 
 The reported time covers CPU/core stepping, including audio production. Loading,
 hashing, and draining the audio queue are outside the timed region. The hashes
@@ -281,6 +284,103 @@ Validation on the final combined implementation:
 - `cargo check -p vibe-emu-core --all-features`: passed (separate target directory).
 - Gambatte was not run; it remains informational.
 
+## HALT batching with local APU scheduling
+
+Baseline for this pass: `2aa334a`, preserved as `/tmp/vibe-core-pass3`.
+Instrumentation of the 2,100-frame Polished Crystal workload found 114,957,248
+of 147,470,400 dots spent in halted CPU calls (78.0%), and 57,283,389 of
+64,262,136 calls entering with the CPU halted (89.1%). The small interrupt-entry
+cost inside a waking HALT call is included. Instrumentation was removed before
+timing comparisons.
+
+The main opportunity was to stop revisiting every device during those waits:
+
+- `Cpu::step_with_halt_batch` combines complete halted M-cycles, bounded by the
+  caller's budget, PPU events, and timer overflow. It retains `Cpu::step` for
+  pending interrupts, STOP/faults, OAM DMA, GDMA, and active serial transfers.
+  The PPU deadline stops strictly before mode transitions, register effects,
+  sprite latches, and frame delivery, preserving HBlank DMA and interrupt timing.
+  Single-step/debugger behavior stays on the original API.
+- The APU runs its own event loop inside a CPU batch. Waveform events do not
+  require returning to the timer, PPU, cartridge, and CPU scheduler. Settled
+  outputs can advance together until the next waveform/DIV event; transition
+  intervals retain the original M-cycle ordering of channel clocks, sampling,
+  and output pipelines. Sample production and high-pass filtering still run
+  for every sample, with unchanged arithmetic and bookkeeping counters.
+- Noise prescaler reloads between LFSR edges are counted arithmetically, including
+  their counter wrap and final phase. The general loop remains for edges,
+  delayed starts, disable effects, and divisor glitches.
+- TIMA falling edges are counted directly when they cannot overflow. A pending
+  reload or TMA write retains cycle stepping; the HALT deadline ends before an
+  overflow. This avoids changing the delayed interrupt and write-collision
+  behavior described in [Pan Docs' timer documentation](https://github.com/gbdev/pandocs/blob/master/src/Timer_Obscure_Behaviour.md).
+
+An initial implementation bounded the entire machine by every APU event. Its
+median speedup was only 1.16×. Keeping those events local to the APU produced
+substantially larger batches. This applies the interaction-boundary approach
+in [mGBA's design discussion](https://mgba.io/2017/04/30/emulation-accuracy/) and
+[GameRoy's lazy-peripheral scheduling](https://rodrigodd.github.io/2023/09/02/gameroy-jit.html).
+HALT still wakes on pending enabled interrupts regardless of IME, as documented
+in [Pan Docs](https://github.com/gbdev/pandocs/blob/master/src/halt.md); batching
+stops before the existing wakeup path needs to run.
+
+New differential checks compare APU batches and local scheduling with individual
+M-cycles across all ten hardware revisions, audio rates, power transitions,
+register writes, speed changes, and divider wrap. PPU batches are compared with
+M-cycle stepping through three frames, register changes, sprite latches, DMA
+contention, and DMG compatibility modes. Timer tests cover 4,576 combinations
+of TAC, DIV phase, TIMA, and step length, plus pending writes/reloads. A complete
+machine test compares 96,000 observation boundaries across DMG/CGB, both CPU
+speeds, and both IME states, including interrupts, DMA, serial transfers, LCD
+power changes, audio, memory, and frame boundaries. These establish equivalence
+to the reference implementation; they do not establish perfect hardware accuracy.
+
+Final paired medians versus `2aa334a`, five alternating runs per binary:
+
+| Workload | Measured / warmup frames | Before | After | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 1,800 / 300 | 2.519030 s | 1.529420 s | 1.647× |
+| Polished Crystal, silent | 1,800 / 300 | 2.429197 s | 1.421808 s | 1.709× |
+| DMG acid2, audio output enabled | 600 / 120 | 0.812166 s | 0.821816 s | 0.988× |
+| Blargg CPU instructions, CGB, audio output enabled | 600 / 120 | 0.700107 s | 0.707019 s | 0.990× |
+| CGB acid2, audio output enabled | 600 / 120 | 0.402688 s | 0.187482 s | 2.148× |
+| CGB wave test, audio output enabled | 600 / 120 | 0.337653 s | 0.348968 s | 0.968× |
+
+Every output signature matched. Polished Crystal uses 39.29% less measured
+execution time with audio and 41.47% less without it. The benefit is
+workload-dependent: DMG acid2 and the CPU test regressed about 1%, and the wave
+test about 3.35%. These regressions are retained in the report; the new dispatch
+and code layout are not a universal speedup. No frontend frame-rate or 3DS
+hardware measurement is implied.
+
+A separate five-run comparison against the original `83f3465` binary measured
+4.473945 s versus 1.557065 s for Polished Crystal with audio:
+**2.873× cumulative throughput, or 65.20% less execution time**. Audio/video
+hashes, sample/dot counts, and final PC matched the original baseline.
+
+The 600/120-frame counter workload retires **5,669,258,570 instructions** and
+**1,086,820,574 branches**, down 41.59% and 44.50% from the previous pass.
+Instruction count is 70.28% lower than the original baseline. Executable text
+is 586,932 bytes, up 3,616 bytes (0.62%); no dependencies, large tables, or unsafe
+code were added.
+
+The final exclusive sampling profile attributes 24.3% to APU CPU-tick stepping,
+20.0% to the bounded CPU runner (including its inlined APU scheduler/quiet work),
+10.6% to PPU stepping, 8.3% to ordinary CPU ticks (also including inlined APU
+work), 6.9% to instruction execution, 4.5% to static CGB background spans, 4.1%
+to audio sample production, 3.2% to OAM scanning, and 2.2% to timer stepping.
+These are symbol sample shares, not exclusive subsystem totals. The APU's
+remaining M-cycle visits and deadline overhead are the next substantial target.
+
+Validation for the HALT scheduling pass:
+
+- `cargo fmt --all`: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- `cargo test`: 571 passed, 33 existing ignored tests.
+- `cargo test --release`: 567 passed, 33 existing ignored tests.
+- `cargo check -p vibe-emu-core --all-features`: passed.
+- Gambatte was not run; it remains informational.
+
 ## Rough 3DS budget without hardware testing
 
 Use instruction counts as a work proxy, not desktop FPS scaled by clock speed.
@@ -292,8 +392,8 @@ must enable the appropriate speed/cache mode through
 [libctru's `osSetSpeedupEnable`](https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/os.h).
 
 The counter workload advances `(600 + 120) × 70,224 / 4,194,304 = 12.05475`
-emulated seconds. Its 9.706 billion x86-64 instructions correspond to
-**0.805 billion host instructions per emulated second**, or 13.481 million
+emulated seconds. Its 5.669 billion x86-64 instructions correspond to
+**0.470 billion host instructions per emulated second**, or 7.874 million
 per benchmark frame. This includes startup, warmup, checksumming, and queue
 draining; it is a conservative process-level proxy rather than an isolated
 count of core instructions. It still represents an introductory ROM sequence,
@@ -318,20 +418,22 @@ equal cycle costs across these architectures.
 
 | Scenario | ARM/x86 instruction ratio | ARM CPI | Core CPU budget | Old 3DS remaining speedup | New 3DS remaining speedup |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Optimistic | 1.0 | 1.0 | 90% | 3.3× | 1.1× |
-| Working planning assumption | 1.5 | 1.5 | 80% | 8.4× | 2.8× |
-| More costly ARM execution | 2.0 | 2.0 | 75% | 16.0× | 5.3× |
+| Optimistic | 1.0 | 1.0 | 90% | 1.95× | 0.65× |
+| Working planning assumption | 1.5 | 1.5 | 80% | 4.94× | 1.65× |
+| More costly ARM execution | 2.0 | 2.0 | 75% | 9.36× | 3.12× |
 
-A 2.8× requirement means roughly 36% of real time under that scenario. The
-working interpretation is **several-fold more improvement for New 3DS and
-roughly an order of magnitude for old 3DS**. These are development budgets,
-not a claim that either machine has achieved those speeds.
+A 1.65× requirement means roughly 61% of real time under that scenario; the old
+3DS estimate is about 20%. A value below 1 in the optimistic scenario means
+headroom under that assumption, not a measured result. The working interpretation
+is **another ~1.65× improvement for New 3DS and ~4.9× for old 3DS**, reduced from
+2.8× and 8.4× before this pass. These remain development budgets, not a claim
+that either machine has achieved those speeds.
 
 For a provisional future hardware-testing trigger, reduce this same workload
 to about **0.43 billion host instructions per emulated second** (about 7.2 million
 per frame), while keeping checksums and tests passing. That would bring the
-working New 3DS estimate within 1.5× of full speed, requiring another ~1.9×
-reduction in this work proxy from today's result. A 1.0× working budget is
+working New 3DS estimate within 1.5× of full speed, requiring another ~1.10×
+speedup (about 9% fewer instructions) from today's result. A 1.0× working budget is
 ~0.286 billion instructions/s. Revisit these targets after ARM assembly analysis;
 a target build and a broader gameplay workload set can improve the estimate
 without requiring a physical console. Only the x86-64 Rust target is installed
@@ -343,8 +445,9 @@ The scheduling approach follows the principle that cycle accuracy requires
 correctly timed interactions, not redundant processing in intervals with no
 interaction. mGBA describes batching and splitting at interactions;
 GameRoy describes lazy peripherals with predicted interrupt boundaries and an
-interpreter fallback. This pass applies conservative deadlines inside the APU
-without changing the CPU's scheduling granularity.
+interpreter fallback. The earlier passes applied conservative deadlines inside
+the APU; the latest pass adds a bounded HALT runner while preserving the
+single-step API.
 [mGBA design discussion](https://mgba.io/2017/04/30/emulation-accuracy/),
 [GameRoy implementation discussion](https://rodrigodd.github.io/2023/09/02/gameroy-jit.html).
 
@@ -354,26 +457,26 @@ That supports investigating work proportional to signal transitions. Adopting
 a different resampler would change audio output, so this pass retains vibeEmu's
 existing sample clock and filter and instead skips redundant digital staging.
 
-1. **Batch visits to peripherals during HALT and other predictable intervals.**
-   The APU fast path is smaller, but the CPU still enters it and the PPU/timer
-   on each machine cycle. Conservative wakeup/event deadlines can remove whole
-   visits. Bound batches by timer reloads, STAT/LYC, DMA, serial, APU waveform
-   and sample events, and register accesses. This requires coordination across
-   the scheduler, so it is separate from the local APU and rendering changes.
-2. **Defer noise counter work to meaningful LFSR edges.** The retained fast
-   paths optimize individual ticks. A further deadline at the selected counter
-   bit's rising edge could skip groups of prescaler reloads. Materialize the
-   ripple counter, countdown, and alignment before NR43 writes or debug reads;
-   preserve suppressed-output release and delayed-start/disable boundaries.
-   Avoid the previously unsuccessful strategy of rebuilding a global deadline
-   at every prescaler reload.
-3. **Inspect an ARM build before architecture-specific tuning.** Rust documents
-   the `armv6k-nintendo-3ds` target and its devkitARM/build-std requirements.
-   Examine instruction expansion, variable division, 64-bit counters, and code
-   layout to refine the budget above. The inlining/outlined-sampling tradeoff
-   was measured on x86-64; ARM code/cache behavior may justify a different choice.
-   Hardware tests can wait for the budget to become promising.
+1. **Advance the APU between actual observations.** HALT batching now removes
+   most whole-machine revisits, but frequent waveform transitions still return
+   to the APU's M-cycle path. Investigate exact phase/pipeline projection up to
+   audio samples, DIV/sweep events, and register/PCM reads, keeping the existing
+   sample-boundary ordering and high-pass filter. The current quiet intervals
+   require constant staged output; lifting that restriction safely could skip
+   more of the remaining work. Preserve the reference path for trigger, wave
+   RAM, sweep, and noise quirks.
+2. **Inspect an ARM build before architecture-specific tuning.** The working
+   New 3DS budget is approaching the provisional hardware-testing threshold,
+   but instruction expansion and CPI are still assumptions. Rust documents the
+   `armv6k-nintendo-3ds` target and its devkitARM/build-std requirements. Inspect
+   variable division, 64-bit counters, code layout, and caches, and broaden the
+   gameplay workloads before drawing hardware conclusions. Hardware testing
+   can remain deferred.
    [Rust target documentation](https://doc.rust-lang.org/rustc/platform-support/armv6k-nintendo-3ds.html).
+3. **Reduce costs outside long HALT intervals.** Investigate the 1–3% regressions
+   above, ordinary CPU/APU dispatch, and DMG FIFO work. Wider scheduling across
+   running instructions requires register-access and interrupt deadlines;
+   it should not reuse HALT's no-memory-access assumptions.
 
 Avoid large tables or aggressive inlining without measuring their cache cost.
 For example, an earlier branch avoiding division on single waveform edges

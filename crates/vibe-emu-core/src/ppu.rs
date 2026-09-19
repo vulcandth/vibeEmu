@@ -6383,6 +6383,42 @@ impl Ppu {
         if raw_x == 0 { 1 } else { (raw_x + 8).min(end) }
     }
 
+    /// Dots before the next event, restricted to intervals already handled by
+    /// the PPU's bulk stepping paths. Stop strictly before mode transitions so
+    /// STAT, frame delivery, and HBlank DMA keep their original M-cycle timing.
+    pub(crate) fn idle_dots(&self) -> u16 {
+        if self.boot_hold_cycles != 0
+            || self.lcdc & 0x80 == 0
+            || self.stat_mode_delay != 0
+            || self.pending_reg_write_count != 0
+            || self.stat_irq_dirty
+            || self.dmg_mode2_vblank_irq_pending
+            || (!self.cgb() && self.dmg_startup_cycle.is_some())
+        {
+            return 0;
+        }
+        let event = match self.mode {
+            MODE_TRANSFER
+                if self.is_cgb_native_mode()
+                    && self.mode3_lcdc_event_count == 0
+                    && !(1..=0xA0).contains(&self.oam_dma_current_dest) =>
+            {
+                self.next_cgb_transfer_event()
+            }
+            MODE_HBLANK => {
+                if self.dmg_hblank_render_pending {
+                    self.mode0_target_cycles.min(dmg_hblank_render_delay())
+                } else {
+                    self.mode0_target_cycles
+                }
+            }
+            MODE_VBLANK if self.ly != 153 || self.cgb_line153_ly0_triggered => MODE1_CYCLES,
+            MODE_OAM if !self.dmg_oam_dma_contention_active() => MODE2_CYCLES,
+            _ => return 0,
+        };
+        event.saturating_sub(self.mode_clock.saturating_add(1))
+    }
+
     /// Advance the PPU by `cycles` dot cycles.
     ///
     /// Returns `true` when HBlank begins (the HDMA transfer boundary).
@@ -8407,6 +8443,15 @@ mod mode3_timing_tests {
 
     #[test]
     fn cgb_transfer_batch_matches_original_dot_path() {
+        compare_transfer_batches(false);
+    }
+
+    #[test]
+    fn idle_batches_match_machine_cycles() {
+        compare_transfer_batches(true);
+    }
+
+    fn compare_transfer_batches(idle_batch: bool) {
         for (model, compat) in [
             (Model::Cgb(CgbRevision::RevE), false),
             (Model::Cgb(CgbRevision::RevC), false),
@@ -8474,9 +8519,22 @@ mod mode3_timing_tests {
                         fast.oam[index] = iteration as u8;
                         reference.oam[index] = iteration as u8;
                     }
-                    let cycles = [1, 2, 4, 3, 8, 7, 16, 80, 255, 456][iteration % 10];
+                    let m_dots = if iteration % 2 == 0 { 2 } else { 4 };
+                    let cycles = if idle_batch {
+                        (fast.idle_dots().min(512) / m_dots * m_dots).max(m_dots)
+                    } else {
+                        [1, 2, 4, 3, 8, 7, 16, 80, 255, 456][iteration % 10]
+                    };
                     let fast_hblank = fast.step(cycles, &mut fast_if);
-                    let reference_hblank = reference.step_inner::<false>(cycles, &mut reference_if);
+                    let reference_hblank = if idle_batch {
+                        let mut hblank = false;
+                        for _ in (0..cycles).step_by(usize::from(m_dots)) {
+                            hblank |= reference.step(m_dots, &mut reference_if);
+                        }
+                        hblank
+                    } else {
+                        reference.step_inner::<false>(cycles, &mut reference_if)
+                    };
                     assert_eq!(fast_hblank, reference_hblank);
                     assert_eq!(fast_if, reference_if);
                     assert_eq!(fast.mode_clock, reference.mode_clock);

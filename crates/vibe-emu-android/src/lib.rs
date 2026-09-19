@@ -232,7 +232,7 @@ impl EmulatorHandle {
 
     fn run_frame(&mut self) -> bool {
         while !self.gb.mmu.ppu.frame_ready() {
-            self.gb.cpu.step(&mut self.gb.mmu);
+            self.gb.cpu.step_with_halt_batch(&mut self.gb.mmu, 256);
         }
 
         if let Some(adapter) = &self.mobile

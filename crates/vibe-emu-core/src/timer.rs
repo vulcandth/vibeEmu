@@ -21,6 +21,25 @@ pub struct Timer {
 }
 
 impl Timer {
+    /// CPU cycles before an overflow or pending write/reload effect. Ordinary
+    /// TIMA increments are independent of other devices and can be combined.
+    pub(crate) fn idle_cycles(&self) -> u16 {
+        if self.pending_reload.is_some() || self.tma_latch.is_some() {
+            return 0;
+        }
+        if self.tac & 4 == 0 {
+            return u16::MAX;
+        }
+        if self.last_signal != self.signal() {
+            return 0;
+        }
+        let bit = [9, 3, 5, 7][(self.tac & 3) as usize];
+        let period = 1u32 << (bit + 1);
+        let before_overflow =
+            period * (256 - u32::from(self.tima)) - u32::from(self.div) % period - 1;
+        before_overflow.min(u32::from(u16::MAX)) as u16
+    }
+
     /// Create a new `Timer` with all registers at their power-on values.
     pub fn new() -> Self {
         Self {
@@ -145,6 +164,21 @@ impl Timer {
                 self.reloading = false;
                 return;
             }
+
+            // Count falling edges directly when no overflow can occur. The
+            // delayed reload/write collision path below remains cycle-stepped.
+            // Public register fields can be changed directly by callers, so
+            // require a synchronized signal before using this edge count.
+            if self.tac & 4 != 0 && self.last_signal == self.signal() {
+                let edges = (u32::from(low) + u32::from(cycles)) >> (timer_bit + 1);
+                if edges <= u32::from(u8::MAX - self.tima) {
+                    self.tima += edges as u8;
+                    self.div = self.div.wrapping_add(cycles);
+                    self.last_signal = self.signal();
+                    self.reloading = false;
+                    return;
+                }
+            }
         }
 
         for _ in 0..cycles {
@@ -247,5 +281,68 @@ impl Timer {
 impl Default for Timer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batched_edges_and_idle_deadlines_match_single_cycles() {
+        for tac in 0..8 {
+            for div in [0, 7, 8, 15, 16, 31, 63, 127, 255, 511, 1023, 0xfffb, 0xffff] {
+                for tima in [0, 113, 254, 255] {
+                    for cycles in [0, 1, 3, 4, 15, 16, 17, 63, 256, 4096, 65535] {
+                        let make = || {
+                            let mut timer = Timer::new();
+                            timer.div = div;
+                            timer.write(0xff07, tac, &mut 0);
+                            timer.tima = tima;
+                            timer.tma = 0xf7;
+                            timer
+                        };
+                        let mut actual = make();
+                        let mut expected = make();
+                        let idle = actual.idle_cycles();
+                        let mut actual_if = 0xe0;
+                        let mut expected_if = actual_if;
+                        actual.step(cycles, &mut actual_if);
+                        for _ in 0..cycles {
+                            expected.step(1, &mut expected_if);
+                        }
+                        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+                        assert_eq!(actual_if, expected_if);
+                        if cycles <= idle {
+                            assert_eq!(actual_if, 0xe0);
+                            assert!(actual.pending_reload.is_none());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pending_writes_and_reloads_disable_idle_prediction() {
+        let mut timer = Timer::new();
+        let mut if_reg = 0;
+        timer.write(0xff06, 0x42, &mut if_reg);
+        assert_eq!(timer.idle_cycles(), 0);
+        timer.step(1, &mut if_reg);
+        timer.div = 15;
+        timer.write(0xff07, 5, &mut if_reg);
+        timer.tima = 255;
+        timer.step(1, &mut if_reg);
+        for _ in 0..4 {
+            assert_eq!(timer.idle_cycles(), 0);
+            timer.step(1, &mut if_reg);
+        }
+        assert_eq!(if_reg, 4);
+        assert_eq!(timer.tima, 0x42);
+        assert!(timer.idle_cycles() > 0);
+        // A caller may change the public divider without updating the edge latch.
+        timer.div = 8;
+        assert_eq!(timer.idle_cycles(), 0);
     }
 }

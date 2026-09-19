@@ -39,7 +39,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         // overshoot forward so every run executes the same amount of hardware time.
         let target = (frame + 1) * 70_224;
         while gb.cpu.cycles < target {
-            gb.cpu.step(&mut gb.mmu);
+            gb.cpu.step_with_halt_batch(
+                &mut gb.mmu,
+                (target - gb.cpu.cycles).min(u64::from(u16::MAX)) as u16,
+            );
         }
         if frame >= warmup {
             elapsed += start.elapsed();

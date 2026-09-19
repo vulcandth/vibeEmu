@@ -677,6 +677,50 @@ impl Cpu {
         }
     }
 
+    /// Execute one instruction, or combine HALT cycles within `max_idle_dots`.
+    ///
+    /// Only HALT intervals without CPU-visible events are combined. The APU
+    /// handles audio events locally; interrupt delivery, DMA, serial transfers,
+    /// and frame boundaries use ordinary stepping. Instructions may exceed
+    /// the budget just as with [`Self::step`].
+    /// Use `step` when observing the machine after every instruction/M-cycle.
+    pub fn step_with_halt_batch(&mut self, mmu: &mut crate::mmu::Mmu, max_idle_dots: u16) {
+        if self.halted
+            && !self.stopped
+            && !self.faulted
+            && (mmu.if_reg & mmu.ie_reg & 0x1f) == 0
+            && !mmu.dma_active()
+            && !mmu.gdma_active()
+            && !mmu.serial.transfer_active()
+        {
+            let m_dots = if self.double_speed { 2 } else { 4 };
+            let dots = max_idle_dots
+                .min(mmu.ppu.idle_dots())
+                .min(mmu.timer.idle_cycles() >> u32::from(self.double_speed));
+            let dots = dots / m_dots * m_dots;
+            if dots >= m_dots * 2 {
+                mmu.ppu.set_render_vram_blocked(false);
+                self.dma_conflict_active = false;
+                let cpu_cycles = dots << u32::from(self.double_speed);
+                self.cycles += u64::from(dots);
+                let prev_dot_div = mmu.dot_div;
+                let prev_cpu_div = mmu.timer.div;
+                mmu.dot_div = mmu.dot_div.wrapping_add(dots);
+                if let Some(cart) = mmu.cart.as_mut() {
+                    cart.step_rtc(cpu_cycles);
+                }
+                mmu.timer.step(cpu_cycles, &mut mmu.if_reg);
+                mmu.apu
+                    .run_halt_steps(dots, prev_cpu_div, prev_dot_div, self.double_speed);
+                let hblank = mmu.ppu.step(dots, &mut mmu.if_reg);
+                debug_assert!(!hblank);
+                mmu.dma_step(dots);
+                return;
+            }
+        }
+        self.step(mmu);
+    }
+
     /// Execute one instruction and update internal state accordingly.
     pub fn step(&mut self, mmu: &mut crate::mmu::Mmu) {
         if self.faulted {

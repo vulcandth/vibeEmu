@@ -314,6 +314,11 @@ impl Serial {
         );
     }
 
+    /// Whether HALT must keep polling a serial transfer at M-cycle granularity.
+    pub(crate) fn transfer_active(&self) -> bool {
+        self.transfer.is_some()
+    }
+
     /// Advance the serial unit by an explicit number of divider `steps`.
     pub fn step_steps(&mut self, prev_div: u16, steps: u16, double_speed: bool, if_reg: &mut u8) {
         if self.transfer.is_none() {

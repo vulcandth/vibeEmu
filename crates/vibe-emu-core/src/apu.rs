@@ -2933,6 +2933,26 @@ impl Apu {
                     }
                     return;
                 }
+                if self.ch4.delta == 0 {
+                    let reloads = 1 + remaining / period;
+                    let shift = self.regs[NR43_IDX] >> 4;
+                    let bit = 1 << shift;
+                    let to_edge = ((bit - self.ch4.counter - 1) & (2 * bit - 1)) + 1;
+                    if shift >= 14 || reloads < to_edge {
+                        // A HALT batch can cross many prescaler reloads without
+                        // clocking the LFSR. Materialize their final phase in O(1).
+                        let tail = remaining % period;
+                        self.ch4.counter = (self.ch4.counter + reloads) & 0x3fff;
+                        self.ch4.alignment = self.ch4.alignment.wrapping_add(cycles);
+                        self.ch4.counter_countdown = period - tail;
+                        self.ch4.timer = self.ch4.counter_countdown;
+                        self.ch4.countdown_reloaded = tail == 0;
+                        if self.ch4.enabled && self.ch4.dac_enabled {
+                            self.ch4.sample_suppressed = false;
+                        }
+                        return;
+                    }
+                }
             }
         }
         self.clock_noise_channel_2mhz_slow(cycles);
@@ -3577,6 +3597,78 @@ impl Apu {
         self.quiet_dots = self.predict_quiet_dots();
     }
 
+    /// Dots with settled outputs and no waveform or frame-sequencer event.
+    /// Unlike `quiet_dots`, this also bounds noise transitions, allowing audio
+    /// sampling and pipeline shifts to be combined across several CPU calls.
+    fn halt_idle_dots(&self, cpu_div: u16, double_speed: bool) -> u16 {
+        if self.double_speed != double_speed
+            || self.quiet_dots == 0
+            || self.ch4.output_pipeline.0 != u32::from(self.ch4.compute_output()) * 0x01_0101
+        {
+            return 0;
+        }
+        let span = 1u16 << if double_speed { 13 } else { 12 };
+        let cpu_dots = (span - 1 - (cpu_div & (span - 1))) >> u32::from(double_speed);
+        let mut dots = self.quiet_dots.min(cpu_dots);
+        if self.nr52 & 0x80 != 0 {
+            if self.ch4.dmg_delayed_start != 0 || self.ch4.pending_disable {
+                return 0;
+            }
+            if self.ch4.enabled || !self.cgb_mode() {
+                if self.ch4.counter_countdown <= 0
+                    || self.ch4.delta != 0
+                    || (self.ch4.sample_suppressed && self.ch4.enabled && self.ch4.dac_enabled)
+                {
+                    return 0;
+                }
+                let shift = self.regs[NR43_IDX] >> 4;
+                // Bits 14 and 15 never rise in the 14-bit noise counter.
+                if shift < 14 {
+                    let bit = 1 << shift;
+                    let reloads = ((bit - self.ch4.counter - 1) & (2 * bit - 1)) + 1;
+                    let ticks =
+                        self.ch4.counter_countdown + (reloads - 1) * self.ch4.base_divisor();
+                    dots = dots.min(((ticks - 1) * 2).min(i32::from(u16::MAX)) as u16);
+                }
+            }
+        }
+        dots
+    }
+
+    /// Advance a HALT interval certified by `halt_idle_dots`.
+    fn advance_halt_idle(&mut self, dots: u16, double_speed: bool) {
+        self.advance_quiet(dots);
+        // tick_steps adds one bookkeeping cycle per original M-cycle call.
+        let calls = dots / if double_speed { 2 } else { 4 };
+        self.cpu_cycles = self.cpu_cycles.wrapping_add(u64::from(calls - 1));
+    }
+
+    /// Run an integral number of halted CPU M-cycles. Audio events need not
+    /// wake the CPU, so handle them locally instead of revisiting every device.
+    pub(crate) fn run_halt_steps(
+        &mut self,
+        mut dots: u16,
+        mut cpu_div: u16,
+        mut dot_div: u16,
+        double_speed: bool,
+    ) {
+        let m_dots = if double_speed { 2 } else { 4 };
+        debug_assert_eq!(dots % m_dots, 0);
+        while dots != 0 {
+            let idle = self.halt_idle_dots(cpu_div, double_speed).min(dots) / m_dots * m_dots;
+            let consumed = if idle >= 2 * m_dots {
+                self.advance_halt_idle(idle, double_speed);
+                idle
+            } else {
+                self.run_cpu_tick_steps(m_dots, cpu_div, 4, dot_div, m_dots, double_speed);
+                m_dots
+            };
+            dots -= consumed;
+            cpu_div = cpu_div.wrapping_add(consumed << u32::from(double_speed));
+            dot_div = dot_div.wrapping_add(consumed);
+        }
+    }
+
     /// Predict intervals where the square/wave staged outputs are constant. DIV
     /// edges are checked separately against the caller's CPU-domain divider.
     fn predict_quiet_dots(&self) -> u16 {
@@ -4185,6 +4277,21 @@ mod tests {
 
     #[test]
     fn quiet_intervals_match_full_stepping() {
+        compare_quiet_intervals(0);
+    }
+
+    #[test]
+    fn halt_batches_match_machine_cycle_stepping() {
+        compare_quiet_intervals(1);
+    }
+
+    #[test]
+    fn halt_scheduler_matches_machine_cycle_stepping() {
+        compare_quiet_intervals(2);
+    }
+
+    fn compare_quiet_intervals(halt_mode: u8) {
+        let halt_batch = halt_mode != 0;
         for model in [
             Model::Dmg(DmgRevision::Rev0),
             Model::Dmg(DmgRevision::RevA),
@@ -4212,7 +4319,8 @@ mod tests {
                 let mut random = 0x12345678u32;
                 let mut quiet_steps = 0;
                 let mut max_deferred = 0;
-                for iteration in 0..30_000 {
+                let mut batched_calls = 0;
+                for iteration in 0..if halt_mode == 2 { 4_000 } else { 30_000 } {
                     let double_speed = model.is_cgb() && iteration / 997 % 2 != 0;
                     if iteration % 4096 == 0 {
                         for apu in [&mut actual, &mut expected] {
@@ -4285,31 +4393,66 @@ mod tests {
                         actual.set_sample_rate(next_rate);
                         expected.set_sample_rate(next_rate);
                     }
-                    let dots = if iteration % 101 == 100 {
+                    let m_dots = if double_speed { 2 } else { 4 };
+                    let idle =
+                        actual.halt_idle_dots(cpu_div, double_speed).min(1024) / m_dots * m_dots;
+                    let batch = halt_mode == 2 || (halt_batch && idle >= 2 * m_dots);
+                    let dots = if halt_mode == 2 {
+                        [2, 3, 16, 127, 256][iteration % 5] * m_dots
+                    } else if batch {
+                        idle
+                    } else if iteration % 101 == 100 {
                         [0, 1, 3, 255, 8192][iteration / 101 % 5]
                     } else {
                         [2, 4, 4, 8, 2, 6, 12, 16][iteration % 8]
                     };
                     // Include independently frozen dividers, as during STOP,
                     // and unequal clock-domain increments in the public API.
-                    let cpu_steps = if iteration % 73 == 72 {
+                    let cpu_steps = if !batch && iteration % 73 == 72 {
                         0
                     } else {
                         dots * if double_speed { 2 } else { 1 }
                     };
-                    let dot_steps = if iteration % 79 == 78 { dots / 2 } else { dots };
+                    let dot_steps = if !batch && iteration % 79 == 78 {
+                        dots / 2
+                    } else {
+                        dots
+                    };
                     let before = actual.quiet_dots;
-                    actual.run_cpu_tick_steps(
-                        dots,
-                        cpu_div,
-                        cpu_steps,
-                        dot_div,
-                        dot_steps,
-                        double_speed,
-                    );
-                    expected.step(dots);
-                    expected.tick_frame_sequencer_steps(cpu_div, cpu_steps, double_speed);
-                    expected.tick_steps(dot_div, dot_steps, double_speed);
+                    if batch {
+                        if halt_mode == 2 {
+                            actual.run_halt_steps(dots, cpu_div, dot_div, double_speed);
+                        } else {
+                            actual.advance_halt_idle(dots, double_speed);
+                        }
+                        for elapsed in (0..dots).step_by(usize::from(m_dots)) {
+                            let cpu_elapsed = elapsed * if double_speed { 2 } else { 1 };
+                            expected.step(m_dots);
+                            expected.tick_frame_sequencer_steps(
+                                cpu_div.wrapping_add(cpu_elapsed),
+                                4,
+                                double_speed,
+                            );
+                            expected.tick_steps(
+                                dot_div.wrapping_add(elapsed),
+                                m_dots,
+                                double_speed,
+                            );
+                        }
+                        batched_calls += 1;
+                    } else {
+                        actual.run_cpu_tick_steps(
+                            dots,
+                            cpu_div,
+                            cpu_steps,
+                            dot_div,
+                            dot_steps,
+                            double_speed,
+                        );
+                        expected.step(dots);
+                        expected.tick_frame_sequencer_steps(cpu_div, cpu_steps, double_speed);
+                        expected.tick_steps(dot_div, dot_steps, double_speed);
+                    }
                     if dots != 0 && before.checked_sub(dots) == Some(actual.quiet_dots) {
                         quiet_steps += 1;
                     }
@@ -4329,6 +4472,12 @@ mod tests {
                             }
                         }
                     }
+                }
+                if halt_batch {
+                    assert!(
+                        batched_calls > 100,
+                        "HALT path not exercised: {model:?}, {rate}"
+                    );
                 }
                 assert!(
                     max_deferred > 16,
