@@ -59,6 +59,7 @@ const VOLUME_FACTOR: i16 = 64;
 /// Three byte-wide sample latches, newest in the low byte. Packing them makes
 /// each pipeline advance a single word load/store on 32-bit hosts as well.
 #[derive(Default)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct OutputPipeline(u32);
 
 impl OutputPipeline {
@@ -117,6 +118,7 @@ const NR44_IDX: usize = (0xFF23 - 0xFF10) as usize;
 /// This mechanism is derived from SameBoy's envelope clock implementation.
 /// See: <https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c>
 #[derive(Default, Clone, Copy)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct EnvelopeClock {
     clock: bool,
     locked: bool,
@@ -124,6 +126,7 @@ struct EnvelopeClock {
 }
 
 #[derive(Default, Clone, Copy)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct Envelope {
     initial: u8,
     period: u8,
@@ -180,6 +183,7 @@ impl Envelope {
 
 #[derive(Default)]
 // Handles Channel 1 frequency sweep logic. See TODO.md #257.
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct Sweep {
     period: u8,
     negate: bool,
@@ -226,6 +230,7 @@ impl Sweep {
 }
 
 #[derive(Default)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct SquareChannel {
     enabled: bool,
     dac_enabled: bool,
@@ -474,6 +479,7 @@ impl SquareChannel {
     }
 }
 
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct WaveChannel {
     enabled: bool,
     dac_enabled: bool,
@@ -691,6 +697,7 @@ impl WaveChannel {
 }
 
 #[derive(Default)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct NoiseChannel {
     enabled: bool,
     dac_enabled: bool,
@@ -808,6 +815,7 @@ impl NoiseChannel {
     }
 }
 
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct FrameSequencer {
     step: u8,
 }
@@ -873,6 +881,9 @@ pub struct Apu {
     apu_enable_tick: u64,
     /// Accumulates CPU cycles to emit 2 MHz ticks (1 tick per 2 CPU cycles).
     mhz2_residual: i32,
+    /// Dots before the next square/wave edge, with their output latches settled.
+    /// Public timing/register entry points invalidate this conservative deadline.
+    quiet_dots: u16,
     /// Tracks 2 MHz ticks pre-stepped to compensate for write-before-tick ordering.
     /// Our CPU does write→tick, but hardware steps APU before each bus access.
     wave_prestep_deficit: i32,
@@ -967,6 +978,7 @@ pub struct ApuBootSnapshot {
 
 impl Apu {
     pub(crate) fn apply_post_boot_state(&mut self) {
+        self.quiet_dots = 0;
         self.regs[0x01] = 0x80;
         self.regs[0x03] = 0xC1;
         self.regs[0x04] = 0x87;
@@ -1521,6 +1533,7 @@ impl Apu {
             ch1_last_env_write_cycle: 0,
             apu_enable_tick: 0,
             mhz2_residual: 0,
+            quiet_dots: 0,
             wave_prestep_deficit: 0,
             model: Model::default(),
             ch1_env_clock: EnvelopeClock::default(),
@@ -1609,6 +1622,7 @@ impl Apu {
 
     /// Read an APU register at `addr`.
     pub fn read_reg(&mut self, addr: u16) -> u8 {
+        self.quiet_dots = 0;
         if addr == 0xFF26 {
             // Process any pending sweep calculation before reading channel status
             // This is called before reading NR52
@@ -1695,6 +1709,7 @@ impl Apu {
     ///
     /// `prev_div` is the 16-bit internal divider value before the write.
     pub fn on_div_reset(&mut self, prev_div: u16, double_speed: bool) {
+        self.quiet_dots = 0;
         // APU frame sequencer is clocked by DIV bit 4 in single-speed and DIV
         // bit 5 in double-speed. Our `prev_div` is the internal 16-bit divider
         // (DIV register is the upper 8 bits), so these correspond to bits 12/13.
@@ -1757,6 +1772,7 @@ impl Apu {
 
     /// Advance the frame sequencer by explicit divider `steps`.
     pub fn tick_frame_sequencer_steps(&mut self, div_prev: u16, steps: u16, double_speed: bool) {
+        self.quiet_dots = 0;
         if self.nr52 & 0x80 == 0 || steps == 0 {
             return;
         }
@@ -1824,6 +1840,7 @@ impl Apu {
 
     /// Write an APU register at `addr`.
     pub fn write_reg(&mut self, addr: u16, mut val: u8) {
+        self.quiet_dots = 0;
         if self.nr52 & 0x80 == 0 && addr != 0xFF26 && !(0xFF30..=0xFF3F).contains(&addr) {
             // On DMG, NR11/NR21/NR31/NR41 length writes are allowed even when APU is off
             if !self.cgb_mode() && matches!(addr, 0xFF11 | 0xFF16 | 0xFF1B | 0xFF20) {
@@ -2743,6 +2760,7 @@ impl Apu {
 
     /// Advance the APU audio pipeline by explicit divider `ticks`.
     pub fn tick_steps(&mut self, _div_prev: u16, ticks: u16, double_speed: bool) {
+        self.quiet_dots = 0;
         let speed_changed = self.double_speed != double_speed;
         // Store the current CPU speed so trigger_square can select the
         // correct initial delay when a channel is triggered.
@@ -3484,16 +3502,105 @@ impl Apu {
         dot_div_steps: u16,
         double_speed: bool,
     ) {
+        let div_span = 1 << if double_speed { 13 } else { 12 };
+        if dot_cycles != 0
+            && dot_cycles & 1 == 0
+            && dot_cycles <= self.quiet_dots
+            && dot_div_steps == dot_cycles
+            && double_speed == self.double_speed
+            && cpu_div_steps <= div_span
+            && (prev_cpu_div ^ prev_cpu_div.wrapping_add(cpu_div_steps)) & div_span == 0
+        {
+            self.advance_quiet(dot_cycles);
+            return;
+        }
         self.step(dot_cycles);
         self.tick_frame_sequencer_steps(prev_cpu_div, cpu_div_steps, double_speed);
         self.tick_steps(prev_dot_div, dot_div_steps, double_speed);
+        self.quiet_dots = self.predict_quiet_dots();
+    }
+
+    /// Predict intervals where the square/wave staged outputs are constant. DIV
+    /// edges are checked separately against the caller's CPU-domain divider.
+    fn predict_quiet_dots(&self) -> u16 {
+        if self.mhz2_residual != 0
+            || self.sweep_tick_pending()
+            || self.ch1.output_pipeline.0 != u32::from(self.ch1.compute_output()) * 0x01_0101
+            || self.ch2.output_pipeline.0 != u32::from(self.ch2.compute_output()) * 0x01_0101
+            || self.ch3.output_pipeline.0 != u32::from(self.ch3.compute_output()) * 0x01_0101
+        {
+            return 0;
+        }
+        if self.nr52 & 0x80 == 0 {
+            return u16::MAX;
+        }
+        if self.ch1_restart_hold != 0
+            || self.ch1_restart_hold_skip
+            || self.wave_prestep_deficit != 0
+            || self.ch3.delay != 0
+            || self.ch3.wave_ram_state != 0
+            || self.ch3.bugged_read_countdown != 0
+        {
+            return 0;
+        }
+        let mut ticks = i32::from(u16::MAX / 2);
+        if self.ch1.enabled && self.ch1.dac_enabled {
+            ticks = ticks.min(self.ch1.sample_countdown);
+        }
+        if self.ch2.enabled && self.ch2.dac_enabled {
+            ticks = ticks.min(self.ch2.sample_countdown);
+        }
+        if self.ch3.enabled && self.ch3.dac_enabled {
+            ticks = ticks.min(self.ch3.sample_countdown);
+        }
+        (ticks.max(0) * 2) as u16
+    }
+
+    fn advance_quiet(&mut self, dots: u16) {
+        self.quiet_dots -= dots;
+        let ticks = i32::from(dots / 2);
+        if self.nr52 & 0x80 != 0 {
+            self.lf_div ^= (ticks & 1) as u8;
+            for ch in [&mut self.ch1, &mut self.ch2] {
+                ch.just_reloaded = false;
+                if ch.enabled && ch.dac_enabled {
+                    ch.delay = 0;
+                    ch.sample_countdown -= ticks;
+                }
+            }
+            self.ch3.tick_count = 0;
+            self.ch3.did_tick = false;
+            self.ch3.wave_position.set(self.ch3.current_sample_index);
+            self.ch3
+                .wave_ram_access_index
+                .set(self.ch3.current_sample_index >> 1);
+            self.ch3.wave_form_just_read.set(false);
+            let wave_active = self.ch3.enabled && self.ch3.dac_enabled;
+            self.ch3.wave_ram_locked.set(wave_active);
+            if !wave_active {
+                self.ch3.sample_suppressed.set(true);
+                self.ch3.pending_reset = false;
+            }
+            self.ch3.sample_countdown = (self.ch3.sample_countdown - ticks).max(0);
+            self.ch3.timer = self.ch3.sample_countdown;
+            // Noise's small prescaler often expires every M-cycle. Keeping it
+            // independent avoids rebuilding the square/wave deadline each time.
+            self.clock_noise_channel_2mhz(ticks);
+        }
+        // Sampling still precedes the noise pipeline shift, as in step(). The
+        // square/wave pipelines are settled and cannot change in this interval.
+        self.cpu_cycles = self.cpu_cycles.wrapping_add(u64::from(dots));
+        self.advance_sample_clock(dots);
+        self.ch4.tick_1mhz_batch(dots);
+        self.lf_div_counter = self.lf_div_counter.wrapping_add(u64::from(dots));
+        self.sweep_dot_countdown = 0;
+        self.mark_pcm_dirty();
+        self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
     }
 
     /// Advance the audio sample pipeline by `cycles` CPU cycles.
     pub fn step(&mut self, cycles: u16) {
-        let rate = self.sample_rate as u64;
-        let sample_period = CPU_CLOCK_HZ as u64;
-        let emit_audio = self.audio_out.is_some();
+        self.quiet_dots = 0;
         // Advance square channels at 2 MHz: 1 tick per 2 CPU cycles (accumulated)
         self.mhz2_residual += cycles as i32;
         let ticks_2mhz = self.mhz2_residual / 2;
@@ -3534,8 +3641,15 @@ impl Apu {
         }
         self.cpu_cycles = self.cpu_cycles.wrapping_add(cycles as u64);
 
+        self.advance_sample_clock(cycles);
+    }
+
+    #[inline(always)]
+    fn advance_sample_clock(&mut self, cycles: u16) {
+        let rate = self.sample_rate as u64;
+        let sample_period = CPU_CLOCK_HZ as u64;
         self.sample_timer_accum += rate * cycles as u64;
-        if !emit_audio {
+        if self.audio_out.is_none() {
             self.sample_timer_accum %= sample_period;
             return;
         }
@@ -3857,6 +3971,222 @@ impl Default for Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_same_apu_state(actual: &Apu, expected: &Apu) {
+        macro_rules! check {
+            ($($field:ident),* $(,)?) => { $(
+                assert_eq!(actual.$field, expected.$field, stringify!($field));
+            )* };
+        }
+        check!(
+            ch1,
+            ch2,
+            ch3,
+            ch4,
+            wave_ram,
+            nr50,
+            nr51,
+            nr52,
+            sequencer,
+            sample_rate,
+            sample_timer_accum,
+            pcm_samples,
+            pcm_active,
+            pcm_mask,
+            speed_factor,
+            hp_coef,
+            hp_prev_input_left,
+            hp_prev_output_left,
+            hp_prev_input_right,
+            hp_prev_output_right,
+            pcm12,
+            pcm34,
+            pcm_dirty,
+            pcm12_ch1_glitch_once,
+            regs,
+            cpu_cycles,
+            lf_div_counter,
+            ch1_env_clock,
+            ch2_env_clock,
+            ch4_env_clock,
+            div_divider,
+            ch1_env_countdown,
+            ch2_env_countdown,
+            lf_div,
+            double_speed,
+            ch1_last_env_write_cycle,
+            apu_enable_tick,
+            mhz2_residual,
+            wave_prestep_deficit,
+            model,
+            skip_div_event,
+            sweep_countdown,
+            sweep_dot_countdown,
+            sweep_calc_countdown,
+            sweep_calc_reload_timer,
+            sweep_shadow_freq,
+            sweep_addend,
+            sweep_completed_addend,
+            sweep_unshifted,
+            sweep_instant_calc_done,
+            ch1_restart_hold,
+            ch1_restart_hold_skip,
+            sweep_neg_used
+        );
+    }
+
+    #[test]
+    fn quiet_intervals_match_full_stepping() {
+        for model in [
+            Model::Dmg(DmgRevision::Rev0),
+            Model::Dmg(DmgRevision::RevA),
+            Model::Dmg(DmgRevision::RevB),
+            Model::Dmg(DmgRevision::RevC),
+            Model::Cgb(CgbRevision::Rev0),
+            Model::Cgb(CgbRevision::RevA),
+            Model::Cgb(CgbRevision::RevB),
+            Model::Cgb(CgbRevision::RevC),
+            Model::Cgb(CgbRevision::RevD),
+            Model::Cgb(CgbRevision::RevE),
+        ] {
+            for rate in [0, 48_000, 96_000] {
+                let mut actual = Apu::new(model);
+                let mut expected = Apu::new(model);
+                let consumers = if rate == 0 {
+                    actual.set_sample_rate(0);
+                    expected.set_sample_rate(0);
+                    None
+                } else {
+                    Some((actual.enable_output(rate), expected.enable_output(rate)))
+                };
+                let mut cpu_div = 0xfff0u16;
+                let mut dot_div = 0xfff0u16;
+                let mut random = 0x12345678u32;
+                let mut quiet_steps = 0;
+                for iteration in 0..30_000 {
+                    let double_speed = model.is_cgb() && iteration / 997 % 2 != 0;
+                    if iteration % 4096 == 0 {
+                        for apu in [&mut actual, &mut expected] {
+                            apu.write_reg(0xff26, 0);
+                            apu.write_reg_with_div(0xff26, 0x80, cpu_div, double_speed);
+                            for (addr, value) in [
+                                (0xff24, 0x77),
+                                (0xff25, 0xff),
+                                (0xff10, 0x21),
+                                (0xff11, 0x80),
+                                (0xff12, 0xa3),
+                                (0xff13, 0x32),
+                                (0xff14, 0x83),
+                                (0xff16, 0x40),
+                                (0xff17, 0x59),
+                                (0xff18, 0x51),
+                                (0xff19, 0x85),
+                                (0xff1a, 0x80),
+                                (0xff1c, 0x20),
+                                (0xff1d, 0x23),
+                                (0xff1e, 0x86),
+                                (0xff21, 0x93),
+                                (0xff22, 0x37),
+                                (0xff23, 0x80),
+                            ] {
+                                apu.write_reg(addr, value);
+                            }
+                            for index in 0..16 {
+                                apu.write_reg(0xff30 + index, (index * 17) as u8);
+                            }
+                        }
+                    }
+                    if iteration % 4096 == 3840 {
+                        actual.write_reg(0xff26, 0);
+                        expected.write_reg(0xff26, 0);
+                    }
+                    if iteration % 257 == 256 {
+                        // Deterministic writes exercise sweep/envelope changes,
+                        // retriggers, wave RAM collisions, and DAC/power gating.
+                        random ^= random << 13;
+                        random ^= random >> 17;
+                        random ^= random << 5;
+                        let addr = 0xff10 + (random % 0x30) as u16;
+                        let value = (random >> 16) as u8;
+                        actual.write_reg_with_div(addr, value, cpu_div, double_speed);
+                        expected.write_reg_with_div(addr, value, cpu_div, double_speed);
+                    }
+                    if iteration % 521 == 520 {
+                        actual.on_div_reset(cpu_div, double_speed);
+                        expected.on_div_reset(cpu_div, double_speed);
+                        cpu_div = 0;
+                    }
+                    if iteration % 127 == 126 {
+                        let addr = 0xff30 + (iteration % 16) as u16;
+                        assert_eq!(actual.read_reg(addr), expected.read_reg(addr));
+                        assert_eq!(actual.read_reg(0xff26), expected.read_reg(0xff26));
+                    }
+                    if iteration % 701 == 700 {
+                        // The standalone clocks used during speed-switch stalls
+                        // must invalidate predictions made by the combined API.
+                        actual.step(1);
+                        expected.step(1);
+                        actual.tick_steps(dot_div, 1, double_speed);
+                        expected.tick_steps(dot_div, 1, double_speed);
+                        actual.tick_frame_sequencer_steps(cpu_div, 8192, double_speed);
+                        expected.tick_frame_sequencer_steps(cpu_div, 8192, double_speed);
+                    }
+                    if iteration % 1597 == 1596 {
+                        let next_rate = if iteration & 1 == 0 { rate } else { 32_768 };
+                        actual.set_sample_rate(next_rate);
+                        expected.set_sample_rate(next_rate);
+                    }
+                    let dots = if iteration % 101 == 100 {
+                        [0, 1, 3, 255, 8192][iteration / 101 % 5]
+                    } else {
+                        [2, 4, 4, 8, 2, 6, 12, 16][iteration % 8]
+                    };
+                    // Include independently frozen dividers, as during STOP,
+                    // and unequal clock-domain increments in the public API.
+                    let cpu_steps = if iteration % 73 == 72 {
+                        0
+                    } else {
+                        dots * if double_speed { 2 } else { 1 }
+                    };
+                    let dot_steps = if iteration % 79 == 78 { dots / 2 } else { dots };
+                    let before = actual.quiet_dots;
+                    actual.run_cpu_tick_steps(
+                        dots,
+                        cpu_div,
+                        cpu_steps,
+                        dot_div,
+                        dot_steps,
+                        double_speed,
+                    );
+                    expected.step(dots);
+                    expected.tick_frame_sequencer_steps(cpu_div, cpu_steps, double_speed);
+                    expected.tick_steps(dot_div, dot_steps, double_speed);
+                    if dots != 0 && before.checked_sub(dots) == Some(actual.quiet_dots) {
+                        quiet_steps += 1;
+                    }
+                    cpu_div = cpu_div.wrapping_add(cpu_steps);
+                    dot_div = dot_div.wrapping_add(dot_steps);
+                    assert_same_apu_state(&actual, &expected);
+                    assert_eq!(actual.read_pcm(0xff76), expected.read_pcm(0xff76));
+                    assert_eq!(actual.read_pcm(0xff77), expected.read_pcm(0xff77));
+                    assert_same_apu_state(&actual, &expected);
+                    if let Some((actual_audio, expected_audio)) = &consumers {
+                        loop {
+                            let sample = actual_audio.pop_stereo();
+                            assert_eq!(sample, expected_audio.pop_stereo());
+                            if sample.is_none() {
+                                break;
+                            }
+                        }
+                    }
+                }
+                assert!(
+                    quiet_steps > 100,
+                    "deadline path not exercised: {model:?}, {rate}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn packed_pipeline_matches_individual_latches() {
