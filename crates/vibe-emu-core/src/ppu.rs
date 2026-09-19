@@ -7798,6 +7798,111 @@ impl Ppu {
     }
 
     fn render_cgb_bg_window_scanline_with_mode3_lcdc(&mut self) {
+        if self.mode3_lcdc_event_count == 0
+            && self.mode3_scx_event_count == 0
+            && self.mode3_scy_event_count == 0
+            && self.mode3_wx_event_count == 0
+            && self.mode3_wy_event_count == 0
+        {
+            if self.sprite_count > 0 {
+                self.render_cgb_static_scanline::<true>();
+            } else {
+                self.render_cgb_static_scanline::<false>();
+            }
+        } else {
+            self.render_cgb_bg_window_scanline_fetcher();
+        }
+    }
+
+    fn render_cgb_static_scanline<const TRACK_PRIORITY: bool>(&mut self) {
+        let lcdc = self.mode3_lcdc_base;
+        let row_base = self.ly as usize * SCREEN_WIDTH;
+        let window_start = if lcdc & 0x20 != 0 && self.ly >= self.wy && self.wx <= WINDOW_X_MAX {
+            usize::from(self.wx.saturating_sub(7))
+        } else {
+            SCREEN_WIDTH
+        };
+        if TRACK_PRIORITY {
+            self.cgb_line_obj_enabled.fill(lcdc & 0x02 != 0);
+        }
+        let bg_map = if lcdc & 0x08 != 0 {
+            BG_MAP_1_BASE
+        } else {
+            BG_MAP_0_BASE
+        };
+        self.render_cgb_static_span::<TRACK_PRIORITY>(
+            0..window_start,
+            row_base,
+            bg_map,
+            self.scx,
+            self.ly.wrapping_add(self.scy),
+        );
+        if window_start < SCREEN_WIDTH {
+            let win_map = if lcdc & 0x40 != 0 {
+                BG_MAP_1_BASE
+            } else {
+                BG_MAP_0_BASE
+            };
+            // Match the existing CGB fetcher: WX <= 7 starts with window pixel
+            // zero, and activating the window discards BG fine-scroll/fifo data.
+            self.render_cgb_static_span::<TRACK_PRIORITY>(
+                window_start..SCREEN_WIDTH,
+                row_base,
+                win_map,
+                0,
+                self.win_line_counter,
+            );
+            self.win_line_counter = self.win_line_counter.wrapping_add(1);
+        }
+    }
+
+    fn render_cgb_static_span<const TRACK_PRIORITY: bool>(
+        &mut self,
+        screen: std::ops::Range<usize>,
+        row_base: usize,
+        map_base: usize,
+        mut source_x: u8,
+        source_y: u8,
+    ) {
+        let mut x = screen.start;
+        let map_row = map_base + usize::from(source_y / 8) * 32;
+        while x < screen.end {
+            let tile_x = usize::from(source_x & 7);
+            let map_addr = map_row + usize::from(source_x / 8);
+            let tile = self.vram_read_for_render(0, map_addr);
+            let attr = self.vram_read_for_render(1, map_addr);
+            let tile_y = usize::from(if attr & 0x40 != 0 {
+                7 - (source_y & 7)
+            } else {
+                source_y & 7
+            });
+            let bank = usize::from((attr >> 3) & 1);
+            let addr =
+                Self::bg_tile_row_plane_addr(tile, tile_y, self.mode3_lcdc_base & 0x10 != 0, false);
+            let lo = self.vram_read_for_render(bank, addr);
+            let hi = self.vram_read_for_render(bank, addr + 1);
+            let palette = usize::from(attr & 7) * 4;
+            let run = (8 - tile_x).min(screen.end - x);
+            for offset in 0..run {
+                let bit = if attr & 0x20 != 0 {
+                    tile_x + offset
+                } else {
+                    7 - tile_x - offset
+                };
+                let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                self.framebuffer[row_base + x + offset] =
+                    self.cgb_bg_color_table[palette + usize::from(color_id)];
+                if TRACK_PRIORITY {
+                    self.line_priority[x + offset] = attr & 0x80 != 0;
+                    self.line_color_zero[x + offset] = color_id == 0;
+                }
+            }
+            source_x = source_x.wrapping_add(run as u8);
+            x += run;
+        }
+    }
+
+    fn render_cgb_bg_window_scanline_fetcher(&mut self) {
         use std::collections::VecDeque;
 
         #[derive(Clone, Copy)]
@@ -8239,6 +8344,66 @@ impl Default for Ppu {
 #[cfg(test)]
 mod mode3_timing_tests {
     use super::*;
+
+    #[test]
+    fn cgb_static_spans_match_dot_fetcher() {
+        let mut actual = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        let mut expected = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        let mut random = 0x12345678u32;
+        for byte in actual.vram.iter_mut().flatten() {
+            random ^= random << 13;
+            random ^= random >> 17;
+            random ^= random << 5;
+            *byte = random as u8;
+        }
+        expected.vram = actual.vram;
+        for ppu in [&mut actual, &mut expected] {
+            for (i, color) in ppu.cgb_bg_color_table.iter_mut().enumerate() {
+                *color = (i as u32 + 1) * 0x010203;
+            }
+        }
+        // Every SCX/WX combination, both tile addressing modes and maps,
+        // all palette/flip/priority attributes, VRAM banks, and blocked VRAM.
+        for lcdc in [0x83, 0xb3, 0xe7, 0xff] {
+            for window_visible in [false, true] {
+                for scx in 0..=255u8 {
+                    for wx in 0..=255u8 {
+                        for ppu in [&mut actual, &mut expected] {
+                            ppu.mode3_lcdc_base = lcdc;
+                            ppu.lcdc = lcdc;
+                            ppu.scx = scx;
+                            ppu.scy = scx.wrapping_mul(17).wrapping_add(wx);
+                            ppu.wx = wx;
+                            ppu.ly = scx % 144;
+                            ppu.wy = if window_visible { ppu.ly } else { ppu.ly + 1 };
+                            ppu.win_line_counter = wx.wrapping_add(scx);
+                            ppu.sprite_count = usize::from(scx & 1);
+                            ppu.line_sprites[0].x = -4;
+                            ppu.render_vram_blocked = scx % 17 == 0;
+                            ppu.mode3_target_cycles = MODE3_CYCLES;
+                            ppu.line_priority.fill(true);
+                            ppu.line_color_zero.fill(false);
+                            ppu.cgb_line_obj_enabled.fill(false);
+                            let row = usize::from(ppu.ly) * SCREEN_WIDTH;
+                            ppu.framebuffer[row..row + SCREEN_WIDTH].fill(0xdeadbeef);
+                        }
+                        actual.render_cgb_bg_window_scanline_with_mode3_lcdc();
+                        expected.render_cgb_bg_window_scanline_fetcher();
+                        let row = usize::from(actual.ly) * SCREEN_WIDTH;
+                        assert_eq!(
+                            actual.framebuffer[row..row + SCREEN_WIDTH],
+                            expected.framebuffer[row..row + SCREEN_WIDTH],
+                            "LCDC={lcdc:02x} SCX={scx} WX={wx}"
+                        );
+                        assert_eq!(actual.line_priority, expected.line_priority);
+                        assert_eq!(actual.line_color_zero, expected.line_color_zero);
+                        assert_eq!(actual.cgb_line_obj_enabled, expected.cgb_line_obj_enabled);
+                        assert_eq!(actual.win_line_counter, expected.win_line_counter);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn cgb_transfer_batch_matches_original_dot_path() {
