@@ -55,6 +55,34 @@ const CPU_CLOCK_HZ: u32 = 4_194_304;
 // 512 Hz frame sequencer tick (not doubled in CGB mode)
 const FRAME_SEQUENCER_PERIOD: u32 = 8192;
 const VOLUME_FACTOR: i16 = 64;
+
+/// Three byte-wide sample latches, newest in the low byte. Packing them makes
+/// each pipeline advance a single word load/store on 32-bit hosts as well.
+#[derive(Default)]
+struct OutputPipeline(u32);
+
+impl OutputPipeline {
+    #[inline]
+    fn advance(&mut self, sample: u8, ticks: u16) {
+        let sample = u32::from(sample);
+        self.0 = match ticks {
+            0 => self.0,
+            1 => ((self.0 << 8) | sample) & 0xFF_FFFF,
+            2 => ((self.0 << 16) | (sample * 0x0101)) & 0xFF_FFFF,
+            _ => sample * 0x01_0101,
+        };
+    }
+
+    #[inline]
+    fn fill(&mut self, sample: u8) {
+        self.0 = u32::from(sample) * 0x01_0101;
+    }
+
+    #[inline]
+    fn sample(&self) -> u8 {
+        (self.0 >> 16) as u8
+    }
+}
 /// Target audio latency in milliseconds used to size the output ring buffer.
 pub const AUDIO_LATENCY_MS: u32 = 40;
 // Audio sample pipeline delay is computed dynamically when a channel is
@@ -220,9 +248,7 @@ struct SquareChannel {
     sample_surpressed: bool,
     just_reloaded: bool,
     did_tick: bool,
-    out_latched: u8,
-    out_stage1: u8,
-    out_stage2: u8,
+    output_pipeline: OutputPipeline,
 }
 
 impl SquareChannel {
@@ -362,9 +388,7 @@ impl SquareChannel {
 
     /// Shift the 1 MHz staging pipeline by one step.
     ///
-    /// `out_latched` captures the most recent duty output, `out_stage1` reflects the
-    /// intermediate step, and `out_stage2` is the latched value consumed by the mixer
-    /// (third-stage output produced by the pipeline).
+    /// The third stage is the delayed sample consumed by the mixer.
     fn tick_1mhz(&mut self) {
         let sample = self.compute_output();
         self.tick_1mhz_with_sample(sample);
@@ -372,9 +396,7 @@ impl SquareChannel {
 
     #[inline]
     fn tick_1mhz_with_sample(&mut self, sample: u8) {
-        self.out_stage2 = self.out_stage1;
-        self.out_stage1 = self.out_latched;
-        self.out_latched = sample;
+        self.output_pipeline.advance(sample, 1);
     }
 
     fn tick_1mhz_batch(&mut self, ticks: u16) {
@@ -382,30 +404,11 @@ impl SquareChannel {
             return;
         }
         let sample = self.compute_output();
-        match ticks {
-            1 => self.tick_1mhz_with_sample(sample),
-            2 => {
-                self.out_stage2 = self.out_latched;
-                self.out_stage1 = sample;
-                self.out_latched = sample;
-            }
-            _ => {
-                self.out_stage2 = sample;
-                self.out_stage1 = sample;
-                self.out_latched = sample;
-            }
-        }
-    }
-
-    #[inline]
-    fn can_skip_1mhz_batch(&self) -> bool {
-        let pipeline_flushed =
-            self.out_latched == 0 && self.out_stage1 == 0 && self.out_stage2 == 0;
-        pipeline_flushed && (!self.enabled || !self.dac_enabled || self.sample_surpressed)
+        self.output_pipeline.advance(sample, ticks);
     }
 
     fn current_sample(&self) -> u8 {
-        self.out_stage2
+        self.output_pipeline.sample()
     }
 
     #[inline]
@@ -497,9 +500,7 @@ struct WaveChannel {
     wave_shadow: [u8; 0x10],
     wave_ram_state: u16,
     tick_count: u8,
-    out_latched: u8,
-    out_stage1: u8,
-    out_stage2: u8,
+    output_pipeline: OutputPipeline,
 }
 
 impl Default for WaveChannel {
@@ -530,9 +531,7 @@ impl Default for WaveChannel {
             wave_shadow: [0; 0x10],
             wave_ram_state: 0,
             tick_count: 0,
-            out_latched: 0,
-            out_stage1: 0,
-            out_stage2: 0,
+            output_pipeline: OutputPipeline::default(),
         }
     }
 }
@@ -555,9 +554,7 @@ impl WaveChannel {
     }
 
     fn set_pipeline_sample(&mut self, sample: u8) {
-        self.out_latched = sample;
-        self.out_stage1 = sample;
-        self.out_stage2 = sample;
+        self.output_pipeline.fill(sample);
     }
 
     fn tick_1mhz(&mut self) {
@@ -567,9 +564,7 @@ impl WaveChannel {
 
     #[inline]
     fn tick_1mhz_with_sample(&mut self, sample: u8) {
-        self.out_stage2 = self.out_stage1;
-        self.out_stage1 = self.out_latched;
-        self.out_latched = sample;
+        self.output_pipeline.advance(sample, 1);
     }
 
     fn tick_1mhz_batch(&mut self, ticks: u16) {
@@ -577,31 +572,11 @@ impl WaveChannel {
             return;
         }
         let sample = self.compute_output();
-        match ticks {
-            1 => self.tick_1mhz_with_sample(sample),
-            2 => {
-                self.out_stage2 = self.out_latched;
-                self.out_stage1 = sample;
-                self.out_latched = sample;
-            }
-            _ => {
-                self.out_stage2 = sample;
-                self.out_stage1 = sample;
-                self.out_latched = sample;
-            }
-        }
-    }
-
-    #[inline]
-    fn can_skip_1mhz_batch(&self) -> bool {
-        if !(self.out_latched == 0 && self.out_stage1 == 0 && self.out_stage2 == 0) {
-            return false;
-        }
-        !self.enabled || !self.dac_enabled || self.sample_suppressed.get() || self.shift >= 4
+        self.output_pipeline.advance(sample, ticks);
     }
 
     fn current_sample(&self) -> u8 {
-        self.out_stage2
+        self.output_pipeline.sample()
     }
 
     fn step(&mut self, cycles: u32, wave_ram: &[u8; 0x10]) {
@@ -741,9 +716,7 @@ struct NoiseChannel {
     volume_countdown: u8,
     current_volume: u8,
     envelope_clock: EnvelopeClock,
-    out_latched: u8,
-    out_stage1: u8,
-    out_stage2: u8,
+    output_pipeline: OutputPipeline,
 }
 
 impl NoiseChannel {
@@ -789,9 +762,7 @@ impl NoiseChannel {
     }
 
     fn set_pipeline_sample(&mut self, sample: u8) {
-        self.out_latched = sample;
-        self.out_stage1 = sample;
-        self.out_stage2 = sample;
+        self.output_pipeline.fill(sample);
     }
 
     fn tick_1mhz(&mut self) {
@@ -801,9 +772,7 @@ impl NoiseChannel {
 
     #[inline]
     fn tick_1mhz_with_sample(&mut self, sample: u8) {
-        self.out_stage2 = self.out_stage1;
-        self.out_stage1 = self.out_latched;
-        self.out_latched = sample;
+        self.output_pipeline.advance(sample, 1);
     }
 
     fn tick_1mhz_batch(&mut self, ticks: u16) {
@@ -811,31 +780,11 @@ impl NoiseChannel {
             return;
         }
         let sample = self.compute_output();
-        match ticks {
-            1 => self.tick_1mhz_with_sample(sample),
-            2 => {
-                self.out_stage2 = self.out_latched;
-                self.out_stage1 = sample;
-                self.out_latched = sample;
-            }
-            _ => {
-                self.out_stage2 = sample;
-                self.out_stage1 = sample;
-                self.out_latched = sample;
-            }
-        }
-    }
-
-    #[inline]
-    fn can_skip_1mhz_batch(&self) -> bool {
-        if !(self.out_latched == 0 && self.out_stage1 == 0 && self.out_stage2 == 0) {
-            return false;
-        }
-        !self.enabled || !self.dac_enabled || self.sample_suppressed
+        self.output_pipeline.advance(sample, ticks);
     }
 
     fn current_sample(&self) -> u8 {
-        self.out_stage2
+        self.output_pipeline.sample()
     }
 
     fn output(&self) -> u8 {
@@ -2193,12 +2142,8 @@ impl Apu {
                     if self.nr52 & 0x80 == 0 {
                         // On 0->1 transition, reset internal timing/pipelines to match hardware startup state.
                         self.lf_div = 1;
-                        self.ch1.out_latched = 0;
-                        self.ch1.out_stage1 = 0;
-                        self.ch1.out_stage2 = 0;
-                        self.ch2.out_latched = 0;
-                        self.ch2.out_stage1 = 0;
-                        self.ch2.out_stage2 = 0;
+                        self.ch1.output_pipeline.fill(0);
+                        self.ch2.output_pipeline.fill(0);
                         self.ch3.set_pipeline_sample(0);
                         self.ch4.set_pipeline_sample(0);
                         self.ch4.sample_suppressed = true;
@@ -2321,18 +2266,12 @@ impl Apu {
                 let level = DUTY_TABLE[ch.duty as usize][ch.duty_pos as usize];
                 let sample = level * ch.envelope.volume;
                 if was_active || force_unsurpressed {
-                    ch.out_latched = sample;
-                    ch.out_stage1 = sample;
-                    ch.out_stage2 = sample;
+                    ch.output_pipeline.fill(sample);
                 } else if !was_active {
-                    ch.out_latched = 0;
-                    ch.out_stage1 = 0;
-                    ch.out_stage2 = 0;
+                    ch.output_pipeline.fill(0);
                 }
             } else {
-                ch.out_latched = 0;
-                ch.out_stage1 = 0;
-                ch.out_stage2 = 0;
+                ch.output_pipeline.fill(0);
             }
 
             let mut new_timer = ch.period();
@@ -2812,18 +2751,7 @@ impl Apu {
             return;
         }
         if !self.sweep_tick_pending() {
-            if !self.ch1.can_skip_1mhz_batch() {
-                self.ch1.tick_1mhz_batch(ticks);
-            }
-            if !self.ch2.can_skip_1mhz_batch() {
-                self.ch2.tick_1mhz_batch(ticks);
-            }
-            if !self.ch3.can_skip_1mhz_batch() {
-                self.ch3.tick_1mhz_batch(ticks);
-            }
-            if !self.ch4.can_skip_1mhz_batch() {
-                self.ch4.tick_1mhz_batch(ticks);
-            }
+            self.tick_output_pipelines(ticks);
 
             self.lf_div_counter = self.lf_div_counter.wrapping_add(ticks as u64);
             self.sweep_dot_countdown = 0;
@@ -2835,6 +2763,26 @@ impl Apu {
         self.mark_pcm_dirty();
         // cpu_cycles remains a CPU cycle counter for timers and IRQs.
         self.cpu_cycles = self.cpu_cycles.wrapping_add(1);
+    }
+
+    #[inline]
+    fn tick_output_pipelines(&mut self, ticks: u16) {
+        // All four channels share the staging clock. Dispatch once so the
+        // per-channel shifts are constants, including complete pipeline flushes.
+        match ticks {
+            0 => {}
+            1 => self.tick_output_pipelines_fixed::<1>(),
+            2 => self.tick_output_pipelines_fixed::<2>(),
+            _ => self.tick_output_pipelines_fixed::<3>(),
+        }
+    }
+
+    #[inline]
+    fn tick_output_pipelines_fixed<const TICKS: u16>(&mut self) {
+        self.ch1.tick_1mhz_batch(TICKS);
+        self.ch2.tick_1mhz_batch(TICKS);
+        self.ch3.tick_1mhz_batch(TICKS);
+        self.ch4.tick_1mhz_batch(TICKS);
     }
 
     #[inline(never)]
@@ -2856,18 +2804,7 @@ impl Apu {
 
             // Within each chunk, channel state is constant with respect to 1 MHz
             // pipeline sampling; only pipeline registers shift.
-            if !self.ch1.can_skip_1mhz_batch() {
-                self.ch1.tick_1mhz_batch(chunk);
-            }
-            if !self.ch2.can_skip_1mhz_batch() {
-                self.ch2.tick_1mhz_batch(chunk);
-            }
-            if !self.ch3.can_skip_1mhz_batch() {
-                self.ch3.tick_1mhz_batch(chunk);
-            }
-            if !self.ch4.can_skip_1mhz_batch() {
-                self.ch4.tick_1mhz_batch(chunk);
-            }
+            self.tick_output_pipelines(chunk);
 
             self.lf_div_counter = self.lf_div_counter.wrapping_add(chunk as u64);
             remaining -= chunk;
@@ -3922,6 +3859,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn packed_pipeline_matches_individual_latches() {
+        // Exhaust every valid starting combination of the three 4-bit DAC
+        // samples, including transitions to silence and partial flushes.
+        for latched in 0..16u32 {
+            for stage1 in 0..16u32 {
+                for stage2 in 0..16u32 {
+                    for sample in 0..16u8 {
+                        for ticks in [0, 1, 2, 3, 4, 255, u16::MAX] {
+                            let mut reference = [latched as u8, stage1 as u8, stage2 as u8];
+                            let mut packed = OutputPipeline(latched | stage1 << 8 | stage2 << 16);
+                            for _ in 0..ticks.min(3) {
+                                reference = [sample, reference[0], reference[1]];
+                            }
+                            packed.advance(sample, ticks);
+                            assert_eq!(packed.0.to_le_bytes()[..3], reference);
+                            assert_eq!(packed.sample(), reference[2]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn dc_filter_reduces_constant_input() {
         let mut apu = Apu::new(Model::default());
         let first = apu.dc_block(1000, 1000);
@@ -3962,7 +3923,7 @@ mod tests {
         apu.nr51 = 0x11;
         apu.ch1.enabled = true;
         apu.ch1.dac_enabled = true;
-        apu.ch1.out_latched = 15;
+        apu.ch1.output_pipeline.0 = 15;
         let _ = apu.mix_output();
 
         apu.ch1.dac_enabled = false;
@@ -3981,9 +3942,9 @@ mod tests {
         apu.nr51 = 0x11;
         apu.ch1.enabled = true;
         apu.ch1.dac_enabled = true;
-        apu.ch1.out_latched = 15;
+        apu.ch1.output_pipeline.0 = 15;
         let (first, _) = apu.mix_output();
-        apu.ch1.out_latched = 15;
+        apu.ch1.output_pipeline.0 = 15;
         let (second, _) = apu.mix_output();
         assert!(second.abs() < first.abs());
     }

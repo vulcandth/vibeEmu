@@ -232,6 +232,9 @@ sampling and optional scanline/LCD grid effects.
 
 ## Testing
 
+For core profiling, repeatable performance comparisons, and the 3DS optimization
+roadmap, see [PERFORMANCE.md](PERFORMANCE.md).
+
 Unit tests for the emulation core can be executed with:
 
 ```bash

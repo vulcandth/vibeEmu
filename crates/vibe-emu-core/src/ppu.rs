@@ -6370,10 +6370,27 @@ impl Ppu {
         }
     }
 
+    /// Next native-CGB OBJ latch or end-of-transfer housekeeping dot.
+    fn next_cgb_transfer_event(&self) -> u16 {
+        let end = self.mode3_target_cycles.saturating_sub(1);
+        if self.mode3_sprite_latch_index >= self.sprite_count {
+            return end;
+        }
+        // OPRI can leave sprites in OAM order rather than X order. Consult
+        // exactly the next entry the dot path would inspect, without sorting.
+        let sprite = self.line_sprites[self.mode3_sprite_latch_index];
+        let raw_x = (sprite.x + 8).clamp(0, 255) as u16;
+        if raw_x == 0 { 1 } else { (raw_x + 8).min(end) }
+    }
+
     /// Advance the PPU by `cycles` dot cycles.
     ///
-    /// Returns `true` when a new frame has been completed.
+    /// Returns `true` when HBlank begins (the HDMA transfer boundary).
     pub fn step(&mut self, cycles: u16, if_reg: &mut u8) -> bool {
+        self.step_inner::<true>(cycles, if_reg)
+    }
+
+    fn step_inner<const BATCH_TRANSFER: bool>(&mut self, cycles: u16, if_reg: &mut u8) -> bool {
         let mut remaining = cycles;
         if self.boot_hold_cycles > 0 {
             let consume = remaining.min(self.boot_hold_cycles);
@@ -6392,6 +6409,27 @@ impl Ppu {
             && (self.cgb() || self.dmg_startup_cycle.is_none())
         {
             match self.mode {
+                MODE_TRANSFER
+                    if BATCH_TRANSFER
+                        && self.is_cgb_native_mode()
+                        && self.mode3_lcdc_event_count == 0
+                        && !(1..=0xA0).contains(&self.oam_dma_current_dest)
+                        && self.mode_clock.saturating_add(remaining)
+                            < self.next_cgb_transfer_event() =>
+                {
+                    // Native CGB uses a scanline renderer, not the DMG FIFO.
+                    // Between OBJ attribute latches there is no observable work.
+                    // Register writes, STAT delays and DMA stay on the dot path;
+                    // the end-of-transfer fallback also latches offscreen OBJs.
+                    // A stable LCDC also leaves the DMG size-capture array equal
+                    // to its line initialization, even if KEY0 changes modes later.
+                    self.mode_clock += remaining;
+                    #[cfg(feature = "ppu-trace")]
+                    if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+                        *timer += remaining as u64;
+                    }
+                    return false;
+                }
                 MODE_HBLANK => {
                     let target = self.mode0_target_cycles;
                     if !self.dmg_hblank_render_pending {
@@ -8201,6 +8239,121 @@ impl Default for Ppu {
 #[cfg(test)]
 mod mode3_timing_tests {
     use super::*;
+
+    #[test]
+    fn cgb_transfer_batch_matches_original_dot_path() {
+        for (model, compat) in [
+            (Model::Cgb(CgbRevision::RevE), false),
+            (Model::Cgb(CgbRevision::RevC), false),
+            (Model::Cgb(CgbRevision::RevE), true),
+            (Model::default(), false),
+        ] {
+            for opri in [0, 1] {
+                let make_ppu = || {
+                    let mut ppu = Ppu::new(model);
+                    if compat {
+                        ppu.apply_dmg_compatibility_palettes();
+                    }
+                    ppu.write_reg(0xFF40, 0xF7);
+                    ppu.write_reg(0xFF6C, opri);
+                    // Include offscreen OBJs and deliberately unsorted X values.
+                    for (i, sprite) in ppu.oam.chunks_exact_mut(4).enumerate() {
+                        sprite.copy_from_slice(&[
+                            16 + (i / 10) as u8 * 8,
+                            [167, 0, 8, 80, 16, 255, 1, 80, 160, 32][i % 10],
+                            i as u8,
+                            (i as u8).wrapping_mul(37),
+                        ]);
+                    }
+                    for (i, byte) in ppu.vram.iter_mut().flatten().enumerate() {
+                        *byte = (i as u8).wrapping_mul(19).wrapping_add((i >> 8) as u8);
+                    }
+                    ppu.skip_startup_for_test();
+                    ppu
+                };
+                let mut fast = make_ppu();
+                let mut reference = make_ppu();
+                let mut fast_if = 0;
+                let mut reference_if = 0;
+                let mut dots = 0u32;
+                let mut iteration = 0usize;
+                while dots < 70_224 * 3 {
+                    // Stable periods exercise batching; bursts of writes and
+                    // DMA overlap exercise its guards, at varying dot phases.
+                    if iteration % 113 == 0 {
+                        let addr = [0xFF41, 0xFF45, 0xFF43, 0xFF42, 0xFF4A, 0xFF4B, 0xFF40]
+                            [(iteration / 113) % 7];
+                        let value = if addr == 0xFF40 {
+                            0x80 | (iteration as u8 & 0x7F)
+                        } else {
+                            iteration as u8
+                        };
+                        fast.write_reg(addr, value);
+                        reference.write_reg(addr, value);
+                    }
+                    if model.is_cgb() && iteration % 307 == 0 {
+                        let compatible = (iteration / 307) % 2 == 0;
+                        fast.set_dmg_compat_mode(compatible);
+                        reference.set_dmg_compat_mode(compatible);
+                    }
+                    let dma = iteration % 251 < 40;
+                    let dest = if dma {
+                        (iteration % 160 + 1) as u8
+                    } else {
+                        0xA1
+                    };
+                    fast.oam_dma_current_dest = dest;
+                    reference.oam_dma_current_dest = dest;
+                    if dma {
+                        let index = iteration % 160;
+                        fast.oam[index] = iteration as u8;
+                        reference.oam[index] = iteration as u8;
+                    }
+                    let cycles = [1, 2, 4, 3, 8, 7, 16, 80, 255, 456][iteration % 10];
+                    let fast_hblank = fast.step(cycles, &mut fast_if);
+                    let reference_hblank = reference.step_inner::<false>(cycles, &mut reference_if);
+                    assert_eq!(fast_hblank, reference_hblank);
+                    assert_eq!(fast_if, reference_if);
+                    assert_eq!(fast.mode_clock, reference.mode_clock);
+                    assert_eq!(fast.frame_ready(), reference.frame_ready());
+                    assert_eq!(fast.frame_counter, reference.frame_counter);
+                    assert_eq!(fast.dmg_line_obj_size_16, reference.dmg_line_obj_size_16);
+                    assert_eq!(
+                        fast.mode3_sprite_latch_index,
+                        reference.mode3_sprite_latch_index
+                    );
+                    for addr in [0xFF40, 0xFF41, 0xFF44, 0xFF45] {
+                        assert_eq!(fast.read_reg(addr), reference.read_reg(addr));
+                    }
+                    for (a, b) in fast.line_sprites.iter().zip(&reference.line_sprites) {
+                        assert_eq!(
+                            (
+                                a.tile,
+                                a.flags,
+                                a.fetched,
+                                a.obj_row_addr,
+                                a.obj_lo,
+                                a.obj_hi
+                            ),
+                            (
+                                b.tile,
+                                b.flags,
+                                b.fetched,
+                                b.obj_row_addr,
+                                b.obj_lo,
+                                b.obj_hi
+                            )
+                        );
+                    }
+                    if fast_hblank {
+                        assert_eq!(fast.framebuffer(), reference.framebuffer());
+                    }
+                    dots += u32::from(cycles);
+                    iteration += 1;
+                }
+            }
+        }
+    }
 
     #[test]
     fn stable_obj_rows_leave_dynamic_fetches_untouched() {
