@@ -677,6 +677,43 @@ impl Cpu {
         }
     }
 
+    /// Execute instructions for a dot budget, stopping at a frame or active
+    /// serial transfer. The final instruction may exceed the budget. A zero
+    /// budget does nothing; STOP/faults return after at most one step.
+    ///
+    /// CPU, timer, PPU and bus accesses retain their normal timing. APU clocks
+    /// are combined between MMIO observations and synchronized before returning.
+    /// Attached link endpoints retain instruction polling unless they opt out.
+    /// Debuggers requiring instruction boundaries should use [`Self::step`].
+    pub fn run_for_dots(&mut self, mmu: &mut crate::mmu::Mmu, dots: u16) {
+        if dots == 0 {
+            return;
+        }
+        if mmu.serial.requires_instruction_polling() {
+            self.step_with_halt_batch(mmu, dots.min(256));
+            return;
+        }
+        let target = self.cycles + u64::from(dots);
+        mmu.apu.begin_cpu_batch();
+        while self.cycles < target {
+            let before = self.cycles;
+            if self.halted {
+                self.step_with_halt_batch(mmu, (target - self.cycles) as u16);
+            } else {
+                self.step(mmu);
+            }
+            if mmu.ppu.frame_ready()
+                || mmu.serial.transfer_active()
+                || self.faulted
+                || self.stopped
+                || self.cycles == before
+            {
+                break;
+            }
+        }
+        mmu.apu.end_cpu_batch();
+    }
+
     /// Execute one instruction, or combine HALT cycles within `max_idle_dots`.
     ///
     /// Only HALT intervals without CPU-visible events are combined. The APU

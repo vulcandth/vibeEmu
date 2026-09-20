@@ -801,7 +801,11 @@ fn run_emulator_thread(
                 let prev_dot_div = mmu.dot_div;
                 // Active serial transfers retain M-cycle polling in the core.
                 // Idle batches stop before PPU events, including frame delivery.
-                cpu.step_with_halt_batch(mmu, 256);
+                if breakpoints.is_empty() {
+                    cpu.run_for_dots(mmu, 4096);
+                } else {
+                    cpu.step_with_halt_batch(mmu, 256);
+                }
                 let dot_div_delta = mmu.dot_div.wrapping_sub(prev_dot_div) as u32;
 
                 // Update cumulative timestamp for BGB protocol (2 MiHz = dot_div / 2)

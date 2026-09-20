@@ -140,3 +140,112 @@ fn halt_batches_preserve_wakeup_dma_serial_and_frame_boundaries() {
         }
     }
 }
+
+#[test]
+fn bounded_runner_matches_instructions_with_sound_mmio() {
+    for model in [Model::default(), Model::Cgb(Default::default())] {
+        for double_speed in [false, true] {
+            if model.is_dmg() && double_speed {
+                continue;
+            }
+            let make = || {
+                let mut gb = machine(model, double_speed, true);
+                let mut rom = vec![0; 0x8000];
+                for vector in [0x40, 0x48, 0x50, 0x58, 0x60] {
+                    rom[vector] = 0xd9;
+                }
+                let setup = [
+                    0x3e, 0x80, 0xe0, 0x26, 0x3e, 0x77, 0xe0, 0x24, 0x3e, 0xff, 0xe0, 0x25, 0x3e,
+                    0xf3, 0xe0, 0x12, 0x3e, 0x87, 0xe0, 0x14, 0x3e, 0x80, 0xe0, 0x1a, 0x3e, 0x20,
+                    0xe0, 0x1c, 0x3e, 0x87, 0xe0, 0x1e,
+                ];
+                rom[0x150..0x150 + setup.len()].copy_from_slice(&setup);
+                let loop_addr = 0x150 + setup.len();
+                let program = [
+                    0x3c,
+                    0xe0,
+                    0x13,
+                    0xf0,
+                    0x76,
+                    0xea,
+                    0x00,
+                    0xc0,
+                    0xf0,
+                    0x26,
+                    0xe0,
+                    0x22,
+                    0xe0,
+                    0x80,
+                    0xf0,
+                    0x30,
+                    0xcb,
+                    0x37,
+                    0x06,
+                    0x08,
+                    0x05,
+                    0x20,
+                    0xfd,
+                    0xe0,
+                    0x04,
+                    0xc3,
+                    loop_addr as u8,
+                    (loop_addr >> 8) as u8,
+                ];
+                rom[loop_addr..loop_addr + program.len()].copy_from_slice(&program);
+                gb.mmu.load_cart(Cartridge::from_bytes(rom));
+                gb
+            };
+            let mut actual = make();
+            let mut expected = make();
+            let audio = actual.mmu.apu.enable_output(48_000);
+            let reference_audio = expected.mmu.apu.enable_output(48_000);
+            for iteration in 0..2000 {
+                let budget = [0, 1, 4, 17, 256, 4096][iteration % 6];
+                actual.cpu.run_for_dots(&mut actual.mmu, budget);
+                while expected.cpu.cycles < actual.cpu.cycles {
+                    expected.cpu.step(&mut expected.mmu);
+                }
+                assert_eq!(format!("{:?}", actual.cpu), format!("{:?}", expected.cpu));
+                assert_eq!(
+                    actual.capture_boot_handoff_snapshot(),
+                    expected.capture_boot_handoff_snapshot()
+                );
+                assert_eq!(actual.mmu.ppu.framebuffer(), expected.mmu.ppu.framebuffer());
+                assert_eq!(actual.mmu.ppu.frame_ready(), expected.mmu.ppu.frame_ready());
+                loop {
+                    let sample = audio.pop_stereo();
+                    assert_eq!(sample, reference_audio.pop_stereo());
+                    if sample.is_none() {
+                        break;
+                    }
+                }
+                actual.mmu.ppu.clear_frame_flag();
+                expected.mmu.ppu.clear_frame_flag();
+            }
+        }
+    }
+}
+
+#[test]
+fn bounded_runner_preserves_external_link_polling() {
+    use vibe_emu_core::serial::{LinkPort, NullLinkPort};
+    struct ExternalPort;
+    impl LinkPort for ExternalPort {
+        fn transfer(&mut self, _: u8) -> u8 {
+            0xff
+        }
+    }
+    let mut gb = machine(Model::default(), false, false);
+    // Run NOPs rather than HALTs so multiple instructions could be combined.
+    gb.cpu.pc = 0x100;
+    gb.mmu.serial.connect(Box::new(ExternalPort));
+    gb.cpu.run_for_dots(&mut gb.mmu, 4096);
+    assert_eq!(gb.cpu.pc, 0x101);
+    assert_eq!(gb.cpu.cycles, 4);
+    gb.mmu.serial.connect(Box::new(NullLinkPort::default()));
+    gb.cpu.run_for_dots(&mut gb.mmu, 64);
+    assert!(gb.cpu.pc > 0x102);
+    let cycles = gb.cpu.cycles;
+    gb.cpu.run_for_dots(&mut gb.mmu, 0);
+    assert_eq!(gb.cpu.cycles, cycles);
+}
