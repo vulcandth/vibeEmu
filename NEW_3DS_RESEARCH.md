@@ -4,7 +4,13 @@ Implementation follow-up: [PPU configuration snapshots, cartridge bank caching,
 and square/wave reciprocal division](PERFORMANCE.md#arm-setup-caching-ppu-cartridge-and-apu)
 are now implemented and audited in ARM assembly. The findings and benchmarks
 below describe the original research revision; consult the follow-up for current
-implementation measurements and remaining targets.
+implementation measurements and remaining targets. The latest
+[FIFO/noise pass and complete main comparison](PERFORMANCE.md#fifo-and-noise-optimizations-branch-comparison-with-main)
+also removes noise batch division and broadens the instruction-budget corpus.
+Its CPU/raster stress cases still require roughly 1.8–2.2× additional speedup
+on New 3DS under the uncalibrated working assumptions. Hardware testing remains
+deferred; the current planning gate is approximately 91% speed across
+representative workloads, superseding the earlier 67% threshold.
 
 Research pass against `f0f47e4`, September 19, 2026. This pass changes
 documentation only. It adds an actual ARM assembly audit and refreshes the

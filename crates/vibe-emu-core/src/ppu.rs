@@ -6155,10 +6155,35 @@ impl Ppu {
         self.dmg_line_bgp_at_pixel[start..end].fill(self.bgp);
         // LCDC and OBJ-size captures already equal their line initialization:
         // the deadline rejects any line with an LCDC change.
-        for offset in 1..=dots {
-            let t = self.mode_clock + offset;
-            self.dmg_line_mode3_t_at_pixel[start + usize::from(offset) - 1] = t;
-            self.record_mode3_pop_event(t, self.mode3_position_in_line + offset as i16);
+        // The certified run ends before transfer housekeeping, so these times
+        // cannot need clamping. Reserve both ranges once, retaining every pop
+        // timestamp while avoiding per-pixel capacity and count updates.
+        let count = self.mode3_pop_event_count;
+        let added = usize::from(dots).min(MODE3_POP_EVENTS_MAX - count);
+        let (times, overflow_times) =
+            self.dmg_line_mode3_t_at_pixel[start..end].split_at_mut(added);
+        for (offset, (time, event)) in times
+            .iter_mut()
+            .zip(&mut self.mode3_pop_events[count..count + added])
+            .enumerate()
+        {
+            let t = self.mode_clock + offset as u16 + 1;
+            *time = t;
+            *event = Mode3PopEvent {
+                t,
+                position_in_line: self.mode3_position_in_line + offset as i16 + 1,
+            };
+        }
+        for (offset, time) in overflow_times.iter_mut().enumerate() {
+            *time = self.mode_clock + (added + offset) as u16 + 1;
+        }
+        self.mode3_pop_event_count += added;
+        if added < usize::from(dots) {
+            // Match record_mode3_pop_event's overwrite-last behavior at capacity.
+            self.mode3_pop_events[MODE3_POP_EVENTS_MAX - 1] = Mode3PopEvent {
+                t: self.mode_clock + dots,
+                position_in_line: self.mode3_position_in_line + dots as i16,
+            };
         }
         self.mode3_position_in_line += dots as i16;
         self.mode3_lcd_x += dots;
@@ -8271,6 +8296,94 @@ mod mode3_timing_tests {
                         assert_fifo_timing_equal(&actual, &reference);
                         assert_eq!(actual.mode_clock, reference.mode_clock);
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batched_pop_events_preserve_capacity_overwrite() {
+        for count in [
+            0,
+            MODE3_POP_EVENTS_MAX - 6,
+            MODE3_POP_EVENTS_MAX - 1,
+            MODE3_POP_EVENTS_MAX,
+        ] {
+            for requested in [1, 2, 7, 8, 16, 64] {
+                let mut fast = Ppu::new(Model::default());
+                let mut reference = Ppu::new(Model::default());
+                for ppu in [&mut fast, &mut reference] {
+                    ppu.lcdc = 0x93;
+                    ppu.begin_mode3_line();
+                    ppu.dmg_begin_transfer_line();
+                    ppu.mode = MODE_TRANSFER;
+                    ppu.mode_clock = 24;
+                    ppu.mode3_target_cycles = 252;
+                    ppu.mode3_position_in_line = 8;
+                    ppu.mode3_lcd_x = 9;
+                    ppu.mode3_render_delay = 0;
+                    ppu.mode3_bg_fifo = 8;
+                    ppu.mode3_fetcher_state = 0;
+                    ppu.mode3_pop_event_count = count;
+                }
+                let dots = requested.min(fast.dmg_fifo_run_limit());
+                fast.advance_dmg_fifo_run(dots);
+                for _ in 0..dots {
+                    reference.mode_clock += 1;
+                    reference.mode3_latch_sprite_attributes();
+                }
+                assert_fifo_timing_equal(&fast, &reference);
+                assert_eq!(fast.mode_clock, reference.mode_clock);
+            }
+        }
+    }
+
+    #[test]
+    fn transfer_batches_match_single_dots_across_lines() {
+        for model in [
+            Model::default(),
+            Model::Cgb(CgbRevision::Rev0),
+            Model::Cgb(CgbRevision::RevE),
+        ] {
+            let make_ppu = || {
+                let mut ppu = Ppu::new(model);
+                ppu.write_reg(0xFF40, 0xF7);
+                ppu.write_reg(0xFF41, 0x78);
+                ppu.write_reg(0xFF45, 2);
+                ppu.write_reg(0xFF4B, 79);
+                for (i, sprite) in ppu.oam.chunks_exact_mut(4).enumerate() {
+                    sprite.copy_from_slice(&[
+                        16 + (i / 10) as u8 * 8,
+                        [0, 1, 8, 8, 31, 72, 80, 160, 167, 255][i % 10],
+                        i as u8,
+                        (i as u8).wrapping_mul(37),
+                    ]);
+                }
+                for (i, byte) in ppu.vram.iter_mut().flatten().enumerate() {
+                    *byte = (i as u8).wrapping_mul(19).wrapping_add((i >> 8) as u8);
+                }
+                ppu.skip_startup_for_test();
+                ppu
+            };
+            let mut fast = make_ppu();
+            let mut reference = make_ppu();
+            let mut fast_if = 0;
+            let mut reference_if = 0;
+            for cycles in [79, 2, 170, 2, 456, 1000, 60000, 10000, 65535] {
+                let hblank = fast.step(cycles, &mut fast_if);
+                let mut reference_hblank = false;
+                for _ in 0..cycles {
+                    reference_hblank |= reference.step_inner::<false>(1, &mut reference_if);
+                }
+                assert_eq!(hblank, reference_hblank);
+                assert_eq!(fast_if, reference_if);
+                assert_eq!(fast.mode_clock, reference.mode_clock);
+                assert_eq!(fast.frame_counter, reference.frame_counter);
+                assert_eq!(fast.frame_ready(), reference.frame_ready());
+                assert_eq!(fast.framebuffer(), reference.framebuffer());
+                assert_fifo_timing_equal(&fast, &reference);
+                for addr in [0xFF40, 0xFF41, 0xFF44, 0xFF45] {
+                    assert_eq!(fast.read_reg(addr), reference.read_reg(addr));
                 }
             }
         }

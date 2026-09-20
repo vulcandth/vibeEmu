@@ -6,6 +6,124 @@ recurring PPU configuration barriers and software division in cartridge reads
 as concrete next targets, with separate plans for the larger DMG gap.
 The subsequent [implementation pass](#arm-setup-caching-ppu-cartridge-and-apu)
 removes those costs and the square/wave edge divisions from the hot ARM paths.
+The latest [FIFO/noise pass and branch comparison](#fifo-and-noise-optimizations-branch-comparison-with-main)
+cover the complete performance branch against `main`.
+
+## FIFO and noise optimizations: branch comparison with main
+
+The newest pass writes batched pixel timestamps and pop events together, using
+one bounds/capacity decision for each run. It retains every timestamp and the
+event buffer's overwrite-last behavior at capacity. Tests compare full and
+partially full event buffers with the original dot path, and compare calls
+crossing scanlines and frames with single-dot stepping, including sprites and
+STAT. Existing hardware-revision and non-default-tuning comparisons still pass.
+
+Noise batches now use exact multiply/shift/correction arithmetic through the
+existing reciprocal helper. NR43 selects one of eight 2 MHz prescalers; a
+32-byte compile-time table supplies their reciprocals without adding channel
+state or register-write setup work. Delayed starts, disable boundaries and
+divisor glitches retain their original event loop. Tests check every numerator
+from 0 through 65,535 plus signed maximum boundaries against integer division
+for all eight divisors. The existing noise differential test covers all 256
+NR43 values, counter phases, DMG/CGB, and both regular and quirk paths.
+
+The ARM library build confirms that `clock_noise_regular_batch` no longer
+contains software division calls, removing the previous `__aeabi_idiv` and
+`__aeabi_idivmod` sites. This remains assembly evidence, not console timing.
+
+Experiments reconsidering FIFO batching inside a call after each sprite/fetcher
+boundary had inconsistent gains and regressions in the broader corpus. They
+were removed; this pass retains the simpler timestamp and noise arithmetic
+changes. Existing DMG/CGB scheduling rules are unchanged.
+
+The cumulative comparison uses fetched `origin/main` at
+`83f346529be876f6bac184607c356650e7dec83b`. Both core versions are built from
+source with Rust 1.98.1, optimization level 3, thin LTO, one codegen unit, no
+native-CPU flags and no PGO. The shared profiling harness uses `Cpu::step` on
+`main`, which lacks `run_for_dots`, and the bounded API on this branch. ROM
+loading, frame budgets, warmup, audio production/draining, and checksum logic
+are otherwise identical. These measurements cover the core and its runner,
+not the frontend or a Nintendo 3DS executable.
+
+Five alternating pairs per workload on an Intel Core i7-4790, with no concurrent
+builds or tests. Values are medians; audio is enabled at 48 kHz except in the
+explicit silent case. **Complete branch versus main:**
+
+| Workload | Measured / warmup frames | Baseline | Final | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 1,800 / 300 | 4.528619 s | 0.975616 s | 4.642× |
+| Polished Crystal, silent | 1,800 / 300 | 4.826859 s | 0.755025 s | 6.393× |
+| DMG acid2 | 600 / 120 | 1.088590 s | 0.435001 s | 2.502× |
+| Blargg CPU instructions | 600 / 120 | 1.199915 s | 0.551201 s | 2.177× |
+| CGB acid2 | 600 / 120 | 0.813198 s | 0.155694 s | 5.223× |
+| Blargg CGB 12-wave | 600 / 120 | 0.619135 s | 0.246652 s | 2.510× |
+| CGB acid-hell | 600 / 120 | 0.996587 s | 0.600809 s | 1.659× |
+
+The equal-weight geometric mean of these seven speedups is **3.210×**.
+Polished Crystal with audio takes 78.46% less time; DMG acid2 takes 60.04% less.
+This is a corpus-specific result, not an estimate of arbitrary gameplay or ARM
+speed. Hardware model, dot count, video/audio hashes, sample count, and final
+PC matched on every comparison. The Polished sequence is introductory.
+
+**This pass alone versus preceding branch head `7afc1d3`:**
+
+| Workload | Measured / warmup frames | Baseline | Final | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 1,800 / 300 | 0.965994 s | 0.964389 s | 1.002× |
+| Polished Crystal, silent | 1,800 / 300 | 0.719963 s | 0.730437 s | 0.986× |
+| DMG acid2 | 600 / 120 | 0.414434 s | 0.408714 s | 1.014× |
+| Blargg CPU instructions | 600 / 120 | 0.503859 s | 0.509023 s | 0.990× |
+| CGB acid2 | 600 / 120 | 0.153737 s | 0.153418 s | 1.002× |
+| Blargg CGB 12-wave | 600 / 120 | 0.242474 s | 0.238661 s | 1.016× |
+| CGB acid-hell | 600 / 120 | 0.569875 s | 0.566819 s | 1.005× |
+
+The desktop gain in this final pass is small: DMG and wave improve by about
+1.4–1.6%, while silent Polished and CPU regress by about 1.0–1.5%. These are close
+to host timing variability; this pass does not claim a universal desktop gain.
+The ARM division removal and exact FIFO work reduction are the reasons to keep
+it. Separate comparison sessions have different host conditions; do not multiply
+their median ratios to infer cumulative improvement.
+
+At 600 measured plus 120 warmup frames, DMG process instructions drop from
+5,200,573,729 to 4,999,027,216 (3.88%), and branches from 936,835,757 to
+901,338,906 (3.79%). Polished instructions increase from 3,649,176,555 to
+3,655,702,891 (0.18%); branches remain effectively unchanged. The
+[updated 3DS estimate](#rough-3ds-budget-without-hardware-testing) now covers all
+seven workloads and keeps hardware testing deferred.
+
+Validation of the final source:
+
+- `cargo fmt --all`: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- `cargo test`: **591 passed**, plus the isolated tuning subprocess test;
+  33 existing ignored tests.
+- `cargo test --release`: **587 passed**, plus the isolated tuning subprocess
+  test; 33 existing ignored tests.
+- `cargo check -p vibe-emu-core --all-features`: passed.
+- Nintendo 3DS target library/assembly build: passed; no console executable run.
+- Revision helper: built main, preceding branch head, and final source;
+  Python compilation check passed.
+- Gambatte was not run; it remains informational.
+
+Temporary evidence lives in `/tmp/vibe-pass11-*`: `bench-results.json`,
+`{main,previous}-<workload>.log`, `counters.json`,
+`profile-{previous,final}-{polished,dmg}.log`, `final-clippy.log`,
+`final-cargo-test{,-release}.log`, and `final-arm-build.log`.
+
+Reproduce either build with the new revision helper, then compare its printed
+binary paths using the existing alternating benchmark:
+
+```bash
+python3 scripts/build_profile_revision.py --revision 83f3465 --output /tmp/vibe-pr-bench
+python3 scripts/build_profile_revision.py --output /tmp/vibe-pr-bench
+python3 scripts/benchmark_core.py /path/to/main/profile_core \
+  /path/to/branch/profile_core polishedcrystal-debug-3.2.3.gbc
+```
+
+The helper preserves the source snapshot, harness, revision/API choice, compiler
+version, and any tracked core working-tree diff beside each binary. It requires
+Python 3.12+ and the repository's Rust compiler; no profiling dependency is
+added to the emulator.
 
 ## Reproducing measurements
 
@@ -1015,20 +1133,18 @@ assembly is under `/tmp/vibe-3ds-assembly-pass10/`.
 ## Rough 3DS budget without hardware testing
 
 Use instruction counts as a work proxy, not desktop FPS scaled by clock speed.
-[3dbrew's hardware research](https://3dbrew.org/wiki/Hardware) documents roughly
+[libctru's clock constants](https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/os.h) specify roughly
 268 MHz for the original 3DS and 804 MHz for New 3DS application cores with
 speedup enabled. This estimate budgets **one core** for the serial emulator;
 it does not multiply capacity by the number of CPU cores. The New 3DS frontend
 must enable the appropriate speed/cache mode through
 [libctru's `osSetSpeedupEnable`](https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/os.h).
 
-The counter workload advances `(600 + 120) × 70,224 / 4,194,304 = 12.05475`
-emulated seconds. Its latest 3.649 billion x86-64 instructions correspond to
-**0.303 billion host instructions per emulated second**, or 5.068 million
-per benchmark frame. This includes startup, warmup, checksumming, and queue
-draining; it is a conservative process-level proxy rather than an isolated
-count of core instructions. It still represents an introductory ROM sequence,
-not a representative gameplay collection.
+Each counter workload advances `(600 + 120) × 70,224 / 4,194,304 = 12.05475`
+emulated seconds. The counts include startup, warmup, checksumming, and queue
+draining: a process-level work proxy rather than an isolated core measurement.
+The expanded corpus includes CPU and raster stress tests, but still lacks a
+representative gameplay collection.
 
 Define the estimated remaining speedup requirement as:
 
@@ -1039,58 +1155,66 @@ required speedup = host instructions per emulated second
                  / (target cycles per second × fraction available to core)
 ```
 
-The instruction-expansion and CPI factors below are **uncalibrated assumptions**,
-not measurements or confidence bounds. ARM11's instruction latencies, load
-interlocks, branches, caches, 32-bit handling of 64-bit counters, and generated
-code can move actual results outside this range. See the
-[ARM11 MPCore Technical Reference Manual, chapter 15](https://documentation-service.arm.com/static/5e8e1cd9fd977155116a4a7a)
-for the underlying execution constraints. Equal instruction counts do not imply
-equal cycle costs across these architectures.
+Instruction expansion and CPI are **uncalibrated assumptions**, not measurements
+or confidence bounds. ARM11 instruction latencies, load interlocks, branches,
+caches, 32-bit handling of 64-bit counters, and generated code can move actual
+results outside these scenarios. See the
+[ARM11 MPCore Technical Reference Manual, chapter 15](https://documentation-service.arm.com/static/5e8e1cd9fd977155116a4a7a).
+Equal instruction counts do not imply equal cycle costs across architectures.
+
+For the final Polished Crystal intro count, scenario sensitivity is:
 
 | Scenario | ARM/x86 instruction ratio | ARM CPI | Core CPU budget | Old 3DS remaining speedup | New 3DS remaining speedup |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Optimistic | 1.0 | 1.0 | 90% | 1.26× | 0.42× |
 | Working planning assumption | 1.5 | 1.5 | 80% | 3.18× | 1.06× |
-| More costly ARM execution | 2.0 | 2.0 | 75% | 6.02× | 2.01× |
+| More costly ARM execution | 2.0 | 2.0 | 75% | 6.04× | 2.01× |
 
-A 1.06× requirement means roughly 94% of real time under that scenario; the old
-3DS estimate is about 31%. A value below 1 in the optimistic scenario means
-headroom under that assumption, not a measured result. The working interpretation
-is **another ~1.06× improvement for New 3DS and ~3.18× for old 3DS**, reduced from
-1.07× and 3.21× before the ARM setup-caching pass. These remain development budgets,
-not a claim that either machine has achieved those speeds. The optional PGO experiment is
-not credited in this calculation.
+Using the working assumption consistently across the final seven workloads:
 
-This workload remains below the earlier provisional hardware-testing trigger
-of **0.43 billion host instructions per emulated second** (about 7.2 million per
-frame), corresponding to a working New 3DS requirement within 1.5× of full speed.
-Hardware testing remains deferred as requested. The more useful next estimate
-improvement is broader gameplay traces and continued ARM assembly analysis.
-A 1.0× working budget is ~0.286 billion instructions/s, about 5.6% fewer than the
-current count. The [ARM setup-caching pass](#arm-setup-caching-ppu-cartridge-and-apu)
-successfully cross-compiled the core library and removed targeted barriers and
-division helpers. It has not calibrated dynamic ARM instruction counts or
-console execution time. These changes specifically alter costs that x86 counts
-underrepresent; the unchanged expansion/CPI assumptions cannot quantify that gain.
+| Workload | Host instructions / emulated second | New 3DS remaining speedup | Old 3DS remaining speedup |
+| --- | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 0.303 billion | 1.06× | 3.18× |
+| Polished Crystal, silent | 0.243 billion | 0.85× | 2.56× |
+| DMG acid2 | 0.415 billion | 1.45× | 4.35× |
+| Blargg CPU instructions | 0.506 billion | 1.77× | 5.31× |
+| CGB acid2 | 0.141 billion | 0.49× | 1.48× |
+| Blargg CGB 12-wave | 0.296 billion | 1.03× | 3.10× |
+| CGB acid-hell | 0.629 billion | 2.20× | 6.60× |
 
-The DMG workload must be assessed separately. Its latest counter rate is
-**0.431 billion instructions per emulated second**, or 7.223 million per frame.
-Under the same working assumptions, DMG acid2 still needs **1.51× on New 3DS
-and 4.53× on old 3DS**. Its instruction proxy and desktop time improve slightly
-in this pass; neither measures the ARM-specific benefit. It remains
-above the provisional hardware-testing trigger despite the preceding FIFO
-pass's large improvement. These are different ROMs and
-execution paths, so their rates do not establish a hardware-model accuracy
-ranking or predict arbitrary gameplay.
+A requirement below 1 means headroom only under that assumption. These figures
+suggest roughly 94% of normal speed for the Polished intro, 69% for DMG acid2,
+56% for the CPU test, and 45% for acid-hell on New 3DS. They are **not measured
+console speeds**. The broadened evidence makes a general readiness claim less
+justified than an intro-only estimate. The original 3DS remains much farther
+away: the demanding CPU/raster cases need about 5.3–6.6× under this model.
+
+**Keep hardware testing deferred.** The earlier provisional 1.5× requirement
+(~67% speed) is too loose for the requested near-normal-speed threshold.
+Use a working requirement no worse than about **1.1× (~91% speed)** across
+representative DMG and CGB workloads with audio before considering hardware
+validation, and add actual gameplay traces before treating the corpus as
+representative. That corresponds to about 0.314 billion host instructions/s
+under the working assumptions; full speed is about 0.286 billion. This is a
+planning gate, not a promise that a console will reach that speed.
+
+The DMG count improves by 3.88% in this pass, reducing its working requirement
+from 1.51× to 1.45×. Polished remains near 1.06×. Removing ARM barriers and
+software division changes costs that x86 counts underrepresent, but the library
+assembly audit has not calibrated dynamic ARM instruction counts or CPI.
+Neither optional host PGO gains nor desktop elapsed-time gains are credited
+in these estimates. Different ROMs and execution paths do not establish a
+hardware-model accuracy ranking or predict arbitrary gameplay.
 
 ## Research and next opportunities
 
-The latest profile separates two priorities:
+Fresh 999 Hz cycle profiles (6,000 measured / 300 warmup frames, zero lost
+samples) separate two priorities:
 
 1. **CGB: reduce peripheral clock updates and remaining APU work.**
-   Polished Crystal spends 11.9% of samples in CPU tick orchestration and 2.9%
-   in timer stepping. APU scheduling also remains significant: 5.4% in the
-   double-speed loop plus 6.8% in its two deadline helpers. Investigate combining
+   Polished Crystal spends 10.8% of samples in CPU tick orchestration and 3.1%
+   in timer stepping. APU scheduling also remains significant: 5.3% in the
+   double-speed loop plus 7.0% in its two deadline helpers. Investigate combining
    timer/RTC and other peripheral advances across ordinary instructions, stopping before interrupt
    deadlines and synchronizing on relevant bus accesses. The current PPU/APU
    scopes provide part of this foundation, but timer overflow/reload collisions,
@@ -1098,12 +1222,13 @@ The latest profile separates two priorities:
    is now removed; reusing the overlapping DIV/noise eligibility checks is a
    more relevant APU target. Measure those changes before broadening dispatch
    or adding a CPU JIT; instruction
-   execution itself still accounts for only 8.7% of this profile.
+   execution itself still accounts for only 9.1% of this profile.
 2. **DMG: reduce repeated work at FIFO boundaries.** Stable FIFO runs are now
-   projected, but PPU stepping still takes 40.0% of samples, with another 9.5%
-   in projection and run-limit calculation. Investigate splitting calls at safe
-   boundaries inside `step_inner`, so an interval that starts or ends in a
-   quirk need not keep its entire middle on the dot path. Avoid recomputing the
+   projected, but PPU stepping still takes 41.5% of samples, with another 6.6%
+   in projection and run-limit calculation. The latest experiment adding a
+   run-limit check after each dot did not yield a reliable corpus-wide gain
+   and was removed. A useful redesign needs explicit event boundaries or
+   reusable eligibility state, rather than more guards in the dot loop. Avoid recomputing the
    same run limit in deadline prediction and advancement where possible. Preserve
    the per-pixel timestamps needed by raster replay, and extend the original
    dot-path comparisons to any newly batched startup or sprite phases.

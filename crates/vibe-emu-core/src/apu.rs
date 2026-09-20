@@ -265,6 +265,19 @@ impl<const INITIAL_PERIOD: u32> PeriodReciprocal<INITIAL_PERIOD> {
     }
 }
 
+// NR43 selects one of eight 2 MHz prescalers. A single 32-byte table avoids
+// runtime division and any extra cache state on channel/register updates.
+const NOISE_PERIOD_RECIPROCALS: [PeriodReciprocal<2>; 8] = {
+    let mut table = [PeriodReciprocal(0); 8];
+    let mut code = 0;
+    while code < table.len() {
+        let period = if code == 0 { 2 } else { code * 4 };
+        table[code] = PeriodReciprocal(((1u64 << 32) / period as u64) as u32);
+        code += 1;
+    }
+    table
+};
+
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug, PartialEq, Clone))]
 struct SquareChannel {
@@ -3049,7 +3062,9 @@ impl Apu {
     // Keep bulk arithmetic out of the much more frequent single-M-cycle path.
     #[inline(never)]
     fn clock_noise_regular_batch(&mut self, cycles: i32, remaining: i32, period: i32) {
-        let reloads = 1 + remaining / period;
+        let (additional, tail) =
+            NOISE_PERIOD_RECIPROCALS[usize::from(self.ch4.divisor)].div_rem(remaining, period);
+        let reloads = 1 + additional;
         let shift = self.regs[NR43_IDX] >> 4;
         if shift < 14 {
             let bit = 1 << shift;
@@ -3059,7 +3074,6 @@ impl Apu {
                 self.ch4.advance_lfsr_by(edges as u32);
             }
         }
-        let tail = remaining % period;
         self.ch4.counter = (self.ch4.counter + reloads) & 0x3fff;
         self.ch4.alignment = self.ch4.alignment.wrapping_add(cycles);
         self.ch4.counter_countdown = period - tail;
@@ -4438,6 +4452,23 @@ impl Default for Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn noise_reciprocals_match_every_prescaler() {
+        for (code, reciprocal) in NOISE_PERIOD_RECIPROCALS.iter().enumerate() {
+            let channel = NoiseChannel {
+                divisor: code as u8,
+                ..Default::default()
+            };
+            let period = channel.base_divisor();
+            for numerator in (0..=65535).chain([i32::MAX - 1, i32::MAX]) {
+                assert_eq!(
+                    reciprocal.div_rem(numerator, period),
+                    (numerator / period, numerator % period)
+                );
+            }
+        }
+    }
 
     #[test]
     fn waveform_reciprocals_match_integer_division() {
