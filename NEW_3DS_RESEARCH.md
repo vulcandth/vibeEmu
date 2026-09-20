@@ -1,5 +1,11 @@
 # New 3DS performance research
 
+Implementation follow-up: [PPU configuration snapshots, cartridge bank caching,
+and square/wave reciprocal division](PERFORMANCE.md#arm-setup-caching-ppu-cartridge-and-apu)
+are now implemented and audited in ARM assembly. The findings and benchmarks
+below describe the original research revision; consult the follow-up for current
+implementation measurements and remaining targets.
+
 Research pass against `f0f47e4`, September 19, 2026. This pass changes
 documentation only. It adds an actual ARM assembly audit and refreshes the
 optional host PGO experiment; it does not enable PGO in release builds.

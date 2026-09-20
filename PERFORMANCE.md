@@ -4,6 +4,8 @@ The latest [New 3DS research pass](NEW_3DS_RESEARCH.md) audits actual ARMv6K
 assembly and refreshes PGO measurements against `f0f47e4`. It identifies
 recurring PPU configuration barriers and software division in cartridge reads
 as concrete next targets, with separate plans for the larger DMG gap.
+The subsequent [implementation pass](#arm-setup-caching-ppu-cartridge-and-apu)
+removes those costs and the square/wave edge divisions from the hot ARM paths.
 
 ## Reproducing measurements
 
@@ -895,6 +897,121 @@ Validation:
 - `cargo check -p vibe-emu-core --all-features`: passed.
 - Gambatte was not run; it remains informational.
 
+## ARM setup caching: PPU, cartridge, and APU
+
+This pass implements three targets from [the ARM research](NEW_3DS_RESEARCH.md),
+against `03193f8` (whose emulation source is unchanged from `f0f47e4`). It moves
+work to configuration, mapper, and frequency changes while retaining the same
+emulated events and output samples. Ordinary release builds use these changes;
+PGO is not enabled by this pass.
+
+- **PPU:** one immutable process-wide snapshot replaces 119 scalar `OnceLock`
+  getters plus the object-size tuning and fetch-simulation settings. Each PPU
+  stores a reference to it. All keys, parsing rules, defaults, and timing quirks
+  remain. The first PPU constructor now captures these environment overrides;
+  set them before constructing an emulator. Trace controls remain separate.
+- **Cartridge:** ROM reads use cached offsets for the two 16 KiB windows.
+  Mapper writes invalidate the offsets, and the first subsequent ROM read
+  resolves the mapping. A length check handles the publicly mutable ROM Vec;
+  bytes and pointers are never cached. MBC1 multicart behavior, MBC2/3 bank-zero
+  rules, MBC30/5/TPP1, truncated ROMs, and bus-latch updates are preserved.
+- **APU:** square and wave channels each cache a 32-bit reciprocal alongside
+  their latched sample length. Frequency writes, triggers that reset sample
+  timing, and sweep changes keep it coherent. Quotient/remainder calculation
+  uses multiply/shift plus exact correction, with an explicit period-one case.
+  Setup itself uses 32-bit division. There is no reciprocal table, floating-point
+  approximation, sample-rate change, or extra per-frame allocation. Noise's
+  separate batch divisions remain a future target.
+
+The existing dot/M-cycle differential tests pass with these changes. Additional
+tests compare every ROM-window address against the original uncached mapper
+logic across nine mapper configurations, eight ROM lengths, and sixteen rounds
+of register writes; another covers byte replacement, shrinking, and growing ROMs.
+PPU tests exercise non-default tuning in a fresh subprocess and compare batched
+and reference dot stepping under custom timing settings across hardware models.
+APU tests cover all 2,048 frequency values for both waveform types, every
+numerator from 0 through 1,024, period boundaries, large signed numerators, and
+deterministic random values against ordinary integer division.
+
+Rebuilt the same `armv6k-nintendo-3ds` library using the research pass's nightly
+compiler and build-std procedure. Static sites in the emitted function bodies:
+
+| ARM function | Before | After |
+| --- | --- | --- |
+| `Ppu::render_scanline` | 21 memory barriers | 0 |
+| `Ppu::dmg_bg_en_for_pixel` | 7 memory barriers | 0 |
+| `Ppu::dmg_lcdc_for_bg_fetch_t` | 7 memory barriers | 0 |
+| `Ppu::advance_dmg_fifo_run` | 1 memory barrier | 0 |
+| `Cartridge::read_with_open_bus` | 5 software division calls | 0 |
+| Each `Apu::run_machine_cycles_at_speed` specialization | 4 software division calls | 0 |
+
+Other PPU helpers have been inlined or removed, so absent symbols are not
+reported as zero-cost functions. Excluding `OnceLock` initialization machinery,
+the only emitted PPU method with a memory barrier is now `Ppu::new`. Mapper
+cache refreshes and APU period setup still perform division when needed.
+These are static code-generation results, not dynamic ARM cycle measurements.
+No console executable was linked or run.
+
+Five alternating pairs per workload, ordinary release settings and the same
+stable host compiler as the baseline, with no concurrent builds or tests:
+
+| Workload | Measured / warmup frames | Baseline | Optimized | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 1,800 / 300 | 0.987179 s | 0.973223 s | 1.014× |
+| Polished Crystal, silent | 1,800 / 300 | 0.751486 s | 0.743593 s | 1.011× |
+| DMG acid2 | 600 / 120 | 0.433412 s | 0.424303 s | 1.021× |
+| Blargg CPU instructions | 600 / 120 | 0.508966 s | 0.508738 s | 1.000× |
+| CGB acid2 | 600 / 120 | 0.157461 s | 0.156888 s | 1.004× |
+| Blargg CGB wave test | 600 / 120 | 0.240541 s | 0.241059 s | 0.998× |
+| CGB acid-hell | 600 / 120 | 0.600806 s | 0.578053 s | 1.039× |
+
+Every video/audio hash, sample count, dot count, hardware model, and final PC
+matched. Eight additional old/new binary comparisons used four sets of
+non-default PPU overrides on Polished Crystal and DMG acid2; all outputs matched.
+The desktop gain is modest, with a 0.2% wave-test regression and several results
+close to measurement noise. It does not quantify the ARM benefit.
+
+An earlier comparison of PPU/cartridge caching alone showed 1.2% less Polished
+runtime, 2.1% less DMG runtime, and 2–2.5% regressions on CPU/wave tests. Adding
+waveform reciprocals in a separate comparison saved 0.9% on Polished, 2.4% on
+CPU, and 1.0% on wave, while regressing DMG by 1.2%. These small differences are
+reported to avoid implying every component improves every desktop workload;
+use the final combined table rather than multiplying separate medians.
+
+At 600 measured plus 120 warmup frames, fresh process-level instruction counts
+fall from **3,684,247,243 to 3,649,174,279** for Polished (0.95%) and
+**5,299,038,619 to 5,200,582,892** for DMG (1.86%). Branch counts fall from
+738,921,042 to 728,672,612 and from 979,686,695 to 936,837,717, respectively.
+The host executable text section shrinks from **595,100 to 550,560 bytes**
+(44,540 bytes, 7.48%). Cache layout, barrier costs, and software division make
+these host counts insufficient to predict the target's change in execution time.
+
+Fresh cycle sampling profiles place CGB CPU tick orchestration at 11.9%, timer
+stepping at 2.9%, PPU stepping at 8.7%, and instruction execution at 8.7%. DMG
+PPU stepping remains 40.0%, FIFO projection 5.7%, and run-limit calculation 3.8%.
+Shared peripheral deadlines and larger exact DMG intervals remain the next
+structural opportunities. Audio transport batching and noise division are also
+still open; this pass does not change their semantics.
+
+Validation:
+
+- `cargo fmt --all`: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- `cargo test`: **588 passed**, plus the isolated tuning subprocess test;
+  33 existing ignored tests.
+- `cargo test --release`: **584 passed**, plus the isolated tuning subprocess
+  test; 33 existing ignored tests.
+- `cargo check -p vibe-emu-core --all-features`: passed.
+- Nintendo 3DS target library/assembly build: passed.
+- Gambatte was not run; it remains informational.
+
+Local logs use `/tmp/vibe-pass10-*`: `final-bench.log`, individual
+`final-<workload>.log` comparisons, `count-{before,after}-<workload>.log`,
+`profile-<workload>.log`, `arm-build.log`, `arm-audit.json`, `clippy.log`, and
+`cargo-test{,-release}.log`. Before/after binaries are `/tmp/vibe-pass10-before`
+and `/tmp/vibe-pass10-apu`; the latter includes all three optimizations. ARM
+assembly is under `/tmp/vibe-3ds-assembly-pass10/`.
+
 ## Rough 3DS budget without hardware testing
 
 Use instruction counts as a work proxy, not desktop FPS scaled by clock speed.
@@ -906,8 +1023,8 @@ must enable the appropriate speed/cache mode through
 [libctru's `osSetSpeedupEnable`](https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/os.h).
 
 The counter workload advances `(600 + 120) × 70,224 / 4,194,304 = 12.05475`
-emulated seconds. Its latest 3.684 billion x86-64 instructions correspond to
-**0.306 billion host instructions per emulated second**, or 5.117 million
+emulated seconds. Its latest 3.649 billion x86-64 instructions correspond to
+**0.303 billion host instructions per emulated second**, or 5.068 million
 per benchmark frame. This includes startup, warmup, checksumming, and queue
 draining; it is a conservative process-level proxy rather than an isolated
 count of core instructions. It still represents an introductory ROM sequence,
@@ -932,15 +1049,15 @@ equal cycle costs across these architectures.
 
 | Scenario | ARM/x86 instruction ratio | ARM CPI | Core CPU budget | Old 3DS remaining speedup | New 3DS remaining speedup |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Optimistic | 1.0 | 1.0 | 90% | 1.27× | 0.42× |
-| Working planning assumption | 1.5 | 1.5 | 80% | 3.21× | 1.07× |
-| More costly ARM execution | 2.0 | 2.0 | 75% | 6.08× | 2.03× |
+| Optimistic | 1.0 | 1.0 | 90% | 1.26× | 0.42× |
+| Working planning assumption | 1.5 | 1.5 | 80% | 3.18× | 1.06× |
+| More costly ARM execution | 2.0 | 2.0 | 75% | 6.02× | 2.01× |
 
-A 1.07× requirement means roughly 94% of real time under that scenario; the old
+A 1.06× requirement means roughly 94% of real time under that scenario; the old
 3DS estimate is about 31%. A value below 1 in the optimistic scenario means
 headroom under that assumption, not a measured result. The working interpretation
-is **another ~1.07× improvement for New 3DS and ~3.21× for old 3DS**, reduced from
-1.12× and 3.35× before the APU pipeline pass. These remain development budgets,
+is **another ~1.06× improvement for New 3DS and ~3.18× for old 3DS**, reduced from
+1.07× and 3.21× before the ARM setup-caching pass. These remain development budgets,
 not a claim that either machine has achieved those speeds. The optional PGO experiment is
 not credited in this calculation.
 
@@ -948,18 +1065,19 @@ This workload remains below the earlier provisional hardware-testing trigger
 of **0.43 billion host instructions per emulated second** (about 7.2 million per
 frame), corresponding to a working New 3DS requirement within 1.5× of full speed.
 Hardware testing remains deferred as requested. The more useful next estimate
-improvement is an ARM build and assembly analysis, plus broader gameplay traces.
-A 1.0× working budget is ~0.286 billion instructions/s, about 6.5% fewer than the
-current count. No ARM binary or physical console was measured in that pass.
-The subsequent [ARM assembly audit](NEW_3DS_RESEARCH.md#actual-target-assembly)
-successfully cross-compiled the core library, but has not calibrated dynamic
-ARM instruction counts or console execution time.
+improvement is broader gameplay traces and continued ARM assembly analysis.
+A 1.0× working budget is ~0.286 billion instructions/s, about 5.6% fewer than the
+current count. The [ARM setup-caching pass](#arm-setup-caching-ppu-cartridge-and-apu)
+successfully cross-compiled the core library and removed targeted barriers and
+division helpers. It has not calibrated dynamic ARM instruction counts or
+console execution time. These changes specifically alter costs that x86 counts
+underrepresent; the unchanged expansion/CPI assumptions cannot quantify that gain.
 
 The DMG workload must be assessed separately. Its latest counter rate is
-**0.440 billion instructions per emulated second**, or 7.360 million per frame.
-Under the same working assumptions, DMG acid2 still needs **1.54× on New 3DS
-and 4.61× on old 3DS**. Its instruction proxy improves in this pass while its
-desktop time regresses, illustrating the limits of this estimate. It remains
+**0.431 billion instructions per emulated second**, or 7.223 million per frame.
+Under the same working assumptions, DMG acid2 still needs **1.51× on New 3DS
+and 4.53× on old 3DS**. Its instruction proxy and desktop time improve slightly
+in this pass; neither measures the ARM-specific benefit. It remains
 above the provisional hardware-testing trigger despite the preceding FIFO
 pass's large improvement. These are different ROMs and
 execution paths, so their rates do not establish a hardware-model accuracy
@@ -970,9 +1088,9 @@ ranking or predict arbitrary gameplay.
 The latest profile separates two priorities:
 
 1. **CGB: reduce peripheral clock updates and remaining APU work.**
-   Polished Crystal spends 10.5% of samples in CPU tick orchestration and 3.3%
-   in timer stepping. APU scheduling also remains significant: 5.1% in the
-   double-speed loop plus 6.3% in its two deadline helpers. Investigate combining
+   Polished Crystal spends 11.9% of samples in CPU tick orchestration and 2.9%
+   in timer stepping. APU scheduling also remains significant: 5.4% in the
+   double-speed loop plus 6.8% in its two deadline helpers. Investigate combining
    timer/RTC and other peripheral advances across ordinary instructions, stopping before interrupt
    deadlines and synchronizing on relevant bus accesses. The current PPU/APU
    scopes provide part of this foundation, but timer overflow/reload collisions,
@@ -980,9 +1098,9 @@ The latest profile separates two priorities:
    is now removed; reusing the overlapping DIV/noise eligibility checks is a
    more relevant APU target. Measure those changes before broadening dispatch
    or adding a CPU JIT; instruction
-   execution itself still accounts for only 8.1% of this profile.
+   execution itself still accounts for only 8.7% of this profile.
 2. **DMG: reduce repeated work at FIFO boundaries.** Stable FIFO runs are now
-   projected, but PPU stepping still takes 41.0% of samples, with another 8.8%
+   projected, but PPU stepping still takes 40.0% of samples, with another 9.5%
    in projection and run-limit calculation. Investigate splitting calls at safe
    boundaries inside `step_inner`, so an interval that starts or ends in a
    quirk need not keep its entire middle on the dot path. Avoid recomputing the
@@ -990,8 +1108,8 @@ The latest profile separates two priorities:
    the per-pixel timestamps needed by raster replay, and extend the original
    dot-path comparisons to any newly batched startup or sprite phases.
 
-Before architecture-specific changes, build for ARM and inspect division,
-64-bit arithmetic, spills, and instruction-cache footprint. Rust documents the
+Continue auditing ARM division, 64-bit arithmetic, spills, and code footprint
+as these paths change. Rust documents the
 [`armv6k-nintendo-3ds` target and devkitARM/build-std requirements](https://doc.rust-lang.org/rustc/platform-support/armv6k-nintendo-3ds.html).
 This can sharpen the current instruction-expansion assumptions without hardware
 access. Broaden deterministic gameplay workloads before selecting training
