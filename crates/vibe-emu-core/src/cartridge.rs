@@ -44,6 +44,10 @@ pub struct Cartridge {
     rtc_path: Option<PathBuf>,
     mbc_state: MbcState,
     cart_bus: Cell<u8>,
+    // Invalidated by mapper writes; length checking also covers direct mutation
+    // of the public ROM Vec. Offsets cache mapping, never ROM bytes or pointers.
+    rom_mapping_len: usize,
+    rom_windows: Option<[usize; 2]>,
 }
 
 #[derive(Debug)]
@@ -882,7 +886,54 @@ impl Cartridge {
             rtc_path: None,
             mbc_state,
             cart_bus: Cell::new(0xFF),
+            rom_mapping_len: usize::MAX,
+            rom_windows: None,
         }
+    }
+
+    // Mapper changes are infrequent relative to fetches. Keep modulo and the
+    // mapper dispatch out of the ROM read path, including on ARM without IDIV.
+    #[cold]
+    fn refresh_rom_mapping(&mut self) {
+        let count = (self.rom.len() / 0x4000).max(1);
+        let mut lower = 0;
+        let upper = match &self.mbc_state {
+            MbcState::NoMbc => 1, // Direct 32 KiB mapping, even for partial ROMs.
+            MbcState::Mbc1 {
+                rom_bank,
+                ram_bank,
+                mode,
+                multicart,
+                ..
+            } => {
+                let high = ((*ram_bank as usize) & 3) << if *multicart { 4 } else { 5 };
+                if *mode != 0 {
+                    lower = high % count;
+                }
+                let raw = *rom_bank as usize & 0x1F;
+                let bank = if *multicart {
+                    let low = if raw == 0 { 1 } else { raw & 0x0F };
+                    high | low
+                } else {
+                    high | if raw == 0 { 1 } else { raw }
+                };
+                bank % count
+            }
+            MbcState::Mbc2 { rom_bank, .. } => ((*rom_bank & 0x0F).max(1) as usize) % count,
+            MbcState::Mbc3 { rom_bank, .. } | MbcState::Mbc30 { rom_bank, .. } => {
+                let bank = *rom_bank as usize % count;
+                if bank == 0 && count > 1 { 1 } else { bank }
+            }
+            MbcState::Mbc5 { rom_bank, .. } => *rom_bank as usize % count,
+            MbcState::Tpp1 { mr0, mr1, .. } => (((*mr1 as usize) << 8) | *mr0 as usize) % count,
+            MbcState::Unknown => {
+                self.rom_windows = None;
+                self.rom_mapping_len = self.rom.len();
+                return;
+            }
+        };
+        self.rom_windows = Some([lower * 0x4000, upper * 0x4000]);
+        self.rom_mapping_len = self.rom.len();
     }
 
     /// Read a byte from the cartridge bus, updating the open-bus latch.
@@ -893,96 +944,23 @@ impl Cartridge {
 
     /// Read a byte from the cartridge bus using a caller-supplied open-bus value.
     pub fn read_with_open_bus(&mut self, addr: u16, open_bus: u8) -> u8 {
-        let rom_bank_count = (self.rom.len() / 0x4000).max(1);
+        if addr < 0x8000 {
+            if self.rom_mapping_len != self.rom.len() {
+                self.refresh_rom_mapping();
+            }
+            return match self.rom_windows {
+                Some(windows) => {
+                    let offset = windows[(addr >> 14) as usize] + (addr as usize & 0x3FFF);
+                    Self::bus_read(
+                        &self.cart_bus,
+                        self.rom.get(offset).copied().unwrap_or(0xFF),
+                    )
+                }
+                None => 0xFF,
+            };
+        }
         let cart_bus = &self.cart_bus;
         match (&mut self.mbc_state, addr) {
-            (MbcState::NoMbc, 0x0000..=0x7FFF) => Self::bus_read(
-                cart_bus,
-                self.rom.get(addr as usize).copied().unwrap_or(0xFF),
-            ),
-            (MbcState::Mbc2 { .. }, 0x0000..=0x3FFF) => Self::bus_read(
-                cart_bus,
-                self.rom.get(addr as usize).copied().unwrap_or(0xFF),
-            ),
-            (MbcState::Mbc2 { rom_bank, .. }, 0x4000..=0x7FFF) => {
-                let mut bank = (*rom_bank & 0x0F) as usize;
-                if bank == 0 {
-                    bank = 1;
-                }
-                bank %= rom_bank_count;
-                let offset = bank * 0x4000 + (addr as usize - 0x4000);
-                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
-            }
-            (
-                MbcState::Mbc1 {
-                    ram_bank,
-                    mode,
-                    multicart,
-                    ..
-                },
-                0x0000..=0x3FFF,
-            ) => {
-                let bank = if *mode == 0 {
-                    0
-                } else if *multicart {
-                    (((*ram_bank as usize) & 0x03) << 4) % rom_bank_count
-                } else {
-                    (((*ram_bank as usize) & 0x03) << 5) % rom_bank_count
-                };
-                let offset = bank * 0x4000 + addr as usize;
-                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
-            }
-            (
-                MbcState::Mbc1 {
-                    rom_bank,
-                    ram_bank,
-                    mode: _,
-                    multicart,
-                    ..
-                },
-                0x4000..=0x7FFF,
-            ) => {
-                let bank = if *multicart {
-                    let high = ((*ram_bank as usize) & 0x03) << 4;
-                    let raw = *rom_bank as usize & 0x1F;
-                    let low4 = raw & 0x0F;
-                    let bit4 = (raw & 0x10) != 0;
-                    let low = if low4 == 0 && !bit4 { 1 } else { low4 };
-                    (high | low) % rom_bank_count
-                } else {
-                    let high = ((*ram_bank as usize) & 0x03) << 5;
-                    let mut bank = high | (*rom_bank as usize & 0x1F);
-                    if bank & 0x1F == 0 {
-                        bank += 1;
-                    }
-                    bank % rom_bank_count
-                };
-                let offset = bank * 0x4000 + (addr as usize - 0x4000);
-                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
-            }
-            (MbcState::Mbc3 { .. }, 0x0000..=0x3FFF)
-            | (MbcState::Mbc30 { .. }, 0x0000..=0x3FFF) => Self::bus_read(
-                cart_bus,
-                self.rom.get(addr as usize).copied().unwrap_or(0xFF),
-            ),
-            (MbcState::Mbc3 { rom_bank, .. }, 0x4000..=0x7FFF)
-            | (MbcState::Mbc30 { rom_bank, .. }, 0x4000..=0x7FFF) => {
-                let mut bank = (*rom_bank as usize) % rom_bank_count;
-                if bank == 0 && rom_bank_count > 1 {
-                    bank = 1;
-                }
-                let offset = bank * 0x4000 + (addr as usize - 0x4000);
-                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
-            }
-            (MbcState::Mbc5 { .. }, 0x0000..=0x3FFF) => Self::bus_read(
-                cart_bus,
-                self.rom.get(addr as usize).copied().unwrap_or(0xFF),
-            ),
-            (MbcState::Mbc5 { rom_bank, .. }, 0x4000..=0x7FFF) => {
-                let bank = (*rom_bank as usize) % rom_bank_count;
-                let offset = bank * 0x4000 + (addr as usize - 0x4000);
-                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
-            }
             (MbcState::NoMbc, 0xA000..=0xBFFF) => {
                 let idx = self.ram_index(addr);
                 Self::bus_read(cart_bus, self.ram.get(idx).copied().unwrap_or(0xFF))
@@ -1078,20 +1056,6 @@ impl Cartridge {
                     Self::bus_read(cart_bus, self.ram.get(idx).copied().unwrap_or(0xFF))
                 }
             }
-            (MbcState::Tpp1 { .. }, 0x0000..=0x3FFF) => Self::bus_read(
-                cart_bus,
-                self.rom.get(addr as usize).copied().unwrap_or(0xFF),
-            ),
-            (MbcState::Tpp1 { mr0, mr1, .. }, 0x4000..=0x7FFF) => {
-                let bank = ((*mr1 as usize) << 8) | *mr0 as usize;
-                let bank = if rom_bank_count > 0 {
-                    bank % rom_bank_count
-                } else {
-                    0
-                };
-                let offset = bank * 0x4000 + (addr as usize - 0x4000);
-                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
-            }
             (
                 MbcState::Tpp1 {
                     mapping,
@@ -1137,8 +1101,122 @@ impl Cartridge {
         }
     }
 
+    #[cfg(test)]
+    fn read_rom_reference(&mut self, addr: u16) -> u8 {
+        let rom_bank_count = (self.rom.len() / 0x4000).max(1);
+        let cart_bus = &self.cart_bus;
+        match (&mut self.mbc_state, addr) {
+            (MbcState::NoMbc, 0x0000..=0x7FFF) => Self::bus_read(
+                cart_bus,
+                self.rom.get(addr as usize).copied().unwrap_or(0xFF),
+            ),
+            (MbcState::Mbc2 { .. }, 0x0000..=0x3FFF) => Self::bus_read(
+                cart_bus,
+                self.rom.get(addr as usize).copied().unwrap_or(0xFF),
+            ),
+            (MbcState::Mbc2 { rom_bank, .. }, 0x4000..=0x7FFF) => {
+                let mut bank = (*rom_bank & 0x0F) as usize;
+                if bank == 0 {
+                    bank = 1;
+                }
+                bank %= rom_bank_count;
+                let offset = bank * 0x4000 + (addr as usize - 0x4000);
+                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
+            }
+            (
+                MbcState::Mbc1 {
+                    ram_bank,
+                    mode,
+                    multicart,
+                    ..
+                },
+                0x0000..=0x3FFF,
+            ) => {
+                let bank = if *mode == 0 {
+                    0
+                } else if *multicart {
+                    (((*ram_bank as usize) & 0x03) << 4) % rom_bank_count
+                } else {
+                    (((*ram_bank as usize) & 0x03) << 5) % rom_bank_count
+                };
+                let offset = bank * 0x4000 + addr as usize;
+                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
+            }
+            (
+                MbcState::Mbc1 {
+                    rom_bank,
+                    ram_bank,
+                    mode: _,
+                    multicart,
+                    ..
+                },
+                0x4000..=0x7FFF,
+            ) => {
+                let bank = if *multicart {
+                    let high = ((*ram_bank as usize) & 0x03) << 4;
+                    let raw = *rom_bank as usize & 0x1F;
+                    let low4 = raw & 0x0F;
+                    let bit4 = (raw & 0x10) != 0;
+                    let low = if low4 == 0 && !bit4 { 1 } else { low4 };
+                    (high | low) % rom_bank_count
+                } else {
+                    let high = ((*ram_bank as usize) & 0x03) << 5;
+                    let mut bank = high | (*rom_bank as usize & 0x1F);
+                    if bank & 0x1F == 0 {
+                        bank += 1;
+                    }
+                    bank % rom_bank_count
+                };
+                let offset = bank * 0x4000 + (addr as usize - 0x4000);
+                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
+            }
+            (MbcState::Mbc3 { .. }, 0x0000..=0x3FFF)
+            | (MbcState::Mbc30 { .. }, 0x0000..=0x3FFF) => Self::bus_read(
+                cart_bus,
+                self.rom.get(addr as usize).copied().unwrap_or(0xFF),
+            ),
+            (MbcState::Mbc3 { rom_bank, .. }, 0x4000..=0x7FFF)
+            | (MbcState::Mbc30 { rom_bank, .. }, 0x4000..=0x7FFF) => {
+                let mut bank = (*rom_bank as usize) % rom_bank_count;
+                if bank == 0 && rom_bank_count > 1 {
+                    bank = 1;
+                }
+                let offset = bank * 0x4000 + (addr as usize - 0x4000);
+                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
+            }
+            (MbcState::Mbc5 { .. }, 0x0000..=0x3FFF) => Self::bus_read(
+                cart_bus,
+                self.rom.get(addr as usize).copied().unwrap_or(0xFF),
+            ),
+            (MbcState::Mbc5 { rom_bank, .. }, 0x4000..=0x7FFF) => {
+                let bank = (*rom_bank as usize) % rom_bank_count;
+                let offset = bank * 0x4000 + (addr as usize - 0x4000);
+                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
+            }
+            (MbcState::Tpp1 { .. }, 0x0000..=0x3FFF) => Self::bus_read(
+                cart_bus,
+                self.rom.get(addr as usize).copied().unwrap_or(0xFF),
+            ),
+            (MbcState::Tpp1 { mr0, mr1, .. }, 0x4000..=0x7FFF) => {
+                let bank = ((*mr1 as usize) << 8) | *mr0 as usize;
+                let bank = if rom_bank_count > 0 {
+                    bank % rom_bank_count
+                } else {
+                    0
+                };
+                let offset = bank * 0x4000 + (addr as usize - 0x4000);
+                Self::bus_read(cart_bus, self.rom.get(offset).copied().unwrap_or(0xFF))
+            }
+
+            _ => 0xFF,
+        }
+    }
+
     /// Write a byte to the cartridge bus (MBC register or RAM write).
     pub fn write(&mut self, addr: u16, val: u8) {
+        if addr < 0x8000 {
+            self.rom_mapping_len = usize::MAX;
+        }
         let cart_bus = &self.cart_bus;
         // CPU drives the cart data bus on writes too.
         if matches!(addr, 0x0000..=0x7FFF | 0xA000..=0xBFFF) {
@@ -1637,6 +1715,120 @@ impl<'a> Header<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mapping_test_cart(kind: u8, len: usize) -> Cartridge {
+        let mut cart = Cartridge::from_bytes(vec![0; 0x8000]);
+        cart.mbc_state = match kind {
+            0 => MbcState::NoMbc,
+            1 | 2 => MbcState::Mbc1 {
+                rom_bank: 1,
+                ram_bank: 0,
+                mode: 0,
+                ram_enable: false,
+                multicart: kind == 2,
+            },
+            3 => MbcState::Mbc2 {
+                rom_bank: 1,
+                ram_enable: false,
+            },
+            4 => MbcState::Mbc3 {
+                rom_bank: 1,
+                ram_bank: 0,
+                ram_enable: false,
+                rtc: None,
+            },
+            5 => MbcState::Mbc30 {
+                rom_bank: 1,
+                ram_bank: 0,
+                ram_enable: false,
+                rtc: None,
+            },
+            6 => MbcState::Mbc5 {
+                rom_bank: 1,
+                ram_bank: 0,
+                ram_enable: false,
+            },
+            7 => MbcState::Tpp1 {
+                mr0: 1,
+                mr1: 0,
+                mr2: 0,
+                mapping: Tpp1Mapping::ControlRegisters,
+                rumble_speed: 0,
+                has_rumble: false,
+                has_multi_rumble: false,
+                has_battery: false,
+                rtc: None,
+            },
+            _ => MbcState::Unknown,
+        };
+        cart.rom = (0..len)
+            .map(|i| (i ^ (i >> 8) ^ (i >> 14) ^ (i >> 19)) as u8)
+            .collect();
+        cart
+    }
+
+    fn compare_rom_windows(cart: &mut Cartridge) {
+        for addr in 0..0x8000 {
+            cart.cart_bus.set(0x35);
+            let actual = cart.read_with_open_bus(addr, 0xA7);
+            let latch = cart.cart_bus.get();
+            cart.cart_bus.set(0x35);
+            let expected = cart.read_rom_reference(addr);
+            assert_eq!(
+                (actual, latch),
+                (expected, cart.cart_bus.get()),
+                "address {addr:04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn cached_rom_windows_match_original_mapper_reads() {
+        for kind in 0..=8 {
+            for len in [
+                0,
+                1,
+                0x3FFF,
+                0x4001,
+                0x8000,
+                3 * 0x4000 + 17,
+                72 * 0x4000,
+                512 * 0x4000,
+            ] {
+                let mut cart = mapping_test_cart(kind, len);
+                compare_rom_windows(&mut cart);
+                let mut seed = 0x7418_ABC1u32;
+                for i in 0..16 {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    let value = [0, 1, 0x10, 0x1F, 0x80, 0xFF, seed as u8][i % 7];
+                    // Exercise every mapper's bank registers, including MBC2's
+                    // address-bit selector and TPP1's mirrored MR0/MR1 registers.
+                    for addr in [0x0000, 0x0001, 0x2100, 0x3000, 0x4000, 0x6000] {
+                        cart.write(addr, value);
+                    }
+                    compare_rom_windows(&mut cart);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cached_rom_windows_follow_public_rom_edits() {
+        for kind in 0..=8 {
+            let mut cart = mapping_test_cart(kind, 5 * 0x4000);
+            cart.write(0x2100, 3);
+            compare_rom_windows(&mut cart);
+            // Same-length replacements and byte edits must not cache stale data.
+            cart.rom = vec![0xA7; cart.rom.len()];
+            compare_rom_windows(&mut cart);
+            cart.rom[0x4000] = 0xE1;
+            compare_rom_windows(&mut cart);
+            for len in [0x4001, 0, 1, 0x8000, 3 * 0x4000, 9 * 0x4000 + 3] {
+                cart.rom.resize(len, 0xC9);
+                compare_rom_windows(&mut cart);
+            }
+        }
+    }
 
     fn ms_to_cycles(ms: u64) -> u32 {
         ((ms as u128).saturating_mul(RTC_CYCLES_PER_SECOND as u128) / 1000u128) as u32
