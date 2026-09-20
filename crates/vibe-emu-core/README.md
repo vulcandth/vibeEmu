@@ -93,7 +93,7 @@ let pixels = gb.mmu.ppu.framebuffer();
 
 `run_for_dots` stops at a frame boundary or active serial transfer and finishes
 the current instruction even if it exceeds the dot budget. APU and PPU state
-are fully synchronized when it returns. Native CGB PPU clocks are combined
+are fully synchronized when it returns. DMG and CGB PPU clocks are combined
 between register/memory observations, stopping before interrupt and DMA events.
 Use `Cpu::step` for debugger/single-instruction execution. Custom `LinkPort` implementations retain instruction-level polling
 by default; self-contained endpoints can override `requires_instruction_polling`.

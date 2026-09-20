@@ -372,18 +372,83 @@ const DMG_BOOT_LOGO_MAP_9910: usize = 0x1910;
 const DMG_BOOT_LOGO_MAP_992F: usize = 0x192F;
 const DMG_BOOT_TRADEMARK_BYTES: [u8; 8] = [0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C];
 
+// Shared storage for DMG and CGB replay fetchers. Sequencing, pixel payloads,
+// palette semantics, and priority rules remain model-specific.
+struct PixelFifo<T: Copy + Default> {
+    data: [T; 32],
+    head: usize,
+    len: usize,
+}
+
+impl<T: Copy + Default> PixelFifo<T> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            data: [T::default(); 32],
+            head: 0,
+            len: 0,
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[inline]
+    fn clear(&mut self) {
+        self.head = 0;
+        self.len = 0;
+    }
+
+    #[inline]
+    fn push_back(&mut self, value: T) {
+        if self.len >= self.data.len() {
+            return;
+        }
+        let tail = (self.head + self.len) % self.data.len();
+        self.data[tail] = value;
+        self.len += 1;
+    }
+
+    #[inline]
+    fn push_front(&mut self, value: T) {
+        if self.len >= self.data.len() {
+            return;
+        }
+        self.head = (self.head + self.data.len() - 1) % self.data.len();
+        self.data[self.head] = value;
+        self.len += 1;
+    }
+
+    #[inline]
+    fn pop_front(&mut self) -> Option<T> {
+        if self.len == 0 {
+            return None;
+        }
+        let value = self.data[self.head];
+        self.head = (self.head + 1) % self.data.len();
+        self.len -= 1;
+        Some(value)
+    }
+}
 // Content-addressed rows remain coherent even when a caller changes public
 // VRAM directly. The complete tag is compared; hash collisions only cause misses.
-const CGB_ROW_CACHE_LEN: usize = 64;
+const TILE_ROW_CACHE_LEN: usize = 64;
 
 #[derive(Clone, Copy)]
-struct CgbDecodedRow {
+struct DecodedTileRow {
     key: u32,
     pixels: [u32; 8],
     color_zero: [bool; 8],
 }
 
-impl CgbDecodedRow {
+impl DecodedTileRow {
     const EMPTY: Self = Self {
         key: u32::MAX,
         pixels: [0; 8],
@@ -432,7 +497,7 @@ pub struct Ppu {
     obpi: u8,
     obpd: [u8; PAL_RAM_SIZE],
     cgb_bg_color_table: [u32; 32],
-    cgb_row_cache: [CgbDecodedRow; CGB_ROW_CACHE_LEN],
+    tile_row_cache: [DecodedTileRow; TILE_ROW_CACHE_LEN],
     cgb_obj_color_table: [u32; 32],
     dmg_bg_color_table: [u32; 1024],
     dmg_obj_color_table: [[u32; 4]; 2],
@@ -1390,7 +1455,7 @@ impl Ppu {
             obpi: PAL_UNUSED_BIT,
             obpd: [0; PAL_RAM_SIZE],
             cgb_bg_color_table: [0; 32],
-            cgb_row_cache: [CgbDecodedRow::EMPTY; CGB_ROW_CACHE_LEN],
+            tile_row_cache: [DecodedTileRow::EMPTY; TILE_ROW_CACHE_LEN],
             cgb_obj_color_table: [0; 32],
             dmg_bg_color_table: [0; 1024],
             dmg_obj_color_table: [[0; 4]; 2],
@@ -1486,7 +1551,7 @@ impl Ppu {
     }
 
     fn refresh_cgb_bg_color_table(&mut self) {
-        for entry in &mut self.cgb_row_cache {
+        for entry in &mut self.tile_row_cache {
             entry.key = u32::MAX;
         }
         for palette in 0..8 {
@@ -1511,6 +1576,9 @@ impl Ppu {
     }
 
     fn refresh_dmg_bg_color_table(&mut self) {
+        for entry in &mut self.tile_row_cache {
+            entry.key = u32::MAX;
+        }
         for bgp in u8::MIN..=u8::MAX {
             for color_id in 0..4u8 {
                 let shade = Self::dmg_shade(bgp, color_id) as usize;
@@ -3609,9 +3677,10 @@ impl Ppu {
         }
 
         if self.is_cgb_native_mode() {
-            // CGB mode has different timing/behavior expectations (and this
-            // scanline renderer doesn't model the FIFO). Keep sprite attribute
-            // latching simple here to avoid DMG-specific DMA corruption quirks.
+            // Both hardware families use FIFOs. This native-CGB live timing
+            // path currently uses a simplified attribute-latch schedule; its
+            // raster-effect renderer replays a separate pixel fetcher later.
+            // Do not import the DMG-specific fetch/DMA quirks into this schedule.
             let match_raw_x: u8 = if self.mode_clock < 8 {
                 0
             } else {
@@ -3672,18 +3741,7 @@ impl Ppu {
             // One "dot" of simplified mode 3 progression.
             let sprites_enabled = (self.lcdc & 0x02) != 0;
 
-            let match_x = if self.mode3_position_in_line < -7 {
-                0u8
-            } else {
-                let mut x = self.mode3_position_in_line + 8 + obj_size_tuning.object_match_bias;
-                if (self.scx & 0x07) >= 2 {
-                    x -= 1;
-                }
-                if (self.scx & 0x07) >= 3 {
-                    x -= 1;
-                }
-                (x.clamp(0, 255) as u16).min(255) as u8
-            };
+            let match_x = self.dmg_sprite_match_x(self.mode3_position_in_line);
 
             if match_x != self.mode3_last_match_x {
                 self.mode3_last_match_x = match_x;
@@ -6438,6 +6496,88 @@ impl Ppu {
         if raw_x == 0 { 1 } else { (raw_x + 8).min(end) }
     }
 
+    // The live DMG timing FIFO and the line renderer are separate. During an
+    // uninterrupted pixel run we can project the former, but must retain every
+    // pop timestamp used later by register-write and window rendering logic.
+    fn dmg_fifo_run_limit(&self) -> u16 {
+        if self.mode3_obj_fetch_active
+            || self.mode3_render_delay != 0
+            || self.mode3_position_in_line < 0
+            || self.mode3_lcd_x >= SCREEN_WIDTH as u16
+            || self.mode3_bg_fifo == 0
+            || self.mode3_fetcher_state > 6
+            || self.mode3_lcdc_event_count != 0
+            || (1..=0xa0).contains(&self.oam_dma_current_dest)
+        {
+            return 0;
+        }
+        let mut dots = self
+            .mode3_target_cycles
+            .saturating_sub(self.mode_clock + 2)
+            .min(SCREEN_WIDTH as u16 - self.mode3_lcd_x);
+        // An underfilled startup FIFO can empty before its fetcher is ready.
+        // Keep that stall on the dot path. Otherwise each refill starts the
+        // exact periodic sequence (fifo=8, fetcher=0), repeating every 8 dots.
+        if self.mode3_bg_fifo <= 6 - self.mode3_fetcher_state {
+            dots = dots.min(u16::from(self.mode3_bg_fifo));
+        }
+        if self.mode3_sprite_latch_index < self.sprite_count {
+            let raw_x = (self.line_sprites[self.mode3_sprite_latch_index].x + 8).clamp(0, 255);
+            let match_x = self.dmg_sprite_match_x(self.mode3_position_in_line);
+            if raw_x <= i16::from(match_x) {
+                return 0;
+            }
+            dots = dots.min((raw_x - i16::from(match_x)) as u16);
+        }
+        dots
+    }
+
+    #[inline]
+    fn dmg_sprite_match_x(&self, position: i16) -> u8 {
+        if position < -7 {
+            return 0;
+        }
+        let fine = self.scx & 7;
+        (position + 8 + dmg_obj_size_tuning().object_match_bias
+            - i16::from(fine >= 2)
+            - i16::from(fine >= 3))
+        .clamp(0, 255) as u8
+    }
+
+    fn advance_dmg_fifo_run(&mut self, dots: u16) {
+        let last_match = self.dmg_sprite_match_x(self.mode3_position_in_line + dots as i16 - 1);
+        if last_match != self.mode3_last_match_x {
+            self.mode3_last_match_x = last_match;
+            self.mode3_same_x_toggle = last_match & 2 != 0 && last_match & 4 == 0;
+        }
+        let fifo = u16::from(self.mode3_bg_fifo);
+        if dots < fifo || fifo <= u16::from(6 - self.mode3_fetcher_state) {
+            self.mode3_bg_fifo -= dots as u8;
+            self.mode3_fetcher_state = (u16::from(self.mode3_fetcher_state) + dots).min(6) as u8;
+        } else {
+            let phase = ((dots - fifo) & 7) as u8;
+            self.mode3_bg_fifo = 8 - phase;
+            self.mode3_fetcher_state = phase.min(6);
+        }
+        let start = usize::from(self.mode3_lcd_x);
+        let end = start + usize::from(dots);
+        self.dmg_line_bgp_at_pixel[start..end].fill(self.bgp);
+        // LCDC and OBJ-size captures already equal their line initialization:
+        // the deadline rejects any line with an LCDC change.
+        for offset in 1..=dots {
+            let t = self.mode_clock + offset;
+            self.dmg_line_mode3_t_at_pixel[start + usize::from(offset) - 1] = t;
+            self.record_mode3_pop_event(t, self.mode3_position_in_line + offset as i16);
+        }
+        self.mode3_position_in_line += dots as i16;
+        self.mode3_lcd_x += dots;
+        self.mode_clock += dots;
+        #[cfg(feature = "ppu-trace")]
+        if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+            *timer += u64::from(dots);
+        }
+    }
+
     /// Dots before the next event, restricted to intervals already handled by
     /// the PPU's bulk stepping paths. Stop strictly before mode transitions so
     /// STAT, frame delivery, and HBlank DMA keep their original M-cycle timing.
@@ -6460,6 +6600,7 @@ impl Ppu {
             {
                 self.next_cgb_transfer_event()
             }
+            MODE_TRANSFER if self.is_dmg_mode() => return self.dmg_fifo_run_limit(),
             MODE_HBLANK => {
                 if self.dmg_hblank_render_pending {
                     self.mode0_target_cycles.min(dmg_hblank_render_delay())
@@ -6508,8 +6649,9 @@ impl Ppu {
                         && self.mode_clock.saturating_add(remaining)
                             < self.next_cgb_transfer_event() =>
                 {
-                    // Native CGB uses a scanline renderer, not the DMG FIFO.
-                    // Between OBJ attribute latches there is no observable work.
+                    // Native CGB's current live timing model has no observable
+                    // work between OBJ attribute latches. Its pixel fetcher is
+                    // replayed separately when rendering raster effects.
                     // Register writes, STAT delays and DMA stay on the dot path;
                     // the end-of-transfer fallback also latches offscreen OBJs.
                     // A stable LCDC also leaves the DMG size-capture array equal
@@ -6519,6 +6661,15 @@ impl Ppu {
                     if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
                         *timer += remaining as u64;
                     }
+                    return false;
+                }
+                MODE_TRANSFER
+                    if BATCH_TRANSFER
+                        && self.is_dmg_mode()
+                        && remaining != 0
+                        && remaining <= self.dmg_fifo_run_limit() =>
+                {
+                    self.advance_dmg_fifo_run(remaining);
                     return false;
                 }
                 MODE_HBLANK => {
@@ -7080,14 +7231,14 @@ impl Ppu {
             let lo = self.vram_read_for_render(0, addr_lo);
             let hi = self.vram_read_for_render(0, addr_hi);
             let run_len = (8 - tile_x).min(screen_end - screen_x);
-            for offset in 0..run_len {
-                let bit = 7 - (tile_x + offset);
-                let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                self.framebuffer[row_base + screen_x + offset] =
-                    self.dmg_bg_color_table[((bgp as usize) << 2) | color_id as usize];
-                if track_bg_zero {
-                    self.line_color_zero[screen_x + offset] = color_id == 0;
-                }
+            // BGP is part of the tag; runtime DMG/compatibility colors are
+            // invalidated when their color table changes. Bit 24 separates
+            // this interpretation from CGB's palette/flip tag bits.
+            let key = u32::from(lo) | (u32::from(hi) << 8) | (u32::from(bgp) << 16) | (1 << 24);
+            if track_bg_zero {
+                self.copy_cached_tile_row::<true>(key, row_base, screen_x, tile_x, run_len);
+            } else {
+                self.copy_cached_tile_row::<false>(key, row_base, screen_x, tile_x, run_len);
             }
             screen_x += run_len;
             pixel_x = pixel_x.wrapping_add(run_len as u16);
@@ -7102,69 +7253,6 @@ impl Ppu {
         } else {
             None
         };
-        struct BgFifo {
-            data: [u8; 32],
-            head: usize,
-            len: usize,
-        }
-
-        impl BgFifo {
-            #[inline]
-            fn new() -> Self {
-                Self {
-                    data: [0; 32],
-                    head: 0,
-                    len: 0,
-                }
-            }
-
-            #[inline]
-            fn len(&self) -> usize {
-                self.len
-            }
-
-            #[inline]
-            fn is_empty(&self) -> bool {
-                self.len == 0
-            }
-
-            #[inline]
-            fn clear(&mut self) {
-                self.head = 0;
-                self.len = 0;
-            }
-
-            #[inline]
-            fn push_back(&mut self, value: u8) {
-                if self.len >= self.data.len() {
-                    return;
-                }
-                let tail = (self.head + self.len) % self.data.len();
-                self.data[tail] = value;
-                self.len += 1;
-            }
-
-            #[inline]
-            fn push_front(&mut self, value: u8) {
-                if self.len >= self.data.len() {
-                    return;
-                }
-                self.head = (self.head + self.data.len() - 1) % self.data.len();
-                self.data[self.head] = value;
-                self.len += 1;
-            }
-
-            #[inline]
-            fn pop_front(&mut self) -> Option<u8> {
-                if self.len == 0 {
-                    return None;
-                }
-                let value = self.data[self.head];
-                self.head = (self.head + 1) % self.data.len();
-                self.len -= 1;
-                Some(value)
-            }
-        }
         const FETCH_GET_TILE_T1: u8 = 0;
         const FETCH_GET_TILE_T2: u8 = 1;
         const FETCH_GET_LO_T1: u8 = 2;
@@ -7235,7 +7323,7 @@ impl Ppu {
             max_t = max_t.max(t_schedule[SCREEN_WIDTH - 1].saturating_add(64));
         }
 
-        let mut bg_fifo = BgFifo::new();
+        let mut bg_fifo = PixelFifo::<u8>::new();
         for _ in 0..8 {
             bg_fifo.push_back(0);
         }
@@ -7976,54 +8064,70 @@ impl Ppu {
                 | (u32::from(hi) << 8)
                 | (u32::from(attr & 7) << 16)
                 | (u32::from(attr & 0x20) << 14);
-            let slot = ((key ^ (key >> 6) ^ (key >> 12)) as usize) & (CGB_ROW_CACHE_LEN - 1);
-            if self.cgb_row_cache[slot].key != key {
-                self.decode_cgb_cached_row(slot, key);
-            }
-            let row = &self.cgb_row_cache[slot];
             let run = (8 - tile_x).min(screen.end - x);
-            if run == 8 {
-                // Constant-size copies let the compiler avoid a memcpy call
-                // for the overwhelmingly common complete tile row.
-                self.framebuffer[row_base + x..row_base + x + 8].copy_from_slice(&row.pixels);
-                if TRACK_PRIORITY {
-                    self.line_priority[x..x + 8].fill(attr & 0x80 != 0);
-                    self.line_color_zero[x..x + 8].copy_from_slice(&row.color_zero);
-                }
-            } else {
-                self.framebuffer[row_base + x..row_base + x + run]
-                    .copy_from_slice(&row.pixels[tile_x..tile_x + run]);
-                if TRACK_PRIORITY {
-                    self.line_priority[x..x + run].fill(attr & 0x80 != 0);
-                    self.line_color_zero[x..x + run]
-                        .copy_from_slice(&row.color_zero[tile_x..tile_x + run]);
-                }
+            self.copy_cached_tile_row::<TRACK_PRIORITY>(key, row_base, x, tile_x, run);
+            if TRACK_PRIORITY {
+                self.line_priority[x..x + run].fill(attr & 0x80 != 0);
             }
             source_x = source_x.wrapping_add(run as u8);
             x += run;
         }
     }
 
+    #[inline]
+    fn copy_cached_tile_row<const TRACK_ZERO: bool>(
+        &mut self,
+        key: u32,
+        row_base: usize,
+        x: usize,
+        tile_x: usize,
+        run: usize,
+    ) {
+        let slot = ((key ^ (key >> 6) ^ (key >> 12)) as usize) & (TILE_ROW_CACHE_LEN - 1);
+        if self.tile_row_cache[slot].key != key {
+            self.decode_cached_tile_row(slot, key);
+        }
+        let row = &self.tile_row_cache[slot];
+        if run == 8 {
+            self.framebuffer[row_base + x..row_base + x + 8].copy_from_slice(&row.pixels);
+            if TRACK_ZERO {
+                self.line_color_zero[x..x + 8].copy_from_slice(&row.color_zero);
+            }
+        } else {
+            self.framebuffer[row_base + x..row_base + x + run]
+                .copy_from_slice(&row.pixels[tile_x..tile_x + run]);
+            if TRACK_ZERO {
+                self.line_color_zero[x..x + run]
+                    .copy_from_slice(&row.color_zero[tile_x..tile_x + run]);
+            }
+        }
+    }
+
     #[inline(never)]
-    fn decode_cgb_cached_row(&mut self, slot: usize, key: u32) {
+    fn decode_cached_tile_row(&mut self, slot: usize, key: u32) {
         let lo = key as u8;
         let hi = (key >> 8) as u8;
-        let palette = ((key >> 16) & 7) as usize * 4;
-        let flipped = key & (1 << 19) != 0;
-        let row = &mut self.cgb_row_cache[slot];
+        let dmg = key & (1 << 24) != 0;
+        let colors = if dmg {
+            let start = ((key >> 16) & 255) as usize * 4;
+            &self.dmg_bg_color_table[start..start + 4]
+        } else {
+            let start = ((key >> 16) & 7) as usize * 4;
+            &self.cgb_bg_color_table[start..start + 4]
+        };
+        let flipped = !dmg && key & (1 << 19) != 0;
+        let row = &mut self.tile_row_cache[slot];
         for x in 0..8 {
             let bit = if flipped { x } else { 7 - x };
             let color = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-            row.pixels[x] = self.cgb_bg_color_table[palette + usize::from(color)];
+            row.pixels[x] = colors[usize::from(color)];
             row.color_zero[x] = color == 0;
         }
         row.key = key;
     }
 
     fn render_cgb_bg_window_scanline_fetcher(&mut self) {
-        use std::collections::VecDeque;
-
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, Default)]
         struct FifoPixel {
             color_id: u8,
             palette: u8,
@@ -8040,7 +8144,9 @@ impl Ppu {
         let row_base = ly as usize * SCREEN_WIDTH;
         let track_sprite_priority = self.sprite_count > 0;
 
-        let mut fifo: VecDeque<FifoPixel> = VecDeque::with_capacity(32);
+        // At most eight queued pixels can receive another eight-pixel row.
+        // The shared 32-slot FIFO therefore needs no allocation or growth.
+        let mut fifo = PixelFifo::<FifoPixel>::new();
 
         let mut out_x: usize = 0;
         let mut discard: u8 = scx & 7;
@@ -8463,6 +8569,158 @@ impl Default for Ppu {
 mod mode3_timing_tests {
     use super::*;
 
+    fn assert_fifo_timing_equal(a: &Ppu, b: &Ppu) {
+        assert_eq!(
+            (
+                a.mode3_position_in_line,
+                a.mode3_lcd_x,
+                a.mode3_bg_fifo,
+                a.mode3_fetcher_state,
+                a.mode3_render_delay,
+                a.mode3_last_match_x,
+                a.mode3_same_x_toggle
+            ),
+            (
+                b.mode3_position_in_line,
+                b.mode3_lcd_x,
+                b.mode3_bg_fifo,
+                b.mode3_fetcher_state,
+                b.mode3_render_delay,
+                b.mode3_last_match_x,
+                b.mode3_same_x_toggle
+            )
+        );
+        assert_eq!(
+            (
+                a.mode3_obj_fetch_active,
+                a.mode3_obj_fetch_stage,
+                a.mode3_obj_fetch_sprite_index
+            ),
+            (
+                b.mode3_obj_fetch_active,
+                b.mode3_obj_fetch_stage,
+                b.mode3_obj_fetch_sprite_index
+            )
+        );
+        assert_eq!(a.dmg_line_obj_size_16, b.dmg_line_obj_size_16);
+        assert_eq!(a.dmg_line_bgp_at_pixel, b.dmg_line_bgp_at_pixel);
+        assert_eq!(a.dmg_line_lcdc_at_pixel, b.dmg_line_lcdc_at_pixel);
+        assert_eq!(a.dmg_line_mode3_t_at_pixel, b.dmg_line_mode3_t_at_pixel);
+        assert_eq!(a.mode3_pop_event_count, b.mode3_pop_event_count);
+        for (a, b) in a.mode3_pop_events.iter().zip(&b.mode3_pop_events) {
+            assert_eq!((a.t, a.position_in_line), (b.t, b.position_in_line));
+        }
+    }
+
+    #[test]
+    fn dmg_fifo_projection_matches_each_fetcher_phase() {
+        let mut actual = Ppu::new(Model::default());
+        let mut reference = Ppu::new(Model::default());
+        for fifo in 1..=8u8 {
+            for phase in 0..=6u8 {
+                for scx in 0..8 {
+                    for requested in [1, 2, 4, 7, 8, 9, 16, 31, 64, 128] {
+                        for ppu in [&mut actual, &mut reference] {
+                            ppu.lcdc = 0x93;
+                            ppu.scx = scx;
+                            ppu.bgp = scx * 31;
+                            ppu.begin_mode3_line();
+                            ppu.dmg_begin_transfer_line();
+                            ppu.mode = MODE_TRANSFER;
+                            ppu.mode_clock = 24;
+                            ppu.mode3_target_cycles = 252;
+                            ppu.mode3_position_in_line = 8;
+                            ppu.mode3_lcd_x = 9;
+                            ppu.mode3_render_delay = 0;
+                            ppu.mode3_bg_fifo = fifo;
+                            ppu.mode3_fetcher_state = phase;
+                        }
+                        let dots = requested.min(actual.dmg_fifo_run_limit());
+                        assert!(dots != 0);
+                        actual.advance_dmg_fifo_run(dots);
+                        for _ in 0..dots {
+                            reference.mode_clock += 1;
+                            reference.mode3_latch_sprite_attributes();
+                        }
+                        assert_fifo_timing_equal(&actual, &reference);
+                        assert_eq!(actual.mode_clock, reference.mode_clock);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_pixel_fifo_matches_deque_through_wraps() {
+        use std::collections::VecDeque;
+        let mut actual = PixelFifo::<u32>::new();
+        let mut reference = VecDeque::new();
+        for i in 0..10_000 {
+            match i % 113 {
+                0 => {
+                    actual.clear();
+                    reference.clear();
+                }
+                1..=64 => {
+                    actual.push_back(i);
+                    if reference.len() < 32 {
+                        reference.push_back(i);
+                    }
+                }
+                65..=88 => assert_eq!(actual.pop_front(), reference.pop_front()),
+                _ => {
+                    actual.push_front(i);
+                    if reference.len() < 32 {
+                        reference.push_front(i);
+                    }
+                }
+            }
+            assert_eq!(actual.len(), reference.len());
+            assert_eq!(actual.is_empty(), reference.is_empty());
+        }
+        while !reference.is_empty() {
+            assert_eq!(actual.pop_front(), reference.pop_front());
+        }
+        assert_eq!(actual.pop_front(), None);
+    }
+
+    #[test]
+    fn shared_tile_rows_preserve_dmg_palettes_and_cgb_tags() {
+        let mut ppu = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        for compat in [false, true] {
+            ppu.set_dmg_compat_mode(compat);
+            for bgp in 0..=255u8 {
+                for data in 0..256u16 {
+                    let lo = data as u8;
+                    let hi = lo.wrapping_mul(53).wrapping_add(bgp);
+                    // Alternate the two tag formats, including overlapping
+                    // palette bits, then change underlying palette colors.
+                    let cgb_key = u32::from(lo) | (u32::from(hi) << 8) | (u32::from(bgp & 7) << 16);
+                    ppu.copy_cached_tile_row::<true>(cgb_key, 0, 0, 0, 8);
+                    let key =
+                        u32::from(lo) | (u32::from(hi) << 8) | (u32::from(bgp) << 16) | (1 << 24);
+                    if data % 47 == 0 {
+                        ppu.set_dmg_palette([u32::from(bgp), 0xabcdef, u32::from(data), 0x123456]);
+                        ppu.write_reg(0xff68, 0x80);
+                        ppu.write_reg(0xff69, bgp);
+                        ppu.write_reg(0xff69, data as u8);
+                    }
+                    let first = usize::from(bgp & 7);
+                    ppu.copy_cached_tile_row::<true>(key, 0, 0, first, 8 - first);
+                    for x in 0..8 - first {
+                        let bit = 7 - first - x;
+                        let id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                        assert_eq!(
+                            ppu.framebuffer[x],
+                            ppu.dmg_bg_color_table[usize::from(bgp) * 4 + usize::from(id)]
+                        );
+                        assert_eq!(ppu.line_color_zero[x], id == 0);
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn cached_rows_follow_palette_and_direct_vram_changes() {
         let mut actual = Ppu::new(Model::Cgb(CgbRevision::RevE));
@@ -8649,7 +8907,7 @@ mod mode3_timing_tests {
     }
 
     #[test]
-    fn cgb_transfer_batch_matches_original_dot_path() {
+    fn transfer_batches_match_original_dot_path() {
         compare_transfer_batches(false);
     }
 
@@ -8660,10 +8918,19 @@ mod mode3_timing_tests {
 
     fn compare_transfer_batches(idle_batch: bool) {
         for (model, compat) in [
-            (Model::Cgb(CgbRevision::RevE), false),
+            (Model::Cgb(CgbRevision::Rev0), false),
+            (Model::Cgb(CgbRevision::RevA), false),
+            (Model::Cgb(CgbRevision::RevB), false),
             (Model::Cgb(CgbRevision::RevC), false),
+            (Model::Cgb(CgbRevision::RevD), false),
+            (Model::Cgb(CgbRevision::RevE), false),
+            (Model::Cgb(CgbRevision::Rev0), true),
+            (Model::Cgb(CgbRevision::RevC), true),
             (Model::Cgb(CgbRevision::RevE), true),
-            (Model::default(), false),
+            (Model::Dmg(DmgRevision::Rev0), false),
+            (Model::Dmg(DmgRevision::RevA), false),
+            (Model::Dmg(DmgRevision::RevB), false),
+            (Model::Dmg(DmgRevision::RevC), false),
         ] {
             for opri in [0, 1] {
                 let make_ppu = || {
@@ -8745,6 +9012,7 @@ mod mode3_timing_tests {
                     assert_eq!(fast_hblank, reference_hblank);
                     assert_eq!(fast_if, reference_if);
                     assert_eq!(fast.mode_clock, reference.mode_clock);
+                    assert_fifo_timing_equal(&fast, &reference);
                     assert_eq!(fast.frame_ready(), reference.frame_ready());
                     assert_eq!(fast.frame_counter, reference.frame_counter);
                     assert_eq!(fast.dmg_line_obj_size_16, reference.dmg_line_obj_size_16);

@@ -230,15 +230,10 @@ impl std::fmt::Debug for Mmu {
 impl Mmu {
     pub(crate) fn begin_ppu_batch(&mut self) {
         debug_assert!(!self.defer_ppu_ticks);
-        // DMG's dot FIFO has too few skippable intervals to pay for deadline
-        // maintenance. Retain eager stepping there (including compatibility
-        // mode); native CGB benefits substantially.
-        self.defer_ppu_ticks = self.ppu.is_cgb_native_mode();
-        self.ppu_idle_remaining = if self.defer_ppu_ticks {
-            self.ppu.idle_dots()
-        } else {
-            0
-        };
+        // Both timing models now expose safe observation deadlines. MMIO,
+        // OAM-corruption operations and DMA synchronize through the same path.
+        self.defer_ppu_ticks = true;
+        self.ppu_idle_remaining = self.ppu.idle_dots();
     }
 
     pub(crate) fn end_ppu_batch(&mut self) {

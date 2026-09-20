@@ -665,6 +665,130 @@ Validation:
 - `cargo check -p vibe-emu-core --all-features`: passed.
 - Gambatte was not run; it remains informational.
 
+## DMG FIFO projection and shared PPU rendering
+
+Baseline for this pass: `1bab0f0`, preserved as
+`/tmp/vibe-core-pass6-nextbase`. A fresh 2,400/120-frame DMG acid2 profile
+attributed 56.6% of samples to PPU stepping and another 4.1% to static DMG
+tile spans. This is a much larger target for that workload than CPU dispatch.
+
+### Why DMG and CGB had different FIFO paths
+
+Both hardware families have background and object pixel FIFOs. CGB adds
+palette and priority metadata and can fetch a tile index and its attributes
+simultaneously. It also differs in object-fetch cancellation and LCDC bit
+semantics. Those differences justify model-specific rules, but not the idea
+that only DMG uses a FIFO. See the hardware descriptions in
+[Pan Docs: Pixel FIFO](https://github.com/gbdev/pandocs/blob/master/src/pixel_fifo.md)
+and [Rendering](https://github.com/gbdev/pandocs/blob/master/src/Rendering.md).
+
+The implementation has two separate concerns:
+
+| Concern | DMG / CGB compatibility | Native CGB |
+| --- | --- | --- |
+| Live mode-3 timing | Simplified FIFO occupancy, fetcher phases, pixel pop times, and OBJ fetch stages | Simpler clock-based OBJ attribute-latch schedule |
+| Final pixel rendering | Static tile spans or a replay fetcher for raster effects | Static tile spans or a replay fetcher for raster effects |
+
+Thus the old comment about CGB not modeling a FIFO described only its live
+timing path and was misleading about rendering. It has been corrected.
+Neither model is a complete transistor-level simulation. DMG has more detailed
+live modeling in these areas; that does not establish greater accuracy across
+all games and hardware behavior. A simpler model can be equivalent for a
+given observation, while missing an edge case elsewhere. Code alone does not
+establish why its authors chose the split.
+
+This pass shares mechanisms with identical semantics and preserves the
+different timing rules. Missing native-CGB fetch timing should be addressed
+with hardware-backed regression cases, especially around register writes,
+window restarts, and OBJ fetch boundaries. Replacing its timing wholesale with
+DMG's would import DMG-specific quirks. The following optimizations preserve
+the existing model; they do not claim to close those accuracy gaps.
+
+### Changes and correctness boundaries
+
+- **Project uninterrupted DMG FIFO runs.** Once startup and fine-scroll
+  discard finish, the ready fetcher repeats an eight-dot cycle. Calculate
+  occupancy and phase directly, retaining every pixel-pop timestamp, palette
+  capture, and final sprite-match state. Stop before sprite matches, transfer
+  housekeeping, or a FIFO stall. Active OBJ fetches, LCDC changes, DMA overlap,
+  delayed register writes, and startup quirks keep the original path. This
+  projects the existing live timing model; window/register effects still use
+  the same captured timing in the replay renderer.
+- **Use the same bounded PPU scheduler for both models.** DMG and compatibility
+  mode now expose useful safe intervals. Existing MMU synchronization barriers
+  apply before VRAM/OAM/MMIO observations and CPU OAM-corruption operations;
+  interrupts, DMA, and frame boundaries retain their original timing.
+- **Share decoded rows.** Extend the existing 64-entry cache to static DMG
+  spans. Full tags distinguish CGB palette/flip data from DMG BGP mappings;
+  both color-table refresh paths invalidate entries. Bitplane decoding and
+  row copying are shared, while priority rules remain in their model-specific
+  callers. Cache capacity remains 2,816 bytes per PPU.
+- **Share fixed FIFO storage.** Both replay fetchers now use the same generic
+  ring buffer, retaining different pixel payloads and sequencers. This removes
+  CGB's per-dynamic-scanline `VecDeque` allocation. Its push rule permits at
+  most 16 queued pixels, within the existing 32-slot storage. The storage size
+  is an implementation choice, not a claim about hardware FIFO capacity.
+
+Differential coverage includes 4,480 occupancy/fetcher/scroll/run-length
+combinations against original dot stepping, comparing internal timing and all
+pop records. Existing mixed-access comparisons now cover all four DMG and six
+CGB revisions plus three CGB compatibility configurations, both priority
+orders, DMA, mode changes, raster writes, and varied clock chunks. Additional
+tests cover FIFO wraparound and saturation and 131,072 alternating cache-tag
+cases with palette updates and clipped rows. Existing CPU-runner comparisons
+exercise the expanded MMU scheduling scope.
+
+### Measurements and validation
+
+Five alternating pairs per workload, with the same release configuration as
+the baseline and no concurrent builds or tests:
+
+| Workload | Measured / warmup frames | Baseline | Optimized | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 1,800 / 300 | 1.029635 s | 1.039253 s | 0.991× |
+| Polished Crystal, silent | 1,800 / 300 | 0.738028 s | 0.746695 s | 0.988× |
+| DMG acid2, audio enabled | 600 / 120 | 0.716671 s | 0.442928 s | **1.618×** |
+| Blargg CPU instructions, CGB, audio enabled | 600 / 120 | 0.497086 s | 0.502383 s | 0.989× |
+| CGB acid2, audio enabled | 600 / 120 | 0.149999 s | 0.155514 s | 0.965× |
+| Blargg CGB wave test, audio enabled | 600 / 120 | 0.233122 s | 0.236607 s | 0.985× |
+| CGB acid-hell, audio enabled | 600 / 120 | 0.600337 s | 0.579010 s | 1.037× |
+
+All video/audio hashes, sample counts, dot counts, and final PCs matched.
+DMG acid2 saves **38.2%** of execution time. This is not an across-the-board
+CGB improvement: Polished Crystal is about 1% slower and static CGB acid2
+about 3.7% slower, while the dynamic CGB acid-hell workload improves 3.7%.
+The changes are retained for the substantial DMG gain and shared machinery;
+these CGB costs remain visible rather than being averaged away. An experiment
+forcing the shared row-copy helper inline did not improve the Polished Crystal
+or DMG result and was not retained.
+
+For 600 measured plus 120 warmup frames, DMG acid2's retired user instructions
+fell from **9,684,748,790 to 5,497,285,404** (43.2%), and branches from
+1,879,990,385 to 1,014,361,869 (46.0%). Polished Crystal instead changes from
+3,847,686,518 to 3,853,066,165 instructions (+0.14%) and from 756,900,316 to
+759,521,544 branches (+0.35%). These process counters include initialization,
+warmup, checksums, and queue draining. Five fresh pairs against the original
+`83f3465` binary put the cumulative Polished Crystal improvement at **4.368×**
+(4.501492 s to 1.030618 s). Executable text falls from 592,748 to 592,060 bytes;
+combined text/data/BSS remains 617,402 bytes. No extra per-PPU cache is added.
+
+The final DMG profile places 39.2% in PPU stepping, 5.1% in FIFO projection,
+3.5% in its run-limit calculation, and 1.5% in static tile spans. This points
+to remaining dot-path boundaries and guards rather than more tile decoding.
+The final Polished Crystal profile places 13.0% in the APU scheduler, 9.7% in
+CPU tick orchestration, 8.4% in PPU stepping, and 7.7% in instruction execution.
+These are exclusive symbol shares, not subsystem totals; changing inlining
+also changes attribution. Neither final profile lost samples.
+
+Validation:
+
+- `cargo fmt --all`: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- `cargo test`: **581 passed**, 33 existing ignored tests.
+- `cargo test --release`: **577 passed**, 33 existing ignored tests.
+- `cargo check -p vibe-emu-core --all-features`: passed.
+- Gambatte was not run; it remains informational.
+
 ## Rough 3DS budget without hardware testing
 
 Use instruction counts as a work proxy, not desktop FPS scaled by clock speed.
@@ -676,8 +800,8 @@ must enable the appropriate speed/cache mode through
 [libctru's `osSetSpeedupEnable`](https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/os.h).
 
 The counter workload advances `(600 + 120) × 70,224 / 4,194,304 = 12.05475`
-emulated seconds. Its 3.848 billion x86-64 instructions correspond to
-**0.319 billion host instructions per emulated second**, or 5.344 million
+emulated seconds. Its latest 3.853 billion x86-64 instructions correspond to
+**0.320 billion host instructions per emulated second**, or 5.351 million
 per benchmark frame. This includes startup, warmup, checksumming, and queue
 draining; it is a conservative process-level proxy rather than an isolated
 count of core instructions. It still represents an introductory ROM sequence,
@@ -702,15 +826,16 @@ equal cycle costs across these architectures.
 
 | Scenario | ARM/x86 instruction ratio | ARM CPI | Core CPU budget | Old 3DS remaining speedup | New 3DS remaining speedup |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Optimistic | 1.0 | 1.0 | 90% | 1.32× | 0.44× |
+| Optimistic | 1.0 | 1.0 | 90% | 1.33× | 0.44× |
 | Working planning assumption | 1.5 | 1.5 | 80% | 3.35× | 1.12× |
-| More costly ARM execution | 2.0 | 2.0 | 75% | 6.35× | 2.12× |
+| More costly ARM execution | 2.0 | 2.0 | 75% | 6.36× | 2.12× |
 
 A 1.12× requirement means roughly 90% of real time under that scenario; the old
 3DS estimate is about 30%. A value below 1 in the optimistic scenario means
 headroom under that assumption, not a measured result. The working interpretation
 is **another ~1.12× improvement for New 3DS and ~3.35× for old 3DS**, reduced from
-1.24× and 3.71× before the PPU pass. These remain development budgets, not a claim
+1.24× and 3.71× before the previous PPU pass. The DMG FIFO pass leaves this CGB
+budget essentially unchanged. These remain development budgets, not a claim
 that either machine has achieved those speeds. The optional PGO experiment is
 not credited in this calculation.
 
@@ -719,30 +844,40 @@ of **0.43 billion host instructions per emulated second** (about 7.2 million per
 frame), corresponding to a working New 3DS requirement within 1.5× of full speed.
 Hardware testing remains deferred as requested. The more useful next estimate
 improvement is an ARM build and assembly analysis, plus broader gameplay traces.
-A 1.0× working budget is ~0.286 billion instructions/s, about 10.4% fewer than the
+A 1.0× working budget is ~0.286 billion instructions/s, about 10.6% fewer than the
 current count. Only the x86-64 Rust target is installed in this environment;
 no ARM binary or physical console was measured in this pass.
+
+The DMG workload must be assessed separately. Its latest counter rate is
+**0.456 billion instructions per emulated second**, or 7.635 million per frame.
+Under the same working assumptions, DMG acid2 still needs **1.60× on New 3DS
+and 4.79× on old 3DS**. It remains above the provisional hardware-testing
+trigger, despite this pass's large improvement. These are different ROMs and
+execution paths, so their rates do not establish a hardware-model accuracy
+ranking or predict arbitrary gameplay.
 
 ## Research and next opportunities
 
 The latest profile separates two priorities:
 
 1. **CGB: reduce peripheral clock updates and remaining APU work.**
-   Polished Crystal still spends 13.5% of samples in the APU scheduler and
-   11.1% in CPU tick orchestration. Investigate combining timer/RTC and other
+   Polished Crystal still spends 13.0% of samples in the APU scheduler and
+   9.7% in CPU tick orchestration. Investigate combining timer/RTC and other
    peripheral advances across ordinary instructions, stopping before interrupt
    deadlines and synchronizing on relevant bus accesses. The current PPU/APU
    scopes provide part of this foundation, but timer overflow/reload collisions,
    serial transfers, and DMA must retain their timing. Incremental sample/DIV
    deadlines could also remove repeated arithmetic from the APU loop. Measure
    those changes before broadening dispatch or adding a CPU JIT; instruction
-   execution itself still accounts for only 8.4% of this profile.
-2. **DMG: specialize the stable mode-3 FIFO path.** DMG acid2 spends 55.6% of
-   samples in PPU stepping. The CGB row cache cannot remove that work. Deferred
-   stepping regressed this workload before the mode-specific fallback. Investigate
-   advancing stable FIFO/fetcher phases between pixel, sprite, window, register,
-   and interrupt observations, with the original dot loop retained for quirks.
-   This needs its own differential timing tests, not only screenshot checks.
+   execution itself still accounts for only 7.7% of this profile.
+2. **DMG: reduce repeated work at FIFO boundaries.** Stable FIFO runs are now
+   projected, but PPU stepping still takes 39.2% of samples, with another 8.6%
+   in projection and run-limit calculation. Investigate splitting calls at safe
+   boundaries inside `step_inner`, so an interval that starts or ends in a
+   quirk need not keep its entire middle on the dot path. Avoid recomputing the
+   same run limit in deadline prediction and advancement where possible. Preserve
+   the per-pixel timestamps needed by raster replay, and extend the original
+   dot-path comparisons to any newly batched startup or sprite phases.
 
 Before architecture-specific changes, build for ARM and inspect division,
 64-bit arithmetic, spills, and instruction-cache footprint. Rust documents the
