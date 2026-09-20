@@ -1,5 +1,10 @@
 # Core performance and the 3DS target
 
+The latest [New 3DS research pass](NEW_3DS_RESEARCH.md) audits actual ARMv6K
+assembly and refreshes PGO measurements against `f0f47e4`. It identifies
+recurring PPU configuration barriers and software division in cartridge reads
+as concrete next targets, with separate plans for the larger DMG gap.
+
 ## Reproducing measurements
 
 Build the dependency-free emulation core's profiling example:
@@ -945,8 +950,10 @@ frame), corresponding to a working New 3DS requirement within 1.5× of full spee
 Hardware testing remains deferred as requested. The more useful next estimate
 improvement is an ARM build and assembly analysis, plus broader gameplay traces.
 A 1.0× working budget is ~0.286 billion instructions/s, about 6.5% fewer than the
-current count. Only the x86-64 Rust target is installed in this environment;
-no ARM binary or physical console was measured in this pass.
+current count. No ARM binary or physical console was measured in that pass.
+The subsequent [ARM assembly audit](NEW_3DS_RESEARCH.md#actual-target-assembly)
+successfully cross-compiled the core library, but has not calibrated dynamic
+ARM instruction counts or console execution time.
 
 The DMG workload must be assessed separately. Its latest counter rate is
 **0.440 billion instructions per emulated second**, or 7.360 million per frame.
@@ -989,7 +996,9 @@ Before architecture-specific changes, build for ARM and inspect division,
 This can sharpen the current instruction-expansion assumptions without hardware
 access. Broaden deterministic gameplay workloads before selecting training
 profiles or claiming general 3DS readiness. The PGO measurements above apply
-to `e78952a`; regenerate profiles before evaluating this source revision.
+to `e78952a`; [fresh profiles and comparisons](NEW_3DS_RESEARCH.md#refreshed-pgo-measurements)
+now cover `f0f47e4`, with 1.15–1.46× host speedups across seven workloads.
+These host gains remain excluded from the 3DS instruction budget.
 
 Avoid large tables or aggressive inlining without measuring their cache cost.
 For example, an earlier branch avoiding division on single waveform edges
