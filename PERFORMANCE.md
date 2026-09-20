@@ -789,6 +789,107 @@ Validation:
 - `cargo check -p vibe-emu-core --all-features`: passed.
 - Gambatte was not run; it remains informational.
 
+## APU pipeline reconstruction and exact sample deadlines
+
+Baseline for this pass: `33261cc`, preserved as `/tmp/vibe-core-pass8-base`.
+A fresh 6,000/300-frame Polished Crystal profile attributed 12.7% of samples
+to the APU batch scheduler, 11.3% to CPU tick orchestration, and 4.2% to the
+APU's ordinary tick path. Disassembly sampling also put 13.7% of the scheduler's
+local samples immediately after its sample-deadline division. This is a clue
+to instruction latency, not a precise measurement of division cost.
+
+The earlier scheduler projected waveform counters through intervals without
+observable events, then replayed two complete CPU M-cycles to restore pipeline
+state. Those replay calls repeated sample-clock updates, DIV checks, and
+deadline prediction despite the enclosing interval already excluding them.
+
+This pass reconstructs the final pipeline directly. Only three sample latches
+survive: normal speed replaces all three in the final M-cycle; double speed
+retains one penultimate value and two final values. Advance waveform counters
+to one M-cycle before the end, capture that output where needed, then advance
+the final M-cycle and fill/shift the latches. The final separate channel step
+also preserves wave-RAM access flags and per-call channel bookkeeping. Clock
+and sample-accumulator bookkeeping is combined once. Normal and double speed
+use compile-time specializations selected once per queued batch.
+
+The interval's existing guards remain in force: no audio sample, DIV edge,
+sweep event, register observation, pending wave-RAM effect, or restart quirk
+may be crossed by this reconstruction. PCM reads and register accesses still
+synchronize queued clocks. This matters because CGB PCM registers expose
+channel outputs and DIV writes can trigger the sequencer, as documented in
+[Pan Docs: Audio Details](https://github.com/gbdev/pandocs/blob/master/src/Audio_details.md).
+No mixer, filter, resampling policy, or hardware timing rules change.
+
+Sample deadlines now use a precomputed reciprocal for the runtime sample rate,
+following the general technique of replacing repeated division by a fixed
+runtime denominator with multiply/shift operations described by
+[libdivide](https://libdivide.com/). This implementation adds no dependency or
+copied library code. For numerator `n < 2^32` and rate `d >= 2`,
+`q = (n * floor(2^32 / d)) >> 32` is at most one below `floor(n / d)`.
+The remainder comparison `n - q*d >= d` supplies the exact correction. Rates
+zero and one are handled explicitly; changing or restoring the rate updates
+the reciprocal. There is no approximate sample timing or floating-point math.
+
+New tests check all 4,194,304 accumulator phases at each of 44.1, 48, and 96 kHz,
+plus boundary and deterministic sampled phases across 1,030 rates, including
+zero, one, rates above the emulated clock, and `u32::MAX`. Another test compares
+projected channel state and emitted samples against individual M-cycles across
+15,360 intervals, normal/double speed, DMG and CGB revisions C/E, low/high
+waveform frequencies, noise configurations, DIV boundaries, and counter wrap.
+The existing all-revision scheduling and MMIO differential tests also pass.
+
+Five alternating pairs per workload, using the same ordinary release settings
+and with no concurrent compilation or tests:
+
+| Workload | Measured / warmup frames | Baseline | Optimized | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 1,800 / 300 | 1.036096 s | 0.980635 s | **1.057×** |
+| Polished Crystal, silent | 1,800 / 300 | 0.742323 s | 0.740750 s | 1.002× |
+| DMG acid2, audio enabled | 600 / 120 | 0.446877 s | 0.458151 s | 0.975× |
+| Blargg CPU instructions, CGB, audio enabled | 600 / 120 | 0.501450 s | 0.503331 s | 0.996× |
+| CGB acid2, audio enabled | 600 / 120 | 0.156387 s | 0.158203 s | 0.989× |
+| Blargg CGB wave test, audio enabled | 600 / 120 | 0.237804 s | 0.240840 s | 0.987× |
+| CGB acid-hell, audio enabled | 600 / 120 | 0.578630 s | 0.588159 s | 0.984× |
+
+Every video/audio hash, sample count, dot count, and final PC matched. The
+active-audio Polished Crystal workload saves **5.35%** of execution time;
+silent Polished Crystal is essentially unchanged. The test-ROM workloads
+regress by 0.4–2.5%, with DMG acid2 the largest regression. These are retained
+and reported as a tradeoff for the active-audio gain, not a claim of universal
+improvement. The test-ROM measurements emit silent audio, so broader games
+with active sound remain important holdouts before generalizing this result.
+
+For 600 measured plus 120 warmup frames, Polished Crystal's retired user
+instructions fall from **3,853,065,312 to 3,684,248,557** (4.38%), and branches
+from 759,521,309 to 738,921,355 (2.71%). DMG acid2 instructions fall from
+5,497,286,443 to 5,299,038,136 (3.61%), and branches from 1,014,362,028 to
+979,686,536 (3.42%), despite its elapsed-time regression. Fewer instructions
+alone do not establish better execution time, especially across architectures.
+Counters include startup, warmup, hashing, and queue draining.
+
+Five fresh pairs against the original `83f3465` binary give a cumulative
+Polished Crystal speedup of **4.568×** (4.471525 s to 0.978776 s). Executable
+text grows from 592,060 to 595,100 bytes (3,040 bytes, 0.51%); total
+text/data/BSS grows from 617,402 to 621,498 bytes. The APU stores one cached
+32-bit reciprocal; there are no new allocations, tables, or dependencies.
+
+The final Polished Crystal profile places 10.5% in CPU ticks, 9.5% in PPU
+stepping, 8.1% in instruction execution, and 3.3% in timer stepping. The
+specialized double-speed APU loop takes 5.1%, with another 4.0% in its now
+outlined constant-output deadline and 2.3% in the unobserved-interval deadline.
+Do not compare the loop's 5.1% alone to the old inlined scheduler's 12.7%.
+DMG still spends 41.0% in PPU stepping, 5.9% in FIFO projection, and 2.9% in
+its run-limit calculation. Both final profiles report zero lost samples.
+
+Validation:
+
+- `cargo fmt --all`: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- `cargo test`: **583 passed**, 33 existing ignored tests.
+- `cargo test --release`: **579 passed**, 33 existing ignored tests.
+- `cargo check -p vibe-emu-core --all-features`: passed.
+- Gambatte was not run; it remains informational.
+
 ## Rough 3DS budget without hardware testing
 
 Use instruction counts as a work proxy, not desktop FPS scaled by clock speed.
@@ -800,8 +901,8 @@ must enable the appropriate speed/cache mode through
 [libctru's `osSetSpeedupEnable`](https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/os.h).
 
 The counter workload advances `(600 + 120) × 70,224 / 4,194,304 = 12.05475`
-emulated seconds. Its latest 3.853 billion x86-64 instructions correspond to
-**0.320 billion host instructions per emulated second**, or 5.351 million
+emulated seconds. Its latest 3.684 billion x86-64 instructions correspond to
+**0.306 billion host instructions per emulated second**, or 5.117 million
 per benchmark frame. This includes startup, warmup, checksumming, and queue
 draining; it is a conservative process-level proxy rather than an isolated
 count of core instructions. It still represents an introductory ROM sequence,
@@ -826,17 +927,16 @@ equal cycle costs across these architectures.
 
 | Scenario | ARM/x86 instruction ratio | ARM CPI | Core CPU budget | Old 3DS remaining speedup | New 3DS remaining speedup |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Optimistic | 1.0 | 1.0 | 90% | 1.33× | 0.44× |
-| Working planning assumption | 1.5 | 1.5 | 80% | 3.35× | 1.12× |
-| More costly ARM execution | 2.0 | 2.0 | 75% | 6.36× | 2.12× |
+| Optimistic | 1.0 | 1.0 | 90% | 1.27× | 0.42× |
+| Working planning assumption | 1.5 | 1.5 | 80% | 3.21× | 1.07× |
+| More costly ARM execution | 2.0 | 2.0 | 75% | 6.08× | 2.03× |
 
-A 1.12× requirement means roughly 90% of real time under that scenario; the old
-3DS estimate is about 30%. A value below 1 in the optimistic scenario means
+A 1.07× requirement means roughly 94% of real time under that scenario; the old
+3DS estimate is about 31%. A value below 1 in the optimistic scenario means
 headroom under that assumption, not a measured result. The working interpretation
-is **another ~1.12× improvement for New 3DS and ~3.35× for old 3DS**, reduced from
-1.24× and 3.71× before the previous PPU pass. The DMG FIFO pass leaves this CGB
-budget essentially unchanged. These remain development budgets, not a claim
-that either machine has achieved those speeds. The optional PGO experiment is
+is **another ~1.07× improvement for New 3DS and ~3.21× for old 3DS**, reduced from
+1.12× and 3.35× before the APU pipeline pass. These remain development budgets,
+not a claim that either machine has achieved those speeds. The optional PGO experiment is
 not credited in this calculation.
 
 This workload remains below the earlier provisional hardware-testing trigger
@@ -844,15 +944,17 @@ of **0.43 billion host instructions per emulated second** (about 7.2 million per
 frame), corresponding to a working New 3DS requirement within 1.5× of full speed.
 Hardware testing remains deferred as requested. The more useful next estimate
 improvement is an ARM build and assembly analysis, plus broader gameplay traces.
-A 1.0× working budget is ~0.286 billion instructions/s, about 10.6% fewer than the
+A 1.0× working budget is ~0.286 billion instructions/s, about 6.5% fewer than the
 current count. Only the x86-64 Rust target is installed in this environment;
 no ARM binary or physical console was measured in this pass.
 
 The DMG workload must be assessed separately. Its latest counter rate is
-**0.456 billion instructions per emulated second**, or 7.635 million per frame.
-Under the same working assumptions, DMG acid2 still needs **1.60× on New 3DS
-and 4.79× on old 3DS**. It remains above the provisional hardware-testing
-trigger, despite this pass's large improvement. These are different ROMs and
+**0.440 billion instructions per emulated second**, or 7.360 million per frame.
+Under the same working assumptions, DMG acid2 still needs **1.54× on New 3DS
+and 4.61× on old 3DS**. Its instruction proxy improves in this pass while its
+desktop time regresses, illustrating the limits of this estimate. It remains
+above the provisional hardware-testing trigger despite the preceding FIFO
+pass's large improvement. These are different ROMs and
 execution paths, so their rates do not establish a hardware-model accuracy
 ranking or predict arbitrary gameplay.
 
@@ -861,17 +963,19 @@ ranking or predict arbitrary gameplay.
 The latest profile separates two priorities:
 
 1. **CGB: reduce peripheral clock updates and remaining APU work.**
-   Polished Crystal still spends 13.0% of samples in the APU scheduler and
-   9.7% in CPU tick orchestration. Investigate combining timer/RTC and other
-   peripheral advances across ordinary instructions, stopping before interrupt
+   Polished Crystal spends 10.5% of samples in CPU tick orchestration and 3.3%
+   in timer stepping. APU scheduling also remains significant: 5.1% in the
+   double-speed loop plus 6.3% in its two deadline helpers. Investigate combining
+   timer/RTC and other peripheral advances across ordinary instructions, stopping before interrupt
    deadlines and synchronizing on relevant bus accesses. The current PPU/APU
    scopes provide part of this foundation, but timer overflow/reload collisions,
-   serial transfers, and DMA must retain their timing. Incremental sample/DIV
-   deadlines could also remove repeated arithmetic from the APU loop. Measure
-   those changes before broadening dispatch or adding a CPU JIT; instruction
-   execution itself still accounts for only 7.7% of this profile.
+   serial transfers, and DMA must retain their timing. Sample-deadline division
+   is now removed; reusing the overlapping DIV/noise eligibility checks is a
+   more relevant APU target. Measure those changes before broadening dispatch
+   or adding a CPU JIT; instruction
+   execution itself still accounts for only 8.1% of this profile.
 2. **DMG: reduce repeated work at FIFO boundaries.** Stable FIFO runs are now
-   projected, but PPU stepping still takes 39.2% of samples, with another 8.6%
+   projected, but PPU stepping still takes 41.0% of samples, with another 8.8%
    in projection and run-limit calculation. Investigate splitting calls at safe
    boundaries inside `step_inner`, so an interval that starts or ends in a
    quirk need not keep its entire middle on the dot path. Avoid recomputing the

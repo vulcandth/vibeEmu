@@ -882,6 +882,8 @@ pub struct Apu {
     nr52: u8,
     sequencer: FrameSequencer,
     sample_rate: u32,
+    /// floor(2^32 / max(sample_rate, 2)); used for exact sample deadlines.
+    sample_rate_reciprocal: u32,
     sample_timer_accum: u64,
     audio_out: Option<AudioProducer>,
     pcm_samples: [u8; 4],
@@ -1558,6 +1560,7 @@ impl Apu {
             nr52: 0xF1,
             sequencer: FrameSequencer::new(),
             sample_rate: 44_100,
+            sample_rate_reciprocal: ((1u64 << 32) / 44_100) as u32,
             sample_timer_accum: 0,
             audio_out: None,
             pcm_samples: [0; 4],
@@ -1663,6 +1666,7 @@ impl Apu {
 
     pub(crate) fn restore_output_state(&mut self, state: OutputState) {
         self.sample_rate = state.sample_rate;
+        self.sample_rate_reciprocal = ((1u64 << 32) / u64::from(state.sample_rate.max(2))) as u32;
         self.speed_factor = state.speed_factor;
         self.hp_coef = Apu::calc_hp_coef(state.sample_rate);
         self.audio_out = state.audio_out;
@@ -3742,13 +3746,23 @@ impl Apu {
         }
     }
 
-    fn run_machine_cycles(
+    fn run_machine_cycles(&mut self, dots: u16, cpu_div: u16, dot_div: u16, double_speed: bool) {
+        // Clock mode cannot change inside a queued interval. Specialize once
+        // per batch so its inner deadline/replay loop uses fixed clock ratios.
+        if double_speed {
+            self.run_machine_cycles_at_speed::<true>(dots, cpu_div, dot_div);
+        } else {
+            self.run_machine_cycles_at_speed::<false>(dots, cpu_div, dot_div);
+        }
+    }
+
+    fn run_machine_cycles_at_speed<const DOUBLE_SPEED: bool>(
         &mut self,
         mut dots: u16,
         mut cpu_div: u16,
         mut dot_div: u16,
-        double_speed: bool,
     ) {
+        let double_speed = DOUBLE_SPEED;
         let m_dots = if double_speed { 2 } else { 4 };
         debug_assert_eq!(dots % m_dots, 0);
         while dots != 0 {
@@ -3761,19 +3775,10 @@ impl Apu {
                 self.unobserved_dots(cpu_div, double_speed).min(dots) / m_dots * m_dots
             };
             if unobserved >= 4 * m_dots && unobserved > idle {
-                // Only the final three pipeline latches survive. Replay the
-                // last two M-cycles to reconstruct them and per-call wave flags.
-                let prefix = unobserved - 2 * m_dots;
-                self.advance_unobserved(prefix, double_speed);
-                dots -= prefix;
-                cpu_div = cpu_div.wrapping_add(prefix << u32::from(double_speed));
-                dot_div = dot_div.wrapping_add(prefix);
-                for _ in 0..2 {
-                    self.run_cpu_tick_steps_now(m_dots, cpu_div, 4, dot_div, m_dots, double_speed);
-                    dots -= m_dots;
-                    cpu_div = cpu_div.wrapping_add(4);
-                    dot_div = dot_div.wrapping_add(m_dots);
-                }
+                self.advance_unobserved::<DOUBLE_SPEED>(unobserved);
+                dots -= unobserved;
+                cpu_div = cpu_div.wrapping_add(unobserved << u32::from(double_speed));
+                dot_div = dot_div.wrapping_add(unobserved);
                 continue;
             }
             let consumed = if idle >= 2 * m_dots {
@@ -3855,24 +3860,57 @@ impl Apu {
         if self.audio_out.is_none() || self.sample_rate == 0 {
             return dots;
         }
-        // The accumulator is reduced modulo CPU_CLOCK_HZ after each update.
-        // Keep this division 32-bit for ARM11 hosts.
-        let before_sample = (CPU_CLOCK_HZ - 1 - self.sample_timer_accum as u32) / self.sample_rate;
+        let before_sample = self.dots_before_sample();
         dots.min(before_sample.min(u32::from(u16::MAX)) as u16)
     }
 
-    fn advance_unobserved(&mut self, dots: u16, double_speed: bool) {
+    #[inline]
+    fn dots_before_sample(&self) -> u32 {
+        let numerator = CPU_CLOCK_HZ - 1 - self.sample_timer_accum as u32;
+        if self.sample_rate <= 1 {
+            return if self.sample_rate == 0 {
+                u32::MAX
+            } else {
+                numerator
+            };
+        }
+        // The rounded-down reciprocal underestimates the quotient by at most
+        // one: numerator < 2^32. Correct using the remainder, retaining the
+        // exact sample boundary without division in the scheduler loop.
+        let quotient =
+            ((u64::from(numerator) * u64::from(self.sample_rate_reciprocal)) >> 32) as u32;
+        quotient + u32::from(numerator - quotient * self.sample_rate >= self.sample_rate)
+    }
+
+    fn advance_unobserved<const DOUBLE_SPEED: bool>(&mut self, dots: u16) {
         self.synchronize_waveforms();
         self.quiet_dots = 0;
-        let ticks = i32::from(dots / 2);
+        let m_dots = if DOUBLE_SPEED { 2 } else { 4 };
+        // Only three pipeline latches survive. In double speed the oldest is
+        // the output one M-cycle before the end; the other two are the final
+        // output. Normal speed replaces all three with the final output.
+        // Project to that penultimate observation, then advance one last
+        // M-cycle to restore both output latches and per-call wave flags.
+        // Samples, DIV edges, sweep and bus effects were excluded by the caller.
+        let prefix_ticks = i32::from((dots - m_dots) / 2);
         if self.nr52 & 0x80 != 0 {
-            self.lf_div ^= (ticks & 1) as u8;
-            self.ch1.clock_2mhz(ticks);
-            self.ch2.clock_2mhz(ticks);
-            self.ch3.step(ticks as u32, &self.wave_ram);
-            self.clock_noise_channel_2mhz(ticks);
+            self.lf_div ^= ((dots / 2) & 1) as u8;
+            self.ch1.clock_2mhz(prefix_ticks);
+            self.ch2.clock_2mhz(prefix_ticks);
+            self.ch3.step(prefix_ticks as u32, &self.wave_ram);
+            self.clock_noise_channel_2mhz(prefix_ticks);
         }
-        let calls = dots / if double_speed { 2 } else { 4 };
+        if DOUBLE_SPEED {
+            self.tick_output_pipelines_fixed::<3>();
+        }
+        if self.nr52 & 0x80 != 0 {
+            self.ch1.clock_2mhz(i32::from(m_dots / 2));
+            self.ch2.clock_2mhz(i32::from(m_dots / 2));
+            self.ch3.step(u32::from(m_dots / 2), &self.wave_ram);
+            self.clock_noise_channel_2mhz(i32::from(m_dots / 2));
+        }
+        self.tick_output_pipelines(m_dots);
+        let calls = dots / m_dots;
         self.cpu_cycles = self
             .cpu_cycles
             .wrapping_add(u64::from(dots) + u64::from(calls));
@@ -3880,6 +3918,7 @@ impl Apu {
         self.sweep_dot_countdown = 0;
         self.advance_sample_clock(dots);
         self.mark_pcm_dirty();
+        self.quiet_dots = self.predict_quiet_dots();
     }
 
     /// Predict intervals where the square/wave staged outputs are constant. DIV
@@ -4144,6 +4183,7 @@ impl Apu {
     /// Set the audio output sample rate in Hz.
     pub fn set_sample_rate(&mut self, rate: u32) {
         self.sample_rate = rate;
+        self.sample_rate_reciprocal = ((1u64 << 32) / u64::from(rate.max(2))) as u32;
         self.sample_timer_accum = 0;
         self.hp_coef = Apu::calc_hp_coef(rate);
         // Queue sizing is handled by `enable_output()`.
@@ -4343,6 +4383,156 @@ impl Default for Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reciprocal_sample_deadlines_match_integer_division() {
+        let mut apu = Apu::new(Model::default());
+        // Every accumulator phase at common rates, including rates that do
+        // not divide the emulated clock, must keep the exact same boundary.
+        for rate in [44_100, 48_000, 96_000] {
+            apu.set_sample_rate(rate);
+            for phase in 0..CPU_CLOCK_HZ {
+                apu.sample_timer_accum = u64::from(phase);
+                assert_eq!(apu.dots_before_sample(), (CPU_CLOCK_HZ - 1 - phase) / rate);
+            }
+        }
+        let mut random = 0x1234_5678u32;
+        for rate in (0..1024).chain([
+            32_768,
+            192_000,
+            CPU_CLOCK_HZ - 1,
+            CPU_CLOCK_HZ,
+            CPU_CLOCK_HZ + 1,
+            u32::MAX,
+        ]) {
+            apu.set_sample_rate(rate);
+            // Output restoration may change the rate without resetting phase.
+            let state = apu.take_output_state();
+            apu.set_sample_rate(123);
+            apu.restore_output_state(state);
+            for phase in [0, 1, CPU_CLOCK_HZ - 2, CPU_CLOCK_HZ - 1]
+                .into_iter()
+                .chain((0..64).map(|_| {
+                    random ^= random << 13;
+                    random ^= random >> 17;
+                    random ^= random << 5;
+                    random % CPU_CLOCK_HZ
+                }))
+            {
+                apu.sample_timer_accum = u64::from(phase);
+                let expected = (CPU_CLOCK_HZ - 1 - phase)
+                    .checked_div(rate)
+                    .unwrap_or(u32::MAX);
+                assert_eq!(
+                    apu.dots_before_sample(),
+                    expected,
+                    "rate={rate} phase={phase}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn projected_pipeline_tail_matches_each_machine_cycle() {
+        let mut projections = 0;
+        for model in [
+            Model::default(),
+            Model::Cgb(CgbRevision::RevC),
+            Model::Cgb(CgbRevision::RevE),
+        ] {
+            for double_speed in [false, true] {
+                if double_speed && !model.is_cgb() {
+                    continue;
+                }
+                let m_dots = if double_speed { 2 } else { 4 };
+                for freq in [0u16, 2040, 2047] {
+                    for noise in [0, 8, 0x37, 0xe7] {
+                        let make = || {
+                            let mut apu = Apu::new(model);
+                            let audio = apu.enable_output(48_000);
+                            apu.write_reg(0xff26, 0);
+                            apu.write_reg(0xff26, 0x80);
+                            for (addr, val) in [
+                                (0xff24, 0x77),
+                                (0xff25, 0xff),
+                                (0xff11, 0x80),
+                                (0xff12, 0xf0),
+                                (0xff13, freq as u8),
+                                (0xff14, 0x80 | (freq >> 8) as u8),
+                                (0xff16, 0x40),
+                                (0xff17, 0xa0),
+                                (0xff18, freq as u8),
+                                (0xff19, 0x80 | (freq >> 8) as u8),
+                                (0xff1a, 0x80),
+                                (0xff1c, 0x20),
+                                (0xff1d, freq as u8),
+                                (0xff1e, 0x80 | (freq >> 8) as u8),
+                                (0xff21, 0xf0),
+                                (0xff22, noise),
+                                (0xff23, 0x80),
+                            ] {
+                                apu.write_reg(addr, val);
+                            }
+                            for i in 0..16 {
+                                apu.write_reg(0xff30 + i, (i * 17) as u8);
+                            }
+                            apu.cpu_cycles = u64::MAX - 127;
+                            apu.lf_div_counter = u64::MAX - 127;
+                            (apu, audio)
+                        };
+                        let (mut actual, audio) = make();
+                        let (mut expected, reference_audio) = make();
+                        let mut cpu_div = 0xff80u16;
+                        let mut dot_div = 0xff80u16;
+                        for iteration in 0..256 {
+                            let available = actual.unobserved_dots(cpu_div, double_speed);
+                            let dots = available.min([4, 5, 16, 31][iteration % 4] * m_dots)
+                                / m_dots
+                                * m_dots;
+                            let dots = if dots >= 4 * m_dots {
+                                if double_speed {
+                                    actual.advance_unobserved::<true>(dots);
+                                } else {
+                                    actual.advance_unobserved::<false>(dots);
+                                }
+                                projections += 1;
+                                dots
+                            } else {
+                                actual.run_cpu_tick_steps_now(
+                                    m_dots,
+                                    cpu_div,
+                                    4,
+                                    dot_div,
+                                    m_dots,
+                                    double_speed,
+                                );
+                                m_dots
+                            };
+                            for _ in 0..dots / m_dots {
+                                expected.step(m_dots);
+                                expected.tick_frame_sequencer_steps(cpu_div, 4, double_speed);
+                                expected.tick_steps(dot_div, m_dots, double_speed);
+                                cpu_div = cpu_div.wrapping_add(4);
+                                dot_div = dot_div.wrapping_add(m_dots);
+                            }
+                            assert_same_apu_state(&actual, &expected);
+                            loop {
+                                let sample = audio.pop_stereo();
+                                assert_eq!(sample, reference_audio.pop_stereo());
+                                if sample.is_none() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            projections > 1_000,
+            "only {projections} projections exercised"
+        );
+    }
 
     fn assert_same_apu_state(actual: &Apu, expected: &Apu) {
         // Project the deferred representation without flushing the real APU:
