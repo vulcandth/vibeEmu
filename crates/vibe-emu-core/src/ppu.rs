@@ -40,44 +40,147 @@ fn env_bool_or_true(key: &str) -> bool {
         .is_none_or(|v| env_flag_from_str(v.trim()))
 }
 
-macro_rules! define_env_i16 {
-    ($func:ident, $key:literal, $default:expr) => {
-        fn $func() -> i16 {
-            use std::sync::OnceLock;
-            static VALUE: OnceLock<i16> = OnceLock::new();
-            *VALUE.get_or_init(|| env_i16_or($key, $default))
+// Capture process-wide tuning once when the first PPU is constructed. The PPU
+// retains this immutable reference so pixel/FIFO paths do not repeatedly acquire
+// OnceLock on weakly ordered targets such as ARM11. Trace controls remain separate.
+macro_rules! define_ppu_tuning {
+    ($($name:ident: $ty:ty = $value:expr,)*) => {
+        #[derive(Clone)]
+        struct PpuTuning {
+            $($name: $ty,)*
+        }
+
+        impl PpuTuning {
+            fn process_default() -> &'static Self {
+                static TUNING: std::sync::OnceLock<PpuTuning> = std::sync::OnceLock::new();
+                TUNING.get_or_init(|| Self { $($name: $value,)* })
+            }
         }
     };
 }
 
-macro_rules! define_env_u16 {
-    ($func:ident, $key:literal, $default:expr) => {
-        fn $func() -> u16 {
-            use std::sync::OnceLock;
-            static VALUE: OnceLock<u16> = OnceLock::new();
-            *VALUE.get_or_init(|| env_u16_or($key, $default))
-        }
-    };
-}
-
-macro_rules! define_env_bool_false {
-    ($func:ident, $key:literal) => {
-        fn $func() -> bool {
-            use std::sync::OnceLock;
-            static VALUE: OnceLock<bool> = OnceLock::new();
-            *VALUE.get_or_init(|| env_bool_or_false($key))
-        }
-    };
-}
-
-macro_rules! define_env_bool_true {
-    ($func:ident, $key:literal) => {
-        fn $func() -> bool {
-            use std::sync::OnceLock;
-            static VALUE: OnceLock<bool> = OnceLock::new();
-            *VALUE.get_or_init(|| env_bool_or_true($key))
-        }
-    };
+define_ppu_tuning! {
+    dmg_mode3_lcdc_event_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_LCDC_EVENT_T_BIAS", -1),
+    dmg_mode3_lcdc_fetch_bits_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_LCDC_FETCH_BITS_T_BIAS", -2),
+    dmg_mode3_lcdc_win_en_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_LCDC_WIN_EN_T_BIAS", 2),
+    dmg_mode3_scx_start_delay_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCX_START_DELAY_BIAS", -1),
+    dmg_bgp_tail_pixels: i16 = env_i16_or("VIBEEMU_DMG_BGP_TAIL_PIXELS", 5),
+    dmg_bgp_fetcher_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_BGP_FETCHER_SAMPLE_T_BIAS", -1),
+    dmg_bgp_fetcher_wx0_extra_t: i16 = env_i16_or("VIBEEMU_DMG_BGP_FETCHER_WX0_EXTRA_T", 8),
+    dmg_bg_fetch_lead_pixels: i16 = env_i16_or("VIBEEMU_DMG_BG_FETCH_LEAD_PIXELS", 9),
+    dmg_bg_fetch_sample_px_in_tile: i16 = env_i16_or("VIBEEMU_DMG_BG_FETCH_SAMPLE_PX_IN_TILE", 0),
+    dmg_bg_en_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_SAMPLE_T_BIAS", -3),
+    dmg_bg_en_left_extra_bias: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_LEFT_EXTRA_BIAS", 0),
+    dmg_bg_en_left_x_threshold: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_LEFT_X_THRESHOLD", 0),
+    dmg_bg_en_left_raw_threshold: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_LEFT_RAW_THRESHOLD", 1),
+    dmg_bg_en_first_event_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_FIRST_EVENT_T_ADJUST", 0),
+    dmg_bg_fetch_first_event_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_BG_FETCH_FIRST_EVENT_T_ADJUST", 8),
+    dmg_bg_en_left_raw_sample_shift: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_LEFT_RAW_SAMPLE_SHIFT", 1),
+    dmg_bg_en_line0_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_LINE0_SAMPLE_T_BIAS", -4),
+    dmg_bgp_sprite_lag_pixels: i16 = env_i16_or("VIBEEMU_DMG_BGP_SPRITE_LAG_PIXELS", 1),
+    dmg_bgp_sprite_lag_line0_pixels: i16 = env_i16_or("VIBEEMU_DMG_BGP_SPRITE_LAG_LINE0_PIXELS", 5),
+    dmg_obj_en_pixel_shift: i16 = env_i16_or("VIBEEMU_DMG_OBJ_EN_PIXEL_SHIFT", -1),
+    dmg_obj_en_shift_max_x: i16 = env_i16_or("VIBEEMU_DMG_OBJ_EN_SHIFT_MAX_X", 7),
+    dmg_bgp_use_event_map: bool = env_bool_or_false("VIBEEMU_DMG_BGP_USE_EVENT_MAP"),
+    dmg_bgp_use_t_sample: bool = env_bool_or_false("VIBEEMU_DMG_BGP_USE_T_SAMPLE"),
+    dmg_bgp_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_BGP_SAMPLE_T_BIAS", 0),
+    dmg_bgp_line0_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_BGP_LINE0_SAMPLE_T_BIAS", 0),
+    dmg_bgp_use_simple_event_x: bool = env_bool_or_false("VIBEEMU_DMG_BGP_USE_SIMPLE_EVENT_X"),
+    dmg_bgp_simple_event_x_bias: i16 = env_i16_or("VIBEEMU_DMG_BGP_SIMPLE_EVENT_X_BIAS", 0),
+    dmg_bgp_falling_edge_delay_t: i16 = env_i16_or("VIBEEMU_DMG_BGP_FALLING_EDGE_DELAY_T", 0),
+    dmg_bgp_rising_edge_delay_t: i16 = env_i16_or("VIBEEMU_DMG_BGP_RISING_EDGE_DELAY_T", 0),
+    dmg_bgp_t_sample_use_obj_x_corr: bool = env_bool_or_false("VIBEEMU_DMG_BGP_T_SAMPLE_USE_OBJ_X_CORR"),
+    dmg_bgp_t_sample_use_first_x_phase_corr: bool = env_bool_or_false("VIBEEMU_DMG_BGP_T_SAMPLE_USE_FIRST_X_PHASE_CORR"),
+    dmg_bgp_t_sample_include_line0: bool = env_bool_or_false("VIBEEMU_DMG_BGP_T_SAMPLE_INCLUDE_LINE0"),
+    dmg_bgp_line0_edge_backstep: bool = env_bool_or_false("VIBEEMU_DMG_BGP_LINE0_EDGE_BACKSTEP"),
+    dmg_bgp_t_sample_first_x_phase_corr_mag: i16 = env_i16_or("VIBEEMU_DMG_BGP_T_SAMPLE_FIRST_X_PHASE_CORR_MAG", 1),
+    dmg_hblank_render_delay: u16 = env_u16_or("VIBEEMU_DMG_HBLANK_RENDER_DELAY", DMG_HBLANK_RENDER_DELAY),
+    dmg_obp0_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_OBP0_SAMPLE_T_BIAS", -1),
+    dmg_mode3_scx_event_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCX_EVENT_T_BIAS", -7),
+    dmg_mode3_scx_event_t_obj_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCX_EVENT_T_OBJ_BIAS", -3),
+    dmg_mode3_scx_event_push_state_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCX_EVENT_PUSH_STATE_T_ADJUST", -8),
+    dmg_mode3_scx_event_first_x_ge8_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCX_EVENT_FIRST_X_GE8_T_ADJUST", 4),
+    dmg_mode3_scy_event_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_T_BIAS", -13),
+    cgb_mode3_scy_event_t_bias: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_T_BIAS", -14),
+    dmg_mode3_scy_event_early_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_THRESHOLD_T", 25),
+    cgb_mode3_scy_event_early_threshold_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_EARLY_THRESHOLD_T", 28),
+    cgb_dmg_mode3_scy_event_early_threshold_t: u16 = env_u16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_EARLY_THRESHOLD_T", 21),
+    dmg_mode3_scy_event_early_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_T_ADJUST", 8),
+    cgb_mode3_scy_event_early_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_EARLY_T_ADJUST", 5),
+    cgb_dmg_mode3_scy_event_early_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_EARLY_T_ADJUST", -2),
+    cgb_dmg_mode3_scy_event_line0_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_LINE0_T_ADJUST", 0),
+    cgb_mode3_scy_event_left_regime_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_T_ADJUST", -2),
+    cgb_mode3_scy_event_left_regime_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_MIN_T", 0),
+    cgb_mode3_scy_event_left_regime_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_MAX_T", 0xFFFF),
+    cgb_mode3_scy_event_mid_regime_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_T_ADJUST", -5),
+    cgb_mode3_scy_event_mid_regime_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_MIN_T", 0),
+    cgb_mode3_scy_event_mid_regime_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_MAX_T", 0xFFFF),
+    cgb_mode3_scy_event_right_regime_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_T_ADJUST", -2),
+    cgb_mode3_scy_event_right_regime_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_MIN_T", 0),
+    cgb_mode3_scy_event_right_regime_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_MAX_T", 0xFFFF),
+    cgb_mode3_scy_event_push_state_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_T_ADJUST", 6),
+    cgb_mode3_scy_event_push_state_x0_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_T_ADJUST", -16),
+    cgb_mode3_scy_event_push_state_x0_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_MIN_T", 16),
+    cgb_mode3_scy_event_push_state_x0_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_MAX_T", 32),
+    cgb_mode3_scy_event_push_full_fifo_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_T_ADJUST", 8),
+    cgb_mode3_scy_event_push_full_fifo_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_MIN_T", 28),
+    cgb_mode3_scy_event_push_full_fifo_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_MAX_T", 32),
+    cgb_mode3_scy_event_x0_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X0_T_ADJUST", 0),
+    cgb_mode3_scy_event_x0_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X0_MIN_T", 0),
+    cgb_mode3_scy_event_x0_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X0_MAX_T", 0xFFFF),
+    cgb_mode3_scy_event_x8_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X8_T_ADJUST", 0),
+    cgb_mode3_scy_event_x8_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X8_MIN_T", 0),
+    cgb_mode3_scy_event_x8_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X8_MAX_T", 0xFFFF),
+    cgb_dmg_mode3_scy_event_startup_threshold_t: u16 = env_u16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_THRESHOLD_T", 16),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_ADJUST", 15),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_x0_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_X0_ADJUST", 0),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_x8_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_X8_ADJUST", 0),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t: u16 = env_u16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_MIN_T", 17),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t: u16 = env_u16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_MAX_T", 31),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_late_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_ADJUST", 8),
+    cgb_dmg_mode3_scy_event_startup_push_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_PUSH_ADJUST", -13),
+    cgb_dmg_mode3_scy_event_startup_hi_t2_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_HI_T2_ADJUST", 8),
+    dmg_mode3_scy_event_push_state_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_STATE_T_ADJUST", -2),
+    dmg_mode3_scy_event_push_state_min_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_STATE_MIN_T", 1),
+    dmg_mode3_scy_event_push_previsible_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_PREVISIBLE_T_ADJUST", -2),
+    dmg_mode3_scy_event_push_visible_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_VISIBLE_T_ADJUST", -3),
+    dmg_mode3_scy_event_lo_t1_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LO_T1_T_ADJUST", 2),
+    dmg_mode3_scy_event_tile_t1_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T1_T_ADJUST", 6),
+    dmg_mode3_scy_event_tile_t1_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T1_THRESHOLD_T", 3),
+    dmg_mode3_scy_event_tile_t2_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T2_T_ADJUST", 5),
+    dmg_mode3_scy_event_tile_t2_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T2_THRESHOLD_T", 13),
+    dmg_mode3_scy_event_hi_t2_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_HI_T2_T_ADJUST", -3),
+    dmg_mode3_scy_event_hi_t2_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_HI_T2_THRESHOLD_T", 210),
+    dmg_mode3_scy_event_lo_t1_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LO_T1_THRESHOLD_T", 208),
+    dmg_mode3_scy_use_stage_sample_t: bool = env_bool_or_false("VIBEEMU_DMG_MODE3_SCY_USE_STAGE_SAMPLE_T"),
+    dmg_mode3_scy_sample_tile_t_offset: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_SAMPLE_TILE_T_OFFSET", 0),
+    dmg_mode3_scy_sample_lo_t_offset: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_SAMPLE_LO_T_OFFSET", 0),
+    dmg_mode3_scy_sample_hi_t_offset: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_SAMPLE_HI_T_OFFSET", 0),
+    cgb_dmg_mode3_scy_latch_start_pos: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_LATCH_START_POS", -16),
+    cgb_dmg_mode3_scy_startup_allow_same_dot: bool = env_bool_or_false("VIBEEMU_CGB_DMG_MODE3_SCY_STARTUP_ALLOW_SAME_DOT"),
+    cgb_dmg_mode3_scy_push_full_allow_same_dot: bool = env_bool_or_false("VIBEEMU_CGB_DMG_MODE3_SCY_PUSH_FULL_ALLOW_SAME_DOT"),
+    dmg_mode3_scy_event_left_regime_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_T_ADJUST", -8),
+    dmg_mode3_scy_event_left_edge_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_T_ADJUST", 0),
+    dmg_mode3_scy_event_left_edge_min_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_MIN_T", 0),
+    dmg_mode3_scy_event_left_edge_max_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_MAX_T", 0),
+    dmg_mode3_scy_event_left_regime_min_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_MIN_T", 19),
+    dmg_mode3_scy_event_left_regime_max_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_MAX_T", 26),
+    dmg_mode3_scy_event_right_regime_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_T_ADJUST", -14),
+    dmg_mode3_scy_event_right_regime_min_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_MIN_T", 36),
+    dmg_mode3_scy_event_right_regime_max_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_MAX_T", 43),
+    dmg_mode3_scy_event_startup_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_THRESHOLD_T", 15),
+    dmg_mode3_scy_event_startup_tile_t1_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_ADJUST", -8),
+    dmg_mode3_scy_event_startup_lo_t1_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_LO_T1_ADJUST", 7),
+    dmg_mode3_scy_event_startup_tile_t2_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T2_ADJUST", 9),
+    dmg_mode3_scy_event_startup_hi_t2_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_HI_T2_ADJUST", 6),
+    dmg_mode3_scy_event_startup_push_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_PUSH_ADJUST", 2),
+    dmg_mode3_wx_event_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_WX_EVENT_T_BIAS", 3),
+    dmg_mode3_wy_event_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_WY_EVENT_T_BIAS", 0),
+    dmg_wx_activate_on_pos6: bool = env_bool_or_true("VIBEEMU_DMG_WX_ACTIVATE_ON_POS6"),
+    dmg_wx_previsible_phase_max: i16 = env_i16_or("VIBEEMU_DMG_WX_PREVISIBLE_PHASE_MAX", 0),
+    dmg_bg_window_use_pop_schedule_enabled: bool = env_bool_or_false("VIBEEMU_DMG_BG_WINDOW_USE_POP_SCHEDULE"),
+    dmg_mode3_obj_fetch_sim_dots: u16 = load_obj_fetch_sim_dots(),
+    dmg_obj_size_tuning: DmgObjSizeTuning = load_obj_size_tuning(),
 }
 
 macro_rules! define_trace_env_bool_false {
@@ -115,152 +218,6 @@ macro_rules! define_trace_env_os_bool_false {
 }
 
 define_trace_env_os_bool_false!(oam_bug_trace_enabled, "VIBEEMU_TRACE_OAMBUG");
-define_env_i16!(
-    dmg_mode3_lcdc_event_t_bias,
-    "VIBEEMU_DMG_MODE3_LCDC_EVENT_T_BIAS",
-    -1
-);
-define_env_i16!(
-    dmg_mode3_lcdc_fetch_bits_t_bias,
-    "VIBEEMU_DMG_MODE3_LCDC_FETCH_BITS_T_BIAS",
-    -2
-);
-define_env_i16!(
-    dmg_mode3_lcdc_win_en_t_bias,
-    "VIBEEMU_DMG_MODE3_LCDC_WIN_EN_T_BIAS",
-    2
-);
-define_env_i16!(
-    dmg_mode3_scx_start_delay_bias,
-    "VIBEEMU_DMG_MODE3_SCX_START_DELAY_BIAS",
-    -1
-);
-define_env_i16!(dmg_bgp_tail_pixels, "VIBEEMU_DMG_BGP_TAIL_PIXELS", 5);
-define_env_i16!(
-    dmg_bgp_fetcher_sample_t_bias,
-    "VIBEEMU_DMG_BGP_FETCHER_SAMPLE_T_BIAS",
-    -1
-);
-define_env_i16!(
-    dmg_bgp_fetcher_wx0_extra_t,
-    "VIBEEMU_DMG_BGP_FETCHER_WX0_EXTRA_T",
-    8
-);
-define_env_i16!(
-    dmg_bg_fetch_lead_pixels,
-    "VIBEEMU_DMG_BG_FETCH_LEAD_PIXELS",
-    9
-);
-define_env_i16!(
-    dmg_bg_fetch_sample_px_in_tile,
-    "VIBEEMU_DMG_BG_FETCH_SAMPLE_PX_IN_TILE",
-    0
-);
-define_env_i16!(
-    dmg_bg_en_sample_t_bias,
-    "VIBEEMU_DMG_BG_EN_SAMPLE_T_BIAS",
-    -3
-);
-define_env_i16!(
-    dmg_bg_en_left_extra_bias,
-    "VIBEEMU_DMG_BG_EN_LEFT_EXTRA_BIAS",
-    0
-);
-define_env_i16!(
-    dmg_bg_en_left_x_threshold,
-    "VIBEEMU_DMG_BG_EN_LEFT_X_THRESHOLD",
-    0
-);
-define_env_i16!(
-    dmg_bg_en_left_raw_threshold,
-    "VIBEEMU_DMG_BG_EN_LEFT_RAW_THRESHOLD",
-    1
-);
-define_env_i16!(
-    dmg_bg_en_first_event_t_adjust,
-    "VIBEEMU_DMG_BG_EN_FIRST_EVENT_T_ADJUST",
-    0
-);
-define_env_i16!(
-    dmg_bg_fetch_first_event_t_adjust,
-    "VIBEEMU_DMG_BG_FETCH_FIRST_EVENT_T_ADJUST",
-    8
-);
-define_env_i16!(
-    dmg_bg_en_left_raw_sample_shift,
-    "VIBEEMU_DMG_BG_EN_LEFT_RAW_SAMPLE_SHIFT",
-    1
-);
-define_env_i16!(
-    dmg_bg_en_line0_sample_t_bias,
-    "VIBEEMU_DMG_BG_EN_LINE0_SAMPLE_T_BIAS",
-    -4
-);
-define_env_i16!(
-    dmg_bgp_sprite_lag_pixels,
-    "VIBEEMU_DMG_BGP_SPRITE_LAG_PIXELS",
-    1
-);
-define_env_i16!(
-    dmg_bgp_sprite_lag_line0_pixels,
-    "VIBEEMU_DMG_BGP_SPRITE_LAG_LINE0_PIXELS",
-    5
-);
-define_env_i16!(dmg_obj_en_pixel_shift, "VIBEEMU_DMG_OBJ_EN_PIXEL_SHIFT", -1);
-define_env_i16!(dmg_obj_en_shift_max_x, "VIBEEMU_DMG_OBJ_EN_SHIFT_MAX_X", 7);
-define_env_bool_false!(dmg_bgp_use_event_map, "VIBEEMU_DMG_BGP_USE_EVENT_MAP");
-define_env_bool_false!(dmg_bgp_use_t_sample, "VIBEEMU_DMG_BGP_USE_T_SAMPLE");
-define_env_i16!(dmg_bgp_sample_t_bias, "VIBEEMU_DMG_BGP_SAMPLE_T_BIAS", 0);
-define_env_i16!(
-    dmg_bgp_line0_sample_t_bias,
-    "VIBEEMU_DMG_BGP_LINE0_SAMPLE_T_BIAS",
-    0
-);
-define_env_bool_false!(
-    dmg_bgp_use_simple_event_x,
-    "VIBEEMU_DMG_BGP_USE_SIMPLE_EVENT_X"
-);
-define_env_i16!(
-    dmg_bgp_simple_event_x_bias,
-    "VIBEEMU_DMG_BGP_SIMPLE_EVENT_X_BIAS",
-    0
-);
-define_env_i16!(
-    dmg_bgp_falling_edge_delay_t,
-    "VIBEEMU_DMG_BGP_FALLING_EDGE_DELAY_T",
-    0
-);
-define_env_i16!(
-    dmg_bgp_rising_edge_delay_t,
-    "VIBEEMU_DMG_BGP_RISING_EDGE_DELAY_T",
-    0
-);
-define_env_bool_false!(
-    dmg_bgp_t_sample_use_obj_x_corr,
-    "VIBEEMU_DMG_BGP_T_SAMPLE_USE_OBJ_X_CORR"
-);
-define_env_bool_false!(
-    dmg_bgp_t_sample_use_first_x_phase_corr,
-    "VIBEEMU_DMG_BGP_T_SAMPLE_USE_FIRST_X_PHASE_CORR"
-);
-define_env_bool_false!(
-    dmg_bgp_t_sample_include_line0,
-    "VIBEEMU_DMG_BGP_T_SAMPLE_INCLUDE_LINE0"
-);
-define_env_bool_false!(
-    dmg_bgp_line0_edge_backstep,
-    "VIBEEMU_DMG_BGP_LINE0_EDGE_BACKSTEP"
-);
-define_env_i16!(
-    dmg_bgp_t_sample_first_x_phase_corr_mag,
-    "VIBEEMU_DMG_BGP_T_SAMPLE_FIRST_X_PHASE_CORR_MAG",
-    1
-);
-define_env_u16!(
-    dmg_hblank_render_delay,
-    "VIBEEMU_DMG_HBLANK_RENDER_DELAY",
-    DMG_HBLANK_RENDER_DELAY
-);
 
 #[cfg(feature = "ppu-trace")]
 macro_rules! ppu_trace {
@@ -458,6 +415,7 @@ impl DecodedTileRow {
 
 /// Pixel Processing Unit emulating the Game Boy / Game Boy Color display hardware.
 pub struct Ppu {
+    tuning: &'static PpuTuning,
     /// Two VRAM banks (bank 1 is CGB-only).
     pub vram: [[u8; VRAM_BANK_SIZE]; 2],
     /// Currently selected VRAM bank (0 or 1).
@@ -628,411 +586,6 @@ impl std::fmt::Debug for Ppu {
     }
 }
 
-define_env_i16!(dmg_obp0_sample_t_bias, "VIBEEMU_DMG_OBP0_SAMPLE_T_BIAS", -1);
-define_env_i16!(
-    dmg_mode3_scx_event_t_bias,
-    "VIBEEMU_DMG_MODE3_SCX_EVENT_T_BIAS",
-    -7
-);
-define_env_i16!(
-    dmg_mode3_scx_event_t_obj_bias,
-    "VIBEEMU_DMG_MODE3_SCX_EVENT_T_OBJ_BIAS",
-    -3
-);
-define_env_i16!(
-    dmg_mode3_scx_event_push_state_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCX_EVENT_PUSH_STATE_T_ADJUST",
-    -8
-);
-define_env_i16!(
-    dmg_mode3_scx_event_first_x_ge8_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCX_EVENT_FIRST_X_GE8_T_ADJUST",
-    4
-);
-define_env_i16!(
-    dmg_mode3_scy_event_t_bias,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_T_BIAS",
-    -13
-);
-define_env_i16!(
-    cgb_mode3_scy_event_t_bias,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_T_BIAS",
-    -14
-);
-define_env_u16!(
-    dmg_mode3_scy_event_early_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_THRESHOLD_T",
-    25
-);
-define_env_u16!(
-    cgb_mode3_scy_event_early_threshold_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_EARLY_THRESHOLD_T",
-    28
-);
-define_env_u16!(
-    cgb_dmg_mode3_scy_event_early_threshold_t,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_EARLY_THRESHOLD_T",
-    21
-);
-define_env_i16!(
-    dmg_mode3_scy_event_early_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_T_ADJUST",
-    8
-);
-define_env_i16!(
-    cgb_mode3_scy_event_early_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_EARLY_T_ADJUST",
-    5
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_early_t_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_EARLY_T_ADJUST",
-    -2
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_line0_t_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_LINE0_T_ADJUST",
-    0
-);
-define_env_i16!(
-    cgb_mode3_scy_event_left_regime_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_T_ADJUST",
-    -2
-);
-define_env_u16!(
-    cgb_mode3_scy_event_left_regime_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_MIN_T",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_left_regime_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_MAX_T",
-    0xFFFF
-);
-define_env_i16!(
-    cgb_mode3_scy_event_mid_regime_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_T_ADJUST",
-    -5
-);
-define_env_u16!(
-    cgb_mode3_scy_event_mid_regime_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_MIN_T",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_mid_regime_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_MAX_T",
-    0xFFFF
-);
-define_env_i16!(
-    cgb_mode3_scy_event_right_regime_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_T_ADJUST",
-    -2
-);
-define_env_u16!(
-    cgb_mode3_scy_event_right_regime_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_MIN_T",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_right_regime_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_MAX_T",
-    0xFFFF
-);
-define_env_i16!(
-    cgb_mode3_scy_event_push_state_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_T_ADJUST",
-    6
-);
-define_env_i16!(
-    cgb_mode3_scy_event_push_state_x0_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_T_ADJUST",
-    -16
-);
-define_env_u16!(
-    cgb_mode3_scy_event_push_state_x0_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_MIN_T",
-    16
-);
-define_env_u16!(
-    cgb_mode3_scy_event_push_state_x0_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_MAX_T",
-    32
-);
-define_env_i16!(
-    cgb_mode3_scy_event_push_full_fifo_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_T_ADJUST",
-    8
-);
-define_env_u16!(
-    cgb_mode3_scy_event_push_full_fifo_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_MIN_T",
-    28
-);
-define_env_u16!(
-    cgb_mode3_scy_event_push_full_fifo_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_MAX_T",
-    32
-);
-define_env_i16!(
-    cgb_mode3_scy_event_x0_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X0_T_ADJUST",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_x0_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X0_MIN_T",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_x0_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X0_MAX_T",
-    0xFFFF
-);
-define_env_i16!(
-    cgb_mode3_scy_event_x8_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X8_T_ADJUST",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_x8_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X8_MIN_T",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_x8_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X8_MAX_T",
-    0xFFFF
-);
-define_env_u16!(
-    cgb_dmg_mode3_scy_event_startup_threshold_t,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_THRESHOLD_T",
-    16
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_ADJUST",
-    15
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_x0_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_X0_ADJUST",
-    0
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_x8_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_X8_ADJUST",
-    0
-);
-define_env_u16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_MIN_T",
-    17
-);
-define_env_u16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_MAX_T",
-    31
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_late_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_ADJUST",
-    8
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_push_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_PUSH_ADJUST",
-    -13
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_hi_t2_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_HI_T2_ADJUST",
-    8
-);
-define_env_i16!(
-    dmg_mode3_scy_event_push_state_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_STATE_T_ADJUST",
-    -2
-);
-define_env_u16!(
-    dmg_mode3_scy_event_push_state_min_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_STATE_MIN_T",
-    1
-);
-define_env_i16!(
-    dmg_mode3_scy_event_push_previsible_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_PREVISIBLE_T_ADJUST",
-    -2
-);
-define_env_i16!(
-    dmg_mode3_scy_event_push_visible_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_VISIBLE_T_ADJUST",
-    -3
-);
-define_env_i16!(
-    dmg_mode3_scy_event_lo_t1_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LO_T1_T_ADJUST",
-    2
-);
-define_env_i16!(
-    dmg_mode3_scy_event_tile_t1_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T1_T_ADJUST",
-    6
-);
-define_env_u16!(
-    dmg_mode3_scy_event_tile_t1_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T1_THRESHOLD_T",
-    3
-);
-define_env_i16!(
-    dmg_mode3_scy_event_tile_t2_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T2_T_ADJUST",
-    5
-);
-define_env_u16!(
-    dmg_mode3_scy_event_tile_t2_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T2_THRESHOLD_T",
-    13
-);
-define_env_i16!(
-    dmg_mode3_scy_event_hi_t2_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_HI_T2_T_ADJUST",
-    -3
-);
-define_env_u16!(
-    dmg_mode3_scy_event_hi_t2_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_HI_T2_THRESHOLD_T",
-    210
-);
-define_env_u16!(
-    dmg_mode3_scy_event_lo_t1_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LO_T1_THRESHOLD_T",
-    208
-);
-define_env_bool_false!(
-    dmg_mode3_scy_use_stage_sample_t,
-    "VIBEEMU_DMG_MODE3_SCY_USE_STAGE_SAMPLE_T"
-);
-define_env_i16!(
-    dmg_mode3_scy_sample_tile_t_offset,
-    "VIBEEMU_DMG_MODE3_SCY_SAMPLE_TILE_T_OFFSET",
-    0
-);
-define_env_i16!(
-    dmg_mode3_scy_sample_lo_t_offset,
-    "VIBEEMU_DMG_MODE3_SCY_SAMPLE_LO_T_OFFSET",
-    0
-);
-define_env_i16!(
-    dmg_mode3_scy_sample_hi_t_offset,
-    "VIBEEMU_DMG_MODE3_SCY_SAMPLE_HI_T_OFFSET",
-    0
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_latch_start_pos,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_LATCH_START_POS",
-    -16
-);
-define_env_bool_false!(
-    cgb_dmg_mode3_scy_startup_allow_same_dot,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_STARTUP_ALLOW_SAME_DOT"
-);
-define_env_bool_false!(
-    cgb_dmg_mode3_scy_push_full_allow_same_dot,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_PUSH_FULL_ALLOW_SAME_DOT"
-);
-define_env_i16!(
-    dmg_mode3_scy_event_left_regime_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_T_ADJUST",
-    -8
-);
-define_env_i16!(
-    dmg_mode3_scy_event_left_edge_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_T_ADJUST",
-    0
-);
-define_env_u16!(
-    dmg_mode3_scy_event_left_edge_min_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_MIN_T",
-    0
-);
-define_env_u16!(
-    dmg_mode3_scy_event_left_edge_max_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_MAX_T",
-    0
-);
-define_env_u16!(
-    dmg_mode3_scy_event_left_regime_min_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_MIN_T",
-    19
-);
-define_env_u16!(
-    dmg_mode3_scy_event_left_regime_max_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_MAX_T",
-    26
-);
-define_env_i16!(
-    dmg_mode3_scy_event_right_regime_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_T_ADJUST",
-    -14
-);
-define_env_u16!(
-    dmg_mode3_scy_event_right_regime_min_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_MIN_T",
-    36
-);
-define_env_u16!(
-    dmg_mode3_scy_event_right_regime_max_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_MAX_T",
-    43
-);
-define_env_u16!(
-    dmg_mode3_scy_event_startup_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_THRESHOLD_T",
-    15
-);
-define_env_i16!(
-    dmg_mode3_scy_event_startup_tile_t1_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_ADJUST",
-    -8
-);
-define_env_i16!(
-    dmg_mode3_scy_event_startup_lo_t1_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_LO_T1_ADJUST",
-    7
-);
-define_env_i16!(
-    dmg_mode3_scy_event_startup_tile_t2_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T2_ADJUST",
-    9
-);
-define_env_i16!(
-    dmg_mode3_scy_event_startup_hi_t2_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_HI_T2_ADJUST",
-    6
-);
-define_env_i16!(
-    dmg_mode3_scy_event_startup_push_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_PUSH_ADJUST",
-    2
-);
-define_env_i16!(
-    dmg_mode3_wx_event_t_bias,
-    "VIBEEMU_DMG_MODE3_WX_EVENT_T_BIAS",
-    3
-);
-define_env_i16!(
-    dmg_mode3_wy_event_t_bias,
-    "VIBEEMU_DMG_MODE3_WY_EVENT_T_BIAS",
-    0
-);
-define_env_bool_true!(dmg_wx_activate_on_pos6, "VIBEEMU_DMG_WX_ACTIVATE_ON_POS6");
-define_env_i16!(
-    dmg_wx_previsible_phase_max,
-    "VIBEEMU_DMG_WX_PREVISIBLE_PHASE_MAX",
-    0
-);
-
 #[derive(Copy, Clone, Default)]
 struct DmgBgpEvent {
     t: u16,
@@ -1105,22 +658,16 @@ struct DmgObjSizeTuning {
     fetch_ready_state: i16,
 }
 
-fn dmg_mode3_obj_fetch_sim_dots() -> u16 {
-    use std::sync::OnceLock;
-    static DOTS: OnceLock<u16> = OnceLock::new();
-    *DOTS.get_or_init(|| {
-        std::env::var("VIBEEMU_DMG_MODE3_OBJ_FETCH_SIM_DOTS")
-            .ok()
-            .and_then(|v| v.trim().parse::<i16>().ok())
-            .map(|v| v.clamp(0, 16) as u16)
-            .unwrap_or(10)
-    })
+fn load_obj_fetch_sim_dots() -> u16 {
+    std::env::var("VIBEEMU_DMG_MODE3_OBJ_FETCH_SIM_DOTS")
+        .ok()
+        .and_then(|v| v.trim().parse::<i16>().ok())
+        .map(|v| v.clamp(0, 16) as u16)
+        .unwrap_or(10)
 }
 
-fn dmg_obj_size_tuning() -> &'static DmgObjSizeTuning {
-    use std::sync::OnceLock;
-    static TUNING: OnceLock<DmgObjSizeTuning> = OnceLock::new();
-    TUNING.get_or_init(|| DmgObjSizeTuning {
+fn load_obj_size_tuning() -> DmgObjSizeTuning {
+    DmgObjSizeTuning {
         capture_bias: env_i16_or(
             "VIBEEMU_DMG_OBJ_SIZE_CAPTURE_BIAS",
             DMG_OBJ_SIZE_CAPTURE_BIAS_DEFAULT,
@@ -1192,7 +739,7 @@ fn dmg_obj_size_tuning() -> &'static DmgObjSizeTuning {
             "VIBEEMU_DMG_MODE3_OBJ_FETCH_READY_STATE",
             DMG_MODE3_OBJ_FETCH_READY_STATE_DEFAULT,
         ),
-    })
+    }
 }
 
 #[cfg(feature = "ppu-trace")]
@@ -1270,10 +817,7 @@ define_trace_env_bool_false!(
 );
 define_trace_env_bool_false!(trace_bg_fetcher_enabled, "VIBEEMU_TRACE_BG_FETCHER");
 define_trace_env_bool_false!(trace_dmg_right_obj_enabled, "VIBEEMU_TRACE_DMG_RIGHT_OBJ");
-define_env_bool_false!(
-    dmg_bg_window_use_pop_schedule_enabled,
-    "VIBEEMU_DMG_BG_WINDOW_USE_POP_SCHEDULE"
-);
+
 define_trace_env_bool_false!(trace_win_map_fetch_enabled, "VIBEEMU_TRACE_WIN_MAP_FETCH");
 define_trace_env_bool_false!(trace_scy_render_enabled, "VIBEEMU_TRACE_SCY_RENDER");
 define_trace_env_bool_false!(trace_dmg_bg_output_enabled, "VIBEEMU_TRACE_DMG_BG_OUTPUT");
@@ -1426,8 +970,12 @@ impl Sprite {
 
 impl Ppu {
     /// Create a PPU for the given hardware model.
+    ///
+    /// Timing-tuning environment variables are captured process-wide when the
+    /// first PPU is constructed. Set them before creating an emulator.
     pub fn new(model: Model) -> Self {
         let mut ppu = Self {
+            tuning: PpuTuning::process_default(),
             vram: [[0; VRAM_BANK_SIZE]; 2],
             vram_bank: 0,
             oam: [0; OAM_SIZE],
@@ -1737,8 +1285,8 @@ impl Ppu {
         self.mode3_obj_fetch_stage = 0;
         self.mode3_obj_fetch_sprite_index = 0;
         let scx_delay = (self.scx & 0x07) as i16;
-        let scx_delay =
-            (scx_delay + dmg_mode3_scx_start_delay_bias()).clamp(0, SCREEN_WIDTH as i16) as u16;
+        let scx_delay = (scx_delay + self.tuning.dmg_mode3_scx_start_delay_bias)
+            .clamp(0, SCREEN_WIDTH as i16) as u16;
         self.mode3_render_delay = scx_delay;
         self.mode3_last_match_x = 0;
         self.mode3_same_x_toggle = false;
@@ -1800,7 +1348,7 @@ impl Ppu {
             // closer to the nominal dot than DMG-CPU revisions.
             0
         } else if dmg_mode {
-            dmg_mode3_lcdc_event_t_bias()
+            self.tuning.dmg_mode3_lcdc_event_t_bias
         } else {
             0
         };
@@ -1820,11 +1368,11 @@ impl Ppu {
                         bias -= 1;
                     }
                 } else {
-                    bias += dmg_mode3_lcdc_fetch_bits_t_bias();
+                    bias += self.tuning.dmg_mode3_lcdc_fetch_bits_t_bias;
                 }
             }
             if (changed & 0x20) != 0 {
-                bias += dmg_mode3_lcdc_win_en_t_bias();
+                bias += self.tuning.dmg_mode3_lcdc_win_en_t_bias;
             }
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
@@ -1980,7 +1528,7 @@ impl Ppu {
 
     fn record_mode3_scx_event(&mut self, mode3_t: u16, val: u8) {
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        let mut bias = dmg_mode3_scx_event_t_bias();
+        let mut bias = self.tuning.dmg_mode3_scx_event_t_bias;
         if self.cgb() {
             // Native CGB samples SCX event timing slightly earlier than the
             // DMG-oriented baseline used by the fetcher model. This also
@@ -2000,15 +1548,15 @@ impl Ppu {
             }
         }
         if !self.cgb() && self.sprite_count > 0 {
-            bias += dmg_mode3_scx_event_t_obj_bias();
+            bias += self.tuning.dmg_mode3_scx_event_t_obj_bias;
             if self.line_sprites[0].x >= 8 {
-                bias += dmg_mode3_scx_event_first_x_ge8_t_adjust();
+                bias += self.tuning.dmg_mode3_scx_event_first_x_ge8_t_adjust;
             }
         }
         // Writes that land while the DMG fetcher is in PUSH affect SCX map
         // selection slightly earlier than in other phases.
         if !self.cgb() && self.mode3_fetcher_state == 6 {
-            bias += dmg_mode3_scx_event_push_state_t_adjust();
+            bias += self.tuning.dmg_mode3_scx_event_push_state_t_adjust;
         }
         if self.cgb()
             && self.dmg_compat
@@ -2020,7 +1568,7 @@ impl Ppu {
             // On CGB DMG-compat lines with active OBJ fetch contention, SCX
             // writes that land in PUSH with a shallow FIFO can be observed by
             // the next fetched BG tile one fetch slot earlier.
-            bias += dmg_mode3_scx_event_push_state_t_adjust();
+            bias += self.tuning.dmg_mode3_scx_event_push_state_t_adjust;
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
         if trace_scx_events_enabled() && trace_obj_debug_line_enabled(self.ly) {
@@ -2052,8 +1600,9 @@ impl Ppu {
 
     fn record_mode3_scy_event(&mut self, mode3_t: u16, val: u8) {
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        if !self.cgb() && dmg_mode3_scy_use_stage_sample_t() {
-            let t = (mode3_t as i16 + dmg_mode3_scy_event_t_bias()).clamp(0, max_t) as u16;
+        if !self.cgb() && self.tuning.dmg_mode3_scy_use_stage_sample_t {
+            let t =
+                (mode3_t as i16 + self.tuning.dmg_mode3_scy_event_t_bias).clamp(0, max_t) as u16;
             Self::push_mode3_reg_event(
                 &mut self.mode3_scy_events,
                 &mut self.mode3_scy_event_count,
@@ -2064,28 +1613,28 @@ impl Ppu {
         }
         // Keep CGB SCY event baseline stable while allowing DMG-tuned timing.
         let mut bias = if self.cgb() {
-            cgb_mode3_scy_event_t_bias()
+            self.tuning.cgb_mode3_scy_event_t_bias
         } else {
-            dmg_mode3_scy_event_t_bias()
+            self.tuning.dmg_mode3_scy_event_t_bias
         };
         let (early_threshold, early_adjust) = if self.is_cgb_dmg_compat_mode() {
             (
-                cgb_dmg_mode3_scy_event_early_threshold_t(),
-                cgb_dmg_mode3_scy_event_early_t_adjust(),
+                self.tuning.cgb_dmg_mode3_scy_event_early_threshold_t,
+                self.tuning.cgb_dmg_mode3_scy_event_early_t_adjust,
             )
         } else if self.cgb() {
             (
-                cgb_mode3_scy_event_early_threshold_t(),
-                cgb_mode3_scy_event_early_t_adjust(),
+                self.tuning.cgb_mode3_scy_event_early_threshold_t,
+                self.tuning.cgb_mode3_scy_event_early_t_adjust,
             )
         } else {
             (
-                dmg_mode3_scy_event_early_threshold_t(),
-                dmg_mode3_scy_event_early_t_adjust(),
+                self.tuning.dmg_mode3_scy_event_early_threshold_t,
+                self.tuning.dmg_mode3_scy_event_early_t_adjust,
             )
         };
         if self.is_cgb_dmg_compat_mode() && self.ly == 0 {
-            bias += cgb_dmg_mode3_scy_event_line0_t_adjust();
+            bias += self.tuning.cgb_dmg_mode3_scy_event_line0_t_adjust;
         }
         if mode3_t <= early_threshold {
             bias += early_adjust;
@@ -2093,148 +1642,160 @@ impl Ppu {
         if self.is_cgb_dmg_compat_mode() && self.sprite_count > 0 {
             let first_x = self.line_sprites[0].x;
             if first_x <= -7
-                && mode3_t >= cgb_mode3_scy_event_left_regime_min_t()
-                && mode3_t <= cgb_mode3_scy_event_left_regime_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_left_regime_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_left_regime_max_t
             {
-                bias += cgb_mode3_scy_event_left_regime_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_left_regime_t_adjust;
             } else if (0..=1).contains(&first_x)
                 && self.mode3_fetcher_state == 5
-                && mode3_t >= cgb_mode3_scy_event_mid_regime_min_t()
-                && mode3_t <= cgb_mode3_scy_event_mid_regime_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_mid_regime_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_mid_regime_max_t
             {
-                bias += cgb_mode3_scy_event_mid_regime_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_mid_regime_t_adjust;
             } else if first_x >= 8
                 && self.mode3_fetcher_state == 5
-                && mode3_t >= cgb_mode3_scy_event_right_regime_min_t()
-                && mode3_t <= cgb_mode3_scy_event_right_regime_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_right_regime_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_right_regime_max_t
             {
-                bias += cgb_mode3_scy_event_right_regime_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_right_regime_t_adjust;
             }
             let x_regime_adjust_phase = self.mode3_fetcher_state == 5
                 || (self.mode3_fetcher_state == 6 && self.mode3_bg_fifo >= 8);
             if x_regime_adjust_phase
                 && first_x == 0
-                && mode3_t >= cgb_mode3_scy_event_x0_min_t()
-                && mode3_t <= cgb_mode3_scy_event_x0_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_x0_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_x0_max_t
             {
-                bias += cgb_mode3_scy_event_x0_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_x0_t_adjust;
             } else if x_regime_adjust_phase
                 && first_x == 8
-                && mode3_t >= cgb_mode3_scy_event_x8_min_t()
-                && mode3_t <= cgb_mode3_scy_event_x8_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_x8_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_x8_max_t
             {
-                bias += cgb_mode3_scy_event_x8_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_x8_t_adjust;
             }
             if self.mode3_fetcher_state == 6 && self.mode3_bg_fifo <= 3 {
-                bias += cgb_mode3_scy_event_push_state_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_push_state_t_adjust;
                 if first_x == 0
-                    && mode3_t >= cgb_mode3_scy_event_push_state_x0_min_t()
-                    && mode3_t <= cgb_mode3_scy_event_push_state_x0_max_t()
+                    && mode3_t >= self.tuning.cgb_mode3_scy_event_push_state_x0_min_t
+                    && mode3_t <= self.tuning.cgb_mode3_scy_event_push_state_x0_max_t
                 {
-                    bias += cgb_mode3_scy_event_push_state_x0_t_adjust();
+                    bias += self.tuning.cgb_mode3_scy_event_push_state_x0_t_adjust;
                 }
             } else if self.mode3_fetcher_state == 6
                 && self.mode3_bg_fifo >= 8
                 && first_x >= 0
-                && mode3_t >= cgb_mode3_scy_event_push_full_fifo_min_t()
-                && mode3_t <= cgb_mode3_scy_event_push_full_fifo_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_push_full_fifo_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_push_full_fifo_max_t
             {
                 // In CGB DMG-compat, SCY writes sampled while PUSH still holds
                 // a full FIFO land later than the low-FIFO PUSH regime.
-                bias += cgb_mode3_scy_event_push_full_fifo_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_push_full_fifo_t_adjust;
             }
-            if mode3_t <= cgb_dmg_mode3_scy_event_startup_threshold_t() {
+            if mode3_t <= self.tuning.cgb_dmg_mode3_scy_event_startup_threshold_t {
                 match self.mode3_fetcher_state {
                     0 => {
-                        bias += cgb_dmg_mode3_scy_event_startup_tile_t1_adjust();
+                        bias += self.tuning.cgb_dmg_mode3_scy_event_startup_tile_t1_adjust;
                         if first_x == 0 {
-                            bias += cgb_dmg_mode3_scy_event_startup_tile_t1_x0_adjust();
+                            bias += self
+                                .tuning
+                                .cgb_dmg_mode3_scy_event_startup_tile_t1_x0_adjust;
                         } else if first_x == 8 {
-                            bias += cgb_dmg_mode3_scy_event_startup_tile_t1_x8_adjust();
+                            bias += self
+                                .tuning
+                                .cgb_dmg_mode3_scy_event_startup_tile_t1_x8_adjust;
                         }
                     }
-                    5 => bias += cgb_dmg_mode3_scy_event_startup_hi_t2_adjust(),
-                    6 => bias += cgb_dmg_mode3_scy_event_startup_push_adjust(),
+                    5 => bias += self.tuning.cgb_dmg_mode3_scy_event_startup_hi_t2_adjust,
+                    6 => bias += self.tuning.cgb_dmg_mode3_scy_event_startup_push_adjust,
                     _ => {}
                 }
             }
             if self.mode3_fetcher_state == 0
-                && mode3_t >= cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t()
-                && mode3_t <= cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t()
+                && mode3_t
+                    >= self
+                        .tuning
+                        .cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t
+                && mode3_t
+                    <= self
+                        .tuning
+                        .cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t
                 && first_x >= 0
             {
-                bias += cgb_dmg_mode3_scy_event_startup_tile_t1_late_adjust();
+                bias += self
+                    .tuning
+                    .cgb_dmg_mode3_scy_event_startup_tile_t1_late_adjust;
             }
         }
         // Similar to SCX, some SCY writes sampled while the fetcher is in PUSH
         // land slightly earlier in the effective fetch timeline.
         if !self.cgb()
             && self.mode3_fetcher_state == 6
-            && mode3_t >= dmg_mode3_scy_event_push_state_min_t()
+            && mode3_t >= self.tuning.dmg_mode3_scy_event_push_state_min_t
         {
-            bias += dmg_mode3_scy_event_push_state_t_adjust();
+            bias += self.tuning.dmg_mode3_scy_event_push_state_t_adjust;
             if self.mode3_position_in_line < 0 {
-                bias += dmg_mode3_scy_event_push_previsible_t_adjust();
+                bias += self.tuning.dmg_mode3_scy_event_push_previsible_t_adjust;
             } else {
-                bias += dmg_mode3_scy_event_push_visible_t_adjust();
+                bias += self.tuning.dmg_mode3_scy_event_push_visible_t_adjust;
             }
         }
         // Early writes that hit GET_LO_T1 on DMG can be sampled slightly
         // earlier in the tile-row path than pure dot-time mapping suggests.
         if !self.cgb()
             && self.mode3_fetcher_state == 2
-            && mode3_t <= dmg_mode3_scy_event_lo_t1_threshold_t()
+            && mode3_t <= self.tuning.dmg_mode3_scy_event_lo_t1_threshold_t
         {
-            bias += dmg_mode3_scy_event_lo_t1_t_adjust();
+            bias += self.tuning.dmg_mode3_scy_event_lo_t1_t_adjust;
         }
         if !self.cgb()
             && self.mode3_fetcher_state == 0
-            && mode3_t <= dmg_mode3_scy_event_tile_t1_threshold_t()
+            && mode3_t <= self.tuning.dmg_mode3_scy_event_tile_t1_threshold_t
         {
-            bias += dmg_mode3_scy_event_tile_t1_t_adjust();
+            bias += self.tuning.dmg_mode3_scy_event_tile_t1_t_adjust;
         }
         if !self.cgb()
             && self.mode3_fetcher_state == 1
-            && mode3_t <= dmg_mode3_scy_event_tile_t2_threshold_t()
+            && mode3_t <= self.tuning.dmg_mode3_scy_event_tile_t2_threshold_t
         {
-            bias += dmg_mode3_scy_event_tile_t2_t_adjust();
+            bias += self.tuning.dmg_mode3_scy_event_tile_t2_t_adjust;
         }
         if !self.cgb()
             && self.mode3_fetcher_state == 5
-            && mode3_t <= dmg_mode3_scy_event_hi_t2_threshold_t()
+            && mode3_t <= self.tuning.dmg_mode3_scy_event_hi_t2_threshold_t
         {
-            bias += dmg_mode3_scy_event_hi_t2_t_adjust();
+            bias += self.tuning.dmg_mode3_scy_event_hi_t2_t_adjust;
         }
         if !self.cgb() && self.sprite_count > 0 {
             let first_x = self.line_sprites[0].x;
             if first_x <= -6
-                && mode3_t >= dmg_mode3_scy_event_left_edge_min_t()
-                && mode3_t <= dmg_mode3_scy_event_left_edge_max_t()
+                && mode3_t >= self.tuning.dmg_mode3_scy_event_left_edge_min_t
+                && mode3_t <= self.tuning.dmg_mode3_scy_event_left_edge_max_t
             {
-                bias += dmg_mode3_scy_event_left_edge_t_adjust();
+                bias += self.tuning.dmg_mode3_scy_event_left_edge_t_adjust;
             }
             if first_x < 0
-                && mode3_t >= dmg_mode3_scy_event_left_regime_min_t()
-                && mode3_t <= dmg_mode3_scy_event_left_regime_max_t()
+                && mode3_t >= self.tuning.dmg_mode3_scy_event_left_regime_min_t
+                && mode3_t <= self.tuning.dmg_mode3_scy_event_left_regime_max_t
             {
-                bias += dmg_mode3_scy_event_left_regime_t_adjust();
+                bias += self.tuning.dmg_mode3_scy_event_left_regime_t_adjust;
             }
             if first_x >= 8
-                && mode3_t >= dmg_mode3_scy_event_right_regime_min_t()
-                && mode3_t <= dmg_mode3_scy_event_right_regime_max_t()
+                && mode3_t >= self.tuning.dmg_mode3_scy_event_right_regime_min_t
+                && mode3_t <= self.tuning.dmg_mode3_scy_event_right_regime_max_t
             {
-                bias += dmg_mode3_scy_event_right_regime_t_adjust();
+                bias += self.tuning.dmg_mode3_scy_event_right_regime_t_adjust;
             }
         }
-        if !self.cgb() && mode3_t <= dmg_mode3_scy_event_startup_threshold_t() {
+        if !self.cgb() && mode3_t <= self.tuning.dmg_mode3_scy_event_startup_threshold_t {
             // During fetcher startup, SCY sampling phase differs from steady state.
             // Model this explicitly per stage instead of stretching global bias.
             match self.mode3_fetcher_state {
-                0 => bias += dmg_mode3_scy_event_startup_tile_t1_adjust(),
-                1 => bias += dmg_mode3_scy_event_startup_tile_t2_adjust(),
-                2 => bias += dmg_mode3_scy_event_startup_lo_t1_adjust(),
-                5 => bias += dmg_mode3_scy_event_startup_hi_t2_adjust(),
-                6 => bias += dmg_mode3_scy_event_startup_push_adjust(),
+                0 => bias += self.tuning.dmg_mode3_scy_event_startup_tile_t1_adjust,
+                1 => bias += self.tuning.dmg_mode3_scy_event_startup_tile_t2_adjust,
+                2 => bias += self.tuning.dmg_mode3_scy_event_startup_lo_t1_adjust,
+                5 => bias += self.tuning.dmg_mode3_scy_event_startup_hi_t2_adjust,
+                6 => bias += self.tuning.dmg_mode3_scy_event_startup_push_adjust,
                 _ => {}
             }
         }
@@ -2269,17 +1830,23 @@ impl Ppu {
             && self.dmg_compat
             && first_x >= 0
             && self.mode3_fetcher_state == 0
-            && mode3_t >= cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t()
-            && mode3_t <= cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t()
-            && cgb_dmg_mode3_scy_startup_allow_same_dot();
+            && mode3_t
+                >= self
+                    .tuning
+                    .cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t
+            && mode3_t
+                <= self
+                    .tuning
+                    .cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t
+            && self.tuning.cgb_dmg_mode3_scy_startup_allow_same_dot;
         let allow_push_full_same_dot = self.cgb()
             && self.dmg_compat
             && first_x == 0
             && self.mode3_fetcher_state == 6
             && self.mode3_bg_fifo >= 8
-            && mode3_t >= cgb_mode3_scy_event_push_full_fifo_min_t()
-            && mode3_t <= cgb_mode3_scy_event_push_full_fifo_max_t()
-            && cgb_dmg_mode3_scy_push_full_allow_same_dot();
+            && mode3_t >= self.tuning.cgb_mode3_scy_event_push_full_fifo_min_t
+            && mode3_t <= self.tuning.cgb_mode3_scy_event_push_full_fifo_max_t
+            && self.tuning.cgb_dmg_mode3_scy_push_full_allow_same_dot;
         let allow_same_dot = allow_startup_same_dot || allow_push_full_same_dot;
         if allow_same_dot {
             Self::push_mode3_reg_event_allow_same_t(
@@ -2317,7 +1884,7 @@ impl Ppu {
             &mut self.mode3_wx_event_count,
             mode3_t,
             self.mode3_target_cycles,
-            dmg_mode3_wx_event_t_bias(),
+            self.tuning.dmg_mode3_wx_event_t_bias,
             val,
         );
     }
@@ -2328,7 +1895,7 @@ impl Ppu {
             &mut self.mode3_wy_event_count,
             mode3_t,
             self.mode3_target_cycles,
-            dmg_mode3_wy_event_t_bias(),
+            self.tuning.dmg_mode3_wy_event_t_bias,
             val,
         );
     }
@@ -2584,8 +2151,8 @@ impl Ppu {
     #[inline]
     fn dmg_bgp_for_mode3_t(&self, t: u16) -> u8 {
         let mut current = self.dmg_line_bgp_base;
-        let rise_delay = dmg_bgp_rising_edge_delay_t().clamp(-8, 8);
-        let fall_delay = dmg_bgp_falling_edge_delay_t().clamp(-8, 8);
+        let rise_delay = self.tuning.dmg_bgp_rising_edge_delay_t.clamp(-8, 8);
+        let fall_delay = self.tuning.dmg_bgp_falling_edge_delay_t.clamp(-8, 8);
         for ev in self.dmg_bgp_events[..self.dmg_bgp_event_count].iter() {
             let mut event_t = ev.t as i16;
             if !self.cgb() {
@@ -2608,34 +2175,37 @@ impl Ppu {
     #[inline]
     fn dmg_bgp_for_pixel(&self, x: usize) -> u8 {
         if !self.cgb()
-            && dmg_bgp_use_t_sample()
+            && self.tuning.dmg_bgp_use_t_sample
             && self.sprite_count > 0
             && self.mode3_lcdc_event_count == 0
             && self.dmg_bgp_event_count > 0
-            && (self.ly != 0 || dmg_bgp_t_sample_include_line0())
+            && (self.ly != 0 || self.tuning.dmg_bgp_t_sample_include_line0)
         {
             let x = x.min(SCREEN_WIDTH - 1);
             let mut sample_x = x;
             if self.mode3_lcdc_event_count == 0
                 && self.sprite_count > 0
-                && dmg_bgp_t_sample_use_obj_x_corr()
+                && self.tuning.dmg_bgp_t_sample_use_obj_x_corr
                 && x <= 12
             {
                 sample_x = Self::dmg_adjust_obj_sample_x_for_unfetched(self.line_sprites[0].x, x);
             }
             let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-            let mut bias = dmg_bgp_sample_t_bias();
+            let mut bias = self.tuning.dmg_bgp_sample_t_bias;
             if self.ly == 0 {
-                bias += dmg_bgp_line0_sample_t_bias();
+                bias += self.tuning.dmg_bgp_line0_sample_t_bias;
             }
             let mut sample_t =
                 (self.dmg_line_mode3_t_at_pixel[sample_x] as i16 + bias).clamp(0, max_t);
             if self.mode3_lcdc_event_count == 0
                 && self.sprite_count > 0
-                && dmg_bgp_t_sample_use_first_x_phase_corr()
+                && self.tuning.dmg_bgp_t_sample_use_first_x_phase_corr
             {
                 let first_x = self.line_sprites[0].x;
-                let mag = dmg_bgp_t_sample_first_x_phase_corr_mag().clamp(1, 24);
+                let mag = self
+                    .tuning
+                    .dmg_bgp_t_sample_first_x_phase_corr_mag
+                    .clamp(1, 24);
                 if first_x >= 0 && (x as i16) == first_x && (first_x <= 4 || first_x >= 8) {
                     sample_t = (sample_t + mag).min(max_t);
                 }
@@ -2647,10 +2217,10 @@ impl Ppu {
             && self.sprite_count > 0
             && self.mode3_lcdc_event_count == 0
             && self.dmg_bgp_event_count > 0
-            && dmg_bgp_use_simple_event_x()
+            && self.tuning.dmg_bgp_use_simple_event_x
         {
             let mut current = self.dmg_line_bgp_base;
-            let bias = dmg_bgp_simple_event_x_bias();
+            let bias = self.tuning.dmg_bgp_simple_event_x_bias;
             let sx = (x as i16 + bias).clamp(0, (SCREEN_WIDTH - 1) as i16) as u8;
             for ev in self.dmg_bgp_events[..self.dmg_bgp_event_count].iter() {
                 if sx < ev.x {
@@ -2691,7 +2261,7 @@ impl Ppu {
         }
         // CGB running a DMG title observes mid-scanline BGP writes closer to
         // the mode-3 write timestamp map than to the DMG line-latch fallback.
-        let use_event_map = dmg_bgp_use_event_map()
+        let use_event_map = self.tuning.dmg_bgp_use_event_map
             || (!self.cgb() && self.sprite_count == 0)
             || (self.is_cgb_dmg_compat_mode());
         if use_event_map {
@@ -2757,13 +2327,13 @@ impl Ppu {
             // BGP output lags FIFO pop by one pixel. Line 0 keeps an extra
             // 4-dot skew versus subsequent lines.
             let lag = if self.ly == 0 {
-                dmg_bgp_sprite_lag_line0_pixels().clamp(0, 16) as usize
+                self.tuning.dmg_bgp_sprite_lag_line0_pixels.clamp(0, 16) as usize
             } else {
-                dmg_bgp_sprite_lag_pixels().clamp(0, 16) as usize
+                self.tuning.dmg_bgp_sprite_lag_pixels.clamp(0, 16) as usize
             };
             let mut sample_x = x.saturating_sub(lag);
             if self.ly == 0
-                && dmg_bgp_line0_edge_backstep()
+                && self.tuning.dmg_bgp_line0_edge_backstep
                 && self.dmg_bgp_events[..self.dmg_bgp_event_count]
                     .iter()
                     .any(|ev| ev.x as usize == sample_x)
@@ -2803,7 +2373,10 @@ impl Ppu {
         }
         // DMG output samples BGP slightly later than FIFO pop; tail pixels can
         // still pick up very-late writes near the end of mode 3.
-        let mut tail = dmg_bgp_tail_pixels().clamp(0, SCREEN_WIDTH as i16) as usize;
+        let mut tail = self
+            .tuning
+            .dmg_bgp_tail_pixels
+            .clamp(0, SCREEN_WIDTH as i16) as usize;
         if !self.cgb()
             && (self.mode3_lcdc_base & 0x02) != 0
             && self.sprite_count > 0
@@ -2844,7 +2417,7 @@ impl Ppu {
     fn dmg_obp0_for_pixel(&self, x: usize) -> u8 {
         let x = x.min(SCREEN_WIDTH - 1);
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        let bias = dmg_obp0_sample_t_bias();
+        let bias = self.tuning.dmg_obp0_sample_t_bias;
         let sample_t = (self.dmg_line_mode3_t_at_pixel[x] as i16 + bias).clamp(0, max_t) as u16;
         self.dmg_obp0_for_mode3_t(sample_t)
     }
@@ -2913,7 +2486,7 @@ impl Ppu {
         // BG map/tile-data control bits are sampled by the fetcher before the
         // corresponding tile pixels are popped. Use the recorded mode-3 dot of
         // tile output and sample LCDC at a configurable dot backshift.
-        let mut backshift_t = dmg_bg_fetch_lead_pixels().clamp(0, 64) as u16;
+        let mut backshift_t = self.tuning.dmg_bg_fetch_lead_pixels.clamp(0, 64) as u16;
         if self.is_cgb_dmg_compat_mode() && self.sprite_count > 0 {
             let first_x = self.line_sprites[0].x;
             let mut bg_map_only_line = self.mode3_lcdc_event_count > 0;
@@ -2935,7 +2508,7 @@ impl Ppu {
         }
         let tile_x = x & !7usize;
         let sample_px = {
-            let offset = dmg_bg_fetch_sample_px_in_tile().clamp(0, 7) as usize;
+            let offset = self.tuning.dmg_bg_fetch_sample_px_in_tile.clamp(0, 7) as usize;
             (tile_x + offset).min(SCREEN_WIDTH - 1)
         };
         self.dmg_line_mode3_t_at_pixel[sample_px].saturating_sub(backshift_t)
@@ -2956,7 +2529,7 @@ impl Ppu {
     #[inline]
     fn dmg_lcdc_for_bg_en_mode3_t(&self, t: u16) -> u8 {
         let mut current = self.mode3_lcdc_base;
-        let first_adj = dmg_bg_en_first_event_t_adjust().clamp(-32, 32);
+        let first_adj = self.tuning.dmg_bg_en_first_event_t_adjust.clamp(-32, 32);
         for (i, ev) in self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
             .iter()
             .enumerate()
@@ -2999,16 +2572,17 @@ impl Ppu {
                     if tile_sel_only {
                         // TILE_SEL is sampled on tile-data stages and lags less
                         // than map-control bits in this PUSH/full-FIFO case.
-                        adj = ((dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) * 5) / 8)
-                            .clamp(-16, 16);
+                        adj = ((self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) * 5)
+                            / 8)
+                        .clamp(-16, 16);
                     } else {
-                        adj = dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32);
+                        adj = self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32);
                     }
                 } else if ev.fetcher_state == 6 && (changed & 0x50) != 0 {
                     // With a partially drained FIFO, the first transition still
                     // lags fetch control, but by fewer dots than the full-FIFO
                     // PUSH case above.
-                    adj = ((dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) * 5) / 8)
+                    adj = ((self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) * 5) / 8)
                         .clamp(-16, 16);
                 } else if ev.fetcher_state == 0
                     && ev.bg_fifo == 8
@@ -3018,7 +2592,8 @@ impl Ppu {
                     // If the write lands right as a new fetch cycle starts, the
                     // first affected tile still trails by a small amount on
                     // window-enabled lines.
-                    adj = (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                    adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 2)
+                        .clamp(-16, 16);
                 }
                 if (changed & 0x40) != 0 {
                     if self.ly == 0 {
@@ -3074,13 +2649,14 @@ impl Ppu {
                     let mut adj = 0i16;
                     let first_x = self.line_sprites[0].x;
                     if ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
-                        adj =
-                            (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 2)
+                            .clamp(-16, 16);
                     } else if ev.fetcher_state == 6 {
-                        adj = (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 4).clamp(-8, 8);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 4)
+                            .clamp(-8, 8);
                     } else if ev.fetcher_state == 0 && ev.bg_fifo == 8 {
-                        adj =
-                            (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 2)
+                            .clamp(-16, 16);
                     } else if ev.fetcher_state == 5 && ev.bg_fifo >= 3 && first_x <= -7 {
                         adj = -8;
                     }
@@ -3138,16 +2714,17 @@ impl Ppu {
                     let mut adj = 0i16;
                     let first_x = self.line_sprites[0].x;
                     if ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
-                        adj =
-                            (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 2)
+                            .clamp(-16, 16);
                     } else if ev.fetcher_state == 6 {
-                        adj = (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 4).clamp(-8, 8);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 4)
+                            .clamp(-8, 8);
                     } else if ev.fetcher_state == 0
                         && ev.bg_fifo == 8
                         && (self.mode3_lcdc_base & 0x20) != 0
                     {
-                        adj =
-                            (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 2)
+                            .clamp(-16, 16);
                     } else if ev.fetcher_state == 5 && ev.bg_fifo >= 3 && first_x <= -7 {
                         // Left-clipped top-line regime reacts slightly earlier
                         // in CGB DMG-compat WIN_MAP toggles.
@@ -3343,7 +2920,10 @@ impl Ppu {
         }
         let x = x.min(SCREEN_WIDTH - 1);
         let dmg_mode = self.is_dmg_mode();
-        let mut raw_threshold = dmg_bg_en_left_raw_threshold().clamp(0, SCREEN_WIDTH as i16);
+        let mut raw_threshold = self
+            .tuning
+            .dmg_bg_en_left_raw_threshold
+            .clamp(0, SCREEN_WIDTH as i16);
         if dmg_mode && self.sprite_count > 0 {
             raw_threshold = raw_threshold.max(self.line_sprites[0].x.max(0) + 1);
         }
@@ -3353,7 +2933,7 @@ impl Ppu {
             && self.line_sprites[0].x < 0
             && x == 0;
         if dmg_mode && (x as i16) < raw_threshold && !force_t_sample_left_edge {
-            let mut shift = dmg_bg_en_left_raw_sample_shift();
+            let mut shift = self.tuning.dmg_bg_en_left_raw_sample_shift;
             if self.sprite_count > 0 {
                 let first_x = self.line_sprites[0].x;
                 if !(0..=8).contains(&first_x) {
@@ -3365,20 +2945,24 @@ impl Ppu {
             return en;
         }
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        let mut bias = dmg_bg_en_sample_t_bias();
+        let mut bias = self.tuning.dmg_bg_en_sample_t_bias;
         if !self.cgb() && matches!(self.dmg_revision(), DmgRevision::RevB) {
             // DMG-CPU B samples BG enable transitions one dot later than the
             // default DMG profile used by the blob screenshots.
             bias += 1;
         }
         if dmg_mode && self.ly == 0 && self.mode3_lcdc_event_count > 0 {
-            bias += dmg_bg_en_line0_sample_t_bias();
+            bias += self.tuning.dmg_bg_en_line0_sample_t_bias;
         }
         if dmg_mode
             && self.sprite_count > 0
-            && (x as i16) < dmg_bg_en_left_x_threshold().clamp(0, SCREEN_WIDTH as i16)
+            && (x as i16)
+                < self
+                    .tuning
+                    .dmg_bg_en_left_x_threshold
+                    .clamp(0, SCREEN_WIDTH as i16)
         {
-            bias += dmg_bg_en_left_extra_bias();
+            bias += self.tuning.dmg_bg_en_left_extra_bias;
         }
         let sample_t = (self.dmg_line_mode3_t_at_pixel[x] as i16 + bias).clamp(0, max_t) as u16;
         (self.dmg_lcdc_for_bg_en_mode3_t(sample_t) & 0x01) != 0
@@ -3649,7 +3233,7 @@ impl Ppu {
         // occurs and when the background fetcher can be stalled for sprite fetch.
         // This keeps OAM tile/flags reads close to hardware timing so DMA overlap
         // hits the intended bytes.
-        let obj_size_tuning = dmg_obj_size_tuning();
+        let obj_size_tuning = &self.tuning.dmg_obj_size_tuning;
         let cap_base_x = if obj_size_tuning.capture_use_position {
             let x = self.mode3_position_in_line + 8;
             if (0..SCREEN_WIDTH as i16).contains(&x) {
@@ -4318,8 +3902,9 @@ impl Ppu {
         let mut lcd_x: u16 = 0;
         let mut bg_fifo: u8 = 8;
         let mut fetcher_state: u8 = 0;
-        let scx_start_delay =
-            ((self.scx & 0x07) as i16 + dmg_mode3_scx_start_delay_bias()).clamp(0, 160) as u16;
+        let scx_start_delay = ((self.scx & 0x07) as i16
+            + self.tuning.dmg_mode3_scx_start_delay_bias)
+            .clamp(0, 160) as u16;
         let mut render_delay: u16 = scx_start_delay;
         let mut sprite_idx: usize = 0;
         let mut wx_triggered = false;
@@ -4448,7 +4033,7 @@ impl Ppu {
 
                 // Account for the object fetch micro-sequence (attr, low, high)
                 // that stalls visible output while sprite data is latched.
-                for _ in 0..dmg_mode3_obj_fetch_sim_dots() {
+                for _ in 0..self.tuning.dmg_mode3_obj_fetch_sim_dots {
                     tick_no_render(
                         &mut cycles,
                         &mut render_delay,
@@ -5947,7 +5532,10 @@ impl Ppu {
                 if (0..=255).contains(&pos7) && wx == pos7 as u8 {
                     return true;
                 }
-                if (0..=255).contains(&pos6) && wx == pos6 as u8 && dmg_wx_activate_on_pos6() {
+                if (0..=255).contains(&pos6)
+                    && wx == pos6 as u8
+                    && self.tuning.dmg_wx_activate_on_pos6
+                {
                     return true;
                 }
             }
@@ -6373,7 +5961,10 @@ impl Ppu {
                                 // the left edge than the DMG-oriented baseline.
                                 (-2, 8)
                             } else {
-                                (dmg_obj_en_pixel_shift(), dmg_obj_en_shift_max_x())
+                                (
+                                    self.tuning.dmg_obj_en_pixel_shift,
+                                    self.tuning.dmg_obj_en_shift_max_x,
+                                )
                             };
                         let apply_shift =
                             sx <= obj_en_shift_max_x || (s.x >= 8 && sx >= 0 && sx <= s.x);
@@ -6538,7 +6129,7 @@ impl Ppu {
             return 0;
         }
         let fine = self.scx & 7;
-        (position + 8 + dmg_obj_size_tuning().object_match_bias
+        (position + 8 + self.tuning.dmg_obj_size_tuning.object_match_bias
             - i16::from(fine >= 2)
             - i16::from(fine >= 3))
         .clamp(0, 255) as u8
@@ -6603,7 +6194,8 @@ impl Ppu {
             MODE_TRANSFER if self.is_dmg_mode() => return self.dmg_fifo_run_limit(),
             MODE_HBLANK => {
                 if self.dmg_hblank_render_pending {
-                    self.mode0_target_cycles.min(dmg_hblank_render_delay())
+                    self.mode0_target_cycles
+                        .min(self.tuning.dmg_hblank_render_delay)
                 } else {
                     self.mode0_target_cycles
                 }
@@ -6679,8 +6271,8 @@ impl Ppu {
                             self.mode_clock += remaining;
                             return false;
                         }
-                    } else if self.mode_clock < dmg_hblank_render_delay() {
-                        let next_event = target.min(dmg_hblank_render_delay());
+                    } else if self.mode_clock < self.tuning.dmg_hblank_render_delay {
+                        let next_event = target.min(self.tuning.dmg_hblank_render_delay);
                         if self.mode_clock.saturating_add(remaining) < next_event {
                             self.mode_clock += remaining;
                             return false;
@@ -6721,9 +6313,9 @@ impl Ppu {
                         let mut next_event =
                             self.mode0_target_cycles.saturating_sub(self.mode_clock);
                         if self.dmg_hblank_render_pending
-                            && self.mode_clock < dmg_hblank_render_delay()
+                            && self.mode_clock < self.tuning.dmg_hblank_render_delay
                         {
-                            let render_in = dmg_hblank_render_delay() - self.mode_clock;
+                            let render_in = self.tuning.dmg_hblank_render_delay - self.mode_clock;
                             next_event = next_event.min(render_in);
                         }
                         if next_event > 0 {
@@ -6809,7 +6401,7 @@ impl Ppu {
             match self.mode {
                 MODE_HBLANK => {
                     if self.dmg_hblank_render_pending
-                        && self.mode_clock >= dmg_hblank_render_delay()
+                        && self.mode_clock >= self.tuning.dmg_hblank_render_delay
                     {
                         self.render_scanline();
                         self.dmg_hblank_render_pending = false;
@@ -7261,7 +6853,7 @@ impl Ppu {
         const FETCH_GET_HI_T2: u8 = 5;
         const FETCH_PUSH: u8 = 6;
 
-        let use_pop_schedule = dmg_bg_window_use_pop_schedule_enabled();
+        let use_pop_schedule = self.tuning.dmg_bg_window_use_pop_schedule_enabled;
 
         let mut t_schedule = [0u16; SCREEN_WIDTH];
         let mut use_t_schedule = true;
@@ -7339,8 +6931,8 @@ impl Ppu {
         let mut scy_event_idx = 0usize;
         let mut wx_event_idx = 0usize;
         let mut wy_event_idx = 0usize;
-        let use_stage_scy_sampling =
-            (!self.cgb() && dmg_mode3_scy_use_stage_sample_t()) || (self.is_cgb_dmg_compat_mode());
+        let use_stage_scy_sampling = (!self.cgb() && self.tuning.dmg_mode3_scy_use_stage_sample_t)
+            || (self.is_cgb_dmg_compat_mode());
         let max_mode3_t_i16 = self.mode3_target_cycles.saturating_sub(1) as i16;
 
         if has_win_en_toggle && self.mode3_wx_event_count > 0 && self.mode3_wx_events[0].t <= 7 {
@@ -7422,7 +7014,7 @@ impl Ppu {
                         // Left-edge window start cases (WX<=5) are sensitive to how
                         // pre-visible dots interact with SCX fine-scroll on DMG.
                         if !suppress_wx0_previsible_shortcuts
-                            && (wx_cur as i16) <= dmg_wx_previsible_phase_max()
+                            && (wx_cur as i16) <= self.tuning.dmg_wx_previsible_phase_max
                             && (position_in_line + 16) < 8
                         {
                             if position_in_line == -17 {
@@ -7464,7 +7056,7 @@ impl Ppu {
                                 0
                             };
                             let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-                            let mut sample_t = $t as i16 + dmg_bgp_fetcher_sample_t_bias();
+                            let mut sample_t = $t as i16 + self.tuning.dmg_bgp_fetcher_sample_t_bias;
                             if wx_triggered && wx_cur == 0 {
                                 if wx_zero_armed_by_mode3_write {
                                     // If WX is forced to 0 during early mode 3, the
@@ -7472,7 +7064,7 @@ impl Ppu {
                                     // palette sample phase than steady-state WX=0 lines.
                                     sample_t -= 4;
                                 } else {
-                                    sample_t += dmg_bgp_fetcher_wx0_extra_t();
+                                    sample_t += self.tuning.dmg_bgp_fetcher_wx0_extra_t;
                                     if self.mode3_wx_base == 0
                                         && self.mode3_wx_event_count == 0
                                         && (scx_cur & 0x07) == 0
@@ -7630,7 +7222,7 @@ impl Ppu {
                     } else if (0..=255).contains(&pos6)
                         && wx_cur == pos6 as u8
                         && !self.cgb()
-                        && dmg_wx_activate_on_pos6()
+                        && self.tuning.dmg_wx_activate_on_pos6
                         && !wx_just_changed
                     {
                         should_activate_window = true;
@@ -7687,14 +7279,14 @@ impl Ppu {
             // fetch stages. Differences between LO/HI are parameterized:
             // SCY sample offset, high-plane flag, output addr, trace tag, next state.
             macro_rules! fetch_tile_data_addr {
-                ($scy_offset_fn:expr, $is_high:expr, $out_addr:ident, $tag:literal, $next_state:expr) => {{
+                ($scy_offset:ident, $is_high:expr, $out_addr:ident, $tag:literal, $next_state:expr) => {{
                     let fetcher_y = if wx_triggered {
                         window_line
                     } else if self.is_cgb_dmg_compat_mode() {
                         if self.sprite_count > 0
-                            && position_in_line < cgb_dmg_mode3_scy_latch_start_pos()
+                            && position_in_line < self.tuning.cgb_dmg_mode3_scy_latch_start_pos
                         {
-                            let sample_t = (t as i16 + $scy_offset_fn())
+                            let sample_t = (t as i16 + self.tuning.$scy_offset)
                                 .clamp(0, max_mode3_t_i16)
                                 as u16;
                             self.ly.wrapping_add(self.dmg_scy_for_mode3_t(sample_t))
@@ -7702,7 +7294,7 @@ impl Ppu {
                             bg_fetcher_y_latched
                         }
                     } else if use_stage_scy_sampling {
-                        let sample_t = (t as i16 + $scy_offset_fn())
+                        let sample_t = (t as i16 + self.tuning.$scy_offset)
                             .clamp(0, max_mode3_t_i16)
                             as u16;
                         self.ly.wrapping_add(self.dmg_scy_for_mode3_t(sample_t))
@@ -7760,7 +7352,7 @@ impl Ppu {
                     let mut fetcher_y = if wx_triggered {
                         window_line
                     } else if use_stage_scy_sampling {
-                        let sample_t = (t as i16 + dmg_mode3_scy_sample_tile_t_offset())
+                        let sample_t = (t as i16 + self.tuning.dmg_mode3_scy_sample_tile_t_offset)
                             .clamp(0, max_mode3_t_i16)
                             as u16;
                         self.ly.wrapping_add(self.dmg_scy_for_mode3_t(sample_t))
@@ -8569,6 +8161,40 @@ impl Default for Ppu {
 mod mode3_timing_tests {
     use super::*;
 
+    #[test]
+    fn tuning_environment_is_captured_at_construction() {
+        // A subprocess supplies environment before any PPU exists, without
+        // mutating the environment of the multithreaded test harness.
+        const CHILD: &str = "VIBEEMU_TEST_TUNING_SNAPSHOT_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "ppu::mode3_timing_tests::tuning_environment_is_captured_at_construction",
+                ])
+                .env(CHILD, "1")
+                .env("VIBEEMU_DMG_MODE3_SCX_EVENT_T_BIAS", " -12 ")
+                .env("VIBEEMU_DMG_HBLANK_RENDER_DELAY", "7")
+                .env("VIBEEMU_DMG_BGP_USE_EVENT_MAP", "true")
+                .env("VIBEEMU_DMG_WX_ACTIVATE_ON_POS6", "false")
+                .env("VIBEEMU_DMG_MODE3_OBJECT_MATCH_BIAS", "3")
+                .env("VIBEEMU_DMG_MODE3_OBJ_FETCH_SIM_DOTS", "20")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        let ppu = Ppu::new(Model::default());
+        let other = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        assert!(std::ptr::eq(ppu.tuning, other.tuning));
+        assert_eq!(ppu.tuning.dmg_mode3_scx_event_t_bias, -12);
+        assert_eq!(ppu.tuning.dmg_hblank_render_delay, 7);
+        assert!(ppu.tuning.dmg_bgp_use_event_map);
+        assert!(!ppu.tuning.dmg_wx_activate_on_pos6);
+        assert_eq!(ppu.tuning.dmg_mode3_obj_fetch_sim_dots, 16);
+        assert_eq!(ppu.dmg_sprite_match_x(8), 19);
+    }
+
     fn assert_fifo_timing_equal(a: &Ppu, b: &Ppu) {
         assert_eq!(
             (
@@ -8908,15 +8534,26 @@ mod mode3_timing_tests {
 
     #[test]
     fn transfer_batches_match_original_dot_path() {
-        compare_transfer_batches(false);
+        compare_transfer_batches(false, PpuTuning::process_default());
     }
 
     #[test]
     fn idle_batches_match_machine_cycles() {
-        compare_transfer_batches(true);
+        compare_transfer_batches(true, PpuTuning::process_default());
     }
 
-    fn compare_transfer_batches(idle_batch: bool) {
+    #[test]
+    fn nondefault_tuning_batches_match_original_dot_path() {
+        let mut tuning = PpuTuning::process_default().clone();
+        tuning.dmg_obj_size_tuning.object_match_bias = 1;
+        tuning.dmg_mode3_scx_event_t_bias = -5;
+        tuning.dmg_hblank_render_delay = 3;
+        let tuning = Box::leak(Box::new(tuning));
+        compare_transfer_batches(false, tuning);
+        compare_transfer_batches(true, tuning);
+    }
+
+    fn compare_transfer_batches(idle_batch: bool, tuning: &'static PpuTuning) {
         for (model, compat) in [
             (Model::Cgb(CgbRevision::Rev0), false),
             (Model::Cgb(CgbRevision::RevA), false),
@@ -8935,6 +8572,7 @@ mod mode3_timing_tests {
             for opri in [0, 1] {
                 let make_ppu = || {
                     let mut ppu = Ppu::new(model);
+                    ppu.tuning = tuning;
                     if compat {
                         ppu.apply_dmg_compatibility_palettes();
                     }
