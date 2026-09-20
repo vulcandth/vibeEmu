@@ -229,6 +229,42 @@ impl Sweep {
     }
 }
 
+// Frequency writes are rare compared with waveform edges. Store an exact
+// reciprocal with the latched sample length, including sweep updates, so ARM11
+// does not need a software division each time a batch crosses an edge.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PeriodReciprocal<const INITIAL_PERIOD: u32>(u32);
+
+impl<const INITIAL_PERIOD: u32> Default for PeriodReciprocal<INITIAL_PERIOD> {
+    fn default() -> Self {
+        Self(((1u64 << 32) / INITIAL_PERIOD as u64) as u32)
+    }
+}
+
+impl<const INITIAL_PERIOD: u32> PeriodReciprocal<INITIAL_PERIOD> {
+    fn set_period(&mut self, period: u32) {
+        let d = period.max(2);
+        // floor(2^32 / d), using a 32-bit divide/remainder during setup.
+        self.0 = u32::MAX / d + u32::from(u32::MAX % d == d - 1);
+    }
+
+    #[inline]
+    fn div_rem(&self, numerator: i32, period: i32) -> (i32, i32) {
+        debug_assert!(numerator >= 0 && period > 0);
+        if period == 1 {
+            return (numerator, 0);
+        }
+        let n = numerator as u32;
+        let d = period as u32;
+        // The rounded-down reciprocal is at most one quotient below n/d for
+        // n < 2^32. Correct its remainder rather than approximating edge times.
+        let q = ((u64::from(n) * u64::from(self.0)) >> 32) as u32;
+        let r = n - q * d;
+        let correction = u32::from(r >= d);
+        ((q + correction) as i32, (r - correction * d) as i32)
+    }
+}
+
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug, PartialEq, Clone))]
 struct SquareChannel {
@@ -248,6 +284,7 @@ struct SquareChannel {
     envelope: Envelope,
     sweep: Option<Sweep>,
     sample_length: u16,
+    sample_period_reciprocal: PeriodReciprocal<4096>,
     sample_countdown: i32,
     delay: i32,
     sample_surpressed: bool,
@@ -257,6 +294,12 @@ struct SquareChannel {
 }
 
 impl SquareChannel {
+    fn set_sample_length(&mut self, length: u16) {
+        self.sample_length = length;
+        self.sample_period_reciprocal
+            .set_period((Self::sample_countdown_from_length(length) + 1) as u32);
+    }
+
     fn new(with_sweep: bool) -> Self {
         Self {
             sweep: if with_sweep {
@@ -282,7 +325,7 @@ impl SquareChannel {
     }
 
     fn refresh_sample_length(&mut self) {
-        self.sample_length = self.frequency & 0x07FF;
+        self.set_sample_length(self.frequency & 0x07FF);
         if self.just_reloaded {
             self.sample_countdown = Self::sample_countdown_from_length(self.sample_length);
         }
@@ -291,7 +334,7 @@ impl SquareChannel {
     fn write_frequency_low(&mut self, value: u8) {
         self.frequency = (self.frequency & 0x700) | value as u16;
         // Update only the low 8 bits of sample_length
-        self.sample_length = (self.sample_length & 0x700) | value as u16;
+        self.set_sample_length((self.sample_length & 0x700) | value as u16);
         if self.just_reloaded {
             self.sample_countdown = Self::sample_countdown_from_length(self.sample_length);
         }
@@ -301,14 +344,14 @@ impl SquareChannel {
         self.frequency = (self.frequency & 0xFF) | (((value & 0x07) as u16) << 8);
         // Update only the high 3 bits of sample_length
         // This preserves the low bits that may have been modified by sweep
-        self.sample_length = (self.sample_length & 0xFF) | (((value & 0x07) as u16) << 8);
+        self.set_sample_length((self.sample_length & 0xFF) | (((value & 0x07) as u16) << 8));
         if self.just_reloaded {
             self.sample_countdown = Self::sample_countdown_from_length(self.sample_length);
         }
     }
 
     fn reset_sample_timing(&mut self) {
-        self.sample_length = self.frequency & 0x07FF;
+        self.set_sample_length(self.frequency & 0x07FF);
         self.sample_countdown = Self::sample_countdown_from_length(self.sample_length);
         self.delay = 0;
         self.just_reloaded = true;
@@ -330,8 +373,9 @@ impl SquareChannel {
             cycles_left -= advance_to_first_edge;
 
             let sample_period = SquareChannel::sample_countdown_from_length(self.sample_length) + 1;
-            let additional_edges = cycles_left / sample_period;
-            let remaining_cycles = cycles_left % sample_period;
+            let (additional_edges, remaining_cycles) = self
+                .sample_period_reciprocal
+                .div_rem(cycles_left, sample_period);
             let total_edges = 1 + additional_edges;
 
             self.timer = self.period();
@@ -489,6 +533,7 @@ struct WaveChannel {
     timer: i32,
     shift: u8,
     sample_length: u16,
+    sample_period_reciprocal: PeriodReciprocal<2048>,
     sample_countdown: i32,
     delay: i32,
     pending_reset: bool,
@@ -520,6 +565,7 @@ impl Default for WaveChannel {
             timer: 0,
             shift: 4,
             sample_length: 0,
+            sample_period_reciprocal: PeriodReciprocal::default(),
             sample_countdown: 0,
             delay: 0,
             pending_reset: false,
@@ -543,6 +589,12 @@ impl Default for WaveChannel {
 }
 
 impl WaveChannel {
+    fn set_sample_length(&mut self, length: u16) {
+        self.sample_length = length;
+        self.sample_period_reciprocal
+            .set_period(Self::period_from_sample_length(length) as u32);
+    }
+
     #[inline]
     fn period_from_sample_length(sample_length: u16) -> i32 {
         ((sample_length ^ 0x07FF) as i32) + 1
@@ -632,8 +684,9 @@ impl WaveChannel {
             cycles_left -= advance_to_first_edge;
 
             let sample_period = WaveChannel::period_from_sample_length(self.sample_length);
-            let additional_edges = cycles_left / sample_period;
-            let remaining_cycles = cycles_left % sample_period;
+            let (additional_edges, remaining_cycles) = self
+                .sample_period_reciprocal
+                .div_rem(cycles_left, sample_period);
             let total_edges = 1 + additional_edges;
 
             self.sample_countdown = sample_period - 1;
@@ -2085,7 +2138,8 @@ impl Apu {
             }
             0xFF1D => {
                 self.ch3.frequency = (self.ch3.frequency & 0x700) | val as u16;
-                self.ch3.sample_length = (self.ch3.sample_length & 0x700) | val as u16;
+                self.ch3
+                    .set_sample_length((self.ch3.sample_length & 0x700) | val as u16);
                 if self.ch3.bugged_read_countdown == 1 {
                     let mut countdown =
                         WaveChannel::period_from_sample_length(self.ch3.sample_length) - 1;
@@ -2099,8 +2153,9 @@ impl Apu {
                 let prev = self.ch3.length_enable;
                 let length_enable = val & 0x40 != 0;
                 self.ch3.frequency = (self.ch3.frequency & 0xFF) | (((val & 0x07) as u16) << 8);
-                self.ch3.sample_length =
-                    (self.ch3.sample_length & 0xFF) | (((val & 0x07) as u16) << 8);
+                self.ch3.set_sample_length(
+                    (self.ch3.sample_length & 0xFF) | (((val & 0x07) as u16) << 8),
+                );
                 let triggered = val & 0x80 != 0;
                 if triggered && !self.cgb_mode() {
                     self.prestep_wave();
@@ -2718,7 +2773,7 @@ impl Apu {
                     .sweep_addend
                     .wrapping_add(self.sweep_shadow_freq)
                     .wrapping_add(negate_add);
-                self.ch1.sample_length = new_freq & 0x07FF;
+                self.ch1.set_sample_length(new_freq & 0x07FF);
                 self.ch1.frequency = self.ch1.sample_length;
                 // The sweep frequency change runs between the 2 MHz channel
                 // step and the dot-clock tick.  If clock_2mhz just reloaded
@@ -4385,6 +4440,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn waveform_reciprocals_match_integer_division() {
+        let mut square = SquareChannel::new(false);
+        let mut wave = WaveChannel::default();
+        assert_eq!(square.sample_period_reciprocal.div_rem(8193, 4096), (2, 1));
+        assert_eq!(wave.sample_period_reciprocal.div_rem(8193, 2048), (4, 1));
+        let mut seed = 0x937A_65C1u32;
+        for length in 0..=0x7FF {
+            square.set_sample_length(length);
+            wave.set_sample_length(length);
+            let wave_period = WaveChannel::period_from_sample_length(length);
+            let square_period = SquareChannel::sample_countdown_from_length(length) + 1;
+            for n in (0..=1024).chain([
+                wave_period - 1,
+                wave_period,
+                wave_period + 1,
+                square_period - 1,
+                square_period,
+                square_period + 1,
+                65535,
+                i32::MAX - 1,
+                i32::MAX,
+            ]) {
+                assert_eq!(
+                    wave.sample_period_reciprocal.div_rem(n, wave_period),
+                    (n / wave_period, n % wave_period)
+                );
+                assert_eq!(
+                    square.sample_period_reciprocal.div_rem(n, square_period),
+                    (n / square_period, n % square_period)
+                );
+            }
+            for _ in 0..64 {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                let n = (seed & i32::MAX as u32) as i32;
+                assert_eq!(
+                    wave.sample_period_reciprocal.div_rem(n, wave_period),
+                    (n / wave_period, n % wave_period)
+                );
+                assert_eq!(
+                    square.sample_period_reciprocal.div_rem(n, square_period),
+                    (n / square_period, n % square_period)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn reciprocal_sample_deadlines_match_integer_division() {
         let mut apu = Apu::new(Model::default());
         // Every accumulator phase at common rates, including rates that do
@@ -5121,7 +5223,7 @@ mod tests {
         square.enabled = true;
         square.dac_enabled = true;
         square.frequency = 2046;
-        square.sample_length = 2046;
+        square.set_sample_length(2046);
         square.sample_countdown = 1;
         square.duty = 1;
         square.duty_next = 2;
@@ -5150,7 +5252,7 @@ mod tests {
         square.enabled = true;
         square.dac_enabled = true;
         square.frequency = 2046;
-        square.sample_length = 2046;
+        square.set_sample_length(2046);
         square.sample_countdown = 1;
 
         square.clock_2mhz(11);
@@ -5166,7 +5268,7 @@ mod tests {
         wave_ram[0] = 0xAB;
         wave.enabled = true;
         wave.dac_enabled = true;
-        wave.sample_length = 2046;
+        wave.set_sample_length(2046);
         wave.sample_countdown = 0;
         wave.current_sample_index = 30;
         wave.pending_reset = true;
@@ -5195,7 +5297,7 @@ mod tests {
         wave_ram[0] = 0xAB;
         wave.enabled = true;
         wave.dac_enabled = true;
-        wave.sample_length = 2046;
+        wave.set_sample_length(2046);
         wave.sample_countdown = 0;
         wave.current_sample_index = 29;
 
