@@ -40,44 +40,147 @@ fn env_bool_or_true(key: &str) -> bool {
         .is_none_or(|v| env_flag_from_str(v.trim()))
 }
 
-macro_rules! define_env_i16 {
-    ($func:ident, $key:literal, $default:expr) => {
-        fn $func() -> i16 {
-            use std::sync::OnceLock;
-            static VALUE: OnceLock<i16> = OnceLock::new();
-            *VALUE.get_or_init(|| env_i16_or($key, $default))
+// Capture process-wide tuning once when the first PPU is constructed. The PPU
+// retains this immutable reference so pixel/FIFO paths do not repeatedly acquire
+// OnceLock on weakly ordered targets such as ARM11. Trace controls remain separate.
+macro_rules! define_ppu_tuning {
+    ($($name:ident: $ty:ty = $value:expr,)*) => {
+        #[derive(Clone)]
+        struct PpuTuning {
+            $($name: $ty,)*
+        }
+
+        impl PpuTuning {
+            fn process_default() -> &'static Self {
+                static TUNING: std::sync::OnceLock<PpuTuning> = std::sync::OnceLock::new();
+                TUNING.get_or_init(|| Self { $($name: $value,)* })
+            }
         }
     };
 }
 
-macro_rules! define_env_u16 {
-    ($func:ident, $key:literal, $default:expr) => {
-        fn $func() -> u16 {
-            use std::sync::OnceLock;
-            static VALUE: OnceLock<u16> = OnceLock::new();
-            *VALUE.get_or_init(|| env_u16_or($key, $default))
-        }
-    };
-}
-
-macro_rules! define_env_bool_false {
-    ($func:ident, $key:literal) => {
-        fn $func() -> bool {
-            use std::sync::OnceLock;
-            static VALUE: OnceLock<bool> = OnceLock::new();
-            *VALUE.get_or_init(|| env_bool_or_false($key))
-        }
-    };
-}
-
-macro_rules! define_env_bool_true {
-    ($func:ident, $key:literal) => {
-        fn $func() -> bool {
-            use std::sync::OnceLock;
-            static VALUE: OnceLock<bool> = OnceLock::new();
-            *VALUE.get_or_init(|| env_bool_or_true($key))
-        }
-    };
+define_ppu_tuning! {
+    dmg_mode3_lcdc_event_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_LCDC_EVENT_T_BIAS", -1),
+    dmg_mode3_lcdc_fetch_bits_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_LCDC_FETCH_BITS_T_BIAS", -2),
+    dmg_mode3_lcdc_win_en_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_LCDC_WIN_EN_T_BIAS", 2),
+    dmg_mode3_scx_start_delay_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCX_START_DELAY_BIAS", -1),
+    dmg_bgp_tail_pixels: i16 = env_i16_or("VIBEEMU_DMG_BGP_TAIL_PIXELS", 5),
+    dmg_bgp_fetcher_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_BGP_FETCHER_SAMPLE_T_BIAS", -1),
+    dmg_bgp_fetcher_wx0_extra_t: i16 = env_i16_or("VIBEEMU_DMG_BGP_FETCHER_WX0_EXTRA_T", 8),
+    dmg_bg_fetch_lead_pixels: i16 = env_i16_or("VIBEEMU_DMG_BG_FETCH_LEAD_PIXELS", 9),
+    dmg_bg_fetch_sample_px_in_tile: i16 = env_i16_or("VIBEEMU_DMG_BG_FETCH_SAMPLE_PX_IN_TILE", 0),
+    dmg_bg_en_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_SAMPLE_T_BIAS", -3),
+    dmg_bg_en_left_extra_bias: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_LEFT_EXTRA_BIAS", 0),
+    dmg_bg_en_left_x_threshold: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_LEFT_X_THRESHOLD", 0),
+    dmg_bg_en_left_raw_threshold: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_LEFT_RAW_THRESHOLD", 1),
+    dmg_bg_en_first_event_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_FIRST_EVENT_T_ADJUST", 0),
+    dmg_bg_fetch_first_event_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_BG_FETCH_FIRST_EVENT_T_ADJUST", 8),
+    dmg_bg_en_left_raw_sample_shift: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_LEFT_RAW_SAMPLE_SHIFT", 1),
+    dmg_bg_en_line0_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_BG_EN_LINE0_SAMPLE_T_BIAS", -4),
+    dmg_bgp_sprite_lag_pixels: i16 = env_i16_or("VIBEEMU_DMG_BGP_SPRITE_LAG_PIXELS", 1),
+    dmg_bgp_sprite_lag_line0_pixels: i16 = env_i16_or("VIBEEMU_DMG_BGP_SPRITE_LAG_LINE0_PIXELS", 5),
+    dmg_obj_en_pixel_shift: i16 = env_i16_or("VIBEEMU_DMG_OBJ_EN_PIXEL_SHIFT", -1),
+    dmg_obj_en_shift_max_x: i16 = env_i16_or("VIBEEMU_DMG_OBJ_EN_SHIFT_MAX_X", 7),
+    dmg_bgp_use_event_map: bool = env_bool_or_false("VIBEEMU_DMG_BGP_USE_EVENT_MAP"),
+    dmg_bgp_use_t_sample: bool = env_bool_or_false("VIBEEMU_DMG_BGP_USE_T_SAMPLE"),
+    dmg_bgp_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_BGP_SAMPLE_T_BIAS", 0),
+    dmg_bgp_line0_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_BGP_LINE0_SAMPLE_T_BIAS", 0),
+    dmg_bgp_use_simple_event_x: bool = env_bool_or_false("VIBEEMU_DMG_BGP_USE_SIMPLE_EVENT_X"),
+    dmg_bgp_simple_event_x_bias: i16 = env_i16_or("VIBEEMU_DMG_BGP_SIMPLE_EVENT_X_BIAS", 0),
+    dmg_bgp_falling_edge_delay_t: i16 = env_i16_or("VIBEEMU_DMG_BGP_FALLING_EDGE_DELAY_T", 0),
+    dmg_bgp_rising_edge_delay_t: i16 = env_i16_or("VIBEEMU_DMG_BGP_RISING_EDGE_DELAY_T", 0),
+    dmg_bgp_t_sample_use_obj_x_corr: bool = env_bool_or_false("VIBEEMU_DMG_BGP_T_SAMPLE_USE_OBJ_X_CORR"),
+    dmg_bgp_t_sample_use_first_x_phase_corr: bool = env_bool_or_false("VIBEEMU_DMG_BGP_T_SAMPLE_USE_FIRST_X_PHASE_CORR"),
+    dmg_bgp_t_sample_include_line0: bool = env_bool_or_false("VIBEEMU_DMG_BGP_T_SAMPLE_INCLUDE_LINE0"),
+    dmg_bgp_line0_edge_backstep: bool = env_bool_or_false("VIBEEMU_DMG_BGP_LINE0_EDGE_BACKSTEP"),
+    dmg_bgp_t_sample_first_x_phase_corr_mag: i16 = env_i16_or("VIBEEMU_DMG_BGP_T_SAMPLE_FIRST_X_PHASE_CORR_MAG", 1),
+    dmg_hblank_render_delay: u16 = env_u16_or("VIBEEMU_DMG_HBLANK_RENDER_DELAY", DMG_HBLANK_RENDER_DELAY),
+    dmg_obp0_sample_t_bias: i16 = env_i16_or("VIBEEMU_DMG_OBP0_SAMPLE_T_BIAS", -1),
+    dmg_mode3_scx_event_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCX_EVENT_T_BIAS", -7),
+    dmg_mode3_scx_event_t_obj_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCX_EVENT_T_OBJ_BIAS", -3),
+    dmg_mode3_scx_event_push_state_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCX_EVENT_PUSH_STATE_T_ADJUST", -8),
+    dmg_mode3_scx_event_first_x_ge8_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCX_EVENT_FIRST_X_GE8_T_ADJUST", 4),
+    dmg_mode3_scy_event_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_T_BIAS", -13),
+    cgb_mode3_scy_event_t_bias: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_T_BIAS", -14),
+    dmg_mode3_scy_event_early_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_THRESHOLD_T", 25),
+    cgb_mode3_scy_event_early_threshold_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_EARLY_THRESHOLD_T", 28),
+    cgb_dmg_mode3_scy_event_early_threshold_t: u16 = env_u16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_EARLY_THRESHOLD_T", 21),
+    dmg_mode3_scy_event_early_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_T_ADJUST", 8),
+    cgb_mode3_scy_event_early_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_EARLY_T_ADJUST", 5),
+    cgb_dmg_mode3_scy_event_early_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_EARLY_T_ADJUST", -2),
+    cgb_dmg_mode3_scy_event_line0_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_LINE0_T_ADJUST", 0),
+    cgb_mode3_scy_event_left_regime_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_T_ADJUST", -2),
+    cgb_mode3_scy_event_left_regime_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_MIN_T", 0),
+    cgb_mode3_scy_event_left_regime_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_MAX_T", 0xFFFF),
+    cgb_mode3_scy_event_mid_regime_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_T_ADJUST", -5),
+    cgb_mode3_scy_event_mid_regime_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_MIN_T", 0),
+    cgb_mode3_scy_event_mid_regime_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_MAX_T", 0xFFFF),
+    cgb_mode3_scy_event_right_regime_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_T_ADJUST", -2),
+    cgb_mode3_scy_event_right_regime_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_MIN_T", 0),
+    cgb_mode3_scy_event_right_regime_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_MAX_T", 0xFFFF),
+    cgb_mode3_scy_event_push_state_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_T_ADJUST", 6),
+    cgb_mode3_scy_event_push_state_x0_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_T_ADJUST", -16),
+    cgb_mode3_scy_event_push_state_x0_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_MIN_T", 16),
+    cgb_mode3_scy_event_push_state_x0_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_MAX_T", 32),
+    cgb_mode3_scy_event_push_full_fifo_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_T_ADJUST", 8),
+    cgb_mode3_scy_event_push_full_fifo_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_MIN_T", 28),
+    cgb_mode3_scy_event_push_full_fifo_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_MAX_T", 32),
+    cgb_mode3_scy_event_x0_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X0_T_ADJUST", 0),
+    cgb_mode3_scy_event_x0_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X0_MIN_T", 0),
+    cgb_mode3_scy_event_x0_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X0_MAX_T", 0xFFFF),
+    cgb_mode3_scy_event_x8_t_adjust: i16 = env_i16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X8_T_ADJUST", 0),
+    cgb_mode3_scy_event_x8_min_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X8_MIN_T", 0),
+    cgb_mode3_scy_event_x8_max_t: u16 = env_u16_or("VIBEEMU_CGB_MODE3_SCY_EVENT_X8_MAX_T", 0xFFFF),
+    cgb_dmg_mode3_scy_event_startup_threshold_t: u16 = env_u16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_THRESHOLD_T", 16),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_ADJUST", 15),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_x0_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_X0_ADJUST", 0),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_x8_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_X8_ADJUST", 0),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t: u16 = env_u16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_MIN_T", 17),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t: u16 = env_u16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_MAX_T", 31),
+    cgb_dmg_mode3_scy_event_startup_tile_t1_late_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_ADJUST", 8),
+    cgb_dmg_mode3_scy_event_startup_push_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_PUSH_ADJUST", -13),
+    cgb_dmg_mode3_scy_event_startup_hi_t2_adjust: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_HI_T2_ADJUST", 8),
+    dmg_mode3_scy_event_push_state_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_STATE_T_ADJUST", -2),
+    dmg_mode3_scy_event_push_state_min_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_STATE_MIN_T", 1),
+    dmg_mode3_scy_event_push_previsible_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_PREVISIBLE_T_ADJUST", -2),
+    dmg_mode3_scy_event_push_visible_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_VISIBLE_T_ADJUST", -3),
+    dmg_mode3_scy_event_lo_t1_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LO_T1_T_ADJUST", 2),
+    dmg_mode3_scy_event_tile_t1_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T1_T_ADJUST", 6),
+    dmg_mode3_scy_event_tile_t1_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T1_THRESHOLD_T", 3),
+    dmg_mode3_scy_event_tile_t2_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T2_T_ADJUST", 5),
+    dmg_mode3_scy_event_tile_t2_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T2_THRESHOLD_T", 13),
+    dmg_mode3_scy_event_hi_t2_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_HI_T2_T_ADJUST", -3),
+    dmg_mode3_scy_event_hi_t2_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_HI_T2_THRESHOLD_T", 210),
+    dmg_mode3_scy_event_lo_t1_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LO_T1_THRESHOLD_T", 208),
+    dmg_mode3_scy_use_stage_sample_t: bool = env_bool_or_false("VIBEEMU_DMG_MODE3_SCY_USE_STAGE_SAMPLE_T"),
+    dmg_mode3_scy_sample_tile_t_offset: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_SAMPLE_TILE_T_OFFSET", 0),
+    dmg_mode3_scy_sample_lo_t_offset: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_SAMPLE_LO_T_OFFSET", 0),
+    dmg_mode3_scy_sample_hi_t_offset: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_SAMPLE_HI_T_OFFSET", 0),
+    cgb_dmg_mode3_scy_latch_start_pos: i16 = env_i16_or("VIBEEMU_CGB_DMG_MODE3_SCY_LATCH_START_POS", -16),
+    cgb_dmg_mode3_scy_startup_allow_same_dot: bool = env_bool_or_false("VIBEEMU_CGB_DMG_MODE3_SCY_STARTUP_ALLOW_SAME_DOT"),
+    cgb_dmg_mode3_scy_push_full_allow_same_dot: bool = env_bool_or_false("VIBEEMU_CGB_DMG_MODE3_SCY_PUSH_FULL_ALLOW_SAME_DOT"),
+    dmg_mode3_scy_event_left_regime_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_T_ADJUST", -8),
+    dmg_mode3_scy_event_left_edge_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_T_ADJUST", 0),
+    dmg_mode3_scy_event_left_edge_min_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_MIN_T", 0),
+    dmg_mode3_scy_event_left_edge_max_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_MAX_T", 0),
+    dmg_mode3_scy_event_left_regime_min_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_MIN_T", 19),
+    dmg_mode3_scy_event_left_regime_max_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_MAX_T", 26),
+    dmg_mode3_scy_event_right_regime_t_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_T_ADJUST", -14),
+    dmg_mode3_scy_event_right_regime_min_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_MIN_T", 36),
+    dmg_mode3_scy_event_right_regime_max_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_MAX_T", 43),
+    dmg_mode3_scy_event_startup_threshold_t: u16 = env_u16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_THRESHOLD_T", 15),
+    dmg_mode3_scy_event_startup_tile_t1_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_ADJUST", -8),
+    dmg_mode3_scy_event_startup_lo_t1_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_LO_T1_ADJUST", 7),
+    dmg_mode3_scy_event_startup_tile_t2_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T2_ADJUST", 9),
+    dmg_mode3_scy_event_startup_hi_t2_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_HI_T2_ADJUST", 6),
+    dmg_mode3_scy_event_startup_push_adjust: i16 = env_i16_or("VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_PUSH_ADJUST", 2),
+    dmg_mode3_wx_event_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_WX_EVENT_T_BIAS", 3),
+    dmg_mode3_wy_event_t_bias: i16 = env_i16_or("VIBEEMU_DMG_MODE3_WY_EVENT_T_BIAS", 0),
+    dmg_wx_activate_on_pos6: bool = env_bool_or_true("VIBEEMU_DMG_WX_ACTIVATE_ON_POS6"),
+    dmg_wx_previsible_phase_max: i16 = env_i16_or("VIBEEMU_DMG_WX_PREVISIBLE_PHASE_MAX", 0),
+    dmg_bg_window_use_pop_schedule_enabled: bool = env_bool_or_false("VIBEEMU_DMG_BG_WINDOW_USE_POP_SCHEDULE"),
+    dmg_mode3_obj_fetch_sim_dots: u16 = load_obj_fetch_sim_dots(),
+    dmg_obj_size_tuning: DmgObjSizeTuning = load_obj_size_tuning(),
 }
 
 macro_rules! define_trace_env_bool_false {
@@ -115,152 +218,6 @@ macro_rules! define_trace_env_os_bool_false {
 }
 
 define_trace_env_os_bool_false!(oam_bug_trace_enabled, "VIBEEMU_TRACE_OAMBUG");
-define_env_i16!(
-    dmg_mode3_lcdc_event_t_bias,
-    "VIBEEMU_DMG_MODE3_LCDC_EVENT_T_BIAS",
-    -1
-);
-define_env_i16!(
-    dmg_mode3_lcdc_fetch_bits_t_bias,
-    "VIBEEMU_DMG_MODE3_LCDC_FETCH_BITS_T_BIAS",
-    -2
-);
-define_env_i16!(
-    dmg_mode3_lcdc_win_en_t_bias,
-    "VIBEEMU_DMG_MODE3_LCDC_WIN_EN_T_BIAS",
-    2
-);
-define_env_i16!(
-    dmg_mode3_scx_start_delay_bias,
-    "VIBEEMU_DMG_MODE3_SCX_START_DELAY_BIAS",
-    -1
-);
-define_env_i16!(dmg_bgp_tail_pixels, "VIBEEMU_DMG_BGP_TAIL_PIXELS", 5);
-define_env_i16!(
-    dmg_bgp_fetcher_sample_t_bias,
-    "VIBEEMU_DMG_BGP_FETCHER_SAMPLE_T_BIAS",
-    -1
-);
-define_env_i16!(
-    dmg_bgp_fetcher_wx0_extra_t,
-    "VIBEEMU_DMG_BGP_FETCHER_WX0_EXTRA_T",
-    8
-);
-define_env_i16!(
-    dmg_bg_fetch_lead_pixels,
-    "VIBEEMU_DMG_BG_FETCH_LEAD_PIXELS",
-    9
-);
-define_env_i16!(
-    dmg_bg_fetch_sample_px_in_tile,
-    "VIBEEMU_DMG_BG_FETCH_SAMPLE_PX_IN_TILE",
-    0
-);
-define_env_i16!(
-    dmg_bg_en_sample_t_bias,
-    "VIBEEMU_DMG_BG_EN_SAMPLE_T_BIAS",
-    -3
-);
-define_env_i16!(
-    dmg_bg_en_left_extra_bias,
-    "VIBEEMU_DMG_BG_EN_LEFT_EXTRA_BIAS",
-    0
-);
-define_env_i16!(
-    dmg_bg_en_left_x_threshold,
-    "VIBEEMU_DMG_BG_EN_LEFT_X_THRESHOLD",
-    0
-);
-define_env_i16!(
-    dmg_bg_en_left_raw_threshold,
-    "VIBEEMU_DMG_BG_EN_LEFT_RAW_THRESHOLD",
-    1
-);
-define_env_i16!(
-    dmg_bg_en_first_event_t_adjust,
-    "VIBEEMU_DMG_BG_EN_FIRST_EVENT_T_ADJUST",
-    0
-);
-define_env_i16!(
-    dmg_bg_fetch_first_event_t_adjust,
-    "VIBEEMU_DMG_BG_FETCH_FIRST_EVENT_T_ADJUST",
-    8
-);
-define_env_i16!(
-    dmg_bg_en_left_raw_sample_shift,
-    "VIBEEMU_DMG_BG_EN_LEFT_RAW_SAMPLE_SHIFT",
-    1
-);
-define_env_i16!(
-    dmg_bg_en_line0_sample_t_bias,
-    "VIBEEMU_DMG_BG_EN_LINE0_SAMPLE_T_BIAS",
-    -4
-);
-define_env_i16!(
-    dmg_bgp_sprite_lag_pixels,
-    "VIBEEMU_DMG_BGP_SPRITE_LAG_PIXELS",
-    1
-);
-define_env_i16!(
-    dmg_bgp_sprite_lag_line0_pixels,
-    "VIBEEMU_DMG_BGP_SPRITE_LAG_LINE0_PIXELS",
-    5
-);
-define_env_i16!(dmg_obj_en_pixel_shift, "VIBEEMU_DMG_OBJ_EN_PIXEL_SHIFT", -1);
-define_env_i16!(dmg_obj_en_shift_max_x, "VIBEEMU_DMG_OBJ_EN_SHIFT_MAX_X", 7);
-define_env_bool_false!(dmg_bgp_use_event_map, "VIBEEMU_DMG_BGP_USE_EVENT_MAP");
-define_env_bool_false!(dmg_bgp_use_t_sample, "VIBEEMU_DMG_BGP_USE_T_SAMPLE");
-define_env_i16!(dmg_bgp_sample_t_bias, "VIBEEMU_DMG_BGP_SAMPLE_T_BIAS", 0);
-define_env_i16!(
-    dmg_bgp_line0_sample_t_bias,
-    "VIBEEMU_DMG_BGP_LINE0_SAMPLE_T_BIAS",
-    0
-);
-define_env_bool_false!(
-    dmg_bgp_use_simple_event_x,
-    "VIBEEMU_DMG_BGP_USE_SIMPLE_EVENT_X"
-);
-define_env_i16!(
-    dmg_bgp_simple_event_x_bias,
-    "VIBEEMU_DMG_BGP_SIMPLE_EVENT_X_BIAS",
-    0
-);
-define_env_i16!(
-    dmg_bgp_falling_edge_delay_t,
-    "VIBEEMU_DMG_BGP_FALLING_EDGE_DELAY_T",
-    0
-);
-define_env_i16!(
-    dmg_bgp_rising_edge_delay_t,
-    "VIBEEMU_DMG_BGP_RISING_EDGE_DELAY_T",
-    0
-);
-define_env_bool_false!(
-    dmg_bgp_t_sample_use_obj_x_corr,
-    "VIBEEMU_DMG_BGP_T_SAMPLE_USE_OBJ_X_CORR"
-);
-define_env_bool_false!(
-    dmg_bgp_t_sample_use_first_x_phase_corr,
-    "VIBEEMU_DMG_BGP_T_SAMPLE_USE_FIRST_X_PHASE_CORR"
-);
-define_env_bool_false!(
-    dmg_bgp_t_sample_include_line0,
-    "VIBEEMU_DMG_BGP_T_SAMPLE_INCLUDE_LINE0"
-);
-define_env_bool_false!(
-    dmg_bgp_line0_edge_backstep,
-    "VIBEEMU_DMG_BGP_LINE0_EDGE_BACKSTEP"
-);
-define_env_i16!(
-    dmg_bgp_t_sample_first_x_phase_corr_mag,
-    "VIBEEMU_DMG_BGP_T_SAMPLE_FIRST_X_PHASE_CORR_MAG",
-    1
-);
-define_env_u16!(
-    dmg_hblank_render_delay,
-    "VIBEEMU_DMG_HBLANK_RENDER_DELAY",
-    DMG_HBLANK_RENDER_DELAY
-);
 
 #[cfg(feature = "ppu-trace")]
 macro_rules! ppu_trace {
@@ -372,8 +329,93 @@ const DMG_BOOT_LOGO_MAP_9910: usize = 0x1910;
 const DMG_BOOT_LOGO_MAP_992F: usize = 0x192F;
 const DMG_BOOT_TRADEMARK_BYTES: [u8; 8] = [0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C];
 
+// Shared storage for DMG and CGB replay fetchers. Sequencing, pixel payloads,
+// palette semantics, and priority rules remain model-specific.
+struct PixelFifo<T: Copy + Default> {
+    data: [T; 32],
+    head: usize,
+    len: usize,
+}
+
+impl<T: Copy + Default> PixelFifo<T> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            data: [T::default(); 32],
+            head: 0,
+            len: 0,
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[inline]
+    fn clear(&mut self) {
+        self.head = 0;
+        self.len = 0;
+    }
+
+    #[inline]
+    fn push_back(&mut self, value: T) {
+        if self.len >= self.data.len() {
+            return;
+        }
+        let tail = (self.head + self.len) % self.data.len();
+        self.data[tail] = value;
+        self.len += 1;
+    }
+
+    #[inline]
+    fn push_front(&mut self, value: T) {
+        if self.len >= self.data.len() {
+            return;
+        }
+        self.head = (self.head + self.data.len() - 1) % self.data.len();
+        self.data[self.head] = value;
+        self.len += 1;
+    }
+
+    #[inline]
+    fn pop_front(&mut self) -> Option<T> {
+        if self.len == 0 {
+            return None;
+        }
+        let value = self.data[self.head];
+        self.head = (self.head + 1) % self.data.len();
+        self.len -= 1;
+        Some(value)
+    }
+}
+// Content-addressed rows remain coherent even when a caller changes public
+// VRAM directly. The complete tag is compared; hash collisions only cause misses.
+const TILE_ROW_CACHE_LEN: usize = 64;
+
+#[derive(Clone, Copy)]
+struct DecodedTileRow {
+    key: u32,
+    pixels: [u32; 8],
+    color_zero: [bool; 8],
+}
+
+impl DecodedTileRow {
+    const EMPTY: Self = Self {
+        key: u32::MAX,
+        pixels: [0; 8],
+        color_zero: [false; 8],
+    };
+}
+
 /// Pixel Processing Unit emulating the Game Boy / Game Boy Color display hardware.
 pub struct Ppu {
+    tuning: &'static PpuTuning,
     /// Two VRAM banks (bank 1 is CGB-only).
     pub vram: [[u8; VRAM_BANK_SIZE]; 2],
     /// Currently selected VRAM bank (0 or 1).
@@ -413,6 +455,7 @@ pub struct Ppu {
     obpi: u8,
     obpd: [u8; PAL_RAM_SIZE],
     cgb_bg_color_table: [u32; 32],
+    tile_row_cache: [DecodedTileRow; TILE_ROW_CACHE_LEN],
     cgb_obj_color_table: [u32; 32],
     dmg_bg_color_table: [u32; 1024],
     dmg_obj_color_table: [[u32; 4]; 2],
@@ -543,411 +586,6 @@ impl std::fmt::Debug for Ppu {
     }
 }
 
-define_env_i16!(dmg_obp0_sample_t_bias, "VIBEEMU_DMG_OBP0_SAMPLE_T_BIAS", -1);
-define_env_i16!(
-    dmg_mode3_scx_event_t_bias,
-    "VIBEEMU_DMG_MODE3_SCX_EVENT_T_BIAS",
-    -7
-);
-define_env_i16!(
-    dmg_mode3_scx_event_t_obj_bias,
-    "VIBEEMU_DMG_MODE3_SCX_EVENT_T_OBJ_BIAS",
-    -3
-);
-define_env_i16!(
-    dmg_mode3_scx_event_push_state_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCX_EVENT_PUSH_STATE_T_ADJUST",
-    -8
-);
-define_env_i16!(
-    dmg_mode3_scx_event_first_x_ge8_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCX_EVENT_FIRST_X_GE8_T_ADJUST",
-    4
-);
-define_env_i16!(
-    dmg_mode3_scy_event_t_bias,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_T_BIAS",
-    -13
-);
-define_env_i16!(
-    cgb_mode3_scy_event_t_bias,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_T_BIAS",
-    -14
-);
-define_env_u16!(
-    dmg_mode3_scy_event_early_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_THRESHOLD_T",
-    25
-);
-define_env_u16!(
-    cgb_mode3_scy_event_early_threshold_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_EARLY_THRESHOLD_T",
-    28
-);
-define_env_u16!(
-    cgb_dmg_mode3_scy_event_early_threshold_t,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_EARLY_THRESHOLD_T",
-    21
-);
-define_env_i16!(
-    dmg_mode3_scy_event_early_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_EARLY_T_ADJUST",
-    8
-);
-define_env_i16!(
-    cgb_mode3_scy_event_early_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_EARLY_T_ADJUST",
-    5
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_early_t_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_EARLY_T_ADJUST",
-    -2
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_line0_t_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_LINE0_T_ADJUST",
-    0
-);
-define_env_i16!(
-    cgb_mode3_scy_event_left_regime_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_T_ADJUST",
-    -2
-);
-define_env_u16!(
-    cgb_mode3_scy_event_left_regime_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_MIN_T",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_left_regime_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_LEFT_REGIME_MAX_T",
-    0xFFFF
-);
-define_env_i16!(
-    cgb_mode3_scy_event_mid_regime_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_T_ADJUST",
-    -5
-);
-define_env_u16!(
-    cgb_mode3_scy_event_mid_regime_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_MIN_T",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_mid_regime_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_MID_REGIME_MAX_T",
-    0xFFFF
-);
-define_env_i16!(
-    cgb_mode3_scy_event_right_regime_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_T_ADJUST",
-    -2
-);
-define_env_u16!(
-    cgb_mode3_scy_event_right_regime_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_MIN_T",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_right_regime_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_RIGHT_REGIME_MAX_T",
-    0xFFFF
-);
-define_env_i16!(
-    cgb_mode3_scy_event_push_state_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_T_ADJUST",
-    6
-);
-define_env_i16!(
-    cgb_mode3_scy_event_push_state_x0_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_T_ADJUST",
-    -16
-);
-define_env_u16!(
-    cgb_mode3_scy_event_push_state_x0_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_MIN_T",
-    16
-);
-define_env_u16!(
-    cgb_mode3_scy_event_push_state_x0_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_STATE_X0_MAX_T",
-    32
-);
-define_env_i16!(
-    cgb_mode3_scy_event_push_full_fifo_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_T_ADJUST",
-    8
-);
-define_env_u16!(
-    cgb_mode3_scy_event_push_full_fifo_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_MIN_T",
-    28
-);
-define_env_u16!(
-    cgb_mode3_scy_event_push_full_fifo_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_PUSH_FULL_FIFO_MAX_T",
-    32
-);
-define_env_i16!(
-    cgb_mode3_scy_event_x0_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X0_T_ADJUST",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_x0_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X0_MIN_T",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_x0_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X0_MAX_T",
-    0xFFFF
-);
-define_env_i16!(
-    cgb_mode3_scy_event_x8_t_adjust,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X8_T_ADJUST",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_x8_min_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X8_MIN_T",
-    0
-);
-define_env_u16!(
-    cgb_mode3_scy_event_x8_max_t,
-    "VIBEEMU_CGB_MODE3_SCY_EVENT_X8_MAX_T",
-    0xFFFF
-);
-define_env_u16!(
-    cgb_dmg_mode3_scy_event_startup_threshold_t,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_THRESHOLD_T",
-    16
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_ADJUST",
-    15
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_x0_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_X0_ADJUST",
-    0
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_x8_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_X8_ADJUST",
-    0
-);
-define_env_u16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_MIN_T",
-    17
-);
-define_env_u16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_MAX_T",
-    31
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_tile_t1_late_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_LATE_ADJUST",
-    8
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_push_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_PUSH_ADJUST",
-    -13
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_event_startup_hi_t2_adjust,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_EVENT_STARTUP_HI_T2_ADJUST",
-    8
-);
-define_env_i16!(
-    dmg_mode3_scy_event_push_state_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_STATE_T_ADJUST",
-    -2
-);
-define_env_u16!(
-    dmg_mode3_scy_event_push_state_min_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_STATE_MIN_T",
-    1
-);
-define_env_i16!(
-    dmg_mode3_scy_event_push_previsible_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_PREVISIBLE_T_ADJUST",
-    -2
-);
-define_env_i16!(
-    dmg_mode3_scy_event_push_visible_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_PUSH_VISIBLE_T_ADJUST",
-    -3
-);
-define_env_i16!(
-    dmg_mode3_scy_event_lo_t1_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LO_T1_T_ADJUST",
-    2
-);
-define_env_i16!(
-    dmg_mode3_scy_event_tile_t1_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T1_T_ADJUST",
-    6
-);
-define_env_u16!(
-    dmg_mode3_scy_event_tile_t1_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T1_THRESHOLD_T",
-    3
-);
-define_env_i16!(
-    dmg_mode3_scy_event_tile_t2_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T2_T_ADJUST",
-    5
-);
-define_env_u16!(
-    dmg_mode3_scy_event_tile_t2_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_TILE_T2_THRESHOLD_T",
-    13
-);
-define_env_i16!(
-    dmg_mode3_scy_event_hi_t2_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_HI_T2_T_ADJUST",
-    -3
-);
-define_env_u16!(
-    dmg_mode3_scy_event_hi_t2_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_HI_T2_THRESHOLD_T",
-    210
-);
-define_env_u16!(
-    dmg_mode3_scy_event_lo_t1_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LO_T1_THRESHOLD_T",
-    208
-);
-define_env_bool_false!(
-    dmg_mode3_scy_use_stage_sample_t,
-    "VIBEEMU_DMG_MODE3_SCY_USE_STAGE_SAMPLE_T"
-);
-define_env_i16!(
-    dmg_mode3_scy_sample_tile_t_offset,
-    "VIBEEMU_DMG_MODE3_SCY_SAMPLE_TILE_T_OFFSET",
-    0
-);
-define_env_i16!(
-    dmg_mode3_scy_sample_lo_t_offset,
-    "VIBEEMU_DMG_MODE3_SCY_SAMPLE_LO_T_OFFSET",
-    0
-);
-define_env_i16!(
-    dmg_mode3_scy_sample_hi_t_offset,
-    "VIBEEMU_DMG_MODE3_SCY_SAMPLE_HI_T_OFFSET",
-    0
-);
-define_env_i16!(
-    cgb_dmg_mode3_scy_latch_start_pos,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_LATCH_START_POS",
-    -16
-);
-define_env_bool_false!(
-    cgb_dmg_mode3_scy_startup_allow_same_dot,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_STARTUP_ALLOW_SAME_DOT"
-);
-define_env_bool_false!(
-    cgb_dmg_mode3_scy_push_full_allow_same_dot,
-    "VIBEEMU_CGB_DMG_MODE3_SCY_PUSH_FULL_ALLOW_SAME_DOT"
-);
-define_env_i16!(
-    dmg_mode3_scy_event_left_regime_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_T_ADJUST",
-    -8
-);
-define_env_i16!(
-    dmg_mode3_scy_event_left_edge_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_T_ADJUST",
-    0
-);
-define_env_u16!(
-    dmg_mode3_scy_event_left_edge_min_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_MIN_T",
-    0
-);
-define_env_u16!(
-    dmg_mode3_scy_event_left_edge_max_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_EDGE_MAX_T",
-    0
-);
-define_env_u16!(
-    dmg_mode3_scy_event_left_regime_min_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_MIN_T",
-    19
-);
-define_env_u16!(
-    dmg_mode3_scy_event_left_regime_max_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_LEFT_REGIME_MAX_T",
-    26
-);
-define_env_i16!(
-    dmg_mode3_scy_event_right_regime_t_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_T_ADJUST",
-    -14
-);
-define_env_u16!(
-    dmg_mode3_scy_event_right_regime_min_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_MIN_T",
-    36
-);
-define_env_u16!(
-    dmg_mode3_scy_event_right_regime_max_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_RIGHT_REGIME_MAX_T",
-    43
-);
-define_env_u16!(
-    dmg_mode3_scy_event_startup_threshold_t,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_THRESHOLD_T",
-    15
-);
-define_env_i16!(
-    dmg_mode3_scy_event_startup_tile_t1_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T1_ADJUST",
-    -8
-);
-define_env_i16!(
-    dmg_mode3_scy_event_startup_lo_t1_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_LO_T1_ADJUST",
-    7
-);
-define_env_i16!(
-    dmg_mode3_scy_event_startup_tile_t2_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_TILE_T2_ADJUST",
-    9
-);
-define_env_i16!(
-    dmg_mode3_scy_event_startup_hi_t2_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_HI_T2_ADJUST",
-    6
-);
-define_env_i16!(
-    dmg_mode3_scy_event_startup_push_adjust,
-    "VIBEEMU_DMG_MODE3_SCY_EVENT_STARTUP_PUSH_ADJUST",
-    2
-);
-define_env_i16!(
-    dmg_mode3_wx_event_t_bias,
-    "VIBEEMU_DMG_MODE3_WX_EVENT_T_BIAS",
-    3
-);
-define_env_i16!(
-    dmg_mode3_wy_event_t_bias,
-    "VIBEEMU_DMG_MODE3_WY_EVENT_T_BIAS",
-    0
-);
-define_env_bool_true!(dmg_wx_activate_on_pos6, "VIBEEMU_DMG_WX_ACTIVATE_ON_POS6");
-define_env_i16!(
-    dmg_wx_previsible_phase_max,
-    "VIBEEMU_DMG_WX_PREVISIBLE_PHASE_MAX",
-    0
-);
-
 #[derive(Copy, Clone, Default)]
 struct DmgBgpEvent {
     t: u16,
@@ -1020,22 +658,16 @@ struct DmgObjSizeTuning {
     fetch_ready_state: i16,
 }
 
-fn dmg_mode3_obj_fetch_sim_dots() -> u16 {
-    use std::sync::OnceLock;
-    static DOTS: OnceLock<u16> = OnceLock::new();
-    *DOTS.get_or_init(|| {
-        std::env::var("VIBEEMU_DMG_MODE3_OBJ_FETCH_SIM_DOTS")
-            .ok()
-            .and_then(|v| v.trim().parse::<i16>().ok())
-            .map(|v| v.clamp(0, 16) as u16)
-            .unwrap_or(10)
-    })
+fn load_obj_fetch_sim_dots() -> u16 {
+    std::env::var("VIBEEMU_DMG_MODE3_OBJ_FETCH_SIM_DOTS")
+        .ok()
+        .and_then(|v| v.trim().parse::<i16>().ok())
+        .map(|v| v.clamp(0, 16) as u16)
+        .unwrap_or(10)
 }
 
-fn dmg_obj_size_tuning() -> &'static DmgObjSizeTuning {
-    use std::sync::OnceLock;
-    static TUNING: OnceLock<DmgObjSizeTuning> = OnceLock::new();
-    TUNING.get_or_init(|| DmgObjSizeTuning {
+fn load_obj_size_tuning() -> DmgObjSizeTuning {
+    DmgObjSizeTuning {
         capture_bias: env_i16_or(
             "VIBEEMU_DMG_OBJ_SIZE_CAPTURE_BIAS",
             DMG_OBJ_SIZE_CAPTURE_BIAS_DEFAULT,
@@ -1107,7 +739,7 @@ fn dmg_obj_size_tuning() -> &'static DmgObjSizeTuning {
             "VIBEEMU_DMG_MODE3_OBJ_FETCH_READY_STATE",
             DMG_MODE3_OBJ_FETCH_READY_STATE_DEFAULT,
         ),
-    })
+    }
 }
 
 #[cfg(feature = "ppu-trace")]
@@ -1185,10 +817,7 @@ define_trace_env_bool_false!(
 );
 define_trace_env_bool_false!(trace_bg_fetcher_enabled, "VIBEEMU_TRACE_BG_FETCHER");
 define_trace_env_bool_false!(trace_dmg_right_obj_enabled, "VIBEEMU_TRACE_DMG_RIGHT_OBJ");
-define_env_bool_false!(
-    dmg_bg_window_use_pop_schedule_enabled,
-    "VIBEEMU_DMG_BG_WINDOW_USE_POP_SCHEDULE"
-);
+
 define_trace_env_bool_false!(trace_win_map_fetch_enabled, "VIBEEMU_TRACE_WIN_MAP_FETCH");
 define_trace_env_bool_false!(trace_scy_render_enabled, "VIBEEMU_TRACE_SCY_RENDER");
 define_trace_env_bool_false!(trace_dmg_bg_output_enabled, "VIBEEMU_TRACE_DMG_BG_OUTPUT");
@@ -1341,8 +970,12 @@ impl Sprite {
 
 impl Ppu {
     /// Create a PPU for the given hardware model.
+    ///
+    /// Timing-tuning environment variables are captured process-wide when the
+    /// first PPU is constructed. Set them before creating an emulator.
     pub fn new(model: Model) -> Self {
         let mut ppu = Self {
+            tuning: PpuTuning::process_default(),
             vram: [[0; VRAM_BANK_SIZE]; 2],
             vram_bank: 0,
             oam: [0; OAM_SIZE],
@@ -1370,6 +1003,7 @@ impl Ppu {
             obpi: PAL_UNUSED_BIT,
             obpd: [0; PAL_RAM_SIZE],
             cgb_bg_color_table: [0; 32],
+            tile_row_cache: [DecodedTileRow::EMPTY; TILE_ROW_CACHE_LEN],
             cgb_obj_color_table: [0; 32],
             dmg_bg_color_table: [0; 1024],
             dmg_obj_color_table: [[0; 4]; 2],
@@ -1465,6 +1099,9 @@ impl Ppu {
     }
 
     fn refresh_cgb_bg_color_table(&mut self) {
+        for entry in &mut self.tile_row_cache {
+            entry.key = u32::MAX;
+        }
         for palette in 0..8 {
             for color_id in 0..4 {
                 let ram_off = palette * 8 + color_id * 2;
@@ -1487,6 +1124,9 @@ impl Ppu {
     }
 
     fn refresh_dmg_bg_color_table(&mut self) {
+        for entry in &mut self.tile_row_cache {
+            entry.key = u32::MAX;
+        }
         for bgp in u8::MIN..=u8::MAX {
             for color_id in 0..4u8 {
                 let shade = Self::dmg_shade(bgp, color_id) as usize;
@@ -1645,8 +1285,8 @@ impl Ppu {
         self.mode3_obj_fetch_stage = 0;
         self.mode3_obj_fetch_sprite_index = 0;
         let scx_delay = (self.scx & 0x07) as i16;
-        let scx_delay =
-            (scx_delay + dmg_mode3_scx_start_delay_bias()).clamp(0, SCREEN_WIDTH as i16) as u16;
+        let scx_delay = (scx_delay + self.tuning.dmg_mode3_scx_start_delay_bias)
+            .clamp(0, SCREEN_WIDTH as i16) as u16;
         self.mode3_render_delay = scx_delay;
         self.mode3_last_match_x = 0;
         self.mode3_same_x_toggle = false;
@@ -1658,7 +1298,7 @@ impl Ppu {
     }
 
     #[inline]
-    fn is_cgb_native_mode(&self) -> bool {
+    pub(crate) fn is_cgb_native_mode(&self) -> bool {
         self.cgb() && !self.dmg_compat
     }
 
@@ -1708,7 +1348,7 @@ impl Ppu {
             // closer to the nominal dot than DMG-CPU revisions.
             0
         } else if dmg_mode {
-            dmg_mode3_lcdc_event_t_bias()
+            self.tuning.dmg_mode3_lcdc_event_t_bias
         } else {
             0
         };
@@ -1728,11 +1368,11 @@ impl Ppu {
                         bias -= 1;
                     }
                 } else {
-                    bias += dmg_mode3_lcdc_fetch_bits_t_bias();
+                    bias += self.tuning.dmg_mode3_lcdc_fetch_bits_t_bias;
                 }
             }
             if (changed & 0x20) != 0 {
-                bias += dmg_mode3_lcdc_win_en_t_bias();
+                bias += self.tuning.dmg_mode3_lcdc_win_en_t_bias;
             }
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
@@ -1888,7 +1528,7 @@ impl Ppu {
 
     fn record_mode3_scx_event(&mut self, mode3_t: u16, val: u8) {
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        let mut bias = dmg_mode3_scx_event_t_bias();
+        let mut bias = self.tuning.dmg_mode3_scx_event_t_bias;
         if self.cgb() {
             // Native CGB samples SCX event timing slightly earlier than the
             // DMG-oriented baseline used by the fetcher model. This also
@@ -1908,15 +1548,15 @@ impl Ppu {
             }
         }
         if !self.cgb() && self.sprite_count > 0 {
-            bias += dmg_mode3_scx_event_t_obj_bias();
+            bias += self.tuning.dmg_mode3_scx_event_t_obj_bias;
             if self.line_sprites[0].x >= 8 {
-                bias += dmg_mode3_scx_event_first_x_ge8_t_adjust();
+                bias += self.tuning.dmg_mode3_scx_event_first_x_ge8_t_adjust;
             }
         }
         // Writes that land while the DMG fetcher is in PUSH affect SCX map
         // selection slightly earlier than in other phases.
         if !self.cgb() && self.mode3_fetcher_state == 6 {
-            bias += dmg_mode3_scx_event_push_state_t_adjust();
+            bias += self.tuning.dmg_mode3_scx_event_push_state_t_adjust;
         }
         if self.cgb()
             && self.dmg_compat
@@ -1928,7 +1568,7 @@ impl Ppu {
             // On CGB DMG-compat lines with active OBJ fetch contention, SCX
             // writes that land in PUSH with a shallow FIFO can be observed by
             // the next fetched BG tile one fetch slot earlier.
-            bias += dmg_mode3_scx_event_push_state_t_adjust();
+            bias += self.tuning.dmg_mode3_scx_event_push_state_t_adjust;
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
         if trace_scx_events_enabled() && trace_obj_debug_line_enabled(self.ly) {
@@ -1960,8 +1600,9 @@ impl Ppu {
 
     fn record_mode3_scy_event(&mut self, mode3_t: u16, val: u8) {
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        if !self.cgb() && dmg_mode3_scy_use_stage_sample_t() {
-            let t = (mode3_t as i16 + dmg_mode3_scy_event_t_bias()).clamp(0, max_t) as u16;
+        if !self.cgb() && self.tuning.dmg_mode3_scy_use_stage_sample_t {
+            let t =
+                (mode3_t as i16 + self.tuning.dmg_mode3_scy_event_t_bias).clamp(0, max_t) as u16;
             Self::push_mode3_reg_event(
                 &mut self.mode3_scy_events,
                 &mut self.mode3_scy_event_count,
@@ -1972,28 +1613,28 @@ impl Ppu {
         }
         // Keep CGB SCY event baseline stable while allowing DMG-tuned timing.
         let mut bias = if self.cgb() {
-            cgb_mode3_scy_event_t_bias()
+            self.tuning.cgb_mode3_scy_event_t_bias
         } else {
-            dmg_mode3_scy_event_t_bias()
+            self.tuning.dmg_mode3_scy_event_t_bias
         };
         let (early_threshold, early_adjust) = if self.is_cgb_dmg_compat_mode() {
             (
-                cgb_dmg_mode3_scy_event_early_threshold_t(),
-                cgb_dmg_mode3_scy_event_early_t_adjust(),
+                self.tuning.cgb_dmg_mode3_scy_event_early_threshold_t,
+                self.tuning.cgb_dmg_mode3_scy_event_early_t_adjust,
             )
         } else if self.cgb() {
             (
-                cgb_mode3_scy_event_early_threshold_t(),
-                cgb_mode3_scy_event_early_t_adjust(),
+                self.tuning.cgb_mode3_scy_event_early_threshold_t,
+                self.tuning.cgb_mode3_scy_event_early_t_adjust,
             )
         } else {
             (
-                dmg_mode3_scy_event_early_threshold_t(),
-                dmg_mode3_scy_event_early_t_adjust(),
+                self.tuning.dmg_mode3_scy_event_early_threshold_t,
+                self.tuning.dmg_mode3_scy_event_early_t_adjust,
             )
         };
         if self.is_cgb_dmg_compat_mode() && self.ly == 0 {
-            bias += cgb_dmg_mode3_scy_event_line0_t_adjust();
+            bias += self.tuning.cgb_dmg_mode3_scy_event_line0_t_adjust;
         }
         if mode3_t <= early_threshold {
             bias += early_adjust;
@@ -2001,148 +1642,160 @@ impl Ppu {
         if self.is_cgb_dmg_compat_mode() && self.sprite_count > 0 {
             let first_x = self.line_sprites[0].x;
             if first_x <= -7
-                && mode3_t >= cgb_mode3_scy_event_left_regime_min_t()
-                && mode3_t <= cgb_mode3_scy_event_left_regime_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_left_regime_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_left_regime_max_t
             {
-                bias += cgb_mode3_scy_event_left_regime_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_left_regime_t_adjust;
             } else if (0..=1).contains(&first_x)
                 && self.mode3_fetcher_state == 5
-                && mode3_t >= cgb_mode3_scy_event_mid_regime_min_t()
-                && mode3_t <= cgb_mode3_scy_event_mid_regime_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_mid_regime_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_mid_regime_max_t
             {
-                bias += cgb_mode3_scy_event_mid_regime_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_mid_regime_t_adjust;
             } else if first_x >= 8
                 && self.mode3_fetcher_state == 5
-                && mode3_t >= cgb_mode3_scy_event_right_regime_min_t()
-                && mode3_t <= cgb_mode3_scy_event_right_regime_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_right_regime_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_right_regime_max_t
             {
-                bias += cgb_mode3_scy_event_right_regime_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_right_regime_t_adjust;
             }
             let x_regime_adjust_phase = self.mode3_fetcher_state == 5
                 || (self.mode3_fetcher_state == 6 && self.mode3_bg_fifo >= 8);
             if x_regime_adjust_phase
                 && first_x == 0
-                && mode3_t >= cgb_mode3_scy_event_x0_min_t()
-                && mode3_t <= cgb_mode3_scy_event_x0_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_x0_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_x0_max_t
             {
-                bias += cgb_mode3_scy_event_x0_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_x0_t_adjust;
             } else if x_regime_adjust_phase
                 && first_x == 8
-                && mode3_t >= cgb_mode3_scy_event_x8_min_t()
-                && mode3_t <= cgb_mode3_scy_event_x8_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_x8_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_x8_max_t
             {
-                bias += cgb_mode3_scy_event_x8_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_x8_t_adjust;
             }
             if self.mode3_fetcher_state == 6 && self.mode3_bg_fifo <= 3 {
-                bias += cgb_mode3_scy_event_push_state_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_push_state_t_adjust;
                 if first_x == 0
-                    && mode3_t >= cgb_mode3_scy_event_push_state_x0_min_t()
-                    && mode3_t <= cgb_mode3_scy_event_push_state_x0_max_t()
+                    && mode3_t >= self.tuning.cgb_mode3_scy_event_push_state_x0_min_t
+                    && mode3_t <= self.tuning.cgb_mode3_scy_event_push_state_x0_max_t
                 {
-                    bias += cgb_mode3_scy_event_push_state_x0_t_adjust();
+                    bias += self.tuning.cgb_mode3_scy_event_push_state_x0_t_adjust;
                 }
             } else if self.mode3_fetcher_state == 6
                 && self.mode3_bg_fifo >= 8
                 && first_x >= 0
-                && mode3_t >= cgb_mode3_scy_event_push_full_fifo_min_t()
-                && mode3_t <= cgb_mode3_scy_event_push_full_fifo_max_t()
+                && mode3_t >= self.tuning.cgb_mode3_scy_event_push_full_fifo_min_t
+                && mode3_t <= self.tuning.cgb_mode3_scy_event_push_full_fifo_max_t
             {
                 // In CGB DMG-compat, SCY writes sampled while PUSH still holds
                 // a full FIFO land later than the low-FIFO PUSH regime.
-                bias += cgb_mode3_scy_event_push_full_fifo_t_adjust();
+                bias += self.tuning.cgb_mode3_scy_event_push_full_fifo_t_adjust;
             }
-            if mode3_t <= cgb_dmg_mode3_scy_event_startup_threshold_t() {
+            if mode3_t <= self.tuning.cgb_dmg_mode3_scy_event_startup_threshold_t {
                 match self.mode3_fetcher_state {
                     0 => {
-                        bias += cgb_dmg_mode3_scy_event_startup_tile_t1_adjust();
+                        bias += self.tuning.cgb_dmg_mode3_scy_event_startup_tile_t1_adjust;
                         if first_x == 0 {
-                            bias += cgb_dmg_mode3_scy_event_startup_tile_t1_x0_adjust();
+                            bias += self
+                                .tuning
+                                .cgb_dmg_mode3_scy_event_startup_tile_t1_x0_adjust;
                         } else if first_x == 8 {
-                            bias += cgb_dmg_mode3_scy_event_startup_tile_t1_x8_adjust();
+                            bias += self
+                                .tuning
+                                .cgb_dmg_mode3_scy_event_startup_tile_t1_x8_adjust;
                         }
                     }
-                    5 => bias += cgb_dmg_mode3_scy_event_startup_hi_t2_adjust(),
-                    6 => bias += cgb_dmg_mode3_scy_event_startup_push_adjust(),
+                    5 => bias += self.tuning.cgb_dmg_mode3_scy_event_startup_hi_t2_adjust,
+                    6 => bias += self.tuning.cgb_dmg_mode3_scy_event_startup_push_adjust,
                     _ => {}
                 }
             }
             if self.mode3_fetcher_state == 0
-                && mode3_t >= cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t()
-                && mode3_t <= cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t()
+                && mode3_t
+                    >= self
+                        .tuning
+                        .cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t
+                && mode3_t
+                    <= self
+                        .tuning
+                        .cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t
                 && first_x >= 0
             {
-                bias += cgb_dmg_mode3_scy_event_startup_tile_t1_late_adjust();
+                bias += self
+                    .tuning
+                    .cgb_dmg_mode3_scy_event_startup_tile_t1_late_adjust;
             }
         }
         // Similar to SCX, some SCY writes sampled while the fetcher is in PUSH
         // land slightly earlier in the effective fetch timeline.
         if !self.cgb()
             && self.mode3_fetcher_state == 6
-            && mode3_t >= dmg_mode3_scy_event_push_state_min_t()
+            && mode3_t >= self.tuning.dmg_mode3_scy_event_push_state_min_t
         {
-            bias += dmg_mode3_scy_event_push_state_t_adjust();
+            bias += self.tuning.dmg_mode3_scy_event_push_state_t_adjust;
             if self.mode3_position_in_line < 0 {
-                bias += dmg_mode3_scy_event_push_previsible_t_adjust();
+                bias += self.tuning.dmg_mode3_scy_event_push_previsible_t_adjust;
             } else {
-                bias += dmg_mode3_scy_event_push_visible_t_adjust();
+                bias += self.tuning.dmg_mode3_scy_event_push_visible_t_adjust;
             }
         }
         // Early writes that hit GET_LO_T1 on DMG can be sampled slightly
         // earlier in the tile-row path than pure dot-time mapping suggests.
         if !self.cgb()
             && self.mode3_fetcher_state == 2
-            && mode3_t <= dmg_mode3_scy_event_lo_t1_threshold_t()
+            && mode3_t <= self.tuning.dmg_mode3_scy_event_lo_t1_threshold_t
         {
-            bias += dmg_mode3_scy_event_lo_t1_t_adjust();
+            bias += self.tuning.dmg_mode3_scy_event_lo_t1_t_adjust;
         }
         if !self.cgb()
             && self.mode3_fetcher_state == 0
-            && mode3_t <= dmg_mode3_scy_event_tile_t1_threshold_t()
+            && mode3_t <= self.tuning.dmg_mode3_scy_event_tile_t1_threshold_t
         {
-            bias += dmg_mode3_scy_event_tile_t1_t_adjust();
+            bias += self.tuning.dmg_mode3_scy_event_tile_t1_t_adjust;
         }
         if !self.cgb()
             && self.mode3_fetcher_state == 1
-            && mode3_t <= dmg_mode3_scy_event_tile_t2_threshold_t()
+            && mode3_t <= self.tuning.dmg_mode3_scy_event_tile_t2_threshold_t
         {
-            bias += dmg_mode3_scy_event_tile_t2_t_adjust();
+            bias += self.tuning.dmg_mode3_scy_event_tile_t2_t_adjust;
         }
         if !self.cgb()
             && self.mode3_fetcher_state == 5
-            && mode3_t <= dmg_mode3_scy_event_hi_t2_threshold_t()
+            && mode3_t <= self.tuning.dmg_mode3_scy_event_hi_t2_threshold_t
         {
-            bias += dmg_mode3_scy_event_hi_t2_t_adjust();
+            bias += self.tuning.dmg_mode3_scy_event_hi_t2_t_adjust;
         }
         if !self.cgb() && self.sprite_count > 0 {
             let first_x = self.line_sprites[0].x;
             if first_x <= -6
-                && mode3_t >= dmg_mode3_scy_event_left_edge_min_t()
-                && mode3_t <= dmg_mode3_scy_event_left_edge_max_t()
+                && mode3_t >= self.tuning.dmg_mode3_scy_event_left_edge_min_t
+                && mode3_t <= self.tuning.dmg_mode3_scy_event_left_edge_max_t
             {
-                bias += dmg_mode3_scy_event_left_edge_t_adjust();
+                bias += self.tuning.dmg_mode3_scy_event_left_edge_t_adjust;
             }
             if first_x < 0
-                && mode3_t >= dmg_mode3_scy_event_left_regime_min_t()
-                && mode3_t <= dmg_mode3_scy_event_left_regime_max_t()
+                && mode3_t >= self.tuning.dmg_mode3_scy_event_left_regime_min_t
+                && mode3_t <= self.tuning.dmg_mode3_scy_event_left_regime_max_t
             {
-                bias += dmg_mode3_scy_event_left_regime_t_adjust();
+                bias += self.tuning.dmg_mode3_scy_event_left_regime_t_adjust;
             }
             if first_x >= 8
-                && mode3_t >= dmg_mode3_scy_event_right_regime_min_t()
-                && mode3_t <= dmg_mode3_scy_event_right_regime_max_t()
+                && mode3_t >= self.tuning.dmg_mode3_scy_event_right_regime_min_t
+                && mode3_t <= self.tuning.dmg_mode3_scy_event_right_regime_max_t
             {
-                bias += dmg_mode3_scy_event_right_regime_t_adjust();
+                bias += self.tuning.dmg_mode3_scy_event_right_regime_t_adjust;
             }
         }
-        if !self.cgb() && mode3_t <= dmg_mode3_scy_event_startup_threshold_t() {
+        if !self.cgb() && mode3_t <= self.tuning.dmg_mode3_scy_event_startup_threshold_t {
             // During fetcher startup, SCY sampling phase differs from steady state.
             // Model this explicitly per stage instead of stretching global bias.
             match self.mode3_fetcher_state {
-                0 => bias += dmg_mode3_scy_event_startup_tile_t1_adjust(),
-                1 => bias += dmg_mode3_scy_event_startup_tile_t2_adjust(),
-                2 => bias += dmg_mode3_scy_event_startup_lo_t1_adjust(),
-                5 => bias += dmg_mode3_scy_event_startup_hi_t2_adjust(),
-                6 => bias += dmg_mode3_scy_event_startup_push_adjust(),
+                0 => bias += self.tuning.dmg_mode3_scy_event_startup_tile_t1_adjust,
+                1 => bias += self.tuning.dmg_mode3_scy_event_startup_tile_t2_adjust,
+                2 => bias += self.tuning.dmg_mode3_scy_event_startup_lo_t1_adjust,
+                5 => bias += self.tuning.dmg_mode3_scy_event_startup_hi_t2_adjust,
+                6 => bias += self.tuning.dmg_mode3_scy_event_startup_push_adjust,
                 _ => {}
             }
         }
@@ -2177,17 +1830,23 @@ impl Ppu {
             && self.dmg_compat
             && first_x >= 0
             && self.mode3_fetcher_state == 0
-            && mode3_t >= cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t()
-            && mode3_t <= cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t()
-            && cgb_dmg_mode3_scy_startup_allow_same_dot();
+            && mode3_t
+                >= self
+                    .tuning
+                    .cgb_dmg_mode3_scy_event_startup_tile_t1_late_min_t
+            && mode3_t
+                <= self
+                    .tuning
+                    .cgb_dmg_mode3_scy_event_startup_tile_t1_late_max_t
+            && self.tuning.cgb_dmg_mode3_scy_startup_allow_same_dot;
         let allow_push_full_same_dot = self.cgb()
             && self.dmg_compat
             && first_x == 0
             && self.mode3_fetcher_state == 6
             && self.mode3_bg_fifo >= 8
-            && mode3_t >= cgb_mode3_scy_event_push_full_fifo_min_t()
-            && mode3_t <= cgb_mode3_scy_event_push_full_fifo_max_t()
-            && cgb_dmg_mode3_scy_push_full_allow_same_dot();
+            && mode3_t >= self.tuning.cgb_mode3_scy_event_push_full_fifo_min_t
+            && mode3_t <= self.tuning.cgb_mode3_scy_event_push_full_fifo_max_t
+            && self.tuning.cgb_dmg_mode3_scy_push_full_allow_same_dot;
         let allow_same_dot = allow_startup_same_dot || allow_push_full_same_dot;
         if allow_same_dot {
             Self::push_mode3_reg_event_allow_same_t(
@@ -2225,7 +1884,7 @@ impl Ppu {
             &mut self.mode3_wx_event_count,
             mode3_t,
             self.mode3_target_cycles,
-            dmg_mode3_wx_event_t_bias(),
+            self.tuning.dmg_mode3_wx_event_t_bias,
             val,
         );
     }
@@ -2236,7 +1895,7 @@ impl Ppu {
             &mut self.mode3_wy_event_count,
             mode3_t,
             self.mode3_target_cycles,
-            dmg_mode3_wy_event_t_bias(),
+            self.tuning.dmg_mode3_wy_event_t_bias,
             val,
         );
     }
@@ -2492,8 +2151,8 @@ impl Ppu {
     #[inline]
     fn dmg_bgp_for_mode3_t(&self, t: u16) -> u8 {
         let mut current = self.dmg_line_bgp_base;
-        let rise_delay = dmg_bgp_rising_edge_delay_t().clamp(-8, 8);
-        let fall_delay = dmg_bgp_falling_edge_delay_t().clamp(-8, 8);
+        let rise_delay = self.tuning.dmg_bgp_rising_edge_delay_t.clamp(-8, 8);
+        let fall_delay = self.tuning.dmg_bgp_falling_edge_delay_t.clamp(-8, 8);
         for ev in self.dmg_bgp_events[..self.dmg_bgp_event_count].iter() {
             let mut event_t = ev.t as i16;
             if !self.cgb() {
@@ -2516,34 +2175,37 @@ impl Ppu {
     #[inline]
     fn dmg_bgp_for_pixel(&self, x: usize) -> u8 {
         if !self.cgb()
-            && dmg_bgp_use_t_sample()
+            && self.tuning.dmg_bgp_use_t_sample
             && self.sprite_count > 0
             && self.mode3_lcdc_event_count == 0
             && self.dmg_bgp_event_count > 0
-            && (self.ly != 0 || dmg_bgp_t_sample_include_line0())
+            && (self.ly != 0 || self.tuning.dmg_bgp_t_sample_include_line0)
         {
             let x = x.min(SCREEN_WIDTH - 1);
             let mut sample_x = x;
             if self.mode3_lcdc_event_count == 0
                 && self.sprite_count > 0
-                && dmg_bgp_t_sample_use_obj_x_corr()
+                && self.tuning.dmg_bgp_t_sample_use_obj_x_corr
                 && x <= 12
             {
                 sample_x = Self::dmg_adjust_obj_sample_x_for_unfetched(self.line_sprites[0].x, x);
             }
             let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-            let mut bias = dmg_bgp_sample_t_bias();
+            let mut bias = self.tuning.dmg_bgp_sample_t_bias;
             if self.ly == 0 {
-                bias += dmg_bgp_line0_sample_t_bias();
+                bias += self.tuning.dmg_bgp_line0_sample_t_bias;
             }
             let mut sample_t =
                 (self.dmg_line_mode3_t_at_pixel[sample_x] as i16 + bias).clamp(0, max_t);
             if self.mode3_lcdc_event_count == 0
                 && self.sprite_count > 0
-                && dmg_bgp_t_sample_use_first_x_phase_corr()
+                && self.tuning.dmg_bgp_t_sample_use_first_x_phase_corr
             {
                 let first_x = self.line_sprites[0].x;
-                let mag = dmg_bgp_t_sample_first_x_phase_corr_mag().clamp(1, 24);
+                let mag = self
+                    .tuning
+                    .dmg_bgp_t_sample_first_x_phase_corr_mag
+                    .clamp(1, 24);
                 if first_x >= 0 && (x as i16) == first_x && (first_x <= 4 || first_x >= 8) {
                     sample_t = (sample_t + mag).min(max_t);
                 }
@@ -2555,10 +2217,10 @@ impl Ppu {
             && self.sprite_count > 0
             && self.mode3_lcdc_event_count == 0
             && self.dmg_bgp_event_count > 0
-            && dmg_bgp_use_simple_event_x()
+            && self.tuning.dmg_bgp_use_simple_event_x
         {
             let mut current = self.dmg_line_bgp_base;
-            let bias = dmg_bgp_simple_event_x_bias();
+            let bias = self.tuning.dmg_bgp_simple_event_x_bias;
             let sx = (x as i16 + bias).clamp(0, (SCREEN_WIDTH - 1) as i16) as u8;
             for ev in self.dmg_bgp_events[..self.dmg_bgp_event_count].iter() {
                 if sx < ev.x {
@@ -2599,7 +2261,7 @@ impl Ppu {
         }
         // CGB running a DMG title observes mid-scanline BGP writes closer to
         // the mode-3 write timestamp map than to the DMG line-latch fallback.
-        let use_event_map = dmg_bgp_use_event_map()
+        let use_event_map = self.tuning.dmg_bgp_use_event_map
             || (!self.cgb() && self.sprite_count == 0)
             || (self.is_cgb_dmg_compat_mode());
         if use_event_map {
@@ -2665,13 +2327,13 @@ impl Ppu {
             // BGP output lags FIFO pop by one pixel. Line 0 keeps an extra
             // 4-dot skew versus subsequent lines.
             let lag = if self.ly == 0 {
-                dmg_bgp_sprite_lag_line0_pixels().clamp(0, 16) as usize
+                self.tuning.dmg_bgp_sprite_lag_line0_pixels.clamp(0, 16) as usize
             } else {
-                dmg_bgp_sprite_lag_pixels().clamp(0, 16) as usize
+                self.tuning.dmg_bgp_sprite_lag_pixels.clamp(0, 16) as usize
             };
             let mut sample_x = x.saturating_sub(lag);
             if self.ly == 0
-                && dmg_bgp_line0_edge_backstep()
+                && self.tuning.dmg_bgp_line0_edge_backstep
                 && self.dmg_bgp_events[..self.dmg_bgp_event_count]
                     .iter()
                     .any(|ev| ev.x as usize == sample_x)
@@ -2711,7 +2373,10 @@ impl Ppu {
         }
         // DMG output samples BGP slightly later than FIFO pop; tail pixels can
         // still pick up very-late writes near the end of mode 3.
-        let mut tail = dmg_bgp_tail_pixels().clamp(0, SCREEN_WIDTH as i16) as usize;
+        let mut tail = self
+            .tuning
+            .dmg_bgp_tail_pixels
+            .clamp(0, SCREEN_WIDTH as i16) as usize;
         if !self.cgb()
             && (self.mode3_lcdc_base & 0x02) != 0
             && self.sprite_count > 0
@@ -2752,7 +2417,7 @@ impl Ppu {
     fn dmg_obp0_for_pixel(&self, x: usize) -> u8 {
         let x = x.min(SCREEN_WIDTH - 1);
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        let bias = dmg_obp0_sample_t_bias();
+        let bias = self.tuning.dmg_obp0_sample_t_bias;
         let sample_t = (self.dmg_line_mode3_t_at_pixel[x] as i16 + bias).clamp(0, max_t) as u16;
         self.dmg_obp0_for_mode3_t(sample_t)
     }
@@ -2821,7 +2486,7 @@ impl Ppu {
         // BG map/tile-data control bits are sampled by the fetcher before the
         // corresponding tile pixels are popped. Use the recorded mode-3 dot of
         // tile output and sample LCDC at a configurable dot backshift.
-        let mut backshift_t = dmg_bg_fetch_lead_pixels().clamp(0, 64) as u16;
+        let mut backshift_t = self.tuning.dmg_bg_fetch_lead_pixels.clamp(0, 64) as u16;
         if self.is_cgb_dmg_compat_mode() && self.sprite_count > 0 {
             let first_x = self.line_sprites[0].x;
             let mut bg_map_only_line = self.mode3_lcdc_event_count > 0;
@@ -2843,7 +2508,7 @@ impl Ppu {
         }
         let tile_x = x & !7usize;
         let sample_px = {
-            let offset = dmg_bg_fetch_sample_px_in_tile().clamp(0, 7) as usize;
+            let offset = self.tuning.dmg_bg_fetch_sample_px_in_tile.clamp(0, 7) as usize;
             (tile_x + offset).min(SCREEN_WIDTH - 1)
         };
         self.dmg_line_mode3_t_at_pixel[sample_px].saturating_sub(backshift_t)
@@ -2864,7 +2529,7 @@ impl Ppu {
     #[inline]
     fn dmg_lcdc_for_bg_en_mode3_t(&self, t: u16) -> u8 {
         let mut current = self.mode3_lcdc_base;
-        let first_adj = dmg_bg_en_first_event_t_adjust().clamp(-32, 32);
+        let first_adj = self.tuning.dmg_bg_en_first_event_t_adjust.clamp(-32, 32);
         for (i, ev) in self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
             .iter()
             .enumerate()
@@ -2907,16 +2572,17 @@ impl Ppu {
                     if tile_sel_only {
                         // TILE_SEL is sampled on tile-data stages and lags less
                         // than map-control bits in this PUSH/full-FIFO case.
-                        adj = ((dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) * 5) / 8)
-                            .clamp(-16, 16);
+                        adj = ((self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) * 5)
+                            / 8)
+                        .clamp(-16, 16);
                     } else {
-                        adj = dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32);
+                        adj = self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32);
                     }
                 } else if ev.fetcher_state == 6 && (changed & 0x50) != 0 {
                     // With a partially drained FIFO, the first transition still
                     // lags fetch control, but by fewer dots than the full-FIFO
                     // PUSH case above.
-                    adj = ((dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) * 5) / 8)
+                    adj = ((self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) * 5) / 8)
                         .clamp(-16, 16);
                 } else if ev.fetcher_state == 0
                     && ev.bg_fifo == 8
@@ -2926,7 +2592,8 @@ impl Ppu {
                     // If the write lands right as a new fetch cycle starts, the
                     // first affected tile still trails by a small amount on
                     // window-enabled lines.
-                    adj = (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                    adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 2)
+                        .clamp(-16, 16);
                 }
                 if (changed & 0x40) != 0 {
                     if self.ly == 0 {
@@ -2982,13 +2649,14 @@ impl Ppu {
                     let mut adj = 0i16;
                     let first_x = self.line_sprites[0].x;
                     if ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
-                        adj =
-                            (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 2)
+                            .clamp(-16, 16);
                     } else if ev.fetcher_state == 6 {
-                        adj = (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 4).clamp(-8, 8);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 4)
+                            .clamp(-8, 8);
                     } else if ev.fetcher_state == 0 && ev.bg_fifo == 8 {
-                        adj =
-                            (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 2)
+                            .clamp(-16, 16);
                     } else if ev.fetcher_state == 5 && ev.bg_fifo >= 3 && first_x <= -7 {
                         adj = -8;
                     }
@@ -3046,16 +2714,17 @@ impl Ppu {
                     let mut adj = 0i16;
                     let first_x = self.line_sprites[0].x;
                     if ev.fetcher_state == 6 && ev.bg_fifo >= 6 {
-                        adj =
-                            (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 2)
+                            .clamp(-16, 16);
                     } else if ev.fetcher_state == 6 {
-                        adj = (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 4).clamp(-8, 8);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 4)
+                            .clamp(-8, 8);
                     } else if ev.fetcher_state == 0
                         && ev.bg_fifo == 8
                         && (self.mode3_lcdc_base & 0x20) != 0
                     {
-                        adj =
-                            (dmg_bg_fetch_first_event_t_adjust().clamp(-32, 32) / 2).clamp(-16, 16);
+                        adj = (self.tuning.dmg_bg_fetch_first_event_t_adjust.clamp(-32, 32) / 2)
+                            .clamp(-16, 16);
                     } else if ev.fetcher_state == 5 && ev.bg_fifo >= 3 && first_x <= -7 {
                         // Left-clipped top-line regime reacts slightly earlier
                         // in CGB DMG-compat WIN_MAP toggles.
@@ -3251,7 +2920,10 @@ impl Ppu {
         }
         let x = x.min(SCREEN_WIDTH - 1);
         let dmg_mode = self.is_dmg_mode();
-        let mut raw_threshold = dmg_bg_en_left_raw_threshold().clamp(0, SCREEN_WIDTH as i16);
+        let mut raw_threshold = self
+            .tuning
+            .dmg_bg_en_left_raw_threshold
+            .clamp(0, SCREEN_WIDTH as i16);
         if dmg_mode && self.sprite_count > 0 {
             raw_threshold = raw_threshold.max(self.line_sprites[0].x.max(0) + 1);
         }
@@ -3261,7 +2933,7 @@ impl Ppu {
             && self.line_sprites[0].x < 0
             && x == 0;
         if dmg_mode && (x as i16) < raw_threshold && !force_t_sample_left_edge {
-            let mut shift = dmg_bg_en_left_raw_sample_shift();
+            let mut shift = self.tuning.dmg_bg_en_left_raw_sample_shift;
             if self.sprite_count > 0 {
                 let first_x = self.line_sprites[0].x;
                 if !(0..=8).contains(&first_x) {
@@ -3273,20 +2945,24 @@ impl Ppu {
             return en;
         }
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        let mut bias = dmg_bg_en_sample_t_bias();
+        let mut bias = self.tuning.dmg_bg_en_sample_t_bias;
         if !self.cgb() && matches!(self.dmg_revision(), DmgRevision::RevB) {
             // DMG-CPU B samples BG enable transitions one dot later than the
             // default DMG profile used by the blob screenshots.
             bias += 1;
         }
         if dmg_mode && self.ly == 0 && self.mode3_lcdc_event_count > 0 {
-            bias += dmg_bg_en_line0_sample_t_bias();
+            bias += self.tuning.dmg_bg_en_line0_sample_t_bias;
         }
         if dmg_mode
             && self.sprite_count > 0
-            && (x as i16) < dmg_bg_en_left_x_threshold().clamp(0, SCREEN_WIDTH as i16)
+            && (x as i16)
+                < self
+                    .tuning
+                    .dmg_bg_en_left_x_threshold
+                    .clamp(0, SCREEN_WIDTH as i16)
         {
-            bias += dmg_bg_en_left_extra_bias();
+            bias += self.tuning.dmg_bg_en_left_extra_bias;
         }
         let sample_t = (self.dmg_line_mode3_t_at_pixel[x] as i16 + bias).clamp(0, max_t) as u16;
         (self.dmg_lcdc_for_bg_en_mode3_t(sample_t) & 0x01) != 0
@@ -3557,7 +3233,7 @@ impl Ppu {
         // occurs and when the background fetcher can be stalled for sprite fetch.
         // This keeps OAM tile/flags reads close to hardware timing so DMA overlap
         // hits the intended bytes.
-        let obj_size_tuning = dmg_obj_size_tuning();
+        let obj_size_tuning = &self.tuning.dmg_obj_size_tuning;
         let cap_base_x = if obj_size_tuning.capture_use_position {
             let x = self.mode3_position_in_line + 8;
             if (0..SCREEN_WIDTH as i16).contains(&x) {
@@ -3585,9 +3261,10 @@ impl Ppu {
         }
 
         if self.is_cgb_native_mode() {
-            // CGB mode has different timing/behavior expectations (and this
-            // scanline renderer doesn't model the FIFO). Keep sprite attribute
-            // latching simple here to avoid DMG-specific DMA corruption quirks.
+            // Both hardware families use FIFOs. This native-CGB live timing
+            // path currently uses a simplified attribute-latch schedule; its
+            // raster-effect renderer replays a separate pixel fetcher later.
+            // Do not import the DMG-specific fetch/DMA quirks into this schedule.
             let match_raw_x: u8 = if self.mode_clock < 8 {
                 0
             } else {
@@ -3648,18 +3325,7 @@ impl Ppu {
             // One "dot" of simplified mode 3 progression.
             let sprites_enabled = (self.lcdc & 0x02) != 0;
 
-            let match_x = if self.mode3_position_in_line < -7 {
-                0u8
-            } else {
-                let mut x = self.mode3_position_in_line + 8 + obj_size_tuning.object_match_bias;
-                if (self.scx & 0x07) >= 2 {
-                    x -= 1;
-                }
-                if (self.scx & 0x07) >= 3 {
-                    x -= 1;
-                }
-                (x.clamp(0, 255) as u16).min(255) as u8
-            };
+            let match_x = self.dmg_sprite_match_x(self.mode3_position_in_line);
 
             if match_x != self.mode3_last_match_x {
                 self.mode3_last_match_x = match_x;
@@ -3962,6 +3628,53 @@ impl Ppu {
 
     fn oam_scan_advance(&mut self) {
         let limit = self.mode_clock.min(MODE2_CYCLES);
+        if self.oam_scan_phase == 0 && !self.dmg_oam_dma_contention_active() {
+            let height: i16 = if self.lcdc & 0x04 != 0 { 16 } else { 8 };
+            // A complete Y/X scan pair has no intervening observer. Odd dots
+            // and DMA contention retain the original phase-by-phase path.
+            while self.oam_scan_dot + 1 < limit && self.oam_scan_index < TOTAL_SPRITES {
+                let base = self.oam_scan_index * 4;
+                self.mode2_y_bus = self.oam[base];
+                self.mode2_x_bus = self.oam[base + 1];
+                let y = i16::from(self.mode2_y_bus) - 16;
+                self.oam_scan_entry_y = y;
+                self.oam_scan_entry_visible =
+                    i16::from(self.ly) >= y && i16::from(self.ly) < y + height;
+                if self.oam_scan_entry_visible && self.sprite_count < MAX_SPRITES_PER_LINE {
+                    self.append_scanned_sprite(i16::from(self.mode2_x_bus) - 8);
+                }
+                self.oam_scan_index += 1;
+                self.oam_scan_dot += 2;
+            }
+        }
+        if self.oam_scan_dot < limit {
+            self.oam_scan_advance_dots();
+        }
+    }
+
+    #[inline]
+    fn append_scanned_sprite(&mut self, x: i16) {
+        self.line_sprites[self.sprite_count] = Sprite {
+            x,
+            y: self.oam_scan_entry_y,
+            tile: 0,
+            flags: 0,
+            oam_index: self.oam_scan_index,
+            fetched: false,
+            obj_row_addr: 0,
+            obj_row_valid: false,
+            obj_size16_low: false,
+            obj_lo: 0,
+            obj_hi: 0,
+            obj_data_valid: false,
+            fetch_t: 0,
+            fetch_t_valid: false,
+        };
+        self.sprite_count += 1;
+    }
+
+    fn oam_scan_advance_dots(&mut self) {
+        let limit = self.mode_clock.min(MODE2_CYCLES);
         let sprite_height: i16 = if self.lcdc & 0x04 != 0 { 16 } else { 8 };
 
         while self.oam_scan_dot < limit && self.oam_scan_index < TOTAL_SPRITES {
@@ -3981,23 +3694,7 @@ impl Ppu {
                 _ => {
                     let x = self.mode2_x_bus as i16 - 8;
                     if self.oam_scan_entry_visible && self.sprite_count < MAX_SPRITES_PER_LINE {
-                        self.line_sprites[self.sprite_count] = Sprite {
-                            x,
-                            y: self.oam_scan_entry_y,
-                            tile: 0,
-                            flags: 0,
-                            oam_index: self.oam_scan_index,
-                            fetched: false,
-                            obj_row_addr: 0,
-                            obj_row_valid: false,
-                            obj_size16_low: false,
-                            obj_lo: 0,
-                            obj_hi: 0,
-                            obj_data_valid: false,
-                            fetch_t: 0,
-                            fetch_t_valid: false,
-                        };
-                        self.sprite_count += 1;
+                        self.append_scanned_sprite(x);
                     }
                     self.oam_scan_index += 1;
                     self.oam_scan_phase = 0;
@@ -4205,8 +3902,9 @@ impl Ppu {
         let mut lcd_x: u16 = 0;
         let mut bg_fifo: u8 = 8;
         let mut fetcher_state: u8 = 0;
-        let scx_start_delay =
-            ((self.scx & 0x07) as i16 + dmg_mode3_scx_start_delay_bias()).clamp(0, 160) as u16;
+        let scx_start_delay = ((self.scx & 0x07) as i16
+            + self.tuning.dmg_mode3_scx_start_delay_bias)
+            .clamp(0, 160) as u16;
         let mut render_delay: u16 = scx_start_delay;
         let mut sprite_idx: usize = 0;
         let mut wx_triggered = false;
@@ -4335,7 +4033,7 @@ impl Ppu {
 
                 // Account for the object fetch micro-sequence (attr, low, high)
                 // that stalls visible output while sprite data is latched.
-                for _ in 0..dmg_mode3_obj_fetch_sim_dots() {
+                for _ in 0..self.tuning.dmg_mode3_obj_fetch_sim_dots {
                     tick_no_render(
                         &mut cycles,
                         &mut render_delay,
@@ -5834,7 +5532,10 @@ impl Ppu {
                 if (0..=255).contains(&pos7) && wx == pos7 as u8 {
                     return true;
                 }
-                if (0..=255).contains(&pos6) && wx == pos6 as u8 && dmg_wx_activate_on_pos6() {
+                if (0..=255).contains(&pos6)
+                    && wx == pos6 as u8
+                    && self.tuning.dmg_wx_activate_on_pos6
+                {
                     return true;
                 }
             }
@@ -6260,7 +5961,10 @@ impl Ppu {
                                 // the left edge than the DMG-oriented baseline.
                                 (-2, 8)
                             } else {
-                                (dmg_obj_en_pixel_shift(), dmg_obj_en_shift_max_x())
+                                (
+                                    self.tuning.dmg_obj_en_pixel_shift,
+                                    self.tuning.dmg_obj_en_shift_max_x,
+                                )
                             };
                         let apply_shift =
                             sx <= obj_en_shift_max_x || (s.x >= 8 && sx >= 0 && sx <= s.x);
@@ -6370,10 +6074,172 @@ impl Ppu {
         }
     }
 
+    /// Next native-CGB OBJ latch or end-of-transfer housekeeping dot.
+    fn next_cgb_transfer_event(&self) -> u16 {
+        let end = self.mode3_target_cycles.saturating_sub(1);
+        if self.mode3_sprite_latch_index >= self.sprite_count {
+            return end;
+        }
+        // OPRI can leave sprites in OAM order rather than X order. Consult
+        // exactly the next entry the dot path would inspect, without sorting.
+        let sprite = self.line_sprites[self.mode3_sprite_latch_index];
+        let raw_x = (sprite.x + 8).clamp(0, 255) as u16;
+        if raw_x == 0 { 1 } else { (raw_x + 8).min(end) }
+    }
+
+    // The live DMG timing FIFO and the line renderer are separate. During an
+    // uninterrupted pixel run we can project the former, but must retain every
+    // pop timestamp used later by register-write and window rendering logic.
+    fn dmg_fifo_run_limit(&self) -> u16 {
+        if self.mode3_obj_fetch_active
+            || self.mode3_render_delay != 0
+            || self.mode3_position_in_line < 0
+            || self.mode3_lcd_x >= SCREEN_WIDTH as u16
+            || self.mode3_bg_fifo == 0
+            || self.mode3_fetcher_state > 6
+            || self.mode3_lcdc_event_count != 0
+            || (1..=0xa0).contains(&self.oam_dma_current_dest)
+        {
+            return 0;
+        }
+        let mut dots = self
+            .mode3_target_cycles
+            .saturating_sub(self.mode_clock + 2)
+            .min(SCREEN_WIDTH as u16 - self.mode3_lcd_x);
+        // An underfilled startup FIFO can empty before its fetcher is ready.
+        // Keep that stall on the dot path. Otherwise each refill starts the
+        // exact periodic sequence (fifo=8, fetcher=0), repeating every 8 dots.
+        if self.mode3_bg_fifo <= 6 - self.mode3_fetcher_state {
+            dots = dots.min(u16::from(self.mode3_bg_fifo));
+        }
+        if self.mode3_sprite_latch_index < self.sprite_count {
+            let raw_x = (self.line_sprites[self.mode3_sprite_latch_index].x + 8).clamp(0, 255);
+            let match_x = self.dmg_sprite_match_x(self.mode3_position_in_line);
+            if raw_x <= i16::from(match_x) {
+                return 0;
+            }
+            dots = dots.min((raw_x - i16::from(match_x)) as u16);
+        }
+        dots
+    }
+
+    #[inline]
+    fn dmg_sprite_match_x(&self, position: i16) -> u8 {
+        if position < -7 {
+            return 0;
+        }
+        let fine = self.scx & 7;
+        (position + 8 + self.tuning.dmg_obj_size_tuning.object_match_bias
+            - i16::from(fine >= 2)
+            - i16::from(fine >= 3))
+        .clamp(0, 255) as u8
+    }
+
+    fn advance_dmg_fifo_run(&mut self, dots: u16) {
+        let last_match = self.dmg_sprite_match_x(self.mode3_position_in_line + dots as i16 - 1);
+        if last_match != self.mode3_last_match_x {
+            self.mode3_last_match_x = last_match;
+            self.mode3_same_x_toggle = last_match & 2 != 0 && last_match & 4 == 0;
+        }
+        let fifo = u16::from(self.mode3_bg_fifo);
+        if dots < fifo || fifo <= u16::from(6 - self.mode3_fetcher_state) {
+            self.mode3_bg_fifo -= dots as u8;
+            self.mode3_fetcher_state = (u16::from(self.mode3_fetcher_state) + dots).min(6) as u8;
+        } else {
+            let phase = ((dots - fifo) & 7) as u8;
+            self.mode3_bg_fifo = 8 - phase;
+            self.mode3_fetcher_state = phase.min(6);
+        }
+        let start = usize::from(self.mode3_lcd_x);
+        let end = start + usize::from(dots);
+        self.dmg_line_bgp_at_pixel[start..end].fill(self.bgp);
+        // LCDC and OBJ-size captures already equal their line initialization:
+        // the deadline rejects any line with an LCDC change.
+        // The certified run ends before transfer housekeeping, so these times
+        // cannot need clamping. Reserve both ranges once, retaining every pop
+        // timestamp while avoiding per-pixel capacity and count updates.
+        let count = self.mode3_pop_event_count;
+        let added = usize::from(dots).min(MODE3_POP_EVENTS_MAX - count);
+        let (times, overflow_times) =
+            self.dmg_line_mode3_t_at_pixel[start..end].split_at_mut(added);
+        for (offset, (time, event)) in times
+            .iter_mut()
+            .zip(&mut self.mode3_pop_events[count..count + added])
+            .enumerate()
+        {
+            let t = self.mode_clock + offset as u16 + 1;
+            *time = t;
+            *event = Mode3PopEvent {
+                t,
+                position_in_line: self.mode3_position_in_line + offset as i16 + 1,
+            };
+        }
+        for (offset, time) in overflow_times.iter_mut().enumerate() {
+            *time = self.mode_clock + (added + offset) as u16 + 1;
+        }
+        self.mode3_pop_event_count += added;
+        if added < usize::from(dots) {
+            // Match record_mode3_pop_event's overwrite-last behavior at capacity.
+            self.mode3_pop_events[MODE3_POP_EVENTS_MAX - 1] = Mode3PopEvent {
+                t: self.mode_clock + dots,
+                position_in_line: self.mode3_position_in_line + dots as i16,
+            };
+        }
+        self.mode3_position_in_line += dots as i16;
+        self.mode3_lcd_x += dots;
+        self.mode_clock += dots;
+        #[cfg(feature = "ppu-trace")]
+        if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+            *timer += u64::from(dots);
+        }
+    }
+
+    /// Dots before the next event, restricted to intervals already handled by
+    /// the PPU's bulk stepping paths. Stop strictly before mode transitions so
+    /// STAT, frame delivery, and HBlank DMA keep their original M-cycle timing.
+    pub(crate) fn idle_dots(&self) -> u16 {
+        if self.boot_hold_cycles != 0
+            || self.lcdc & 0x80 == 0
+            || self.stat_mode_delay != 0
+            || self.pending_reg_write_count != 0
+            || self.stat_irq_dirty
+            || self.dmg_mode2_vblank_irq_pending
+            || (!self.cgb() && self.dmg_startup_cycle.is_some())
+        {
+            return 0;
+        }
+        let event = match self.mode {
+            MODE_TRANSFER
+                if self.is_cgb_native_mode()
+                    && self.mode3_lcdc_event_count == 0
+                    && !(1..=0xA0).contains(&self.oam_dma_current_dest) =>
+            {
+                self.next_cgb_transfer_event()
+            }
+            MODE_TRANSFER if self.is_dmg_mode() => return self.dmg_fifo_run_limit(),
+            MODE_HBLANK => {
+                if self.dmg_hblank_render_pending {
+                    self.mode0_target_cycles
+                        .min(self.tuning.dmg_hblank_render_delay)
+                } else {
+                    self.mode0_target_cycles
+                }
+            }
+            MODE_VBLANK if self.ly != 153 || self.cgb_line153_ly0_triggered => MODE1_CYCLES,
+            MODE_OAM if !self.dmg_oam_dma_contention_active() => MODE2_CYCLES,
+            _ => return 0,
+        };
+        event.saturating_sub(self.mode_clock.saturating_add(1))
+    }
+
     /// Advance the PPU by `cycles` dot cycles.
     ///
-    /// Returns `true` when a new frame has been completed.
+    /// Returns `true` when HBlank begins (the HDMA transfer boundary).
     pub fn step(&mut self, cycles: u16, if_reg: &mut u8) -> bool {
+        self.step_inner::<true>(cycles, if_reg)
+    }
+
+    fn step_inner<const BATCH_TRANSFER: bool>(&mut self, cycles: u16, if_reg: &mut u8) -> bool {
         let mut remaining = cycles;
         if self.boot_hold_cycles > 0 {
             let consume = remaining.min(self.boot_hold_cycles);
@@ -6392,6 +6258,37 @@ impl Ppu {
             && (self.cgb() || self.dmg_startup_cycle.is_none())
         {
             match self.mode {
+                MODE_TRANSFER
+                    if BATCH_TRANSFER
+                        && self.is_cgb_native_mode()
+                        && self.mode3_lcdc_event_count == 0
+                        && !(1..=0xA0).contains(&self.oam_dma_current_dest)
+                        && self.mode_clock.saturating_add(remaining)
+                            < self.next_cgb_transfer_event() =>
+                {
+                    // Native CGB's current live timing model has no observable
+                    // work between OBJ attribute latches. Its pixel fetcher is
+                    // replayed separately when rendering raster effects.
+                    // Register writes, STAT delays and DMA stay on the dot path;
+                    // the end-of-transfer fallback also latches offscreen OBJs.
+                    // A stable LCDC also leaves the DMG size-capture array equal
+                    // to its line initialization, even if KEY0 changes modes later.
+                    self.mode_clock += remaining;
+                    #[cfg(feature = "ppu-trace")]
+                    if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+                        *timer += remaining as u64;
+                    }
+                    return false;
+                }
+                MODE_TRANSFER
+                    if BATCH_TRANSFER
+                        && self.is_dmg_mode()
+                        && remaining != 0
+                        && remaining <= self.dmg_fifo_run_limit() =>
+                {
+                    self.advance_dmg_fifo_run(remaining);
+                    return false;
+                }
                 MODE_HBLANK => {
                     let target = self.mode0_target_cycles;
                     if !self.dmg_hblank_render_pending {
@@ -6399,8 +6296,8 @@ impl Ppu {
                             self.mode_clock += remaining;
                             return false;
                         }
-                    } else if self.mode_clock < dmg_hblank_render_delay() {
-                        let next_event = target.min(dmg_hblank_render_delay());
+                    } else if self.mode_clock < self.tuning.dmg_hblank_render_delay {
+                        let next_event = target.min(self.tuning.dmg_hblank_render_delay);
                         if self.mode_clock.saturating_add(remaining) < next_event {
                             self.mode_clock += remaining;
                             return false;
@@ -6441,9 +6338,9 @@ impl Ppu {
                         let mut next_event =
                             self.mode0_target_cycles.saturating_sub(self.mode_clock);
                         if self.dmg_hblank_render_pending
-                            && self.mode_clock < dmg_hblank_render_delay()
+                            && self.mode_clock < self.tuning.dmg_hblank_render_delay
                         {
-                            let render_in = dmg_hblank_render_delay() - self.mode_clock;
+                            let render_in = self.tuning.dmg_hblank_render_delay - self.mode_clock;
                             next_event = next_event.min(render_in);
                         }
                         if next_event > 0 {
@@ -6529,7 +6426,7 @@ impl Ppu {
             match self.mode {
                 MODE_HBLANK => {
                     if self.dmg_hblank_render_pending
-                        && self.mode_clock >= dmg_hblank_render_delay()
+                        && self.mode_clock >= self.tuning.dmg_hblank_render_delay
                     {
                         self.render_scanline();
                         self.dmg_hblank_render_pending = false;
@@ -6951,14 +6848,14 @@ impl Ppu {
             let lo = self.vram_read_for_render(0, addr_lo);
             let hi = self.vram_read_for_render(0, addr_hi);
             let run_len = (8 - tile_x).min(screen_end - screen_x);
-            for offset in 0..run_len {
-                let bit = 7 - (tile_x + offset);
-                let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                self.framebuffer[row_base + screen_x + offset] =
-                    self.dmg_bg_color_table[((bgp as usize) << 2) | color_id as usize];
-                if track_bg_zero {
-                    self.line_color_zero[screen_x + offset] = color_id == 0;
-                }
+            // BGP is part of the tag; runtime DMG/compatibility colors are
+            // invalidated when their color table changes. Bit 24 separates
+            // this interpretation from CGB's palette/flip tag bits.
+            let key = u32::from(lo) | (u32::from(hi) << 8) | (u32::from(bgp) << 16) | (1 << 24);
+            if track_bg_zero {
+                self.copy_cached_tile_row::<true>(key, row_base, screen_x, tile_x, run_len);
+            } else {
+                self.copy_cached_tile_row::<false>(key, row_base, screen_x, tile_x, run_len);
             }
             screen_x += run_len;
             pixel_x = pixel_x.wrapping_add(run_len as u16);
@@ -6973,69 +6870,6 @@ impl Ppu {
         } else {
             None
         };
-        struct BgFifo {
-            data: [u8; 32],
-            head: usize,
-            len: usize,
-        }
-
-        impl BgFifo {
-            #[inline]
-            fn new() -> Self {
-                Self {
-                    data: [0; 32],
-                    head: 0,
-                    len: 0,
-                }
-            }
-
-            #[inline]
-            fn len(&self) -> usize {
-                self.len
-            }
-
-            #[inline]
-            fn is_empty(&self) -> bool {
-                self.len == 0
-            }
-
-            #[inline]
-            fn clear(&mut self) {
-                self.head = 0;
-                self.len = 0;
-            }
-
-            #[inline]
-            fn push_back(&mut self, value: u8) {
-                if self.len >= self.data.len() {
-                    return;
-                }
-                let tail = (self.head + self.len) % self.data.len();
-                self.data[tail] = value;
-                self.len += 1;
-            }
-
-            #[inline]
-            fn push_front(&mut self, value: u8) {
-                if self.len >= self.data.len() {
-                    return;
-                }
-                self.head = (self.head + self.data.len() - 1) % self.data.len();
-                self.data[self.head] = value;
-                self.len += 1;
-            }
-
-            #[inline]
-            fn pop_front(&mut self) -> Option<u8> {
-                if self.len == 0 {
-                    return None;
-                }
-                let value = self.data[self.head];
-                self.head = (self.head + 1) % self.data.len();
-                self.len -= 1;
-                Some(value)
-            }
-        }
         const FETCH_GET_TILE_T1: u8 = 0;
         const FETCH_GET_TILE_T2: u8 = 1;
         const FETCH_GET_LO_T1: u8 = 2;
@@ -7044,7 +6878,7 @@ impl Ppu {
         const FETCH_GET_HI_T2: u8 = 5;
         const FETCH_PUSH: u8 = 6;
 
-        let use_pop_schedule = dmg_bg_window_use_pop_schedule_enabled();
+        let use_pop_schedule = self.tuning.dmg_bg_window_use_pop_schedule_enabled;
 
         let mut t_schedule = [0u16; SCREEN_WIDTH];
         let mut use_t_schedule = true;
@@ -7106,7 +6940,7 @@ impl Ppu {
             max_t = max_t.max(t_schedule[SCREEN_WIDTH - 1].saturating_add(64));
         }
 
-        let mut bg_fifo = BgFifo::new();
+        let mut bg_fifo = PixelFifo::<u8>::new();
         for _ in 0..8 {
             bg_fifo.push_back(0);
         }
@@ -7122,8 +6956,8 @@ impl Ppu {
         let mut scy_event_idx = 0usize;
         let mut wx_event_idx = 0usize;
         let mut wy_event_idx = 0usize;
-        let use_stage_scy_sampling =
-            (!self.cgb() && dmg_mode3_scy_use_stage_sample_t()) || (self.is_cgb_dmg_compat_mode());
+        let use_stage_scy_sampling = (!self.cgb() && self.tuning.dmg_mode3_scy_use_stage_sample_t)
+            || (self.is_cgb_dmg_compat_mode());
         let max_mode3_t_i16 = self.mode3_target_cycles.saturating_sub(1) as i16;
 
         if has_win_en_toggle && self.mode3_wx_event_count > 0 && self.mode3_wx_events[0].t <= 7 {
@@ -7205,7 +7039,7 @@ impl Ppu {
                         // Left-edge window start cases (WX<=5) are sensitive to how
                         // pre-visible dots interact with SCX fine-scroll on DMG.
                         if !suppress_wx0_previsible_shortcuts
-                            && (wx_cur as i16) <= dmg_wx_previsible_phase_max()
+                            && (wx_cur as i16) <= self.tuning.dmg_wx_previsible_phase_max
                             && (position_in_line + 16) < 8
                         {
                             if position_in_line == -17 {
@@ -7247,7 +7081,7 @@ impl Ppu {
                                 0
                             };
                             let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-                            let mut sample_t = $t as i16 + dmg_bgp_fetcher_sample_t_bias();
+                            let mut sample_t = $t as i16 + self.tuning.dmg_bgp_fetcher_sample_t_bias;
                             if wx_triggered && wx_cur == 0 {
                                 if wx_zero_armed_by_mode3_write {
                                     // If WX is forced to 0 during early mode 3, the
@@ -7255,7 +7089,7 @@ impl Ppu {
                                     // palette sample phase than steady-state WX=0 lines.
                                     sample_t -= 4;
                                 } else {
-                                    sample_t += dmg_bgp_fetcher_wx0_extra_t();
+                                    sample_t += self.tuning.dmg_bgp_fetcher_wx0_extra_t;
                                     if self.mode3_wx_base == 0
                                         && self.mode3_wx_event_count == 0
                                         && (scx_cur & 0x07) == 0
@@ -7413,7 +7247,7 @@ impl Ppu {
                     } else if (0..=255).contains(&pos6)
                         && wx_cur == pos6 as u8
                         && !self.cgb()
-                        && dmg_wx_activate_on_pos6()
+                        && self.tuning.dmg_wx_activate_on_pos6
                         && !wx_just_changed
                     {
                         should_activate_window = true;
@@ -7470,14 +7304,14 @@ impl Ppu {
             // fetch stages. Differences between LO/HI are parameterized:
             // SCY sample offset, high-plane flag, output addr, trace tag, next state.
             macro_rules! fetch_tile_data_addr {
-                ($scy_offset_fn:expr, $is_high:expr, $out_addr:ident, $tag:literal, $next_state:expr) => {{
+                ($scy_offset:ident, $is_high:expr, $out_addr:ident, $tag:literal, $next_state:expr) => {{
                     let fetcher_y = if wx_triggered {
                         window_line
                     } else if self.is_cgb_dmg_compat_mode() {
                         if self.sprite_count > 0
-                            && position_in_line < cgb_dmg_mode3_scy_latch_start_pos()
+                            && position_in_line < self.tuning.cgb_dmg_mode3_scy_latch_start_pos
                         {
-                            let sample_t = (t as i16 + $scy_offset_fn())
+                            let sample_t = (t as i16 + self.tuning.$scy_offset)
                                 .clamp(0, max_mode3_t_i16)
                                 as u16;
                             self.ly.wrapping_add(self.dmg_scy_for_mode3_t(sample_t))
@@ -7485,7 +7319,7 @@ impl Ppu {
                             bg_fetcher_y_latched
                         }
                     } else if use_stage_scy_sampling {
-                        let sample_t = (t as i16 + $scy_offset_fn())
+                        let sample_t = (t as i16 + self.tuning.$scy_offset)
                             .clamp(0, max_mode3_t_i16)
                             as u16;
                         self.ly.wrapping_add(self.dmg_scy_for_mode3_t(sample_t))
@@ -7543,7 +7377,7 @@ impl Ppu {
                     let mut fetcher_y = if wx_triggered {
                         window_line
                     } else if use_stage_scy_sampling {
-                        let sample_t = (t as i16 + dmg_mode3_scy_sample_tile_t_offset())
+                        let sample_t = (t as i16 + self.tuning.dmg_mode3_scy_sample_tile_t_offset)
                             .clamp(0, max_mode3_t_i16)
                             as u16;
                         self.ly.wrapping_add(self.dmg_scy_for_mode3_t(sample_t))
@@ -7760,9 +7594,157 @@ impl Ppu {
     }
 
     fn render_cgb_bg_window_scanline_with_mode3_lcdc(&mut self) {
-        use std::collections::VecDeque;
+        if self.mode3_lcdc_event_count == 0
+            && self.mode3_scx_event_count == 0
+            && self.mode3_scy_event_count == 0
+            && self.mode3_wx_event_count == 0
+            && self.mode3_wy_event_count == 0
+        {
+            if self.sprite_count > 0 {
+                self.render_cgb_static_scanline::<true>();
+            } else {
+                self.render_cgb_static_scanline::<false>();
+            }
+        } else {
+            self.render_cgb_bg_window_scanline_fetcher();
+        }
+    }
 
-        #[derive(Clone, Copy)]
+    fn render_cgb_static_scanline<const TRACK_PRIORITY: bool>(&mut self) {
+        let lcdc = self.mode3_lcdc_base;
+        let row_base = self.ly as usize * SCREEN_WIDTH;
+        let window_start = if lcdc & 0x20 != 0 && self.ly >= self.wy && self.wx <= WINDOW_X_MAX {
+            usize::from(self.wx.saturating_sub(7))
+        } else {
+            SCREEN_WIDTH
+        };
+        if TRACK_PRIORITY {
+            self.cgb_line_obj_enabled.fill(lcdc & 0x02 != 0);
+        }
+        let bg_map = if lcdc & 0x08 != 0 {
+            BG_MAP_1_BASE
+        } else {
+            BG_MAP_0_BASE
+        };
+        self.render_cgb_static_span::<TRACK_PRIORITY>(
+            0..window_start,
+            row_base,
+            bg_map,
+            self.scx,
+            self.ly.wrapping_add(self.scy),
+        );
+        if window_start < SCREEN_WIDTH {
+            let win_map = if lcdc & 0x40 != 0 {
+                BG_MAP_1_BASE
+            } else {
+                BG_MAP_0_BASE
+            };
+            // Match the existing CGB fetcher: WX <= 7 starts with window pixel
+            // zero, and activating the window discards BG fine-scroll/fifo data.
+            self.render_cgb_static_span::<TRACK_PRIORITY>(
+                window_start..SCREEN_WIDTH,
+                row_base,
+                win_map,
+                0,
+                self.win_line_counter,
+            );
+            self.win_line_counter = self.win_line_counter.wrapping_add(1);
+        }
+    }
+
+    fn render_cgb_static_span<const TRACK_PRIORITY: bool>(
+        &mut self,
+        screen: std::ops::Range<usize>,
+        row_base: usize,
+        map_base: usize,
+        mut source_x: u8,
+        source_y: u8,
+    ) {
+        let mut x = screen.start;
+        let map_row = map_base + usize::from(source_y / 8) * 32;
+        while x < screen.end {
+            let tile_x = usize::from(source_x & 7);
+            let map_addr = map_row + usize::from(source_x / 8);
+            let tile = self.vram_read_for_render(0, map_addr);
+            let attr = self.vram_read_for_render(1, map_addr);
+            let tile_y = usize::from(if attr & 0x40 != 0 {
+                7 - (source_y & 7)
+            } else {
+                source_y & 7
+            });
+            let bank = usize::from((attr >> 3) & 1);
+            let addr =
+                Self::bg_tile_row_plane_addr(tile, tile_y, self.mode3_lcdc_base & 0x10 != 0, false);
+            let lo = self.vram_read_for_render(bank, addr);
+            let hi = self.vram_read_for_render(bank, addr + 1);
+            let key = u32::from(lo)
+                | (u32::from(hi) << 8)
+                | (u32::from(attr & 7) << 16)
+                | (u32::from(attr & 0x20) << 14);
+            let run = (8 - tile_x).min(screen.end - x);
+            self.copy_cached_tile_row::<TRACK_PRIORITY>(key, row_base, x, tile_x, run);
+            if TRACK_PRIORITY {
+                self.line_priority[x..x + run].fill(attr & 0x80 != 0);
+            }
+            source_x = source_x.wrapping_add(run as u8);
+            x += run;
+        }
+    }
+
+    #[inline]
+    fn copy_cached_tile_row<const TRACK_ZERO: bool>(
+        &mut self,
+        key: u32,
+        row_base: usize,
+        x: usize,
+        tile_x: usize,
+        run: usize,
+    ) {
+        let slot = ((key ^ (key >> 6) ^ (key >> 12)) as usize) & (TILE_ROW_CACHE_LEN - 1);
+        if self.tile_row_cache[slot].key != key {
+            self.decode_cached_tile_row(slot, key);
+        }
+        let row = &self.tile_row_cache[slot];
+        if run == 8 {
+            self.framebuffer[row_base + x..row_base + x + 8].copy_from_slice(&row.pixels);
+            if TRACK_ZERO {
+                self.line_color_zero[x..x + 8].copy_from_slice(&row.color_zero);
+            }
+        } else {
+            self.framebuffer[row_base + x..row_base + x + run]
+                .copy_from_slice(&row.pixels[tile_x..tile_x + run]);
+            if TRACK_ZERO {
+                self.line_color_zero[x..x + run]
+                    .copy_from_slice(&row.color_zero[tile_x..tile_x + run]);
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn decode_cached_tile_row(&mut self, slot: usize, key: u32) {
+        let lo = key as u8;
+        let hi = (key >> 8) as u8;
+        let dmg = key & (1 << 24) != 0;
+        let colors = if dmg {
+            let start = ((key >> 16) & 255) as usize * 4;
+            &self.dmg_bg_color_table[start..start + 4]
+        } else {
+            let start = ((key >> 16) & 7) as usize * 4;
+            &self.cgb_bg_color_table[start..start + 4]
+        };
+        let flipped = !dmg && key & (1 << 19) != 0;
+        let row = &mut self.tile_row_cache[slot];
+        for x in 0..8 {
+            let bit = if flipped { x } else { 7 - x };
+            let color = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+            row.pixels[x] = colors[usize::from(color)];
+            row.color_zero[x] = color == 0;
+        }
+        row.key = key;
+    }
+
+    fn render_cgb_bg_window_scanline_fetcher(&mut self) {
+        #[derive(Clone, Copy, Default)]
         struct FifoPixel {
             color_id: u8,
             palette: u8,
@@ -7779,7 +7761,9 @@ impl Ppu {
         let row_base = ly as usize * SCREEN_WIDTH;
         let track_sprite_priority = self.sprite_count > 0;
 
-        let mut fifo: VecDeque<FifoPixel> = VecDeque::with_capacity(32);
+        // At most eight queued pixels can receive another eight-pixel row.
+        // The shared 32-slot FIFO therefore needs no allocation or growth.
+        let mut fifo = PixelFifo::<FifoPixel>::new();
 
         let mut out_x: usize = 0;
         let mut discard: u8 = scx & 7;
@@ -8201,6 +8185,624 @@ impl Default for Ppu {
 #[cfg(test)]
 mod mode3_timing_tests {
     use super::*;
+
+    #[test]
+    fn tuning_environment_is_captured_at_construction() {
+        // A subprocess supplies environment before any PPU exists, without
+        // mutating the environment of the multithreaded test harness.
+        const CHILD: &str = "VIBEEMU_TEST_TUNING_SNAPSHOT_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "ppu::mode3_timing_tests::tuning_environment_is_captured_at_construction",
+                ])
+                .env(CHILD, "1")
+                .env("VIBEEMU_DMG_MODE3_SCX_EVENT_T_BIAS", " -12 ")
+                .env("VIBEEMU_DMG_HBLANK_RENDER_DELAY", "7")
+                .env("VIBEEMU_DMG_BGP_USE_EVENT_MAP", "true")
+                .env("VIBEEMU_DMG_WX_ACTIVATE_ON_POS6", "false")
+                .env("VIBEEMU_DMG_MODE3_OBJECT_MATCH_BIAS", "3")
+                .env("VIBEEMU_DMG_MODE3_OBJ_FETCH_SIM_DOTS", "20")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        let ppu = Ppu::new(Model::default());
+        let other = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        assert!(std::ptr::eq(ppu.tuning, other.tuning));
+        assert_eq!(ppu.tuning.dmg_mode3_scx_event_t_bias, -12);
+        assert_eq!(ppu.tuning.dmg_hblank_render_delay, 7);
+        assert!(ppu.tuning.dmg_bgp_use_event_map);
+        assert!(!ppu.tuning.dmg_wx_activate_on_pos6);
+        assert_eq!(ppu.tuning.dmg_mode3_obj_fetch_sim_dots, 16);
+        assert_eq!(ppu.dmg_sprite_match_x(8), 19);
+    }
+
+    fn assert_fifo_timing_equal(a: &Ppu, b: &Ppu) {
+        assert_eq!(
+            (
+                a.mode3_position_in_line,
+                a.mode3_lcd_x,
+                a.mode3_bg_fifo,
+                a.mode3_fetcher_state,
+                a.mode3_render_delay,
+                a.mode3_last_match_x,
+                a.mode3_same_x_toggle
+            ),
+            (
+                b.mode3_position_in_line,
+                b.mode3_lcd_x,
+                b.mode3_bg_fifo,
+                b.mode3_fetcher_state,
+                b.mode3_render_delay,
+                b.mode3_last_match_x,
+                b.mode3_same_x_toggle
+            )
+        );
+        assert_eq!(
+            (
+                a.mode3_obj_fetch_active,
+                a.mode3_obj_fetch_stage,
+                a.mode3_obj_fetch_sprite_index
+            ),
+            (
+                b.mode3_obj_fetch_active,
+                b.mode3_obj_fetch_stage,
+                b.mode3_obj_fetch_sprite_index
+            )
+        );
+        assert_eq!(a.dmg_line_obj_size_16, b.dmg_line_obj_size_16);
+        assert_eq!(a.dmg_line_bgp_at_pixel, b.dmg_line_bgp_at_pixel);
+        assert_eq!(a.dmg_line_lcdc_at_pixel, b.dmg_line_lcdc_at_pixel);
+        assert_eq!(a.dmg_line_mode3_t_at_pixel, b.dmg_line_mode3_t_at_pixel);
+        assert_eq!(a.mode3_pop_event_count, b.mode3_pop_event_count);
+        for (a, b) in a.mode3_pop_events.iter().zip(&b.mode3_pop_events) {
+            assert_eq!((a.t, a.position_in_line), (b.t, b.position_in_line));
+        }
+    }
+
+    #[test]
+    fn dmg_fifo_projection_matches_each_fetcher_phase() {
+        let mut actual = Ppu::new(Model::default());
+        let mut reference = Ppu::new(Model::default());
+        for fifo in 1..=8u8 {
+            for phase in 0..=6u8 {
+                for scx in 0..8 {
+                    for requested in [1, 2, 4, 7, 8, 9, 16, 31, 64, 128] {
+                        for ppu in [&mut actual, &mut reference] {
+                            ppu.lcdc = 0x93;
+                            ppu.scx = scx;
+                            ppu.bgp = scx * 31;
+                            ppu.begin_mode3_line();
+                            ppu.dmg_begin_transfer_line();
+                            ppu.mode = MODE_TRANSFER;
+                            ppu.mode_clock = 24;
+                            ppu.mode3_target_cycles = 252;
+                            ppu.mode3_position_in_line = 8;
+                            ppu.mode3_lcd_x = 9;
+                            ppu.mode3_render_delay = 0;
+                            ppu.mode3_bg_fifo = fifo;
+                            ppu.mode3_fetcher_state = phase;
+                        }
+                        let dots = requested.min(actual.dmg_fifo_run_limit());
+                        assert!(dots != 0);
+                        actual.advance_dmg_fifo_run(dots);
+                        for _ in 0..dots {
+                            reference.mode_clock += 1;
+                            reference.mode3_latch_sprite_attributes();
+                        }
+                        assert_fifo_timing_equal(&actual, &reference);
+                        assert_eq!(actual.mode_clock, reference.mode_clock);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batched_pop_events_preserve_capacity_overwrite() {
+        for count in [
+            0,
+            MODE3_POP_EVENTS_MAX - 6,
+            MODE3_POP_EVENTS_MAX - 1,
+            MODE3_POP_EVENTS_MAX,
+        ] {
+            for requested in [1, 2, 7, 8, 16, 64] {
+                let mut fast = Ppu::new(Model::default());
+                let mut reference = Ppu::new(Model::default());
+                for ppu in [&mut fast, &mut reference] {
+                    ppu.lcdc = 0x93;
+                    ppu.begin_mode3_line();
+                    ppu.dmg_begin_transfer_line();
+                    ppu.mode = MODE_TRANSFER;
+                    ppu.mode_clock = 24;
+                    ppu.mode3_target_cycles = 252;
+                    ppu.mode3_position_in_line = 8;
+                    ppu.mode3_lcd_x = 9;
+                    ppu.mode3_render_delay = 0;
+                    ppu.mode3_bg_fifo = 8;
+                    ppu.mode3_fetcher_state = 0;
+                    ppu.mode3_pop_event_count = count;
+                }
+                let dots = requested.min(fast.dmg_fifo_run_limit());
+                fast.advance_dmg_fifo_run(dots);
+                for _ in 0..dots {
+                    reference.mode_clock += 1;
+                    reference.mode3_latch_sprite_attributes();
+                }
+                assert_fifo_timing_equal(&fast, &reference);
+                assert_eq!(fast.mode_clock, reference.mode_clock);
+            }
+        }
+    }
+
+    #[test]
+    fn transfer_batches_match_single_dots_across_lines() {
+        for model in [
+            Model::default(),
+            Model::Cgb(CgbRevision::Rev0),
+            Model::Cgb(CgbRevision::RevE),
+        ] {
+            let make_ppu = || {
+                let mut ppu = Ppu::new(model);
+                ppu.write_reg(0xFF40, 0xF7);
+                ppu.write_reg(0xFF41, 0x78);
+                ppu.write_reg(0xFF45, 2);
+                ppu.write_reg(0xFF4B, 79);
+                for (i, sprite) in ppu.oam.chunks_exact_mut(4).enumerate() {
+                    sprite.copy_from_slice(&[
+                        16 + (i / 10) as u8 * 8,
+                        [0, 1, 8, 8, 31, 72, 80, 160, 167, 255][i % 10],
+                        i as u8,
+                        (i as u8).wrapping_mul(37),
+                    ]);
+                }
+                for (i, byte) in ppu.vram.iter_mut().flatten().enumerate() {
+                    *byte = (i as u8).wrapping_mul(19).wrapping_add((i >> 8) as u8);
+                }
+                ppu.skip_startup_for_test();
+                ppu
+            };
+            let mut fast = make_ppu();
+            let mut reference = make_ppu();
+            let mut fast_if = 0;
+            let mut reference_if = 0;
+            for cycles in [79, 2, 170, 2, 456, 1000, 60000, 10000, 65535] {
+                let hblank = fast.step(cycles, &mut fast_if);
+                let mut reference_hblank = false;
+                for _ in 0..cycles {
+                    reference_hblank |= reference.step_inner::<false>(1, &mut reference_if);
+                }
+                assert_eq!(hblank, reference_hblank);
+                assert_eq!(fast_if, reference_if);
+                assert_eq!(fast.mode_clock, reference.mode_clock);
+                assert_eq!(fast.frame_counter, reference.frame_counter);
+                assert_eq!(fast.frame_ready(), reference.frame_ready());
+                assert_eq!(fast.framebuffer(), reference.framebuffer());
+                assert_fifo_timing_equal(&fast, &reference);
+                for addr in [0xFF40, 0xFF41, 0xFF44, 0xFF45] {
+                    assert_eq!(fast.read_reg(addr), reference.read_reg(addr));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_pixel_fifo_matches_deque_through_wraps() {
+        use std::collections::VecDeque;
+        let mut actual = PixelFifo::<u32>::new();
+        let mut reference = VecDeque::new();
+        for i in 0..10_000 {
+            match i % 113 {
+                0 => {
+                    actual.clear();
+                    reference.clear();
+                }
+                1..=64 => {
+                    actual.push_back(i);
+                    if reference.len() < 32 {
+                        reference.push_back(i);
+                    }
+                }
+                65..=88 => assert_eq!(actual.pop_front(), reference.pop_front()),
+                _ => {
+                    actual.push_front(i);
+                    if reference.len() < 32 {
+                        reference.push_front(i);
+                    }
+                }
+            }
+            assert_eq!(actual.len(), reference.len());
+            assert_eq!(actual.is_empty(), reference.is_empty());
+        }
+        while !reference.is_empty() {
+            assert_eq!(actual.pop_front(), reference.pop_front());
+        }
+        assert_eq!(actual.pop_front(), None);
+    }
+
+    #[test]
+    fn shared_tile_rows_preserve_dmg_palettes_and_cgb_tags() {
+        let mut ppu = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        for compat in [false, true] {
+            ppu.set_dmg_compat_mode(compat);
+            for bgp in 0..=255u8 {
+                for data in 0..256u16 {
+                    let lo = data as u8;
+                    let hi = lo.wrapping_mul(53).wrapping_add(bgp);
+                    // Alternate the two tag formats, including overlapping
+                    // palette bits, then change underlying palette colors.
+                    let cgb_key = u32::from(lo) | (u32::from(hi) << 8) | (u32::from(bgp & 7) << 16);
+                    ppu.copy_cached_tile_row::<true>(cgb_key, 0, 0, 0, 8);
+                    let key =
+                        u32::from(lo) | (u32::from(hi) << 8) | (u32::from(bgp) << 16) | (1 << 24);
+                    if data % 47 == 0 {
+                        ppu.set_dmg_palette([u32::from(bgp), 0xabcdef, u32::from(data), 0x123456]);
+                        ppu.write_reg(0xff68, 0x80);
+                        ppu.write_reg(0xff69, bgp);
+                        ppu.write_reg(0xff69, data as u8);
+                    }
+                    let first = usize::from(bgp & 7);
+                    ppu.copy_cached_tile_row::<true>(key, 0, 0, first, 8 - first);
+                    for x in 0..8 - first {
+                        let bit = 7 - first - x;
+                        let id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                        assert_eq!(
+                            ppu.framebuffer[x],
+                            ppu.dmg_bg_color_table[usize::from(bgp) * 4 + usize::from(id)]
+                        );
+                        assert_eq!(ppu.line_color_zero[x], id == 0);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cached_rows_follow_palette_and_direct_vram_changes() {
+        let mut actual = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        let mut reference = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        for iteration in 0..2048usize {
+            for ppu in [&mut actual, &mut reference] {
+                ppu.lcdc = 0xf3;
+                ppu.mode3_lcdc_base = 0xf3;
+                ppu.ly = (iteration % 144) as u8;
+                ppu.scx = iteration as u8;
+                ppu.scy = (iteration >> 3) as u8;
+                ppu.wx = (iteration % 168) as u8;
+                ppu.wy = 0;
+                ppu.win_line_counter = (iteration >> 1) as u8;
+                ppu.sprite_count = iteration % 2;
+                ppu.line_sprites[0].x = 40;
+                ppu.render_vram_blocked = iteration % 17 == 0;
+                // Direct writes deliberately bypass any dirty-address tracking.
+                // Repeated plane patterns exercise cache hits; palette updates
+                // and colliding tags must never retain old pixels or zero flags.
+                for (i, byte) in ppu.vram.iter_mut().flatten().enumerate() {
+                    *byte = (i as u8)
+                        .wrapping_mul(13)
+                        .wrapping_add((iteration / 8) as u8);
+                }
+                if iteration % 5 == 0 {
+                    ppu.write_reg(0xff68, 0x80 | (iteration as u8 & 0x3f));
+                    ppu.write_reg(0xff69, iteration as u8);
+                    ppu.write_reg(0xff69, (iteration >> 3) as u8);
+                }
+            }
+            actual.render_cgb_bg_window_scanline_with_mode3_lcdc();
+            reference.render_cgb_bg_window_scanline_fetcher();
+            assert_eq!(
+                actual.framebuffer, reference.framebuffer,
+                "iteration={iteration}"
+            );
+            assert_eq!(actual.line_color_zero, reference.line_color_zero);
+            assert_eq!(actual.line_priority, reference.line_priority);
+            assert_eq!(actual.cgb_line_obj_enabled, reference.cgb_line_obj_enabled);
+            assert_eq!(actual.win_line_counter, reference.win_line_counter);
+        }
+    }
+
+    #[test]
+    fn paired_oam_scan_matches_dot_phases() {
+        for model in [
+            Model::Dmg(DmgRevision::Rev0),
+            Model::default(),
+            Model::Cgb(CgbRevision::RevC),
+            Model::Cgb(CgbRevision::RevE),
+        ] {
+            for seed in 0..512usize {
+                let make = || {
+                    let mut ppu = Ppu::new(model);
+                    ppu.ly = (seed % 154) as u8;
+                    ppu.lcdc = 0x80 | (seed as u8 & 4);
+                    for (i, byte) in ppu.oam.iter_mut().enumerate() {
+                        *byte = (i as u8).wrapping_mul(29).wrapping_add(seed as u8);
+                    }
+                    if seed % 4 == 0 {
+                        // Saturate the ten-OBJ limit while retaining the final
+                        // bus/scan state for the remaining invisible selections.
+                        for sprite in ppu.oam.chunks_exact_mut(4) {
+                            sprite[0] = ppu.ly + 16;
+                        }
+                    }
+                    ppu
+                };
+                let mut actual = make();
+                let mut reference = make();
+                let mut clock = 0;
+                let mut iteration = 0;
+                while clock < 80 {
+                    clock = (clock + [1, 2, 4, 7, 16, 33][(iteration + seed) % 6]).min(80);
+                    for ppu in [&mut actual, &mut reference] {
+                        ppu.mode_clock = clock;
+                        ppu.oam_dma_current_dest = if (iteration + seed) % 7 == 0 {
+                            (clock % 160 + 1) as u8
+                        } else {
+                            0xa1
+                        };
+                        if (iteration + seed) % 3 == 0 {
+                            ppu.lcdc ^= 4;
+                        }
+                        ppu.oam[iteration % OAM_SIZE] = iteration as u8;
+                    }
+                    actual.oam_scan_advance();
+                    reference.oam_scan_advance_dots();
+                    assert_eq!(
+                        (
+                            actual.oam_scan_dot,
+                            actual.oam_scan_index,
+                            actual.oam_scan_phase
+                        ),
+                        (
+                            reference.oam_scan_dot,
+                            reference.oam_scan_index,
+                            reference.oam_scan_phase
+                        )
+                    );
+                    assert_eq!(
+                        (
+                            actual.mode2_y_bus,
+                            actual.mode2_x_bus,
+                            actual.oam_scan_entry_y,
+                            actual.oam_scan_entry_visible
+                        ),
+                        (
+                            reference.mode2_y_bus,
+                            reference.mode2_x_bus,
+                            reference.oam_scan_entry_y,
+                            reference.oam_scan_entry_visible
+                        )
+                    );
+                    assert_eq!(actual.sprite_count, reference.sprite_count);
+                    for (a, b) in actual.line_sprites.iter().zip(&reference.line_sprites) {
+                        assert_eq!((a.x, a.y, a.oam_index), (b.x, b.y, b.oam_index));
+                    }
+                    iteration += 1;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cgb_static_spans_match_dot_fetcher() {
+        let mut actual = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        let mut expected = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        let mut random = 0x12345678u32;
+        for byte in actual.vram.iter_mut().flatten() {
+            random ^= random << 13;
+            random ^= random >> 17;
+            random ^= random << 5;
+            *byte = random as u8;
+        }
+        expected.vram = actual.vram;
+        for ppu in [&mut actual, &mut expected] {
+            for (i, color) in ppu.cgb_bg_color_table.iter_mut().enumerate() {
+                *color = (i as u32 + 1) * 0x010203;
+            }
+        }
+        // Every SCX/WX combination, both tile addressing modes and maps,
+        // all palette/flip/priority attributes, VRAM banks, and blocked VRAM.
+        for lcdc in [0x83, 0xb3, 0xe7, 0xff] {
+            for window_visible in [false, true] {
+                for scx in 0..=255u8 {
+                    for wx in 0..=255u8 {
+                        for ppu in [&mut actual, &mut expected] {
+                            ppu.mode3_lcdc_base = lcdc;
+                            ppu.lcdc = lcdc;
+                            ppu.scx = scx;
+                            ppu.scy = scx.wrapping_mul(17).wrapping_add(wx);
+                            ppu.wx = wx;
+                            ppu.ly = scx % 144;
+                            ppu.wy = if window_visible { ppu.ly } else { ppu.ly + 1 };
+                            ppu.win_line_counter = wx.wrapping_add(scx);
+                            ppu.sprite_count = usize::from(scx & 1);
+                            ppu.line_sprites[0].x = -4;
+                            ppu.render_vram_blocked = scx % 17 == 0;
+                            ppu.mode3_target_cycles = MODE3_CYCLES;
+                            ppu.line_priority.fill(true);
+                            ppu.line_color_zero.fill(false);
+                            ppu.cgb_line_obj_enabled.fill(false);
+                            let row = usize::from(ppu.ly) * SCREEN_WIDTH;
+                            ppu.framebuffer[row..row + SCREEN_WIDTH].fill(0xdeadbeef);
+                        }
+                        actual.render_cgb_bg_window_scanline_with_mode3_lcdc();
+                        expected.render_cgb_bg_window_scanline_fetcher();
+                        let row = usize::from(actual.ly) * SCREEN_WIDTH;
+                        assert_eq!(
+                            actual.framebuffer[row..row + SCREEN_WIDTH],
+                            expected.framebuffer[row..row + SCREEN_WIDTH],
+                            "LCDC={lcdc:02x} SCX={scx} WX={wx}"
+                        );
+                        assert_eq!(actual.line_priority, expected.line_priority);
+                        assert_eq!(actual.line_color_zero, expected.line_color_zero);
+                        assert_eq!(actual.cgb_line_obj_enabled, expected.cgb_line_obj_enabled);
+                        assert_eq!(actual.win_line_counter, expected.win_line_counter);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transfer_batches_match_original_dot_path() {
+        compare_transfer_batches(false, PpuTuning::process_default());
+    }
+
+    #[test]
+    fn idle_batches_match_machine_cycles() {
+        compare_transfer_batches(true, PpuTuning::process_default());
+    }
+
+    #[test]
+    fn nondefault_tuning_batches_match_original_dot_path() {
+        let mut tuning = PpuTuning::process_default().clone();
+        tuning.dmg_obj_size_tuning.object_match_bias = 1;
+        tuning.dmg_mode3_scx_event_t_bias = -5;
+        tuning.dmg_hblank_render_delay = 3;
+        let tuning = Box::leak(Box::new(tuning));
+        compare_transfer_batches(false, tuning);
+        compare_transfer_batches(true, tuning);
+    }
+
+    fn compare_transfer_batches(idle_batch: bool, tuning: &'static PpuTuning) {
+        for (model, compat) in [
+            (Model::Cgb(CgbRevision::Rev0), false),
+            (Model::Cgb(CgbRevision::RevA), false),
+            (Model::Cgb(CgbRevision::RevB), false),
+            (Model::Cgb(CgbRevision::RevC), false),
+            (Model::Cgb(CgbRevision::RevD), false),
+            (Model::Cgb(CgbRevision::RevE), false),
+            (Model::Cgb(CgbRevision::Rev0), true),
+            (Model::Cgb(CgbRevision::RevC), true),
+            (Model::Cgb(CgbRevision::RevE), true),
+            (Model::Dmg(DmgRevision::Rev0), false),
+            (Model::Dmg(DmgRevision::RevA), false),
+            (Model::Dmg(DmgRevision::RevB), false),
+            (Model::Dmg(DmgRevision::RevC), false),
+        ] {
+            for opri in [0, 1] {
+                let make_ppu = || {
+                    let mut ppu = Ppu::new(model);
+                    ppu.tuning = tuning;
+                    if compat {
+                        ppu.apply_dmg_compatibility_palettes();
+                    }
+                    ppu.write_reg(0xFF40, 0xF7);
+                    ppu.write_reg(0xFF6C, opri);
+                    // Include offscreen OBJs and deliberately unsorted X values.
+                    for (i, sprite) in ppu.oam.chunks_exact_mut(4).enumerate() {
+                        sprite.copy_from_slice(&[
+                            16 + (i / 10) as u8 * 8,
+                            [167, 0, 8, 80, 16, 255, 1, 80, 160, 32][i % 10],
+                            i as u8,
+                            (i as u8).wrapping_mul(37),
+                        ]);
+                    }
+                    for (i, byte) in ppu.vram.iter_mut().flatten().enumerate() {
+                        *byte = (i as u8).wrapping_mul(19).wrapping_add((i >> 8) as u8);
+                    }
+                    ppu.skip_startup_for_test();
+                    ppu
+                };
+                let mut fast = make_ppu();
+                let mut reference = make_ppu();
+                let mut fast_if = 0;
+                let mut reference_if = 0;
+                let mut dots = 0u32;
+                let mut iteration = 0usize;
+                while dots < 70_224 * 3 {
+                    // Stable periods exercise batching; bursts of writes and
+                    // DMA overlap exercise its guards, at varying dot phases.
+                    if iteration % 113 == 0 {
+                        let addr = [0xFF41, 0xFF45, 0xFF43, 0xFF42, 0xFF4A, 0xFF4B, 0xFF40]
+                            [(iteration / 113) % 7];
+                        let value = if addr == 0xFF40 {
+                            0x80 | (iteration as u8 & 0x7F)
+                        } else {
+                            iteration as u8
+                        };
+                        fast.write_reg(addr, value);
+                        reference.write_reg(addr, value);
+                    }
+                    if model.is_cgb() && iteration % 307 == 0 {
+                        let compatible = (iteration / 307) % 2 == 0;
+                        fast.set_dmg_compat_mode(compatible);
+                        reference.set_dmg_compat_mode(compatible);
+                    }
+                    let dma = iteration % 251 < 40;
+                    let dest = if dma {
+                        (iteration % 160 + 1) as u8
+                    } else {
+                        0xA1
+                    };
+                    fast.oam_dma_current_dest = dest;
+                    reference.oam_dma_current_dest = dest;
+                    if dma {
+                        let index = iteration % 160;
+                        fast.oam[index] = iteration as u8;
+                        reference.oam[index] = iteration as u8;
+                    }
+                    let m_dots = if iteration % 2 == 0 { 2 } else { 4 };
+                    let cycles = if idle_batch {
+                        (fast.idle_dots().min(512) / m_dots * m_dots).max(m_dots)
+                    } else {
+                        [1, 2, 4, 3, 8, 7, 16, 80, 255, 456][iteration % 10]
+                    };
+                    let fast_hblank = fast.step(cycles, &mut fast_if);
+                    let reference_hblank = if idle_batch {
+                        let mut hblank = false;
+                        for _ in (0..cycles).step_by(usize::from(m_dots)) {
+                            hblank |= reference.step(m_dots, &mut reference_if);
+                        }
+                        hblank
+                    } else {
+                        reference.step_inner::<false>(cycles, &mut reference_if)
+                    };
+                    assert_eq!(fast_hblank, reference_hblank);
+                    assert_eq!(fast_if, reference_if);
+                    assert_eq!(fast.mode_clock, reference.mode_clock);
+                    assert_fifo_timing_equal(&fast, &reference);
+                    assert_eq!(fast.frame_ready(), reference.frame_ready());
+                    assert_eq!(fast.frame_counter, reference.frame_counter);
+                    assert_eq!(fast.dmg_line_obj_size_16, reference.dmg_line_obj_size_16);
+                    assert_eq!(
+                        fast.mode3_sprite_latch_index,
+                        reference.mode3_sprite_latch_index
+                    );
+                    for addr in [0xFF40, 0xFF41, 0xFF44, 0xFF45] {
+                        assert_eq!(fast.read_reg(addr), reference.read_reg(addr));
+                    }
+                    for (a, b) in fast.line_sprites.iter().zip(&reference.line_sprites) {
+                        assert_eq!(
+                            (
+                                a.tile,
+                                a.flags,
+                                a.fetched,
+                                a.obj_row_addr,
+                                a.obj_lo,
+                                a.obj_hi
+                            ),
+                            (
+                                b.tile,
+                                b.flags,
+                                b.fetched,
+                                b.obj_row_addr,
+                                b.obj_lo,
+                                b.obj_hi
+                            )
+                        );
+                    }
+                    if fast_hblank {
+                        assert_eq!(fast.framebuffer(), reference.framebuffer());
+                    }
+                    dots += u32::from(cycles);
+                    iteration += 1;
+                }
+            }
+        }
+    }
 
     #[test]
     fn stable_obj_rows_leave_dynamic_fetches_untouched() {

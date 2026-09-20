@@ -209,6 +209,11 @@ RUST_LOG=vibe_emu_ui=debug,vibe_emu_core=trace cargo run -p vibe-emu-ui -- --log
 Some trace streams are additionally gated by environment variables such as
 `VIBEEMU_TRACE_OAMBUG` and `VIBEEMU_TRACE_LCDC`.
 
+Experimental PPU timing overrides (`VIBEEMU_DMG_*`, `VIBEEMU_CGB_*`) are
+captured process-wide when the first PPU is constructed. Set these environment
+variables before starting the emulator; creating another PPU reuses the same
+immutable settings. Trace controls are separate.
+
 ## Controls
 
 The default keyboard controls are:
@@ -231,6 +236,9 @@ folder next to the loaded ROM. Display filtering is configurable in
 sampling and optional scanline/LCD grid effects.
 
 ## Testing
+
+For core profiling, repeatable performance comparisons, and the 3DS optimization
+roadmap, see [PERFORMANCE.md](PERFORMANCE.md).
 
 Unit tests for the emulation core can be executed with:
 

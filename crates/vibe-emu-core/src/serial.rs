@@ -45,6 +45,13 @@ impl Default for SerialTransferClock {
 /// }
 /// ```
 pub trait LinkPort: Send {
+    /// Whether the host must observe each CPU instruction, for example to
+    /// publish a network timestamp before starting a transfer. Custom endpoints
+    /// default to conservative polling; self-contained endpoints may opt out.
+    fn requires_instruction_polling(&self) -> bool {
+        true
+    }
+
     /// Transfer a byte over the link. Returns the byte received from the
     /// partner. Implementations may perform the transfer immediately.
     fn transfer(&mut self, byte: u8) -> u8;
@@ -104,6 +111,10 @@ impl NullLinkPort {
 }
 
 impl LinkPort for NullLinkPort {
+    fn requires_instruction_polling(&self) -> bool {
+        false
+    }
+
     fn transfer(&mut self, byte: u8) -> u8 {
         if self.loopback { byte } else { 0xFF }
     }
@@ -312,6 +323,15 @@ impl Serial {
             double_speed,
             if_reg,
         );
+    }
+
+    /// Whether HALT must keep polling a serial transfer at M-cycle granularity.
+    pub(crate) fn transfer_active(&self) -> bool {
+        self.transfer.is_some()
+    }
+
+    pub(crate) fn requires_instruction_polling(&self) -> bool {
+        self.port.requires_instruction_polling()
     }
 
     /// Advance the serial unit by an explicit number of divider `steps`.

@@ -68,7 +68,8 @@ vibe-emu-core = "0.0.2"
 ```
 
 The main entry point is `GameBoy`, which holds the `cpu` and `mmu` fields.
-Step the CPU to advance emulation and read the framebuffer from `mmu.ppu`:
+Run bounded CPU intervals to advance emulation and read the framebuffer from
+`mmu.ppu`:
 
 ```rust
 use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
@@ -83,12 +84,19 @@ gb.mmu.load_cart(cart);
 // Run one frame
 gb.mmu.ppu.clear_frame_flag();
 while !gb.mmu.ppu.frame_ready() {
-    gb.cpu.step(&mut gb.mmu);
+    gb.cpu.run_for_dots(&mut gb.mmu, 4096);
 }
 
 // Access the 160×144 ARGB framebuffer
 let pixels = gb.mmu.ppu.framebuffer();
 ```
+
+`run_for_dots` stops at a frame boundary or active serial transfer and finishes
+the current instruction even if it exceeds the dot budget. APU and PPU state
+are fully synchronized when it returns. DMG and CGB PPU clocks are combined
+between register/memory observations, stopping before interrupt and DMA events.
+Use `Cpu::step` for debugger/single-instruction execution. Custom `LinkPort` implementations retain instruction-level polling
+by default; self-contained endpoints can override `requires_instruction_polling`.
 
 For a full integration example, see the
 [vibe-emu-ui](https://github.com/vulcandth/vibeEmu/tree/main/crates/vibe-emu-ui)
