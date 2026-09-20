@@ -301,6 +301,7 @@ impl Cpu {
             .step_steps(prev_dot_div, dot_cycles, self.double_speed, &mut mmu.if_reg);
 
         if mmu.dma_active() {
+            mmu.synchronize_ppu();
             for _ in 0..dot_cycles {
                 mmu.dma_step(1);
                 if mmu.ppu.step(1, &mut mmu.if_reg) {
@@ -308,7 +309,7 @@ impl Cpu {
                 }
             }
         } else {
-            if mmu.ppu.step(dot_cycles, &mut mmu.if_reg) {
+            if mmu.step_ppu(dot_cycles) {
                 mmu.hdma_hblank_transfer();
             }
             mmu.dma_step(dot_cycles);
@@ -316,6 +317,7 @@ impl Cpu {
     }
 
     fn speed_switch_stall(&mut self, mmu: &mut crate::mmu::Mmu) {
+        mmu.synchronize_ppu();
         // Daid's LY timing ROM implies the CPU resumes at a specific LCD phase after
         // a STOP-triggered speed switch.
         //
@@ -427,6 +429,7 @@ impl Cpu {
         // Blargg oam_bug: corruption is triggered by the CPU's 16-bit
         // inc/dec unit driving an address in $FE00-$FEFF during mode 2.
         if (0xFE00..=0xFEFF).contains(&addr) {
+            mmu.synchronize_ppu();
             mmu.ppu.oam_bug_access(addr, access);
         }
     }
@@ -681,8 +684,9 @@ impl Cpu {
     /// serial transfer. The final instruction may exceed the budget. A zero
     /// budget does nothing; STOP/faults return after at most one step.
     ///
-    /// CPU, timer, PPU and bus accesses retain their normal timing. APU clocks
-    /// are combined between MMIO observations and synchronized before returning.
+    /// CPU, timer and bus accesses retain their normal timing. APU/PPU clocks
+    /// are combined between observations and synchronized before returning.
+    /// PPU batches stop before events, preserving interrupt and DMA timing.
     /// Attached link endpoints retain instruction polling unless they opt out.
     /// Debuggers requiring instruction boundaries should use [`Self::step`].
     pub fn run_for_dots(&mut self, mmu: &mut crate::mmu::Mmu, dots: u16) {
@@ -695,6 +699,7 @@ impl Cpu {
         }
         let target = self.cycles + u64::from(dots);
         mmu.apu.begin_cpu_batch();
+        mmu.begin_ppu_batch();
         while self.cycles < target {
             let before = self.cycles;
             if self.halted {
@@ -711,6 +716,7 @@ impl Cpu {
                 break;
             }
         }
+        mmu.end_ppu_batch();
         mmu.apu.end_cpu_batch();
     }
 
@@ -722,6 +728,7 @@ impl Cpu {
     /// the budget just as with [`Self::step`].
     /// Use `step` when observing the machine after every instruction/M-cycle.
     pub fn step_with_halt_batch(&mut self, mmu: &mut crate::mmu::Mmu, max_idle_dots: u16) {
+        mmu.synchronize_ppu();
         if self.halted
             && !self.stopped
             && !self.faulted
@@ -829,6 +836,7 @@ impl Cpu {
                 let val = old.wrapping_add(1);
                 self.set_bc(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
                 self.tick(mmu, 1);
@@ -893,6 +901,7 @@ impl Cpu {
                 let val = old.wrapping_sub(1);
                 self.set_bc(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
                 self.tick(mmu, 1);
@@ -927,6 +936,7 @@ impl Cpu {
             }
             0x10 => {
                 // STOP
+                mmu.synchronize_ppu();
                 let _ = self.fetch8(mmu);
                 mmu.reset_div();
                 if mmu.key1 & 0x01 != 0 {
@@ -957,6 +967,7 @@ impl Cpu {
                 let val = old.wrapping_add(1);
                 self.set_de(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
                 self.tick(mmu, 1);
@@ -1021,6 +1032,7 @@ impl Cpu {
                 let val = old.wrapping_sub(1);
                 self.set_de(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
                 self.tick(mmu, 1);
@@ -1077,6 +1089,7 @@ impl Cpu {
                 let val = old.wrapping_add(1);
                 self.set_hl(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
                 self.tick(mmu, 1);
@@ -1156,6 +1169,7 @@ impl Cpu {
                 let val = old.wrapping_sub(1);
                 self.set_hl(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
                 self.tick(mmu, 1);
@@ -1210,6 +1224,7 @@ impl Cpu {
                 let old = self.sp;
                 self.sp = self.sp.wrapping_add(1);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
                 self.tick(mmu, 1);
@@ -1278,6 +1293,7 @@ impl Cpu {
                 let old = self.sp;
                 self.sp = self.sp.wrapping_sub(1);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
                 self.tick(mmu, 1);

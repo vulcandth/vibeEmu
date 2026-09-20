@@ -123,6 +123,11 @@ struct HdmaState {
 
 /// Memory management unit: the full Game Boy memory map and hardware plumbing.
 pub struct Mmu {
+    // Scoped by Cpu::run_for_dots. Pending clocks never cross a PPU event;
+    // memory/register accesses synchronize before observing or changing inputs.
+    defer_ppu_ticks: bool,
+    pending_ppu_dots: u16,
+    ppu_idle_remaining: u16,
     /// Eight WRAM banks (DMG uses only banks 0 and 1).
     pub wram: [[u8; WRAM_BANK_SIZE]; 8],
     /// Currently selected WRAM bank index (CGB only).
@@ -223,6 +228,64 @@ impl std::fmt::Debug for Mmu {
 }
 
 impl Mmu {
+    pub(crate) fn begin_ppu_batch(&mut self) {
+        debug_assert!(!self.defer_ppu_ticks);
+        // DMG's dot FIFO has too few skippable intervals to pay for deadline
+        // maintenance. Retain eager stepping there (including compatibility
+        // mode); native CGB benefits substantially.
+        self.defer_ppu_ticks = self.ppu.is_cgb_native_mode();
+        self.ppu_idle_remaining = if self.defer_ppu_ticks {
+            self.ppu.idle_dots()
+        } else {
+            0
+        };
+    }
+
+    pub(crate) fn end_ppu_batch(&mut self) {
+        self.synchronize_ppu();
+        self.defer_ppu_ticks = false;
+    }
+
+    /// Catch up strictly before the next PPU event. No interrupt, mode change,
+    /// or HBlank DMA can occur here; those retain the original CPU tick boundary.
+    #[inline]
+    pub(crate) fn synchronize_ppu(&mut self) {
+        self.ppu_idle_remaining = 0;
+        let dots = std::mem::take(&mut self.pending_ppu_dots);
+        if dots != 0 {
+            let hblank = self.ppu.step(dots, &mut self.if_reg);
+            debug_assert!(!hblank);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn step_ppu(&mut self, dots: u16) -> bool {
+        if !self.defer_ppu_ticks {
+            return self.ppu.step(dots, &mut self.if_reg);
+        }
+        if dots <= self.ppu_idle_remaining {
+            self.ppu_idle_remaining -= dots;
+            self.pending_ppu_dots += dots;
+            return false;
+        }
+        self.synchronize_ppu();
+        let hblank = self.ppu.step(dots, &mut self.if_reg);
+        self.ppu_idle_remaining = self.ppu.idle_dots();
+        hblank
+    }
+
+    #[inline]
+    fn synchronize_ppu_access(&mut self, addr: u16) {
+        if self.defer_ppu_ticks
+            && ((0x8000..=0x9fff).contains(&addr)
+                || (0xfe00..=0xfeff).contains(&addr)
+                || (0xff40..=0xff6c).contains(&addr))
+        {
+            // Includes LCD/palette registers, KEY0/KEY1, and OAM/VRAM DMA.
+            self.synchronize_ppu();
+        }
+    }
+
     #[inline]
     fn post_boot_div(model: Model) -> u16 {
         match model {
@@ -433,6 +496,9 @@ impl Mmu {
             gdma_cycles: 0,
             post_boot_state: true,
             model,
+            defer_ppu_ticks: false,
+            pending_ppu_dots: 0,
+            ppu_idle_remaining: 0,
             oam_bug_next_access: None,
             cgb_unusable_oam: [0xFF; 0x60],
             last_cpu_pc: None,
@@ -496,6 +562,9 @@ impl Mmu {
             gdma_cycles: 0,
             post_boot_state: false,
             model,
+            defer_ppu_ticks: false,
+            pending_ppu_dots: 0,
+            ppu_idle_remaining: 0,
             oam_bug_next_access: None,
             cgb_unusable_oam: [0xFF; 0x60],
             last_cpu_pc: None,
@@ -893,6 +962,7 @@ impl Mmu {
 
     /// Read a byte from the memory map, subject to DMA blocking and bus-open rules.
     pub fn read_byte(&mut self, addr: u16) -> u8 {
+        self.synchronize_ppu_access(addr);
         let value = self.read_byte_inner(addr, false);
         self.data_bus = value;
         if Self::updates_main_bus(addr) {
@@ -950,6 +1020,7 @@ impl Mmu {
 
     /// Write a byte to the memory map.
     pub fn write_byte(&mut self, addr: u16, val: u8) {
+        self.synchronize_ppu_access(addr);
         self.data_bus = val;
         if Self::updates_main_bus(addr) {
             self.main_bus = val;

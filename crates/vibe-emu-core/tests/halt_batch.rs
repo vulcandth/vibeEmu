@@ -249,3 +249,135 @@ fn bounded_runner_preserves_external_link_polling() {
     gb.cpu.run_for_dots(&mut gb.mmu, 0);
     assert_eq!(gb.cpu.cycles, cycles);
 }
+
+#[test]
+fn bounded_runner_preserves_ppu_accesses_dma_and_interrupts() {
+    use vibe_emu_core::hardware::{CgbRevision, DmgRevision};
+    let models = [
+        Model::Dmg(DmgRevision::Rev0),
+        Model::Dmg(DmgRevision::RevB),
+        Model::Cgb(CgbRevision::Rev0),
+        Model::Cgb(CgbRevision::RevC),
+        Model::Cgb(CgbRevision::RevE),
+    ];
+    for model in models {
+        for config in 0..if model.is_cgb() { 3 } else { 1 } {
+            let make = || {
+                let mut gb = machine(model, config == 1, true);
+                let mut rom = vec![0; 0x8000];
+                for vector in [0x40, 0x48, 0x50, 0x58, 0x60] {
+                    rom[vector] = 0xd9;
+                }
+                if model.is_cgb() {
+                    rom[0x143] = 0x80;
+                }
+                // CPU-visible VRAM/OAM accesses, IDU corruption, LY/STAT polls,
+                // scroll/palette writes, and ordinary RAM traffic in one loop.
+                let program = [
+                    0x7e, 0x22, 0x23, 0x2b, 0xf0, 0x44, 0xea, 0x00, 0xc0, 0xf0, 0x41, 0xea, 0x01,
+                    0xc0, 0x78, 0xe0, 0x43, 0x04, 0xe0, 0x69, 0x06, 0x20, 0x05, 0x20, 0xfd, 0xc3,
+                    0x50, 0x01,
+                ];
+                rom[0x150..0x150 + program.len()].copy_from_slice(&program);
+                gb.mmu.load_cart(Cartridge::from_bytes(rom));
+                if config == 2 {
+                    gb.mmu.ppu.set_dmg_compat_mode(true);
+                }
+                for (i, byte) in gb.mmu.ppu.vram.iter_mut().flatten().enumerate() {
+                    *byte = (i as u8).wrapping_mul(37).wrapping_add((i >> 8) as u8);
+                }
+                for (i, sprite) in gb.mmu.ppu.oam.chunks_exact_mut(4).enumerate() {
+                    sprite.copy_from_slice(&[
+                        16 + (i as u8 % 18) * 8,
+                        (i as u8).wrapping_mul(17),
+                        i as u8,
+                        (i as u8).wrapping_mul(29),
+                    ]);
+                }
+                gb
+            };
+            let mut actual = make();
+            let mut expected = make();
+            let audio = actual.mmu.apu.enable_output(48_000);
+            let reference_audio = expected.mmu.apu.enable_output(48_000);
+            for iteration in 0..2500usize {
+                for gb in [&mut actual, &mut expected] {
+                    if iteration % 71 == 0 {
+                        let addr =
+                            [0x8000u16, 0x9ff0, 0xfe00, 0xfe98, 0xfea0, 0xc100][iteration / 71 % 6];
+                        gb.cpu.h = (addr >> 8) as u8;
+                        gb.cpu.l = addr as u8;
+                    }
+                    if iteration % 53 == 0 {
+                        let (addr, val) = [
+                            (0xff41, 0x78),
+                            (0xff45, 0),
+                            (0xff40, 0),
+                            (0xff40, 0xf7),
+                            (0xff46, 0xc0),
+                            (0xff4f, 1),
+                            (0xff51, 0xc1),
+                            (0xff52, 0),
+                            (0xff53, 0x80),
+                            (0xff54, 0),
+                            (0xff55, 0x82),
+                            (0xff55, 0),
+                            (0xff4a, 0),
+                            (0xff4b, 4),
+                            (0xff68, 0x80),
+                            (0xff6c, 1),
+                            (0xff07, 5),
+                            (0xff05, 0xff),
+                            (0xff06, 0xf0),
+                            (0xff07, 0),
+                        ][iteration / 53 % 20];
+                        gb.mmu.write_byte(addr, val);
+                    }
+                    if iteration % 127 == 0 {
+                        gb.mmu.ppu.queue_reg_write(0xff43, iteration as u8, 3);
+                    }
+                }
+                let budget = [1, 2, 4, 17, 128, 4096][iteration % 6];
+                actual.cpu.run_for_dots(&mut actual.mmu, budget);
+                while expected.cpu.cycles < actual.cpu.cycles {
+                    expected.cpu.step(&mut expected.mmu);
+                }
+                assert_eq!(
+                    format!("{:?}", actual.cpu),
+                    format!("{:?}", expected.cpu),
+                    "{model:?} config={config} iteration={iteration}"
+                );
+                assert_eq!(
+                    format!("{:?}", actual.mmu.ppu),
+                    format!("{:?}", expected.mmu.ppu)
+                );
+                assert!(!actual.cpu.faulted);
+                assert_eq!(actual.mmu.if_reg, expected.mmu.if_reg);
+                assert_eq!(actual.mmu.dot_div, expected.mmu.dot_div);
+                assert_eq!(
+                    format!("{:?}", actual.mmu.timer),
+                    format!("{:?}", expected.mmu.timer)
+                );
+                assert_eq!(actual.mmu.ppu.mode_clock(), expected.mmu.ppu.mode_clock());
+                assert_eq!(actual.mmu.ppu.vram, expected.mmu.ppu.vram);
+                assert_eq!(actual.mmu.ppu.oam, expected.mmu.ppu.oam);
+                if iteration % 31 == 0 {
+                    assert_eq!(
+                        actual.capture_boot_handoff_snapshot(),
+                        expected.capture_boot_handoff_snapshot()
+                    );
+                    assert_eq!(actual.mmu.ppu.framebuffer(), expected.mmu.ppu.framebuffer());
+                }
+                loop {
+                    let sample = audio.pop_stereo();
+                    assert_eq!(sample, reference_audio.pop_stereo());
+                    if sample.is_none() {
+                        break;
+                    }
+                }
+                actual.mmu.ppu.clear_frame_flag();
+                expected.mmu.ppu.clear_frame_flag();
+            }
+        }
+    }
+}

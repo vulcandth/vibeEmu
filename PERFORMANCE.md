@@ -527,7 +527,7 @@ python3 scripts/benchmark_pgo.py polishedcrystal-debug-3.2.3.gbc \
   --training-frames 600 --warmup 300 --frames 1800 --runs 5
 ```
 
-On the final source, five paired runs per workload measured:
+On the `e78952a` source from the APU pass, five paired runs per workload measured:
 
 | Workload | Without PGO | With PGO | Additional speedup |
 | --- | ---: | ---: | ---: |
@@ -548,6 +548,123 @@ after source/compiler changes; use a representative gameplay corpus and validate
 the actual target/frontend build before adopting PGO there. No speedup from this
 experiment is assumed in the 3DS budget below.
 
+## PPU scheduling and decoded tile rows
+
+Baseline for this pass: `e78952a`, preserved as `/tmp/vibe-core-pass5-nextbase`.
+A new 6,000/300-frame Polished Crystal sampling run attributed 11.0% of samples
+to PPU stepping, 9.4% to the two static CGB tile-span renderers, 4.1% to OAM
+scanning, and 4.0% to scanline dispatch. CPU tick orchestration accounted for
+9.5%, and instruction execution for 8.6%. These are exclusive symbol shares,
+including inlined work, rather than complete subsystem totals.
+
+The implementation addresses three PPU costs together:
+
+- **Defer native CGB PPU clocks across ordinary instructions.** The MMU caches
+  the PPU's existing conservative deadline and accumulates clocks only strictly
+  before the next event. It synchronizes before VRAM/OAM/register accesses,
+  CPU OAM-corruption operations, DMA, speed-switch stalls, HALT batching, and
+  return from the bounded runner. The original CPU tick still executes each
+  mode transition, STAT/VBlank interrupt, and HBlank DMA boundary. Mutable VRAM,
+  OAM, and PPU APIs remain usable outside the bounded scope, where all state is
+  synchronized. DMG and CGB compatibility mode retain eager PPU stepping: their
+  dot FIFO provides too few skippable intervals to justify the extra deadline
+  maintenance. No rendering or frame delivery is skipped.
+- **Reuse decoded CGB tile rows by content.** A 64-entry, 2,816-byte cache stores
+  eight resolved pixels and their color-zero flags. Each tag includes both
+  fetched bitplanes, palette number, and horizontal flip. Lookup compares the
+  entire tag; hash collisions cause misses and cannot produce a false hit.
+  Palette-table refreshes invalidate the cache. VRAM banks, vertical flip,
+  signed addressing, and blocked rendering are resolved before lookup, so
+  direct writes to public VRAM arrays remain coherent without write tracking.
+  Tile priority stays separate and is applied on every draw. Full tile rows
+  use fixed-size copies; clipped BG/window edges use the appropriate slices.
+  Lines with mid-line register changes retain the existing fetcher fallback.
+- **Process complete OAM scan pairs together.** Where both phases occur without
+  an intervening observer or DMG DMA contention, select the sprite and update
+  scan/bus state once per pair. Odd boundaries and contention retain the old
+  per-dot loop. The ten-sprite limit and the final bus state still apply after
+  the selected-sprite list fills.
+
+This follows the interaction-bounded batching principle described by
+[mGBA](https://mgba.io/2017/04/30/emulation-accuracy/) and the lazy-peripheral
+approach in [GameRoy](https://rodrigodd.github.io/2023/09/02/gameroy-jit.html).
+The access barriers are essential because VRAM/OAM availability changes with
+PPU mode, and DMA can alter the PPU's OAM input while drawing; see
+[Pan Docs on video-memory access](https://github.com/gbdev/pandocs/blob/master/src/Accessing_VRAM_and_OAM.md)
+and [OAM DMA](https://github.com/gbdev/pandocs/blob/master/src/OAM_DMA_Transfer.md).
+The cache and scan-pair implementation were derived from vibeEmu's existing
+renderer/state machine; no external emulator code was copied.
+
+Scheduling alone improved the introductory Polished Crystal workload by only
+about 3% in an initial three-run comparison, because earlier work already
+batched its long HALTs. Combining scheduling with row reuse and scan pairs
+addresses work that remains during those HALTs too. An initial all-model
+scheduler also regressed DMG acid2 by about 3%; the final implementation retains
+eager stepping for DMG and compatibility mode.
+
+New validation includes 27,500 whole-machine observation boundaries across DMG
+revisions 0/B and CGB revisions 0/C/E, both CGB speeds, and compatibility mode.
+The reference executes individual instructions. Comparisons cover CPU and timer
+state, dot clocks, interrupts, PPU mode/clocks, VRAM/OAM, memory snapshots,
+framebuffers, and every produced stereo sample. The synthetic program combines
+video-memory accesses, OAM-corruption instructions, LY/STAT polling, palette and
+scroll writes, timer interrupts, pending register writes, LCD power changes,
+OAM DMA, GDMA, and HBlank DMA.
+
+Two new PPU differential tests compare 2,048 changing rendering configurations
+with the original pixel fetcher and 2,048 OAM scan scenarios with the original
+dot loop, including odd phases, sprite-height changes, list saturation, and DMA
+contention. The existing 524,288-configuration static-span test also passes.
+These checks establish equivalence to the reference implementation for covered
+states, not perfect hardware accuracy. No unsafe code or dependencies were added.
+
+Final paired medians versus `e78952a`, five alternating runs per binary:
+
+| Workload | Measured / warmup frames | Before | After | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 1,800 / 300 | 1.145188 s | 1.037419 s | 1.104× |
+| Polished Crystal, silent | 1,800 / 300 | 0.853975 s | 0.735848 s | 1.161× |
+| DMG acid2, audio output enabled | 600 / 120 | 0.714892 s | 0.710895 s | 1.006× |
+| Blargg CPU instructions, CGB, audio output enabled | 600 / 120 | 0.629614 s | 0.503413 s | 1.251× |
+| CGB acid2, audio output enabled | 600 / 120 | 0.174269 s | 0.150844 s | 1.155× |
+| CGB wave test, audio output enabled | 600 / 120 | 0.306229 s | 0.234000 s | 1.309× |
+
+Every run matched video/audio hashes, sample and dot counts, and final PC.
+Polished Crystal with audio uses **9.41% less execution time**; silent execution
+uses 13.83% less. The CPU and wave workloads benefit more from batching ordinary
+instructions. DMG acid2 is effectively unchanged: its 0.56% time reduction is
+too small for a strong performance conclusion. Row reuse and the balance of running/HALT time
+make results workload-dependent; these are introductory/test-ROM sequences,
+not broad gameplay coverage.
+
+A separate five-run comparison with original `83f3465` measured 4.554074 s versus
+1.017922 s: **4.474× cumulative throughput, or 77.65% less execution time**,
+with every output signature matching. All measurements use the normal Cargo
+release configuration, without PGO.
+
+The 600/120-frame counter workload retires **3,847,687,098 instructions** and
+**756,900,492 branches**, reductions of 9.76% and 8.07% from `e78952a`.
+Instruction count is 79.83% lower than the original baseline. Executable text
+increased from 592,044 to 592,748 bytes (704 bytes, 0.12%). The row cache adds
+2.75 KiB per PPU instance; no per-frame allocation is introduced.
+
+The final 6,000/300-frame profile attributes 13.5% to the APU scheduler, 11.1%
+to CPU ticks, 8.4% to instruction execution, 7.9% to PPU stepping, 4.8% combined
+to static CGB span rendering, 4.4% to scanline dispatch, 2.8% to PPU deadline
+prediction, and 2.6% to OAM scanning. The new cache's miss decoder accounts for
+0.8%. Symbol percentages remain a guide rather than precise subsystem totals. A separate 2,400/120-frame DMG acid2 profile
+attributes 55.6% to PPU stepping and 4.5% to static DMG tile spans, showing why
+native CGB optimizations are not enough to address the DMG FIFO's cost.
+
+Validation:
+
+- `cargo fmt --all`: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- `cargo test`: **578 passed**, 33 existing ignored tests.
+- `cargo test --release`: **574 passed**, 33 existing ignored tests.
+- `cargo check -p vibe-emu-core --all-features`: passed.
+- Gambatte was not run; it remains informational.
+
 ## Rough 3DS budget without hardware testing
 
 Use instruction counts as a work proxy, not desktop FPS scaled by clock speed.
@@ -559,8 +676,8 @@ must enable the appropriate speed/cache mode through
 [libctru's `osSetSpeedupEnable`](https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/os.h).
 
 The counter workload advances `(600 + 120) × 70,224 / 4,194,304 = 12.05475`
-emulated seconds. Its 4.264 billion x86-64 instructions correspond to
-**0.354 billion host instructions per emulated second**, or 5.922 million
+emulated seconds. Its 3.848 billion x86-64 instructions correspond to
+**0.319 billion host instructions per emulated second**, or 5.344 million
 per benchmark frame. This includes startup, warmup, checksumming, and queue
 draining; it is a conservative process-level proxy rather than an isolated
 count of core instructions. It still represents an introductory ROM sequence,
@@ -585,51 +702,55 @@ equal cycle costs across these architectures.
 
 | Scenario | ARM/x86 instruction ratio | ARM CPI | Core CPU budget | Old 3DS remaining speedup | New 3DS remaining speedup |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Optimistic | 1.0 | 1.0 | 90% | 1.47× | 0.49× |
-| Working planning assumption | 1.5 | 1.5 | 80% | 3.71× | 1.24× |
-| More costly ARM execution | 2.0 | 2.0 | 75% | 7.04× | 2.35× |
+| Optimistic | 1.0 | 1.0 | 90% | 1.32× | 0.44× |
+| Working planning assumption | 1.5 | 1.5 | 80% | 3.35× | 1.12× |
+| More costly ARM execution | 2.0 | 2.0 | 75% | 6.35× | 2.12× |
 
-A 1.24× requirement means roughly 81% of real time under that scenario; the old
-3DS estimate is about 27%. A value below 1 in the optimistic scenario means
+A 1.12× requirement means roughly 90% of real time under that scenario; the old
+3DS estimate is about 30%. A value below 1 in the optimistic scenario means
 headroom under that assumption, not a measured result. The working interpretation
-is **another ~1.24× improvement for New 3DS and ~3.7× for old 3DS**, reduced from
-1.65× and 4.94× before this pass. These remain development budgets, not a claim
+is **another ~1.12× improvement for New 3DS and ~3.35× for old 3DS**, reduced from
+1.24× and 3.71× before the PPU pass. These remain development budgets, not a claim
 that either machine has achieved those speeds. The optional PGO experiment is
 not credited in this calculation.
 
-This workload is now below the earlier provisional hardware-testing trigger
+This workload remains below the earlier provisional hardware-testing trigger
 of **0.43 billion host instructions per emulated second** (about 7.2 million per
 frame), corresponding to a working New 3DS requirement within 1.5× of full speed.
 Hardware testing remains deferred as requested. The more useful next estimate
 improvement is an ARM build and assembly analysis, plus broader gameplay traces.
-A 1.0× working budget is ~0.286 billion instructions/s, about 19% fewer than the
+A 1.0× working budget is ~0.286 billion instructions/s, about 10.4% fewer than the
 current count. Only the x86-64 Rust target is installed in this environment;
 no ARM binary or physical console was measured in this pass.
 
 ## Research and next opportunities
 
-The largest remaining structural opportunity is to make PPU/device work scale
-with interactions during ordinary CPU execution, as the APU now does. The
-fresh profile gives PPU stepping, CGB span rendering, OAM scanning, and scanline
-dispatch a substantial combined share. A wider scheduler would need precise
-interrupt/STAT and DMA deadlines, VRAM/OAM access synchronization, sprite-latch
-ordering, and fallbacks for mid-line writes. Reusing HALT's no-memory-access
-assumptions during running instructions would be incorrect. Investigate this
-before committing to a CPU JIT: instruction execution still accounts for only
-8.3% of the final Polished Crystal profile.
+The latest profile separates two priorities:
 
-The remaining APU scheduler work also merits investigation: cache or maintain
-sample/DIV observation deadlines incrementally, avoiding repeated variable
-integer division on ARM11. Waveform/trigger events and rate changes must
-invalidate the right deadlines. Retain the exact sample/pipeline differential
-checks and measure the extra state/cache cost before adopting this.
+1. **CGB: reduce peripheral clock updates and remaining APU work.**
+   Polished Crystal still spends 13.5% of samples in the APU scheduler and
+   11.1% in CPU tick orchestration. Investigate combining timer/RTC and other
+   peripheral advances across ordinary instructions, stopping before interrupt
+   deadlines and synchronizing on relevant bus accesses. The current PPU/APU
+   scopes provide part of this foundation, but timer overflow/reload collisions,
+   serial transfers, and DMA must retain their timing. Incremental sample/DIV
+   deadlines could also remove repeated arithmetic from the APU loop. Measure
+   those changes before broadening dispatch or adding a CPU JIT; instruction
+   execution itself still accounts for only 8.4% of this profile.
+2. **DMG: specialize the stable mode-3 FIFO path.** DMG acid2 spends 55.6% of
+   samples in PPU stepping. The CGB row cache cannot remove that work. Deferred
+   stepping regressed this workload before the mode-specific fallback. Investigate
+   advancing stable FIFO/fetcher phases between pixel, sprite, window, register,
+   and interrupt observations, with the original dot loop retained for quirks.
+   This needs its own differential timing tests, not only screenshot checks.
 
 Before architecture-specific changes, build for ARM and inspect division,
 64-bit arithmetic, spills, and instruction-cache footprint. Rust documents the
 [`armv6k-nintendo-3ds` target and devkitARM/build-std requirements](https://doc.rust-lang.org/rustc/platform-support/armv6k-nintendo-3ds.html).
 This can sharpen the current instruction-expansion assumptions without hardware
 access. Broaden deterministic gameplay workloads before selecting training
-profiles or claiming general 3DS readiness.
+profiles or claiming general 3DS readiness. The PGO measurements above apply
+to `e78952a`; regenerate profiles before evaluating this source revision.
 
 Avoid large tables or aggressive inlining without measuring their cache cost.
 For example, an earlier branch avoiding division on single waveform edges

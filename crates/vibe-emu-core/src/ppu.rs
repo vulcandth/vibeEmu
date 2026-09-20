@@ -372,6 +372,25 @@ const DMG_BOOT_LOGO_MAP_9910: usize = 0x1910;
 const DMG_BOOT_LOGO_MAP_992F: usize = 0x192F;
 const DMG_BOOT_TRADEMARK_BYTES: [u8; 8] = [0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C];
 
+// Content-addressed rows remain coherent even when a caller changes public
+// VRAM directly. The complete tag is compared; hash collisions only cause misses.
+const CGB_ROW_CACHE_LEN: usize = 64;
+
+#[derive(Clone, Copy)]
+struct CgbDecodedRow {
+    key: u32,
+    pixels: [u32; 8],
+    color_zero: [bool; 8],
+}
+
+impl CgbDecodedRow {
+    const EMPTY: Self = Self {
+        key: u32::MAX,
+        pixels: [0; 8],
+        color_zero: [false; 8],
+    };
+}
+
 /// Pixel Processing Unit emulating the Game Boy / Game Boy Color display hardware.
 pub struct Ppu {
     /// Two VRAM banks (bank 1 is CGB-only).
@@ -413,6 +432,7 @@ pub struct Ppu {
     obpi: u8,
     obpd: [u8; PAL_RAM_SIZE],
     cgb_bg_color_table: [u32; 32],
+    cgb_row_cache: [CgbDecodedRow; CGB_ROW_CACHE_LEN],
     cgb_obj_color_table: [u32; 32],
     dmg_bg_color_table: [u32; 1024],
     dmg_obj_color_table: [[u32; 4]; 2],
@@ -1370,6 +1390,7 @@ impl Ppu {
             obpi: PAL_UNUSED_BIT,
             obpd: [0; PAL_RAM_SIZE],
             cgb_bg_color_table: [0; 32],
+            cgb_row_cache: [CgbDecodedRow::EMPTY; CGB_ROW_CACHE_LEN],
             cgb_obj_color_table: [0; 32],
             dmg_bg_color_table: [0; 1024],
             dmg_obj_color_table: [[0; 4]; 2],
@@ -1465,6 +1486,9 @@ impl Ppu {
     }
 
     fn refresh_cgb_bg_color_table(&mut self) {
+        for entry in &mut self.cgb_row_cache {
+            entry.key = u32::MAX;
+        }
         for palette in 0..8 {
             for color_id in 0..4 {
                 let ram_off = palette * 8 + color_id * 2;
@@ -1658,7 +1682,7 @@ impl Ppu {
     }
 
     #[inline]
-    fn is_cgb_native_mode(&self) -> bool {
+    pub(crate) fn is_cgb_native_mode(&self) -> bool {
         self.cgb() && !self.dmg_compat
     }
 
@@ -3962,6 +3986,53 @@ impl Ppu {
 
     fn oam_scan_advance(&mut self) {
         let limit = self.mode_clock.min(MODE2_CYCLES);
+        if self.oam_scan_phase == 0 && !self.dmg_oam_dma_contention_active() {
+            let height: i16 = if self.lcdc & 0x04 != 0 { 16 } else { 8 };
+            // A complete Y/X scan pair has no intervening observer. Odd dots
+            // and DMA contention retain the original phase-by-phase path.
+            while self.oam_scan_dot + 1 < limit && self.oam_scan_index < TOTAL_SPRITES {
+                let base = self.oam_scan_index * 4;
+                self.mode2_y_bus = self.oam[base];
+                self.mode2_x_bus = self.oam[base + 1];
+                let y = i16::from(self.mode2_y_bus) - 16;
+                self.oam_scan_entry_y = y;
+                self.oam_scan_entry_visible =
+                    i16::from(self.ly) >= y && i16::from(self.ly) < y + height;
+                if self.oam_scan_entry_visible && self.sprite_count < MAX_SPRITES_PER_LINE {
+                    self.append_scanned_sprite(i16::from(self.mode2_x_bus) - 8);
+                }
+                self.oam_scan_index += 1;
+                self.oam_scan_dot += 2;
+            }
+        }
+        if self.oam_scan_dot < limit {
+            self.oam_scan_advance_dots();
+        }
+    }
+
+    #[inline]
+    fn append_scanned_sprite(&mut self, x: i16) {
+        self.line_sprites[self.sprite_count] = Sprite {
+            x,
+            y: self.oam_scan_entry_y,
+            tile: 0,
+            flags: 0,
+            oam_index: self.oam_scan_index,
+            fetched: false,
+            obj_row_addr: 0,
+            obj_row_valid: false,
+            obj_size16_low: false,
+            obj_lo: 0,
+            obj_hi: 0,
+            obj_data_valid: false,
+            fetch_t: 0,
+            fetch_t_valid: false,
+        };
+        self.sprite_count += 1;
+    }
+
+    fn oam_scan_advance_dots(&mut self) {
+        let limit = self.mode_clock.min(MODE2_CYCLES);
         let sprite_height: i16 = if self.lcdc & 0x04 != 0 { 16 } else { 8 };
 
         while self.oam_scan_dot < limit && self.oam_scan_index < TOTAL_SPRITES {
@@ -3981,23 +4052,7 @@ impl Ppu {
                 _ => {
                     let x = self.mode2_x_bus as i16 - 8;
                     if self.oam_scan_entry_visible && self.sprite_count < MAX_SPRITES_PER_LINE {
-                        self.line_sprites[self.sprite_count] = Sprite {
-                            x,
-                            y: self.oam_scan_entry_y,
-                            tile: 0,
-                            flags: 0,
-                            oam_index: self.oam_scan_index,
-                            fetched: false,
-                            obj_row_addr: 0,
-                            obj_row_valid: false,
-                            obj_size16_low: false,
-                            obj_lo: 0,
-                            obj_hi: 0,
-                            obj_data_valid: false,
-                            fetch_t: 0,
-                            fetch_t_valid: false,
-                        };
-                        self.sprite_count += 1;
+                        self.append_scanned_sprite(x);
                     }
                     self.oam_scan_index += 1;
                     self.oam_scan_phase = 0;
@@ -7917,25 +7972,52 @@ impl Ppu {
                 Self::bg_tile_row_plane_addr(tile, tile_y, self.mode3_lcdc_base & 0x10 != 0, false);
             let lo = self.vram_read_for_render(bank, addr);
             let hi = self.vram_read_for_render(bank, addr + 1);
-            let palette = usize::from(attr & 7) * 4;
+            let key = u32::from(lo)
+                | (u32::from(hi) << 8)
+                | (u32::from(attr & 7) << 16)
+                | (u32::from(attr & 0x20) << 14);
+            let slot = ((key ^ (key >> 6) ^ (key >> 12)) as usize) & (CGB_ROW_CACHE_LEN - 1);
+            if self.cgb_row_cache[slot].key != key {
+                self.decode_cgb_cached_row(slot, key);
+            }
+            let row = &self.cgb_row_cache[slot];
             let run = (8 - tile_x).min(screen.end - x);
-            for offset in 0..run {
-                let bit = if attr & 0x20 != 0 {
-                    tile_x + offset
-                } else {
-                    7 - tile_x - offset
-                };
-                let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                self.framebuffer[row_base + x + offset] =
-                    self.cgb_bg_color_table[palette + usize::from(color_id)];
+            if run == 8 {
+                // Constant-size copies let the compiler avoid a memcpy call
+                // for the overwhelmingly common complete tile row.
+                self.framebuffer[row_base + x..row_base + x + 8].copy_from_slice(&row.pixels);
                 if TRACK_PRIORITY {
-                    self.line_priority[x + offset] = attr & 0x80 != 0;
-                    self.line_color_zero[x + offset] = color_id == 0;
+                    self.line_priority[x..x + 8].fill(attr & 0x80 != 0);
+                    self.line_color_zero[x..x + 8].copy_from_slice(&row.color_zero);
+                }
+            } else {
+                self.framebuffer[row_base + x..row_base + x + run]
+                    .copy_from_slice(&row.pixels[tile_x..tile_x + run]);
+                if TRACK_PRIORITY {
+                    self.line_priority[x..x + run].fill(attr & 0x80 != 0);
+                    self.line_color_zero[x..x + run]
+                        .copy_from_slice(&row.color_zero[tile_x..tile_x + run]);
                 }
             }
             source_x = source_x.wrapping_add(run as u8);
             x += run;
         }
+    }
+
+    #[inline(never)]
+    fn decode_cgb_cached_row(&mut self, slot: usize, key: u32) {
+        let lo = key as u8;
+        let hi = (key >> 8) as u8;
+        let palette = ((key >> 16) & 7) as usize * 4;
+        let flipped = key & (1 << 19) != 0;
+        let row = &mut self.cgb_row_cache[slot];
+        for x in 0..8 {
+            let bit = if flipped { x } else { 7 - x };
+            let color = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+            row.pixels[x] = self.cgb_bg_color_table[palette + usize::from(color)];
+            row.color_zero[x] = color == 0;
+        }
+        row.key = key;
     }
 
     fn render_cgb_bg_window_scanline_fetcher(&mut self) {
@@ -8380,6 +8462,131 @@ impl Default for Ppu {
 #[cfg(test)]
 mod mode3_timing_tests {
     use super::*;
+
+    #[test]
+    fn cached_rows_follow_palette_and_direct_vram_changes() {
+        let mut actual = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        let mut reference = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        for iteration in 0..2048usize {
+            for ppu in [&mut actual, &mut reference] {
+                ppu.lcdc = 0xf3;
+                ppu.mode3_lcdc_base = 0xf3;
+                ppu.ly = (iteration % 144) as u8;
+                ppu.scx = iteration as u8;
+                ppu.scy = (iteration >> 3) as u8;
+                ppu.wx = (iteration % 168) as u8;
+                ppu.wy = 0;
+                ppu.win_line_counter = (iteration >> 1) as u8;
+                ppu.sprite_count = iteration % 2;
+                ppu.line_sprites[0].x = 40;
+                ppu.render_vram_blocked = iteration % 17 == 0;
+                // Direct writes deliberately bypass any dirty-address tracking.
+                // Repeated plane patterns exercise cache hits; palette updates
+                // and colliding tags must never retain old pixels or zero flags.
+                for (i, byte) in ppu.vram.iter_mut().flatten().enumerate() {
+                    *byte = (i as u8)
+                        .wrapping_mul(13)
+                        .wrapping_add((iteration / 8) as u8);
+                }
+                if iteration % 5 == 0 {
+                    ppu.write_reg(0xff68, 0x80 | (iteration as u8 & 0x3f));
+                    ppu.write_reg(0xff69, iteration as u8);
+                    ppu.write_reg(0xff69, (iteration >> 3) as u8);
+                }
+            }
+            actual.render_cgb_bg_window_scanline_with_mode3_lcdc();
+            reference.render_cgb_bg_window_scanline_fetcher();
+            assert_eq!(
+                actual.framebuffer, reference.framebuffer,
+                "iteration={iteration}"
+            );
+            assert_eq!(actual.line_color_zero, reference.line_color_zero);
+            assert_eq!(actual.line_priority, reference.line_priority);
+            assert_eq!(actual.cgb_line_obj_enabled, reference.cgb_line_obj_enabled);
+            assert_eq!(actual.win_line_counter, reference.win_line_counter);
+        }
+    }
+
+    #[test]
+    fn paired_oam_scan_matches_dot_phases() {
+        for model in [
+            Model::Dmg(DmgRevision::Rev0),
+            Model::default(),
+            Model::Cgb(CgbRevision::RevC),
+            Model::Cgb(CgbRevision::RevE),
+        ] {
+            for seed in 0..512usize {
+                let make = || {
+                    let mut ppu = Ppu::new(model);
+                    ppu.ly = (seed % 154) as u8;
+                    ppu.lcdc = 0x80 | (seed as u8 & 4);
+                    for (i, byte) in ppu.oam.iter_mut().enumerate() {
+                        *byte = (i as u8).wrapping_mul(29).wrapping_add(seed as u8);
+                    }
+                    if seed % 4 == 0 {
+                        // Saturate the ten-OBJ limit while retaining the final
+                        // bus/scan state for the remaining invisible selections.
+                        for sprite in ppu.oam.chunks_exact_mut(4) {
+                            sprite[0] = ppu.ly + 16;
+                        }
+                    }
+                    ppu
+                };
+                let mut actual = make();
+                let mut reference = make();
+                let mut clock = 0;
+                let mut iteration = 0;
+                while clock < 80 {
+                    clock = (clock + [1, 2, 4, 7, 16, 33][(iteration + seed) % 6]).min(80);
+                    for ppu in [&mut actual, &mut reference] {
+                        ppu.mode_clock = clock;
+                        ppu.oam_dma_current_dest = if (iteration + seed) % 7 == 0 {
+                            (clock % 160 + 1) as u8
+                        } else {
+                            0xa1
+                        };
+                        if (iteration + seed) % 3 == 0 {
+                            ppu.lcdc ^= 4;
+                        }
+                        ppu.oam[iteration % OAM_SIZE] = iteration as u8;
+                    }
+                    actual.oam_scan_advance();
+                    reference.oam_scan_advance_dots();
+                    assert_eq!(
+                        (
+                            actual.oam_scan_dot,
+                            actual.oam_scan_index,
+                            actual.oam_scan_phase
+                        ),
+                        (
+                            reference.oam_scan_dot,
+                            reference.oam_scan_index,
+                            reference.oam_scan_phase
+                        )
+                    );
+                    assert_eq!(
+                        (
+                            actual.mode2_y_bus,
+                            actual.mode2_x_bus,
+                            actual.oam_scan_entry_y,
+                            actual.oam_scan_entry_visible
+                        ),
+                        (
+                            reference.mode2_y_bus,
+                            reference.mode2_x_bus,
+                            reference.oam_scan_entry_y,
+                            reference.oam_scan_entry_visible
+                        )
+                    );
+                    assert_eq!(actual.sprite_count, reference.sprite_count);
+                    for (a, b) in actual.line_sprites.iter().zip(&reference.line_sprites) {
+                        assert_eq!((a.x, a.y, a.oam_index), (b.x, b.y, b.oam_index));
+                    }
+                    iteration += 1;
+                }
+            }
+        }
+    }
 
     #[test]
     fn cgb_static_spans_match_dot_fetcher() {
