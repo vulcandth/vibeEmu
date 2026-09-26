@@ -937,6 +937,7 @@ impl Cpu {
                     mmu.key1 &= !0x01;
                     mmu.key1 ^= 0x80;
                     self.double_speed = mmu.key1 & 0x80 != 0;
+                    mmu.apu.on_speed_switch(self.double_speed);
                     self.speed_switch_stall(mmu);
                 } else {
                     let _ = self.fetch8(mmu);

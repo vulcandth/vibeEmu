@@ -4118,6 +4118,12 @@ impl Ppu {
             // Fine-scroll pixels are discarded before visible output. OBJ
             // fetches then wait for the BG fetch phase and take six dots.
             let mut cycles = MODE3_CYCLES + u16::from(self.scx & 7);
+            if self.lcdc & 0x20 != 0 && self.ly >= self.wy && self.wx <= WINDOW_X_MAX {
+                // Restarting the BG fetcher for the window costs six dots.
+                // At WX=0, a nonzero fine scroll adds one alignment dot
+                // (AGE stat-mode-window, in both CPU speed modes).
+                cycles += 6 + u16::from(self.wx == 0 && self.scx & 7 != 0);
+            }
             if (self.lcdc & 0x02) != 0 {
                 let mut positions = [0i16; MAX_SPRITES_PER_LINE];
                 let mut count = 0;
@@ -8437,7 +8443,10 @@ impl Ppu {
                         && self.stat & 0x20 != 0)
             }
             MODE_VBLANK => self.stat & 0x10 != 0,
-            MODE_OAM => self.stat & 0x20 != 0,
+            // The mode-2 source is an entry pulse, not a level lasting
+            // through OAM scan. Enabling it halfway through mode 2 must
+            // wait for the next scanline (AGE stat-int).
+            MODE_OAM => self.mode_clock == 0 && self.stat & 0x20 != 0,
             _ => false,
         };
         let glitch_pending = if self.is_cgb_native_mode() {
@@ -8451,7 +8460,7 @@ impl Ppu {
         if (current && !self.stat_irq_line) || glitch {
             *if_reg |= 0x02;
         }
-        self.stat_irq_line = current || glitch;
+        self.stat_irq_line = (current && self.mode != MODE_OAM) || coincidence || glitch;
         self.stat_irq_dirty = false;
     }
 }

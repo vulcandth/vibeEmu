@@ -1,4 +1,4 @@
-# AGE: 48 passing and 71 known failures across 119 ROM/revision cases.
+# AGE: 60 passing and 59 known failures across 119 ROM/revision cases.
 # Baseline before core fixes: 4 passing and 115 failing.
 # Recheck with: cargo test -p vibe-emu-core --test age -- --ignored
 
@@ -50,21 +50,15 @@ oam/oam-write-ncmBCE.gb::ncmB
 oam/oam-write-ncmBCE.gb::ncmC
 oam/oam-write-ncmBCE.gb::ncmE
 
-# Remaining APU length-counter, mode 0, and interrupt-aborted speed-switch timing.
+# Remaining mode 0 and interrupt-aborted speed-switch timing.
 speed-switch/caution/spsw-interrupts-cgbBC.gb::cgbB
 speed-switch/caution/spsw-interrupts-cgbBC.gb::cgbC
 speed-switch/caution/spsw-interrupts-cgbE.gb::cgbE
-speed-switch/spsw-ch2-lc-delay-cgbBCE.gb::cgbB
-speed-switch/spsw-ch2-lc-delay-cgbBCE.gb::cgbC
-speed-switch/spsw-ch2-lc-delay-cgbBCE.gb::cgbE
 speed-switch/spsw-mode0-cgbBCE.gb::cgbB
 speed-switch/spsw-mode0-cgbBCE.gb::cgbC
 speed-switch/spsw-mode0-cgbBCE.gb::cgbE
 
 # stat-interrupt: PPU access, interrupt, or rendering timing still differs from hardware.
-stat-interrupt/stat-int-dmgC-cgbBCE.gb::cgbB
-stat-interrupt/stat-int-dmgC-cgbBCE.gb::cgbC
-stat-interrupt/stat-int-dmgC-cgbBCE.gb::cgbE
 stat-interrupt/stat-int-dmgC-cgbBCE.gb::dmgC
 stat-interrupt/stat-int-ncmBCE.gb::ncmB
 stat-interrupt/stat-int-ncmBCE.gb::ncmC
@@ -74,13 +68,7 @@ stat-interrupt/stat-int-ncmBCE.gb::ncmE
 stat-mode-sprites/stat-mode-sprites-dmgC-cgbBCE.gb::dmgC
 
 # stat-mode-window: PPU access, interrupt, or rendering timing still differs from hardware.
-stat-mode-window/stat-mode-window-cgbBCE.gb::cgbB
-stat-mode-window/stat-mode-window-cgbBCE.gb::cgbC
-stat-mode-window/stat-mode-window-cgbBCE.gb::cgbE
 stat-mode-window/stat-mode-window-dmgC.gb::dmgC
-stat-mode-window/stat-mode-window-ds-cgbBCE.gb::cgbB
-stat-mode-window/stat-mode-window-ds-cgbBCE.gb::cgbC
-stat-mode-window/stat-mode-window-ds-cgbBCE.gb::cgbE
 stat-mode-window/stat-mode-window-ncmBCE.gb::ncmB
 stat-mode-window/stat-mode-window-ncmBCE.gb::ncmC
 stat-mode-window/stat-mode-window-ncmBCE.gb::ncmE

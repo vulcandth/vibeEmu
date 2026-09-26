@@ -1576,7 +1576,11 @@ impl Mmu {
         }
 
         let double_speed = self.key1 & 0x80 != 0;
-        self.apu.on_div_reset(prev_div, double_speed);
+        if speed_switch {
+            self.apu.on_speed_switch_div_reset(prev_div, double_speed);
+        } else {
+            self.apu.on_div_reset(prev_div, double_speed);
+        }
     }
 
     fn tick(&mut self, m_cycles: u32) {

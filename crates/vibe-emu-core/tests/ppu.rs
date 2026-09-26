@@ -4,6 +4,65 @@ use vibe_emu_core::{
 };
 
 #[test]
+fn mode2_interrupt_is_an_entry_pulse_not_the_entire_oam_scan() {
+    for model in [Model::default(), Model::Cgb(CgbRevision::RevE)] {
+        let mut ppu = Ppu::new(model);
+        ppu.write_reg(0xFF40, 0);
+        ppu.write_reg(0xFF40, 0x91);
+        ppu.skip_startup_for_test();
+        let mut interrupts = 0;
+        ppu.step(20, &mut interrupts);
+        ppu.write_reg(0xFF41, 0x20);
+        ppu.step(1, &mut interrupts);
+        assert_eq!(
+            interrupts & 2,
+            0,
+            "enabling mid-scan waits for the next line"
+        );
+        ppu.step(435, &mut interrupts);
+        assert_eq!(interrupts & 2, 2);
+        assert_eq!((ppu.ly(), ppu.mode()), (1, 2));
+        interrupts = 0;
+        ppu.step(20, &mut interrupts);
+        ppu.write_reg(0xFF45, 1);
+        ppu.write_reg(0xFF41, 0x60);
+        ppu.step(1, &mut interrupts);
+        assert_eq!(
+            interrupts & 2,
+            2,
+            "the expired pulse cannot block a LYC edge"
+        );
+    }
+}
+
+#[test]
+fn native_window_fetch_delays_hblank_at_both_screen_edges() {
+    // Transfer lengths derived from AGE's normal/double-speed STAT samples.
+    for (wx, scx, length) in [
+        (0, 0, 178),
+        (0, 3, 182),
+        (7, 3, 181),
+        (166, 3, 181),
+        (167, 3, 175),
+    ] {
+        let mut ppu = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        ppu.write_reg(0xFF40, 0);
+        ppu.write_reg(0xFF43, scx);
+        ppu.write_reg(0xFF4A, 0);
+        ppu.write_reg(0xFF4B, wx);
+        ppu.write_reg(0xFF40, 0xB1);
+        ppu.skip_startup_for_test();
+        let mut interrupts = 0;
+        ppu.step(80 + length - 1, &mut interrupts);
+        assert_eq!(ppu.mode(), 3, "WX={wx}, SCX={scx}");
+        ppu.step(1, &mut interrupts);
+        assert_eq!(ppu.mode(), 0, "WX={wx}, SCX={scx}");
+        ppu.step(456 - 80 - length, &mut interrupts);
+        assert_eq!((ppu.ly(), ppu.mode()), (1, 2));
+    }
+}
+
+#[test]
 fn cgb_lyc_interrupt_precedes_the_physical_scanline_transition() {
     for revision in [CgbRevision::RevB, CgbRevision::RevC, CgbRevision::RevE] {
         for bulk in [false, true] {

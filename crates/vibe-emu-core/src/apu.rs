@@ -978,6 +978,10 @@ pub struct Apu {
     ch4_env_clock: EnvelopeClock,
     // Divider used for envelope countdown scheduling
     div_divider: u32,
+    // Powered-on speed switches alternate the double-speed frame-sequencer
+    // phase. A delayed falling edge arrives one CPU M-cycle later.
+    frame_seq_ds_delay: bool,
+    frame_seq_pending_clocks: u8,
     ch1_env_countdown: u8,
     ch2_env_countdown: u8,
     lf_div: u8,
@@ -1461,6 +1465,8 @@ impl Apu {
         self.ch1_env_countdown = 0;
         self.ch2_env_countdown = 0;
         self.div_divider = 0;
+        self.frame_seq_ds_delay = false;
+        self.frame_seq_pending_clocks = 0;
         self.skip_div_event = SkipDivEvent::Inactive;
         self.sweep_dot_countdown = 1;
     }
@@ -1657,6 +1663,8 @@ impl Apu {
             ch2_env_clock: EnvelopeClock::default(),
             ch4_env_clock: EnvelopeClock::default(),
             div_divider: 0,
+            frame_seq_ds_delay: false,
+            frame_seq_pending_clocks: 0,
             ch1_env_countdown: 0,
             ch2_env_countdown: 0,
             skip_div_event: SkipDivEvent::Inactive,
@@ -1829,15 +1837,37 @@ impl Apu {
     ///
     /// `prev_div` is the 16-bit internal divider value before the write.
     pub fn on_div_reset(&mut self, prev_div: u16, double_speed: bool) {
+        self.on_div_reset_inner(prev_div, double_speed, false);
+    }
+
+    pub(crate) fn on_speed_switch_div_reset(&mut self, prev_div: u16, double_speed: bool) {
+        self.on_div_reset_inner(prev_div, double_speed, true);
+    }
+
+    fn on_div_reset_inner(&mut self, prev_div: u16, double_speed: bool, speed_switch: bool) {
         self.synchronize_waveforms();
         self.quiet_dots = 0;
+        if self.nr52 & 0x80 == 0 {
+            return;
+        }
         // APU frame sequencer is clocked by DIV bit 4 in single-speed and DIV
         // bit 5 in double-speed. Our `prev_div` is the internal 16-bit divider
         // (DIV register is the upper 8 bits), so these correspond to bits 12/13.
         let bit = if double_speed { 13 } else { 12 };
         let prev_bit = (prev_div >> bit) & 1;
-        if prev_bit == 1 {
+        // STOP's divider reset misses the first M-cycle after the APU
+        // divider rises. Ordinary FF04 writes still clock that edge.
+        let rising_edge = prev_div & ((1 << bit) - 1) < 4;
+        if prev_bit == 1 && !(speed_switch && rising_edge) {
             self.handle_div_event();
+        }
+        self.frame_seq_pending_clocks = 0;
+    }
+
+    pub(crate) fn on_speed_switch(&mut self, double_speed: bool) {
+        self.flush_cpu_ticks();
+        if self.nr52 & 0x80 != 0 && double_speed {
+            self.frame_seq_ds_delay = !self.frame_seq_ds_delay;
         }
     }
 
@@ -1900,6 +1930,35 @@ impl Apu {
 
         let bit = if double_speed { 13 } else { 12 };
         let toggle_span = 1u16 << bit;
+        if self.frame_seq_ds_delay && double_speed {
+            let mut div = div_prev;
+            let mut remaining = steps;
+            while remaining != 0 {
+                let to_edge = toggle_span - (div & (toggle_span - 1));
+                let pending = self.frame_seq_pending_clocks;
+                let advance = remaining.min(to_edge).min(if pending == 0 {
+                    u16::MAX
+                } else {
+                    u16::from(pending)
+                });
+                div = div.wrapping_add(advance);
+                remaining -= advance;
+                if pending != 0 {
+                    self.frame_seq_pending_clocks -= advance as u8;
+                    if self.frame_seq_pending_clocks == 0 {
+                        self.handle_div_event();
+                    }
+                }
+                if advance == to_edge {
+                    if div & toggle_span == 0 {
+                        self.frame_seq_pending_clocks = 4;
+                    } else {
+                        self.handle_div_rising_edge();
+                    }
+                }
+            }
+            return;
+        }
         if steps <= toggle_span {
             let div_now = div_prev.wrapping_add(steps);
             if ((div_prev ^ div_now) & toggle_span) == 0 {
@@ -3740,6 +3799,7 @@ impl Apu {
             && dot_cycles <= self.quiet_dots
             && dot_div_steps == dot_cycles
             && double_speed == self.double_speed
+            && self.frame_seq_pending_clocks == 0
             && cpu_div_steps <= div_span
             && (prev_cpu_div ^ prev_cpu_div.wrapping_add(cpu_div_steps)) & div_span == 0
         {
@@ -3757,6 +3817,7 @@ impl Apu {
     /// sampling and pipeline shifts to be combined across several CPU calls.
     fn halt_idle_dots(&self, cpu_div: u16, double_speed: bool) -> u16 {
         if self.double_speed != double_speed
+            || self.frame_seq_pending_clocks != 0
             || self.quiet_dots == 0
             || self.ch4.output_pipeline.0 != u32::from(self.ch4.compute_output()) * 0x01_0101
         {
@@ -3910,6 +3971,7 @@ impl Apu {
     /// crossed analytically; trigger and wave-RAM effects keep the reference path.
     fn unobserved_dots(&self, cpu_div: u16, double_speed: bool) -> u16 {
         if self.double_speed != double_speed
+            || self.frame_seq_pending_clocks != 0
             || self.mhz2_residual != 0
             || self.sweep_tick_pending()
             || self.ch1_restart_hold != 0
@@ -4451,6 +4513,73 @@ impl Default for Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn speed_switch_alternates_delayed_frame_sequencer_edges() {
+        let mut apu = Apu::new(Model::Cgb(CgbRevision::RevE));
+        apu.write_reg(0xFF26, 0);
+        apu.on_div_reset(0x1000, false);
+        assert_eq!(
+            apu.sequencer_step(),
+            0,
+            "DIV cannot clock a powered-off APU"
+        );
+        apu.write_reg(0xFF26, 0x80);
+        for delayed in [true, false, true] {
+            apu.on_speed_switch(true);
+            let before = apu.sequencer_step();
+            apu.tick_frame_sequencer_steps(0x3FFC, 4, true);
+            assert_eq!(apu.sequencer_step(), (before + u8::from(!delayed)) & 7);
+            apu.tick_frame_sequencer_steps(0x4000, 3, true);
+            assert_eq!(apu.sequencer_step(), (before + u8::from(!delayed)) & 7);
+            apu.tick_frame_sequencer_steps(0x4003, 1, true);
+            assert_eq!(apu.sequencer_step(), (before + 1) & 7);
+            apu.on_speed_switch(false);
+        }
+        apu.write_reg(0xFF26, 0);
+        apu.on_speed_switch(true);
+        apu.write_reg(0xFF26, 0x80);
+        apu.tick_frame_sequencer_steps(0x3FFC, 4, true);
+        assert_eq!(apu.sequencer_step(), 1, "power cycling clears the phase");
+    }
+
+    #[test]
+    fn stop_div_reset_omits_only_the_first_machine_cycle_of_the_high_phase() {
+        for double_speed in [false, true] {
+            let high = 1 << if double_speed { 13 } else { 12 };
+            for offset in [0, 3, 4, 8] {
+                let mut apu = Apu::new(Model::Cgb(CgbRevision::RevE));
+                apu.write_reg(0xFF26, 0);
+                apu.write_reg(0xFF26, 0x80);
+                apu.on_speed_switch_div_reset(high + offset, double_speed);
+                assert_eq!(apu.sequencer_step(), u8::from(offset >= 4));
+                apu.on_div_reset(high, double_speed);
+                assert_eq!(apu.sequencer_step(), 1 + u8::from(offset >= 4));
+            }
+        }
+    }
+
+    #[test]
+    fn cpu_batches_do_not_skip_a_pending_frame_sequencer_edge() {
+        for batched in [false, true] {
+            let mut apu = Apu::new(Model::Cgb(CgbRevision::RevE));
+            apu.write_reg(0xFF26, 0);
+            apu.write_reg(0xFF26, 0x80);
+            apu.on_speed_switch(true);
+            let mut div = 0x3FF0u16;
+            for (cycles, expected_step) in [(4, 0), (16, 1)] {
+                if batched {
+                    apu.begin_cpu_batch();
+                }
+                for _ in 0..cycles {
+                    apu.run_cpu_tick_steps(2, div, 4, div / 2, 2, true);
+                    div = div.wrapping_add(4);
+                }
+                apu.end_cpu_batch();
+                assert_eq!(apu.sequencer_step(), expected_step, "batched={batched}");
+            }
+        }
+    }
 
     #[test]
     fn noise_reciprocals_match_every_prescaler() {
