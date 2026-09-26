@@ -1,12 +1,3 @@
-# AGE: 117 passing and 2 known failures across 119 ROM/revision cases.
+# AGE: all 119 ROM/revision cases pass.
 # Baseline before core fixes: 4 passing and 115 failing.
-# Recheck with: cargo test -p vibe-emu-core --test age -- --ignored
-
-# DMG OAM writes at scan boundaries, including the LCD-off-history-sensitive
-# row documented in age-test-roms/src/oam/oam-write.inc.
-oam/oam-write-dmgC.gb::dmgC
-
-# Sub-M-cycle OBJ stalls across SCX fine-scroll phases. The DMG OBJ scheduler
-# still rounds penalties to M-cycles; changing that also requires reconciling
-# Mooneye intr_2_mode0_timing_sprites and Mealybug OBJ-enable raster timing.
-stat-mode-sprites/stat-mode-sprites-dmgC-cgbBCE.gb::dmgC
+# Add a ROM/revision case here only for a newly investigated failure.

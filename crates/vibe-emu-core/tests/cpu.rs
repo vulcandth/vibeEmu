@@ -6,6 +6,77 @@ use vibe_emu_core::{
 };
 
 #[test]
+fn halt_samples_dmg_interrupts_at_the_half_cycle() {
+    for model in [Model::default(), Model::Cgb(CgbRevision::RevE)] {
+        for irq_after in 1..=4 {
+            for ime in [false, true] {
+                let mut cpu = Cpu::new(model);
+                let mut mmu = Mmu::new_power_on(model);
+                mmu.write_byte(0xff40, 0);
+                mmu.write_byte(0xff40, 0x91);
+                mmu.write_byte(0xff41, 8); // HBlank interrupt.
+                // LCD startup: 80 dots before transfer, then 172 dots.
+                mmu.ppu.step(252 - irq_after, &mut mmu.if_reg);
+                mmu.if_reg = 0;
+                mmu.ie_reg = 2;
+                cpu.halted = true;
+                cpu.ime = ime;
+                let before = cpu.cycles;
+                cpu.step(&mut mmu);
+                let deferred = model.is_dmg() && irq_after > 2;
+                assert_eq!(cpu.halted, deferred, "{model:?}, IRQ at {irq_after}");
+                if deferred {
+                    assert_eq!(cpu.cycles - before, 4);
+                    assert_ne!(mmu.if_reg & 2, 0);
+                    cpu.step(&mut mmu);
+                    assert!(!cpu.halted);
+                }
+                if ime {
+                    assert_eq!(cpu.pc, 0x48);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn oam_hl_increment_and_decrement_writes_use_write_corruption() {
+    let mut results = Vec::new();
+    for opcode in [0x77, 0x22, 0x32] {
+        // LD [HL],A; LD [HL+],A; LD [HL-],A.
+        let mut cpu = Cpu::new(Model::default());
+        let mut mmu = Mmu::new_power_on(Model::default());
+        let mut rom = vec![0; 0x8000];
+        rom[0x100] = opcode;
+        mmu.load_cart(Cartridge::from_bytes(rom));
+        mmu.write_byte(0xff40, 0);
+        mmu.write_byte(0xff40, 0x91);
+        mmu.ppu.skip_startup_for_test();
+        for (i, byte) in mmu.ppu.oam.iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(37) ^ 0xa5;
+        }
+        mmu.ppu.step(16, &mut mmu.if_reg);
+        cpu.h = 0xfe;
+        cpu.l = 0x2e;
+        cpu.a = 0x81;
+        let original = mmu.ppu.oam;
+        cpu.step(&mut mmu);
+        assert_ne!(mmu.ppu.oam, original, "the blocked write must corrupt OAM");
+        results.push(mmu.ppu.oam);
+        assert_eq!(
+            cpu.l,
+            match opcode {
+                0x22 => 0x2f,
+                0x32 => 0x2d,
+                _ => 0x2e,
+            }
+        );
+    }
+    assert_eq!(results[0], results[1]);
+    assert_eq!(results[0], results[2]);
+}
+
+#[test]
 fn ei_halt_dispatches_without_waiting_for_a_second_interrupt() {
     for model in [Model::default(), Model::Cgb(CgbRevision::RevE)] {
         for pending in [2, 3] {

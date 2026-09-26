@@ -271,14 +271,12 @@ impl Cpu {
 
     #[inline]
     fn tick(&mut self, mmu: &mut crate::mmu::Mmu, m_cycles: u8) {
-        let dot_cycles = if self.double_speed {
-            CYCLES_PER_M_CYCLE_DOUBLE
-        } else {
-            CYCLES_PER_M_CYCLE
-        } * m_cycles as u16;
+        self.tick_clocks(mmu, CYCLES_PER_M_CYCLE * u16::from(m_cycles));
+    }
 
-        // CPU clock cycles: always 4 cycles per M-cycle regardless of CGB speed.
-        let cpu_cycles = CYCLES_PER_M_CYCLE * m_cycles as u16;
+    #[inline]
+    fn tick_clocks(&mut self, mmu: &mut crate::mmu::Mmu, cpu_cycles: u16) {
+        let dot_cycles = cpu_cycles >> u32::from(self.double_speed);
 
         self.cycles += dot_cycles as u64;
 
@@ -791,7 +789,19 @@ impl Cpu {
         }
 
         if self.halted {
-            self.tick(mmu, 1);
+            if !mmu.is_cgb() {
+                // DMG samples the HALT wake signal halfway through its idle
+                // M-cycle. An IRQ raised in the second half waits until the
+                // next cycle; CGB samples at the end of the M-cycle instead.
+                self.tick_clocks(mmu, 2);
+                let wake = mmu.if_reg & mmu.ie_reg & 0x1F != 0;
+                self.tick_clocks(mmu, 2);
+                if !wake {
+                    return;
+                }
+            } else {
+                self.tick(mmu, 1);
+            }
             // With IME off, CGB needs an extra wake-up M-cycle when an IRQ
             // releases HALT (Daid's speed_switch_timing). With IME on, the
             // interrupt dispatch below already accounts for wake-up.
@@ -1096,7 +1106,9 @@ impl Cpu {
             0x22 => {
                 let addr = self.get_hl();
                 if (0xFE00..=0xFEFF).contains(&addr) {
-                    mmu.oam_bug_next_access = Some(OamBugAccess::ReadDuringIncDec);
+                    // A write combined with IDU activity is a single write
+                    // corruption, unlike LD A,[HL+/-] read corruption.
+                    mmu.oam_bug_next_access = Some(OamBugAccess::Write);
                 }
                 self.write8(mmu, addr, self.a);
                 self.set_hl(addr.wrapping_add(1));
@@ -1232,7 +1244,9 @@ impl Cpu {
             0x32 => {
                 let addr = self.get_hl();
                 if (0xFE00..=0xFEFF).contains(&addr) {
-                    mmu.oam_bug_next_access = Some(OamBugAccess::ReadDuringIncDec);
+                    // A write combined with IDU activity is a single write
+                    // corruption, unlike LD A,[HL+/-] read corruption.
+                    mmu.oam_bug_next_access = Some(OamBugAccess::Write);
                 }
                 self.write8(mmu, addr, self.a);
                 self.set_hl(addr.wrapping_sub(1));

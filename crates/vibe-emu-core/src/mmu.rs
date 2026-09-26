@@ -1116,7 +1116,7 @@ impl Mmu {
 
                 if allow {
                     self.oam_bug_next_access = None;
-                    self.ppu.oam[(addr - 0xFE00) as usize] = val;
+                    self.ppu.write_oam_byte(addr, val);
                 } else if !self.model.is_cgb() {
                     let access = self
                         .oam_bug_next_access

@@ -304,8 +304,10 @@ pub(crate) enum OamBugAccess {
     ReadDuringIncDec,
 }
 
-const BOOT_HOLD_CYCLES_DMG0: u16 = 8192;
-const BOOT_HOLD_CYCLES_DMGA: u16 = 8192;
+// The skipped DMG boot leaves LCD edges halfway through a CPU M-cycle.
+// Preserve that phase when releasing the post-boot PPU hold.
+const BOOT_HOLD_CYCLES_DMG0: u16 = 8194;
+const BOOT_HOLD_CYCLES_DMGA: u16 = 8194;
 
 const DMG_STARTUP_STAGE0_END: u16 = 80;
 const DMG_STARTUP_STAGE1_END: u16 = 252;
@@ -1359,6 +1361,9 @@ impl Ppu {
         // mode-3 origin. Register events share this renderer timeline.
         if self.dmg_lcd_restarted && self.is_dmg_mode() {
             if self.ly == 0 { 2 } else { -2 }
+        } else if !self.cgb() {
+            // The skipped boot retains the LCD/CPU half-cycle phase.
+            2
         } else {
             0
         }
@@ -2388,10 +2393,13 @@ impl Ppu {
         {
             let first = self.dmg_bgp_events[0];
             if first.t >= 168 {
-                // On the first visible DMG line, x=0 object stalls can delay
-                // the observable transition of very-late BGP writes by the
-                // same number of dots that mode 3 is extended beyond 176.
-                let hold = self.mode3_target_cycles.saturating_sub(176).min(6) as u8;
+                // The first-line palette latch follows the renderer's OBJ
+                // fetch schedule, independently of the bus-visible mode-3
+                // duration (whose sprite stalls have single-dot precision).
+                let hold = self
+                    .dmg_compute_mode3_cycles_for_line()
+                    .saturating_sub(176)
+                    .min(6) as u8;
                 let x = x as u8;
                 if hold > 0 && x > first.x && x <= first.x.saturating_add(hold) {
                     return self.dmg_line_bgp_base;
@@ -2477,7 +2485,9 @@ impl Ppu {
             }
         }
         if self.dmg_bgp_event_count > 0 && x.saturating_add(tail) >= SCREEN_WIDTH {
-            return self.bgp;
+            // Rendering may be deferred into HBlank. A subsequent register
+            // write must not recolor pixels already latched during transfer.
+            return self.dmg_bgp_events[self.dmg_bgp_event_count - 1].val;
         }
         self.dmg_line_bgp_at_pixel[x.min(SCREEN_WIDTH - 1)]
     }
@@ -4186,11 +4196,9 @@ impl Ppu {
     }
 
     fn compute_mode3_cycles_for_line(&self) -> u16 {
-        if self.is_dmg_mode() && self.lcdc & 2 != 0 && self.sprite_count > 0 {
-            // The DMG OBJ scheduler measures its duration from the fetcher
-            // origin. Translate that to the bus origin on scanned lines.
-            // Its sub-M-cycle sprite penalties still need refinement (AGE
-            // stat-mode-sprites); retain the Mooneye-verified scheduler here.
+        if self.is_cgb_dmg_compat_mode() && self.lcdc & 2 != 0 && self.sprite_count > 0 {
+            // Compatibility rendering retains its existing OBJ fetch schedule.
+            // Translate the fetcher origin to the bus origin on scanned lines.
             return self
                 .dmg_compute_mode3_cycles_for_line()
                 .saturating_sub(if self.ly == 0 { 0 } else { 2 });
@@ -4680,7 +4688,7 @@ impl Ppu {
         } else {
             0
         };
-        if self.cgb_oam_pre_scan_locked(early_lock, false) {
+        if self.in_oam_pre_scan_window(early_lock, false) {
             return false;
         }
         if !double_speed
@@ -4710,7 +4718,7 @@ impl Ppu {
         if self.cgb() {
             // The write lock also covers the end of the LCD-enable mode-0
             // interval. Unlike reads, every tested CGB revision uses this edge.
-            if self.cgb_oam_pre_scan_locked(2, true) {
+            if self.in_oam_pre_scan_window(2, true) {
                 return false;
             }
             if !double_speed
@@ -4723,7 +4731,44 @@ impl Ppu {
         self.oam_accessible_internal(false)
     }
 
-    fn cgb_oam_pre_scan_locked(&self, lead: u16, include_lcd_start: bool) -> bool {
+    /// Commit an accessible CPU write, including DMG scan-boundary corruption.
+    ///
+    /// The boundary contention algorithm follows SameBoy Core/memory.c,
+    /// Copyright (c) 2015-2025 Lior Halphon, MIT/Expat. See THIRD_PARTY_LICENSES.md.
+    pub(crate) fn write_oam_byte(&mut self, addr: u16, value: u8) {
+        let index = usize::from(addr - 0xFE00);
+        let row = index & !7;
+        let word = index & !1;
+        let mix = |a: u8, b: u8, c: u8| (a & b) | (a & c) | (b & c);
+        // At the end of scanning, the last OAM row still drives the bus.
+        // It replaces the CPU-addressed row, with bitwise contention in the
+        // selected word. The CPU's written byte then wins its own lane.
+        if !self.cgb()
+            && self.lcd_enabled()
+            && self.mode == MODE_OAM
+            && self.mode_clock >= MODE2_CYCLES - 2
+        {
+            for i in 0..8 {
+                self.oam[row + i] = if (i & 6) == (index & 6) {
+                    mix(self.oam[row + i], self.oam[0x9C], self.oam[0x98 + i])
+                } else {
+                    self.oam[0x98 + i]
+                };
+            }
+        }
+        self.oam[index] = value;
+        // On entry to the next scan, both the CPU row and row zero are
+        // selected. This can modify row zero even though the write succeeds.
+        if !self.cgb() && self.lcd_enabled() && self.in_oam_pre_scan_window(2, false) {
+            self.oam[0] = mix(self.oam[0], self.oam[row], self.oam[word]);
+            self.oam[1] = mix(self.oam[1], self.oam[row + 1], self.oam[word + 1]);
+            for i in 2..8 {
+                self.oam[i] = self.oam[row + i];
+            }
+        }
+    }
+
+    fn in_oam_pre_scan_window(&self, lead: u16, include_lcd_start: bool) -> bool {
         (self.mode == MODE_HBLANK
             && (include_lcd_start || !self.cgb_lcd_startup)
             && self.ly < SCREEN_HEIGHT as u8 - 1
@@ -5642,12 +5687,13 @@ impl Ppu {
             0xFF47 => {
                 if self.is_dmg_mode() && self.ly < SCREEN_HEIGHT as u8 && self.lcdc & 0x80 != 0 {
                     // Capture BGP changes during MODE3 for mid-scanline effects.
-                    // Also include very-early HBlank writes: with 4-dot CPU
-                    // granularity, the final mode-3 write can spill into the
-                    // first HBlank tick while still affecting tail pixels.
+                    // Compatibility rendering also captures early HBlank
+                    // writes. On physical DMG, the palette is already latched
+                    // for this line when the bus enters HBlank.
                     let mode3_t = if self.mode == MODE_TRANSFER {
                         self.mode3_render_clock()
-                    } else if self.mode == MODE_HBLANK
+                    } else if self.is_cgb_dmg_compat_mode()
+                        && self.mode == MODE_HBLANK
                         && self.mode_clock <= 8
                         && (self.dmg_hblank_render_pending
                             || (self.is_dmg_mode()
@@ -9079,14 +9125,16 @@ mod mode3_timing_tests {
             ppu.scx = fine_scroll as u8;
             ppu.dmg_line_bgp_base = 0xe4;
             ppu.bgp = 0xe4;
-            ppu.mode_clock = 30 + fine_scroll;
+            // Express these palette writes in renderer dots, accounting for
+            // the two-dot post-boot bus/fetcher phase.
+            ppu.mode_clock = 32 + fine_scroll;
             ppu.write_reg(0xff47, 0x1b);
             assert_eq!(ppu.dmg_bgp_for_pixel(14), 0xe4);
             assert_eq!(ppu.dmg_bgp_for_pixel(15), 0xff);
             assert_eq!(ppu.dmg_bgp_for_pixel(16), 0x1b);
 
             ppu.dmg_bgp_event_count = 0;
-            ppu.mode_clock = 15 + fine_scroll;
+            ppu.mode_clock = 17 + fine_scroll;
             ppu.write_reg(0xff47, 0x1b);
             assert_eq!(ppu.dmg_bgp_for_pixel(0), 0x1b);
         }
@@ -9140,6 +9188,57 @@ mod mode3_timing_tests {
         assert_eq!(ppu.read_stat(false) & 3, MODE_HBLANK);
         assert!(ppu.vram_read_accessible());
         assert!(ppu.oam_read_accessible());
+    }
+
+    #[test]
+    fn accessible_oam_write_at_scan_entry_corrupts_row_zero() {
+        for model in [Model::Dmg(DmgRevision::RevC), Model::Cgb(CgbRevision::RevE)] {
+            for mode in [MODE_HBLANK, MODE_VBLANK] {
+                for lead in [1, 2, 3] {
+                    let mut ppu = Ppu::new(model);
+                    ppu.lcdc = 0x91;
+                    ppu.mode = mode;
+                    ppu.ly = if mode == MODE_VBLANK { 153 } else { 10 };
+                    ppu.mode0_target_cycles = 204;
+                    ppu.mode_clock = if mode == MODE_VBLANK { 456 } else { 204 } - lead;
+                    let first = [0x0f, 0xf0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+                    ppu.oam[..8].copy_from_slice(&first);
+                    ppu.oam[8..16]
+                        .copy_from_slice(&[0x3c, 0xc3, 0x56, 0x65, 0x78, 0x87, 0x9a, 0xa9]);
+                    ppu.write_oam_byte(0xfe0a, 0x96);
+                    assert_eq!(ppu.oam[10], 0x96);
+                    let expected = if model.is_dmg() && lead <= 2 {
+                        [0x1e, 0xe1, 0x96, 0x65, 0x78, 0x87, 0x9a, 0xa9]
+                    } else {
+                        first
+                    };
+                    assert_eq!(
+                        &ppu.oam[..8],
+                        &expected,
+                        "{model:?}, mode {mode}, lead {lead}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn accessible_oam_write_at_scan_end_uses_last_row() {
+        for model in [Model::Dmg(DmgRevision::RevC), Model::Cgb(CgbRevision::RevE)] {
+            let mut ppu = Ppu::new(model);
+            ppu.lcdc = 0x91;
+            ppu.mode = MODE_OAM;
+            ppu.mode_clock = 78;
+            ppu.oam[8..16].fill(0xff);
+            ppu.oam[0x98..0xa0].copy_from_slice(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
+            ppu.write_oam_byte(0xfe0a, 0xab);
+            let expected = if model.is_dmg() {
+                [0x11, 0x22, 0xab, 0x55, 0x55, 0x66, 0x77, 0x88]
+            } else {
+                [0xff, 0xff, 0xab, 0xff, 0xff, 0xff, 0xff, 0xff]
+            };
+            assert_eq!(&ppu.oam[8..16], &expected);
+        }
     }
 
     #[test]
