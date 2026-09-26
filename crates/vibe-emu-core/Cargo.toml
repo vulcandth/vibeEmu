@@ -66,3 +66,8 @@ harness = false
 name = "wilbertpol"
 path = "tests/wilbertpol.rs"
 harness = false
+
+[[test]]
+name = "additional_roms"
+path = "tests/additional_roms.rs"
+harness = false

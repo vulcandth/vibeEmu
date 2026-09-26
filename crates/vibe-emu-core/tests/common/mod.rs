@@ -189,6 +189,11 @@ fn ensure_c_sp_test_rom_bundle(dir: &Path) {
         && dir.join("mooneye-test-suite-wilbertpol").exists()
         && dir.join("age-test-roms").exists()
         && dir.join("gbmicrotest").exists()
+        && dir.join("scribbltests").exists()
+        && dir.join("turtle-tests").exists()
+        && dir.join("mbc3-tester").exists()
+        && dir.join("rtc3test").exists()
+        && dir.join("bully").exists()
         && dir.join("gambatte").exists();
     if has_core_tree {
         return;

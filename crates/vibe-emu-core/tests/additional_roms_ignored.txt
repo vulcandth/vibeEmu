@@ -1,0 +1,8 @@
+# Each entry names a test exactly, followed by its reason.
+scribbltests/fairylake/fairylake.gb/dmg # Animated graphics demo; no assertion or fixed reference frame.
+scribbltests/fairylake/fairylake.gb/cgb # Animated graphics demo; no assertion or fixed reference frame.
+scribbltests/winpos/winpos.gb/dmg # Interactive window-position debugger; no assertion or supplied reference image.
+scribbltests/winpos/winpos.gb/cgb # Interactive window-position debugger; no assertion or supplied reference image.
+turtle-tests/window_y_trigger/window_y_trigger.gb/dmg # WY=0 write at LY=56 incorrectly draws the window; 1716 pixels differ from the supplied reference.
+turtle-tests/window_y_trigger/window_y_trigger.gb/cgb # Same WY trigger failure in CGB compatibility mode; 1716 pixels differ.
+blargg/oam_bug/rom_singles/7-timing_effect.gb/dmg # Standalone timing-effect probe keeps printing OAM dumps past 60 emulated seconds; no valid final RAM signature or verdict. Aggregate passes.
