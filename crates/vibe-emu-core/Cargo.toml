@@ -46,6 +46,11 @@ path = "tests/age.rs"
 harness = false
 
 [[test]]
+name = "gbmicrotest"
+path = "tests/gbmicrotest.rs"
+harness = false
+
+[[test]]
 name = "gambatte"
 path = "tests/gambatte.rs"
 harness = false

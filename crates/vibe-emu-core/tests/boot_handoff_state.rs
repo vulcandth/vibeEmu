@@ -146,13 +146,9 @@ fn assert_snapshot_eq(
             expected.ie_reg, actual.ie_reg
         ));
     }
-    // timer_div, dot_div, ppu_mode, and ppu_mode_clock are excluded from
-    // strict comparison. The skip-boot initializer sets these to
-    // mooneye-verified values tuned for what the first game instruction
-    // should observe (with boot_hold_cycles freezing the PPU). These
-    // differ from the exact handoff-moment values captured here because
-    // the boot ROM's last instruction advances the timer/PPU before this
-    // snapshot is taken.
+    // Divider and CGB LCD phases are covered by the timing ROMs rather than
+    // this shared snapshot comparison. The DMG case below additionally
+    // compares the LCD mode, dot clock, LY, and STAT at the exact handoff.
     if expected.timer_tima != actual.timer_tima {
         mismatches.push(format!(
             "tima: expected {:02X}, got {:02X}",
@@ -231,9 +227,8 @@ fn assert_snapshot_eq(
         ));
     }
 
-    // IO comparison excludes timing-dependent registers whose skip-boot
-    // values are deliberately set to mooneye-verified values rather than
-    // exact handoff values:
+    // The shared comparison excludes timing-dependent registers; the DMG
+    // case below checks LY and STAT against the exact boot-ROM handoff:
     //   FF04 (DIV)  = index 0x04
     //   FF41 (STAT) = index 0x41
     //   FF44 (LY)   = index 0x44
@@ -281,6 +276,13 @@ fn dmg_no_boot_matches_bootrom_handoff() {
     let no_boot = capture_no_boot_snapshot(false);
 
     assert_snapshot_eq(&bootrom_handoff, &no_boot);
+    assert_eq!(
+        (no_boot.ppu_mode, no_boot.ppu_mode_clock),
+        (bootrom_handoff.ppu_mode, bootrom_handoff.ppu_mode_clock)
+    );
+    for register in [0x41, 0x44] {
+        assert_eq!(no_boot.io[register], bootrom_handoff.io[register]);
+    }
 }
 
 #[test]

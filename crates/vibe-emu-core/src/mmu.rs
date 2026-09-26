@@ -1234,7 +1234,8 @@ impl Mmu {
                     self.complete_active_hdma();
                 }
             }
-            0xFF41..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
+            0xFF41 => self.ppu.write_stat(val, &mut self.if_reg),
+            0xFF42..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
             0xFF51 => {
                 if self.model.is_cgb() && !self.hdma.active {
                     self.hdma.src = (val as u16) << 8 | (self.hdma.src & 0x00FF);

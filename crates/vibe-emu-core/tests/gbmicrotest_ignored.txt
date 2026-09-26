@@ -1,0 +1,51 @@
+# GBMicrotest: 474 passing, 39 ignored out of 513 ROMs.
+# Initial baseline: 153 passing, 360 failures/noncompletion.
+# 31 ignored ROMs are manual probes; 8 report failures.
+# Recheck: cargo test -p vibe-emu-core --test gbmicrotest -- --ignored
+
+# Visual/interactive probes: no HRAM completion result (temp.gb also faults).
+000-oam_lock.gb
+000-write_to_x8000.gb
+001-vram_unlocked.gb
+002-vram_locked.gb
+004-tima_boot_phase.gb
+004-tima_cycle_timer.gb
+007-lcd_on_stat.gb
+400-dma.gb
+500-scx-timing.gb
+800-ppu-latch-scx.gb
+801-ppu-latch-scy.gb
+802-ppu-latch-tileselect.gb
+803-ppu-latch-bgdisplay.gb
+audio_testbench.gb
+cpu_bus_1.gb
+dma_basic.gb
+flood_vram.gb
+lcdon_write_timing.gb
+ly_while_lcd_off.gb
+minimal.gb
+mode2_stat_int_to_oam_unlock.gb
+oam_sprite_trashing.gb
+poweron.gb
+ppu_scx_vs_bgp.gb
+ppu_sprite_testbench.gb
+ppu_spritex_vs_scx.gb
+ppu_win_vs_wx.gb
+ppu_wx_early.gb
+temp.gb
+toggle_lcdc.gb
+wave_write_to_0xC003.gb
+
+# Expected values need hardware/source reconciliation (DIV=$55; uncleared VBlank IF).
+halt_op_dupe_delay.gb
+stat_write_glitch_l154_d.gb
+
+# Line 153 coincidence / STAT interrupt edge timing.
+line_153_lyc0_int_inc_sled.gb
+line_153_lyc0_stat_timing_d.gb
+line_153_lyc153_stat_timing_c.gb
+line_153_lyc_c.gb
+line_153_lyc_int_a.gb
+
+# LYC write on the line boundary.
+lyc1_write_timing_c.gb

@@ -304,10 +304,9 @@ pub(crate) enum OamBugAccess {
     ReadDuringIncDec,
 }
 
-// The skipped DMG boot leaves LCD edges halfway through a CPU M-cycle.
-// Preserve that phase when releasing the post-boot PPU hold.
+// The revision-0 boot approximation retains its existing hold and half-cycle
+// phase. DMG A/B/C use the exact running LCD handoff state below.
 const BOOT_HOLD_CYCLES_DMG0: u16 = 8194;
-const BOOT_HOLD_CYCLES_DMGA: u16 = 8194;
 
 const DMG_STARTUP_STAGE0_END: u16 = 80;
 const DMG_STARTUP_STAGE1_END: u16 = 252;
@@ -1010,10 +1009,10 @@ impl Ppu {
             lyc: 0,
             lyc_eq_ly: false,
             ly_for_comparison: 0,
-            dma: 0,
+            dma: if model.is_dmg() { 0xff } else { 0 },
             bgp: 0,
-            obp0: 0,
-            obp1: 0,
+            obp0: if model.is_dmg() { 0xff } else { 0 },
+            obp1: if model.is_dmg() { 0xff } else { 0 },
             wy: 0,
             wx: 0,
             win_line_counter: 0,
@@ -4367,7 +4366,7 @@ impl Ppu {
             self.model = Model::Dmg(rev);
         }
         self.lcdc = 0x91;
-        self.dma = 0x00;
+        self.dma = if self.cgb() { 0 } else { 0xff };
         self.bgp = 0xFC;
         self.win_line_counter = 0;
         self.dmg_window_triggered = false;
@@ -4388,13 +4387,9 @@ impl Ppu {
             self.clock_hold_cycles = 0;
         } else {
             self.stat = 0x80;
-            // PPU mode/LY values represent what the first game instruction
-            // should observe, as verified by mooneye's boot_hwio test ROMs.
-            // These differ from the exact handoff-moment values captured by
-            // the boot-ROM parity test because clock_hold_cycles freezes the
-            // PPU while the real hardware continues clocking.
             match dmg_revision.unwrap_or_default() {
                 DmgRevision::Rev0 => {
+                    // Keep the older revision's separate boot approximation.
                     self.set_mode(MODE_TRANSFER);
                     self.ly = 0x01;
                     self.ly_for_comparison = 0x01;
@@ -4402,11 +4397,17 @@ impl Ppu {
                     self.clock_hold_cycles = BOOT_HOLD_CYCLES_DMG0;
                 }
                 DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => {
-                    self.set_mode(MODE_HBLANK);
-                    self.ly = 0x0A;
-                    self.ly_for_comparison = 0x0A;
-                    self.lyc = 0x00;
-                    self.clock_hold_cycles = BOOT_HOLD_CYCLES_DMGA;
+                    // The boot ROM hands off late in physical line 153, after
+                    // readable LY and the coincidence comparator reset to 0.
+                    // Keep the LCD running: GBMicrotest samples these first
+                    // dots, while Mooneye reads LY=10 much later in its setup.
+                    self.set_mode(MODE_VBLANK);
+                    self.mode_clock = 398;
+                    self.ly = 153;
+                    self.ly_for_comparison = 0;
+                    self.cgb_line153_ly0_triggered = true;
+                    self.lyc = 0;
+                    self.clock_hold_cycles = 0;
                 }
             }
         }
@@ -4673,6 +4674,18 @@ impl Ppu {
         if self.stat_irq_dirty || self.dmg_mode2_vblank_irq_pending {
             self.update_stat_irq(if_reg);
         }
+    }
+
+    pub(crate) fn write_stat(&mut self, value: u8, if_reg: &mut u8) {
+        // On physical DMG, STAT's interrupt enables briefly read as all ones
+        // on the write bus. The shared IRQ line still suppresses a new edge
+        // if another STAT source is already asserted. CGB has no write glitch.
+        if !self.cgb() && self.lcd_enabled() {
+            self.stat |= 0x78;
+            self.update_stat_irq(if_reg);
+        }
+        self.write_reg(0xff41, value);
+        self.update_stat_irq(if_reg);
     }
 
     /// Returns `true` if OAM is accessible for a normal-speed CPU read.
@@ -5542,8 +5555,11 @@ impl Ppu {
                     self.dmg_abort_mode3_object_fetch();
                 }
                 if was_on && self.lcdc & 0x80 == 0 {
+                    // LCD disable ends the skipped-boot timing hold on both
+                    // models. A subsequent enable starts a fresh LCD clock,
+                    // even if the game turns it off immediately after boot.
+                    self.clock_hold_cycles = 0;
                     if self.cgb() {
-                        self.clock_hold_cycles = 0;
                         self.cgb_lcd_started_double_speed = false;
                     }
                     self.framebuffer.fill(0xFFFFFF);
@@ -8677,10 +8693,12 @@ impl Ppu {
         let coincidence = self.lyc_eq_ly && self.stat & 0x40 != 0;
         let mode_signal = match self.mode {
             MODE_HBLANK => {
-                self.stat & 0x08 != 0
-                    || (!self.cgb_lcd_startup
-                        && self.mode_clock + 2 >= self.mode0_target_cycles
-                        && self.stat & 0x20 != 0)
+                // The LCD-enable interval reads as mode 0, but does not
+                // assert the HBlank source. Coincidence can still assert STAT.
+                !self.cgb_lcd_startup
+                    && (self.stat & 0x08 != 0
+                        || (self.mode_clock + 2 >= self.mode0_target_cycles
+                            && self.stat & 0x20 != 0))
             }
             MODE_VBLANK => self.stat & 0x10 != 0,
             // The mode-2 source is an entry pulse, not a level lasting
@@ -8714,6 +8732,57 @@ impl Default for Ppu {
 #[cfg(test)]
 mod mode3_timing_tests {
     use super::*;
+
+    #[test]
+    fn lcd_restart_discards_boot_hold() {
+        for model in [
+            Model::Dmg(DmgRevision::Rev0),
+            Model::Dmg(DmgRevision::RevC),
+            Model::Cgb(CgbRevision::RevE),
+        ] {
+            let mut ppu = Ppu::new(model);
+            ppu.apply_boot_state(model.dmg_revision());
+            ppu.write_reg(0xff40, 0);
+            ppu.write_reg(0xff40, 0x91);
+            let mut interrupts = 0;
+            ppu.step(79, &mut interrupts);
+            assert_eq!((ppu.mode, ppu.mode_clock), (MODE_HBLANK, 79));
+            ppu.step(1, &mut interrupts);
+            assert_eq!((ppu.mode, ppu.mode_clock), (MODE_TRANSFER, 0));
+        }
+    }
+
+    #[test]
+    fn stat_write_glitch_uses_the_shared_dmg_interrupt_line() {
+        for model in [Model::Dmg(DmgRevision::RevC), Model::Cgb(CgbRevision::RevE)] {
+            let mut ppu = Ppu::new(model);
+            ppu.lcdc = 0x91;
+            ppu.mode = MODE_HBLANK;
+            ppu.mode_clock = 10;
+            ppu.stat = 0;
+            ppu.lyc_eq_ly = false;
+            let mut interrupts = 0;
+            ppu.write_stat(0, &mut interrupts);
+            assert_eq!(interrupts & 2, if model.is_dmg() { 2 } else { 0 });
+            assert_eq!(ppu.read_stat(false) & 0x78, 0);
+
+            // A source already holding STAT high blocks the spurious edge.
+            ppu.write_stat(8, &mut interrupts);
+            interrupts = 0;
+            ppu.write_stat(0, &mut interrupts);
+            assert_eq!(interrupts & 2, 0);
+
+            // The LCD-enable interval reads as mode 0 but isn't HBlank.
+            ppu.cgb_lcd_startup = true;
+            ppu.write_stat(0, &mut interrupts);
+            assert_eq!(interrupts & 2, 0);
+
+            // Coincidence can still raise the glitch during that interval.
+            ppu.lyc_eq_ly = true;
+            ppu.write_stat(0, &mut interrupts);
+            assert_eq!(interrupts & 2, if model.is_dmg() { 2 } else { 0 });
+        }
+    }
 
     #[test]
     fn tuning_environment_is_captured_at_construction() {

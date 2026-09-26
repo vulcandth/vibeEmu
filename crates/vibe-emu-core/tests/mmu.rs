@@ -420,6 +420,8 @@ fn oam_dma_restart_timing() {
 #[test]
 fn vram_oam_access_blocking() {
     let mut mmu = Mmu::new(Model::default());
+    // Test each mode from dot zero, independently of the boot-handoff phase.
+    mmu.ppu.skip_startup_for_test();
     mmu.ppu.mode = 3;
     mmu.write_byte(0x8000, 0x12);
     assert_eq!(mmu.read_byte(0x8000), 0xFF);
