@@ -207,6 +207,27 @@ impl Timer {
 
     /// Reset the internal divider counter, applying TIMA edge logic.
     pub fn reset_div(&mut self, if_reg: &mut u8) {
+        self.reset_div_inner(if_reg, false);
+    }
+
+    pub(crate) fn reset_div_for_speed_switch(
+        &mut self,
+        if_reg: &mut u8,
+        revision: crate::hardware::CgbRevision,
+    ) {
+        // AGE's spsw-tima ROMs verify that STOP misses the first M-cycle
+        // of the selected divider bit's high phase. B/C only exhibit this
+        // at 4096 Hz; E also exhibits it at 16384 and 65536 Hz.
+        let selection = self.tac & 3;
+        let delayed =
+            selection == 0 || (revision == crate::hardware::CgbRevision::RevE && selection != 1);
+        let bit = 1u16 << [9, 3, 5, 7][selection as usize];
+        let phase = self.div & (bit * 2 - 1);
+        let suppress = delayed && (bit..bit + 4).contains(&phase);
+        self.reset_div_inner(if_reg, suppress);
+    }
+
+    fn reset_div_inner(&mut self, if_reg: &mut u8, suppress_increment: bool) {
         self.reloading = false;
         if let Some(val) = self.pending_reload {
             if self.reload_delay == 0 {
@@ -221,7 +242,7 @@ impl Timer {
         let prev = Self::signal_with(self.div, self.tac);
         self.div = 0;
         let new = Self::signal_with(self.div, self.tac);
-        if prev && !new {
+        if prev && !new && !suppress_increment {
             let tma_old = self.tma_latch.take();
             self.increment(if_reg, tma_old);
         }

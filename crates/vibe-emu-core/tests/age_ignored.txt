@@ -1,0 +1,122 @@
+# AGE: 24 passing and 95 known failures across 119 ROM/revision cases.
+# Baseline before core fixes: 4 passing and 115 failing.
+# Recheck with: cargo test -p vibe-emu-core --test age -- --ignored
+
+# HALT wake-up versus mode 0 interrupt timing.
+halt/halt-m0-interrupt-dmgC-cgbBCE.gb::cgbB
+halt/halt-m0-interrupt-dmgC-cgbBCE.gb::cgbC
+halt/halt-m0-interrupt-dmgC-cgbBCE.gb::cgbE
+halt/halt-m0-interrupt-dmgC-cgbBCE.gb::dmgC
+
+# LCD startup / scanline alignment timing.
+lcd-align-ly/lcd-align-ly-cgbBC.gb::cgbB
+lcd-align-ly/lcd-align-ly-cgbBC.gb::cgbC
+lcd-align-ly/lcd-align-ly-cgbE.gb::cgbE
+
+# m3-bg-bgp: PPU access, interrupt, or rendering timing still differs from hardware.
+m3-bg-bgp/m3-bg-bgp.gb::dmgC
+m3-bg-bgp/m3-bg-bgp.gb::ncmB
+m3-bg-bgp/m3-bg-bgp.gb::ncmC
+m3-bg-bgp/m3-bg-bgp.gb::ncmE
+
+# m3-bg-lcdc: PPU access, interrupt, or rendering timing still differs from hardware.
+m3-bg-lcdc/m3-bg-lcdc-ds.gb::cgbB
+m3-bg-lcdc/m3-bg-lcdc-ds.gb::cgbC
+m3-bg-lcdc/m3-bg-lcdc-ds.gb::cgbE
+m3-bg-lcdc/m3-bg-lcdc-nocgb.gb::ncmB
+m3-bg-lcdc/m3-bg-lcdc-nocgb.gb::ncmC
+m3-bg-lcdc/m3-bg-lcdc-nocgb.gb::ncmE
+m3-bg-lcdc/m3-bg-lcdc.gb::cgbB
+m3-bg-lcdc/m3-bg-lcdc.gb::cgbC
+m3-bg-lcdc/m3-bg-lcdc.gb::cgbE
+m3-bg-lcdc/m3-bg-lcdc.gb::dmgC
+
+# Mode 3 background fetch / SCX rendering differs from reference images.
+m3-bg-scx/m3-bg-scx-ds.gb::cgbB
+m3-bg-scx/m3-bg-scx-ds.gb::cgbC
+m3-bg-scx/m3-bg-scx-ds.gb::cgbE
+m3-bg-scx/m3-bg-scx-nocgb.gb::ncmB
+m3-bg-scx/m3-bg-scx-nocgb.gb::ncmC
+m3-bg-scx/m3-bg-scx-nocgb.gb::ncmE
+m3-bg-scx/m3-bg-scx.gb::cgbB
+m3-bg-scx/m3-bg-scx.gb::cgbC
+m3-bg-scx/m3-bg-scx.gb::cgbE
+m3-bg-scx/m3-bg-scx.gb::dmgC
+
+# oam: PPU access, interrupt, or rendering timing still differs from hardware.
+oam/oam-read-cgbE.gb::cgbE
+oam/oam-read-dmgC-cgbBC.gb::cgbB
+oam/oam-read-dmgC-cgbBC.gb::cgbC
+oam/oam-read-dmgC-cgbBC.gb::dmgC
+oam/oam-read-ncmBC.gb::ncmB
+oam/oam-read-ncmBC.gb::ncmC
+oam/oam-read-ncmE.gb::ncmE
+oam/oam-write-cgbBCE.gb::cgbB
+oam/oam-write-cgbBCE.gb::cgbC
+oam/oam-write-cgbBCE.gb::cgbE
+oam/oam-write-dmgC.gb::dmgC
+oam/oam-write-ncmBCE.gb::ncmB
+oam/oam-write-ncmBCE.gb::ncmC
+oam/oam-write-ncmBCE.gb::ncmE
+
+# Remaining APU length-counter, mode 0, and interrupt-aborted speed-switch timing.
+speed-switch/caution/spsw-interrupts-cgbBC.gb::cgbB
+speed-switch/caution/spsw-interrupts-cgbBC.gb::cgbC
+speed-switch/caution/spsw-interrupts-cgbE.gb::cgbE
+speed-switch/spsw-ch2-lc-delay-cgbBCE.gb::cgbB
+speed-switch/spsw-ch2-lc-delay-cgbBCE.gb::cgbC
+speed-switch/spsw-ch2-lc-delay-cgbBCE.gb::cgbE
+speed-switch/spsw-mode0-cgbBCE.gb::cgbB
+speed-switch/spsw-mode0-cgbBCE.gb::cgbC
+speed-switch/spsw-mode0-cgbBCE.gb::cgbE
+
+# stat-interrupt: PPU access, interrupt, or rendering timing still differs from hardware.
+stat-interrupt/stat-int-dmgC-cgbBCE.gb::cgbB
+stat-interrupt/stat-int-dmgC-cgbBCE.gb::cgbC
+stat-interrupt/stat-int-dmgC-cgbBCE.gb::cgbE
+stat-interrupt/stat-int-dmgC-cgbBCE.gb::dmgC
+stat-interrupt/stat-int-ncmBCE.gb::ncmB
+stat-interrupt/stat-int-ncmBCE.gb::ncmC
+stat-interrupt/stat-int-ncmBCE.gb::ncmE
+
+# stat-mode-sprites: PPU access, interrupt, or rendering timing still differs from hardware.
+stat-mode-sprites/stat-mode-sprites-dmgC-cgbBCE.gb::cgbB
+stat-mode-sprites/stat-mode-sprites-dmgC-cgbBCE.gb::cgbC
+stat-mode-sprites/stat-mode-sprites-dmgC-cgbBCE.gb::cgbE
+stat-mode-sprites/stat-mode-sprites-dmgC-cgbBCE.gb::dmgC
+stat-mode-sprites/stat-mode-sprites-ds-cgbBCE.gb::cgbB
+stat-mode-sprites/stat-mode-sprites-ds-cgbBCE.gb::cgbC
+stat-mode-sprites/stat-mode-sprites-ds-cgbBCE.gb::cgbE
+
+# stat-mode-window: PPU access, interrupt, or rendering timing still differs from hardware.
+stat-mode-window/stat-mode-window-cgbBCE.gb::cgbB
+stat-mode-window/stat-mode-window-cgbBCE.gb::cgbC
+stat-mode-window/stat-mode-window-cgbBCE.gb::cgbE
+stat-mode-window/stat-mode-window-dmgC.gb::dmgC
+stat-mode-window/stat-mode-window-ds-cgbBCE.gb::cgbB
+stat-mode-window/stat-mode-window-ds-cgbBCE.gb::cgbC
+stat-mode-window/stat-mode-window-ds-cgbBCE.gb::cgbE
+stat-mode-window/stat-mode-window-ncmBCE.gb::ncmB
+stat-mode-window/stat-mode-window-ncmBCE.gb::ncmC
+stat-mode-window/stat-mode-window-ncmBCE.gb::ncmE
+
+# stat-mode: PPU access, interrupt, or rendering timing still differs from hardware.
+stat-mode/stat-mode-cgbE.gb::cgbE
+stat-mode/stat-mode-dmgC-cgbBC.gb::cgbB
+stat-mode/stat-mode-dmgC-cgbBC.gb::cgbC
+stat-mode/stat-mode-dmgC-cgbBC.gb::dmgC
+stat-mode/stat-mode-ds-cgbBCE.gb::cgbB
+stat-mode/stat-mode-ds-cgbBCE.gb::cgbC
+stat-mode/stat-mode-ds-cgbBCE.gb::cgbE
+stat-mode/stat-mode-ncmBC.gb::ncmB
+stat-mode/stat-mode-ncmBC.gb::ncmC
+stat-mode/stat-mode-ncmE.gb::ncmE
+
+# vram: PPU access, interrupt, or rendering timing still differs from hardware.
+vram/vram-read-cgbBCE.gb::cgbB
+vram/vram-read-cgbBCE.gb::cgbC
+vram/vram-read-cgbBCE.gb::cgbE
+vram/vram-read-dmgC.gb::dmgC
+vram/vram-read-ncmBCE.gb::ncmB
+vram/vram-read-ncmBCE.gb::ncmC
+vram/vram-read-ncmBCE.gb::ncmE

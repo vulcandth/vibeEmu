@@ -6,6 +6,52 @@ use vibe_emu_core::{
 };
 
 #[test]
+fn ei_halt_dispatches_without_waiting_for_a_second_interrupt() {
+    for model in [Model::default(), Model::Cgb(CgbRevision::RevE)] {
+        for pending in [2, 3] {
+            let mut rom = vec![0; 0x8000];
+            rom[0x100..0x103].copy_from_slice(&[0xFB, 0x76, 0x07]); // EI; HALT; RLCA
+            for vector in [0x40, 0x48] {
+                rom[vector..vector + 2].copy_from_slice(&[0x3C, 0xC9]); // INC A; RET
+            }
+            let mut cpu = Cpu::new(model);
+            let mut mmu = Mmu::new(model);
+            mmu.load_cart(Cartridge::from_bytes(rom));
+            mmu.write_byte(0xFF40, 0); // Only explicitly requested interrupts.
+            mmu.ie_reg = 3;
+            mmu.if_reg = pending;
+            cpu.a = 0x20;
+
+            cpu.step(&mut mmu); // EI
+            cpu.step(&mut mmu); // HALT and interrupt dispatch
+            assert!(
+                !cpu.halted,
+                "the interrupt handler must execute immediately"
+            );
+            assert_eq!(cpu.pc, if pending == 2 { 0x48 } else { 0x40 });
+            assert_eq!(mmu.read_byte(cpu.sp), 1); // Return to HALT at $0101.
+            cpu.step(&mut mmu); // INC A
+            assert_eq!(cpu.a, 0x21);
+            cpu.step(&mut mmu); // RET
+            assert_eq!(cpu.pc, 0x101);
+            cpu.step(&mut mmu); // Re-execute HALT.
+            if pending == 2 {
+                assert!(cpu.halted);
+                mmu.if_reg = 1;
+                cpu.step(&mut mmu); // Wake without dispatch (IME is off).
+                cpu.step(&mut mmu); // RLCA, once.
+                assert_eq!(cpu.a, 0x42);
+            } else {
+                assert!(!cpu.halted);
+                cpu.step(&mut mmu); // Remaining IRQ causes the HALT bug.
+                cpu.step(&mut mmu); // RLCA is fetched twice.
+                assert_eq!(cpu.a, 0x84);
+            }
+        }
+    }
+}
+
+#[test]
 fn simple_program() {
     // Program that loads values and stores to RAM then jumps
     let program = vec![
@@ -226,31 +272,44 @@ fn stop_speed_switch() {
 
     assert_eq!(mmu.key1 & 0x81, 0x80);
     assert!(cpu.double_speed);
+    // A speed-switching STOP prefetches the following byte as an opcode.
+    assert_eq!(cpu.pc, 1);
+    cpu.step(&mut mmu);
     assert_eq!(cpu.pc, 2);
 }
 
 #[test]
-fn speed_switch_stall_advances_dot_div_but_not_cpu_div() {
-    // STOP 0x00 ; NOP
-    let program = vec![0x10, 0x00, 0x00];
-    let mut cpu = Cpu::new(Model::default());
-    cpu.pc = 0;
-    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
-    mmu.load_cart(Cartridge::from_bytes(program));
-    mmu.key1 = 0x01; // request speed switch
-    mmu.timer.div = 0x4321;
-    mmu.dot_div = 0x1234;
+fn speed_switch_stall_runs_timer_with_lcd_disabled() {
+    for double_speed in [false, true] {
+        let model = Model::Cgb(CgbRevision::RevE);
+        let mut cpu = Cpu::new(model);
+        let mut mmu = Mmu::new(model);
+        cpu.pc = 0;
+        cpu.double_speed = double_speed;
+        mmu.load_cart(Cartridge::from_bytes(vec![0x10, 0x00, 0x00]));
+        mmu.write_byte(0xFF40, 0);
+        mmu.ie_reg = 0;
+        mmu.key1 = if double_speed { 0x81 } else { 0x01 };
+        mmu.timer.div = 0;
+        mmu.timer.tima = 0;
+        mmu.timer.tac = 4; // 4096 Hz: one increment per 1024 CPU clocks.
 
-    let mode_clock_before = mmu.ppu.mode_clock();
+        cpu.step(&mut mmu);
 
-    cpu.step(&mut mmu); // STOP (switch speed)
-
-    assert!(cpu.double_speed);
-    // STOP resets CPU divider; the speed-switch stall should not advance it.
-    assert_eq!(mmu.timer.div, 0);
-    // The stall advances the PPU by dot cycles; dot_div should track that.
-    assert_ne!(mmu.ppu.mode_clock(), mode_clock_before);
-    assert_ne!(mmu.dot_div, 0);
+        assert_eq!(cpu.double_speed, !double_speed);
+        // AGE's spsw-tima measures 128 increments during the wait. DIV
+        // returns to zero because it wraps twice, rather than being frozen.
+        assert_eq!(mmu.timer.tima, 128);
+        assert_eq!(mmu.timer.div, 0);
+        assert_eq!(
+            cpu.cycles,
+            if double_speed {
+                0x20000 + 4
+            } else {
+                0x10000 + 8
+            }
+        );
+    }
 }
 
 #[test]

@@ -41,6 +41,11 @@ png = "0.18"
 libtest-mimic = "0.8.2"
 
 [[test]]
+name = "age"
+path = "tests/age.rs"
+harness = false
+
+[[test]]
 name = "gambatte"
 path = "tests/gambatte.rs"
 harness = false

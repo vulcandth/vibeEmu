@@ -842,7 +842,8 @@ impl Mmu {
             // IF: upper 3 bits are unused and read back as 1 on hardware.
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_reg(addr),
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.read_reg(addr),
+            0xFF44 => self.ppu.read_ly(self.key1 & 0x80 != 0),
+            0xFF40..=0xFF43 | 0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.read_reg(addr),
             0xFF46 => self.ppu.dma,
             0xFF51 => {
                 if self.model.is_cgb() {
@@ -1545,12 +1546,27 @@ impl Mmu {
 
     /// Write 0 to FF04, resetting the CPU divider and propagating the DIV-reset event.
     pub fn reset_div(&mut self) {
+        self.reset_div_inner(false);
+    }
+
+    pub(crate) fn reset_div_for_speed_switch(&mut self) {
+        self.reset_div_inner(true);
+    }
+
+    fn reset_div_inner(&mut self, speed_switch: bool) {
         // rDIV reset affects the CPU divider (timer.div). The PPU/APU dot clock
         // domain keeps running and is not reset by writes to FF04.
         let prev_div = self.timer.div;
 
         // DIV/TIMA are derived from the CPU clock domain.
-        self.timer.reset_div(&mut self.if_reg);
+        if speed_switch {
+            self.timer.reset_div_for_speed_switch(
+                &mut self.if_reg,
+                self.model.cgb_revision().expect("CGB speed switch"),
+            );
+        } else {
+            self.timer.reset_div(&mut self.if_reg);
+        }
 
         let double_speed = self.key1 & 0x80 != 0;
         self.apu.on_div_reset(prev_div, double_speed);

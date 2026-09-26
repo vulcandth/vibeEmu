@@ -1884,9 +1884,8 @@ impl Apu {
     /// Tick the DIV-driven APU frame sequencer.
     ///
     /// `div_prev`/`div_now` are in the CPU divider domain (the same internal
-    /// 16-bit divider that backs rDIV). This is important during STOP-triggered
-    /// CGB speed switching, where DIV/TIMA can be frozen while the APU's dot
-    /// clock continues.
+    /// 16-bit divider that backs rDIV). CGB speed switching resets this divider
+    /// and changes its rate relative to the APU's dot clock.
     pub fn tick_frame_sequencer(&mut self, div_prev: u16, div_now: u16, double_speed: bool) {
         self.tick_frame_sequencer_steps(div_prev, div_now.wrapping_sub(div_prev), double_speed);
     }

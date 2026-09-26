@@ -93,6 +93,7 @@ pub struct Cpu {
     /// Frontends should check this flag in their run loop.
     pub faulted: bool,
     halt_bug: bool,
+    stop_prefetch: Option<(u16, u8)>,
     ime_enable_delay: u8,
     halt_pc: Option<u16>,
     halt_pending: u8,
@@ -123,6 +124,7 @@ impl Cpu {
                 double_speed: false,
                 faulted: false,
                 halt_bug: false,
+                stop_prefetch: None,
                 ime_enable_delay: 0,
                 halt_pc: None,
                 halt_pending: 0,
@@ -170,6 +172,7 @@ impl Cpu {
                     double_speed: false,
                     faulted: false,
                     halt_bug: false,
+                    stop_prefetch: None,
                     ime_enable_delay: 0,
                     halt_pc: None,
                     halt_pending: 0,
@@ -204,6 +207,7 @@ impl Cpu {
             double_speed: false,
             faulted: false,
             halt_bug: false,
+            stop_prefetch: None,
             ime_enable_delay: 0,
             halt_pc: None,
             halt_pending: 0,
@@ -317,42 +321,13 @@ impl Cpu {
     }
 
     fn speed_switch_stall(&mut self, mmu: &mut crate::mmu::Mmu) {
-        mmu.synchronize_ppu();
-        // Daid's LY timing ROM implies the CPU resumes at a specific LCD phase after
-        // a STOP-triggered speed switch.
-        //
-        // During this stall, keep the LCD/PPU running but do not advance DIV/TIMA.
-        const TARGET_LY: u8 = 0x85;
-        const RESUME_DOTS_BEFORE_LY_ADVANCE: u16 = 14;
-        const MAX_DOTS: u32 = 456 * 200;
-
-        let mut dots = 0u32;
-        while dots < MAX_DOTS {
-            if mmu.ppu.ly() == TARGET_LY && mmu.ppu.in_hblank() {
-                let target = mmu.ppu.hblank_target_cycles();
-                let resume_at = target.saturating_sub(RESUME_DOTS_BEFORE_LY_ADVANCE);
-                if mmu.ppu.mode_clock() >= resume_at {
-                    break;
-                }
+        // AGE measures 128 increments of the 4096 Hz timer during this
+        // wait: 0x20000 CPU clocks at the new speed. DIV wraps twice.
+        for _ in 0..0x8000 {
+            if mmu.if_reg & mmu.ie_reg & 0x1F != 0 {
+                break;
             }
-
-            self.cycles += 1;
-
-            let prev_dot_div = mmu.dot_div;
-            mmu.dot_div = mmu.dot_div.wrapping_add(1);
-
-            // Keep APU/serial clock domains consistent with the dot clock.
-            // Note: DIV/TIMA remain frozen during this stall.
-            mmu.apu.step(1);
-            mmu.apu.tick_steps(prev_dot_div, 1, self.double_speed);
-            mmu.serial
-                .step_steps(prev_dot_div, 1, self.double_speed, &mut mmu.if_reg);
-
-            if mmu.ppu.step(1, &mut mmu.if_reg) {
-                mmu.hdma_hblank_transfer();
-            }
-            mmu.dma_step(1);
-            dots += 1;
+            self.tick(mmu, 1);
         }
     }
 
@@ -650,11 +625,11 @@ impl Cpu {
 
             if bit != 0 {
                 mmu.if_reg &= !bit;
-                if (self.halt_pending & bit) != 0 {
-                    self.halt_pending &= !bit;
-                } else {
-                    self.exit_halt();
-                }
+                // EI; HALT can push the HALT address for re-execution, but
+                // interrupt dispatch still leaves HALT immediately. Keeping
+                // the CPU halted here delays the handler until another IRQ
+                // and turns the returning HALT into a spurious HALT bug.
+                self.exit_halt();
                 self.pc = vector;
             } else {
                 self.exit_halt();
@@ -799,17 +774,36 @@ impl Cpu {
 
         if self.halted {
             self.tick(mmu, 1);
+            // With IME off, CGB needs an extra wake-up M-cycle when an IRQ
+            // releases HALT (Daid's speed_switch_timing). With IME on, the
+            // interrupt dispatch below already accounts for wake-up.
+            if mmu.is_cgb() && !self.ime && mmu.if_reg & mmu.ie_reg & 0x1F != 0 {
+                self.tick(mmu, 1);
+            }
             self.handle_interrupts(mmu);
             return;
         }
 
         let enable_after = self.ime_enable_delay == 1;
         let opcode_pc = self.pc;
-        let opcode = if self.halt_bug {
+        let prefetched = self.stop_prefetch.take().filter(|(pc, _)| *pc == self.pc);
+        let opcode = if let Some((_, opcode)) = prefetched {
+            self.pc = self.pc.wrapping_add(1);
+            self.tick(mmu, 1);
+            opcode
+        } else if self.halt_bug {
             self.halt_bug = false;
             self.read8(mmu, self.pc)
         } else {
-            self.fetch8(mmu)
+            mmu.last_cpu_pc = Some(self.pc);
+            let opcode = mmu.read_byte(self.pc);
+            self.pc = self.pc.wrapping_add(1);
+            // STOP latches the following opcode before the speed-switch wait.
+            if opcode == 0x10 && mmu.key1 & 1 != 0 {
+                self.stop_prefetch = Some((self.pc, mmu.read_byte(self.pc)));
+            }
+            self.tick(mmu, 1);
+            opcode
         };
 
         // DMG: when executing from ROM during a ROM-sourced OAM DMA transfer,
@@ -937,14 +931,16 @@ impl Cpu {
             0x10 => {
                 // STOP
                 mmu.synchronize_ppu();
-                let _ = self.fetch8(mmu);
-                mmu.reset_div();
                 if mmu.key1 & 0x01 != 0 {
+                    self.tick(mmu, 1);
+                    mmu.reset_div_for_speed_switch();
                     mmu.key1 &= !0x01;
                     mmu.key1 ^= 0x80;
                     self.double_speed = mmu.key1 & 0x80 != 0;
                     self.speed_switch_stall(mmu);
                 } else {
+                    let _ = self.fetch8(mmu);
+                    mmu.reset_div();
                     if mmu.is_cgb() {
                         // If STOP begins in mode 3, the already-in-flight pixel
                         // transfer can keep using VRAM while stopped; otherwise

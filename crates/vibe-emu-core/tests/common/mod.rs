@@ -186,6 +186,7 @@ fn ensure_c_sp_test_rom_bundle(dir: &Path) {
     // If the directory already contains extracted content, don't re-download.
     let has_core_tree = dir.join("blargg").exists()
         && dir.join("mooneye-test-suite").exists()
+        && dir.join("age-test-roms").exists()
         && dir.join("gambatte").exists();
     if has_core_tree {
         return;

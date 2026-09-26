@@ -4,6 +4,66 @@ use vibe_emu_core::{
 };
 
 #[test]
+fn cgb_lyc_interrupt_precedes_the_physical_scanline_transition() {
+    for revision in [CgbRevision::RevB, CgbRevision::RevC, CgbRevision::RevE] {
+        for bulk in [false, true] {
+            let mut ppu = Ppu::new(Model::Cgb(revision));
+            let mut interrupts = 0;
+            ppu.write_reg(0xFF40, 0);
+            ppu.write_reg(0xFF40, 0x91);
+            ppu.step(456, &mut interrupts); // Physical line 1.
+            ppu.write_reg(0xFF45, 2);
+            ppu.write_reg(0xFF41, 0x40);
+            interrupts = 0;
+            if bulk {
+                ppu.step(451, &mut interrupts);
+            } else {
+                for _ in 0..451 {
+                    ppu.step(1, &mut interrupts);
+                }
+            }
+            assert_eq!(interrupts & 2, 0);
+            assert_eq!(ppu.read_reg(0xFF44), 1);
+            ppu.step(1, &mut interrupts);
+            assert_eq!(interrupts & 2, 2);
+            assert_eq!(ppu.read_reg(0xFF44), 2);
+            assert_ne!(ppu.read_reg(0xFF41) & 4, 0);
+            assert_eq!((ppu.ly(), ppu.mode()), (1, 0));
+            interrupts = 0;
+            ppu.step(4, &mut interrupts);
+            assert_eq!((ppu.ly(), ppu.mode()), (2, 2));
+            assert_eq!(interrupts & 2, 0, "no second edge at the physical boundary");
+        }
+    }
+}
+
+#[test]
+fn compatibility_mode_keeps_boot_palettes_when_cgb_ports_are_written() {
+    for revision in [CgbRevision::RevB, CgbRevision::RevC, CgbRevision::RevE] {
+        let mut ppu = Ppu::new(Model::Cgb(revision));
+        ppu.apply_dmg_compatibility_palettes();
+        ppu.write_reg(0xFF40, 0);
+        let background = std::array::from_fn::<_, 4, _>(|i| ppu.bg_palette_color(0, i));
+        let objects = std::array::from_fn::<_, 4, _>(|i| ppu.ob_palette_color(0, i));
+        for index in [0xFF68, 0xFF6A] {
+            ppu.write_reg(index, 0x80);
+            for _ in 0..64 {
+                ppu.write_reg(index + 1, 0);
+            }
+            assert_eq!(ppu.read_reg(index), 0xFF);
+            assert_eq!(ppu.read_reg(index + 1), 0xFF);
+        }
+        for i in 0..4 {
+            assert_eq!(ppu.bg_palette_color(0, i), background[i]);
+            assert_eq!(ppu.ob_palette_color(0, i), objects[i]);
+        }
+        // DMG shade registers remain accessible.
+        ppu.write_reg(0xFF47, 0x1B);
+        assert_eq!(ppu.read_reg(0xFF47), 0x1B);
+    }
+}
+
+#[test]
 fn lcd_startup_blanks_only_the_first_frame_without_stopping_the_ppu() {
     for model in [Model::default(), Model::Cgb(CgbRevision::default())] {
         let mut ppu = Ppu::new(model);

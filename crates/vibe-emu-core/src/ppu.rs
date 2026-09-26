@@ -5104,8 +5104,47 @@ impl Ppu {
         )
     }
 
+    pub(crate) fn read_ly(&self, double_speed: bool) -> u8 {
+        // CPU-visible LY leads the internal scanline transition. Keep the
+        // physical line 153 intact: the readable value resets early, with
+        // revision/speed-dependent timing verified by AGE's ly ROMs.
+        let mut ly = self.ly;
+        if self.mode == MODE_VBLANK && self.lcdc & 0x80 != 0 {
+            let phase = self.mode_clock + 4;
+            if ly == 152 && phase >= MODE1_CYCLES {
+                ly = 153;
+            } else if ly == 153 {
+                let reset_at = if double_speed {
+                    6
+                } else if self.cgb() && self.cgb_revision() == CgbRevision::RevE {
+                    8
+                } else {
+                    4
+                };
+                if phase >= reset_at {
+                    ly = 0;
+                }
+            }
+        }
+        if self.lcdc & 0x80 != 0
+            && self.lcdc & 0x01 != 0
+            && self.mode == MODE_HBLANK
+            && self.dmg_startup_cycle.is_none()
+            && !self.cgb_lcd_startup
+        {
+            let ahead = 4;
+            if self.mode_clock + ahead >= self.dmg_hblank_ly_advance_cycle() {
+                ly = self.next_visible_ly();
+            }
+        }
+        ly
+    }
+
     /// Read a PPU register at `addr`.
     pub fn read_reg(&mut self, addr: u16) -> u8 {
+        if self.dmg_compat && (0xFF68..=0xFF6B).contains(&addr) {
+            return 0xFF;
+        }
         let value = match addr {
             0xFF40 => self.lcdc,
             0xFF41 => {
@@ -5116,21 +5155,7 @@ impl Ppu {
             }
             0xFF42 => self.scy,
             0xFF43 => self.scx,
-            0xFF44 => {
-                let mut ly = self.ly;
-                if !self.cgb()
-                    && self.lcdc & 0x80 != 0
-                    && self.lcdc & 0x01 != 0
-                    && self.mode == MODE_HBLANK
-                    && self.dmg_startup_cycle.is_none()
-                {
-                    let ahead = 4;
-                    if self.mode_clock + ahead >= self.dmg_hblank_ly_advance_cycle() {
-                        ly = self.next_visible_ly();
-                    }
-                }
-                ly
-            }
+            0xFF44 => self.read_ly(false),
             0xFF45 => self.lyc,
             0xFF46 => self.dma,
             0xFF47 => self.bgp,
@@ -5193,6 +5218,11 @@ impl Ppu {
 
     /// Write a PPU register at `addr`.
     pub fn write_reg(&mut self, addr: u16, val: u8) {
+        // Compatibility-mode software cannot overwrite the color palettes
+        // selected by the CGB boot ROM, even while the LCD is disabled.
+        if self.dmg_compat && (0xFF68..=0xFF6B).contains(&addr) {
+            return;
+        }
         match addr {
             0xFF40 => {
                 let old_lcdc = self.lcdc;
@@ -5509,6 +5539,15 @@ impl Ppu {
 
     fn dmg_hblank_ly_advance_cycle(&self) -> u16 {
         self.mode0_target_cycles
+    }
+
+    fn next_hblank_event(&self) -> u16 {
+        let compare_at = self.mode0_target_cycles.saturating_sub(4);
+        if self.cgb() && !self.cgb_lcd_startup && self.mode_clock < compare_at {
+            compare_at
+        } else {
+            self.mode0_target_cycles
+        }
     }
 
     fn mode3_window_activation_possible_this_line(&self) -> bool {
@@ -6256,10 +6295,10 @@ impl Ppu {
             MODE_TRANSFER if self.is_dmg_mode() => return self.dmg_fifo_run_limit(),
             MODE_HBLANK => {
                 if self.dmg_hblank_render_pending {
-                    self.mode0_target_cycles
+                    self.next_hblank_event()
                         .min(self.tuning.dmg_hblank_render_delay)
                 } else {
-                    self.mode0_target_cycles
+                    self.next_hblank_event()
                 }
             }
             MODE_VBLANK if self.ly != 153 || self.cgb_line153_ly0_triggered => MODE1_CYCLES,
@@ -6327,7 +6366,7 @@ impl Ppu {
                     return false;
                 }
                 MODE_HBLANK => {
-                    let target = self.mode0_target_cycles;
+                    let target = self.next_hblank_event();
                     if !self.dmg_hblank_render_pending {
                         if self.mode_clock.saturating_add(remaining) < target {
                             self.mode_clock += remaining;
@@ -6373,7 +6412,7 @@ impl Ppu {
                 match self.mode {
                     MODE_HBLANK => {
                         let mut next_event =
-                            self.mode0_target_cycles.saturating_sub(self.mode_clock);
+                            self.next_hblank_event().saturating_sub(self.mode_clock);
                         if self.dmg_hblank_render_pending
                             && self.mode_clock < self.tuning.dmg_hblank_render_delay
                         {
@@ -6464,6 +6503,16 @@ impl Ppu {
 
             match self.mode {
                 MODE_HBLANK => {
+                    // On CGB the line comparator sees the next LY before the
+                    // physical scanline ends, just like the CPU-visible LY.
+                    // This edge wakes HALT before the next line's pixel work.
+                    if self.cgb()
+                        && !self.cgb_lcd_startup
+                        && self.mode_clock + 4 >= self.mode0_target_cycles
+                    {
+                        self.ly_for_comparison = self.next_visible_ly();
+                        self.update_lyc_compare();
+                    }
                     if self.dmg_hblank_render_pending
                         && self.mode_clock >= self.tuning.dmg_hblank_render_delay
                     {
@@ -6533,9 +6582,6 @@ impl Ppu {
                     if self.ly == 153 && !self.cgb_line153_ly0_triggered {
                         self.cgb_line153_ly0_triggered = true;
                         self.ly_for_comparison = 0;
-                        if self.cgb() {
-                            self.ly = 0;
-                        }
                         self.update_lyc_compare();
                     }
 
