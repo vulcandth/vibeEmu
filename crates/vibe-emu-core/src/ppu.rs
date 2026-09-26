@@ -480,6 +480,8 @@ pub struct Ppu {
     // The native renderer's dot origin is established by the LCD-enable
     // write. A running LCD retains that origin when the CPU changes speed.
     cgb_lcd_started_double_speed: bool,
+    // Current CPU speed determines when native CGB LCDC writes reach the fetcher.
+    cgb_double_speed: bool,
     // A compatibility-mode LCD restart establishes the DMG fetcher origin.
     // KEY0 switches on an already running native LCD retain its old origin.
     cgb_lcd_started_compat: bool,
@@ -1032,6 +1034,7 @@ impl Ppu {
             mode0_target_cycles: MODE0_CYCLES,
             clock_hold_cycles: 0,
             cgb_lcd_started_double_speed: false,
+            cgb_double_speed: false,
             cgb_lcd_started_compat: false,
             framebuffer: [0xFFFFFF; SCREEN_WIDTH * SCREEN_HEIGHT],
             line_priority: [false; SCREEN_WIDTH],
@@ -1385,7 +1388,10 @@ impl Ppu {
         } else if dmg_mode {
             self.tuning.dmg_mode3_lcdc_event_t_bias
         } else {
-            0
+            // Normal-speed writes reach the native fetcher one dot after the
+            // CPU bus timestamp; double-speed writes use that dot directly.
+            // This phase also selects which bitplane can see a TILE_SEL glitch.
+            i16::from(!self.cgb_double_speed)
         };
         if dmg_mode {
             let changed = self.lcdc ^ val;
@@ -4282,6 +4288,7 @@ impl Ppu {
     }
 
     pub(crate) fn on_speed_switch(&mut self, double_speed: bool) {
+        self.cgb_double_speed = double_speed;
         if double_speed && self.lcd_enabled() && self.is_cgb_native_mode() {
             // Each switch into double speed shifts the running LCD clock
             // by one dot relative to the CPU (AGE lcd-align-ly).
@@ -4292,6 +4299,7 @@ impl Ppu {
     pub(crate) fn on_lcd_enable(&mut self, double_speed: bool) {
         // MMU supplies the CPU phase after the rising LCDC enable edge.
         self.cgb_lcd_started_double_speed = double_speed;
+        self.cgb_double_speed = double_speed;
     }
 
     #[inline]
@@ -6079,6 +6087,14 @@ impl Ppu {
                 self.render_dmg_bg_window_scanline_with_mode3_fetcher();
             } else if cgb_render {
                 self.render_cgb_bg_window_scanline_with_mode3_lcdc();
+            } else if self.mode3_lcdc_base & 0x20 == 0
+                && (self.mode3_lcdc_base & 0x02 == 0 || self.sprite_count == 0)
+                && self.lcdc_events_only_toggled_bit(0x18)
+            {
+                // Map/data selection belongs to tile fetches, whose boundaries
+                // shift with SCX. Screen-aligned groups of eight pixels cannot
+                // represent these writes when fine scrolling is nonzero.
+                self.render_bg_window_scanline_lcdc_fetcher();
             } else {
                 self.render_dmg_bg_window_scanline_simple();
             }
@@ -7970,7 +7986,7 @@ impl Ppu {
                 self.render_cgb_static_scanline::<false>();
             }
         } else {
-            self.render_cgb_bg_window_scanline_fetcher();
+            self.render_bg_window_scanline_lcdc_fetcher();
         }
     }
 
@@ -8108,7 +8124,7 @@ impl Ppu {
         row.key = key;
     }
 
-    fn render_cgb_bg_window_scanline_fetcher(&mut self) {
+    fn render_bg_window_scanline_lcdc_fetcher(&mut self) {
         #[derive(Clone, Copy, Default)]
         struct FifoPixel {
             color_id: u8,
@@ -8141,7 +8157,7 @@ impl Ppu {
         let mut cur_attr: u8 = 0;
         let mut cur_lo: u8 = 0;
         let mut cur_hi: u8 = 0;
-        let mut hi_glitch = false;
+        let mut tile_data_glitch_t = None;
         let bg_y = ly.wrapping_add(scy);
         let bg_tile_row = ((bg_y / 8) & 31) as usize;
         let bg_tile_y_raw = (bg_y & 7) as usize;
@@ -8156,7 +8172,10 @@ impl Ppu {
         let window_tile_y_raw = (self.win_line_counter & 7) as usize;
         let window_tile_row = ((self.win_line_counter / 8) & 31) as usize;
 
-        let mut stall_dots: u8 = 0;
+        // The first BG name/data/push sequence follows four startup dots.
+        // A left-edge OBJ fetch overlaps that startup and instead establishes
+        // the six-dot fetch phase used by cgb-acid-hell's TILE_SEL writes.
+        let mut stall_dots: u8 = 4;
         if (self.mode3_lcdc_base & 0x02) != 0
             && self.sprite_count > 0
             && self.line_sprites[..self.sprite_count]
@@ -8186,15 +8205,12 @@ impl Ppu {
                     let old_sel = (old & 0x10) != 0;
                     let new_sel = (lcdc_cur & 0x10) != 0;
 
-                    // cgb-acid-hell relies on the classic TILE_SEL mid-fetch glitch:
-                    // clearing bit 4 during the upper bitplane fetch causes the fetched
-                    // byte to come from the tile index path instead.
-                    if old_sel && !new_sel {
-                        // If the write lands slightly earlier in our simplified fetcher
-                        // model, carry the glitch forward until the next hi-byte read.
-                        if fetcher_step == 1 || fetcher_step == 2 {
-                            hi_glitch = true;
-                        }
+                    // On CGB hardware a falling TILE_SEL edge coincident with
+                    // a bitplane read substitutes the tile number for that byte.
+                    // It can affect either plane (AGE), and must not carry over
+                    // into a later fetch (cgb-acid-hell).
+                    if self.cgb() && old_sel && !new_sel {
+                        tile_data_glitch_t = Some(t);
                     }
                 }
 
@@ -8222,7 +8238,7 @@ impl Ppu {
                 cur_attr = 0;
                 cur_lo = 0;
                 cur_hi = 0;
-                hi_glitch = false;
+                tile_data_glitch_t = None;
             }
 
             if stall_dots > 0 {
@@ -8281,20 +8297,28 @@ impl Ppu {
                     match fetcher_step {
                         0 => {
                             cur_tile = self.vram_read_for_render(0, map_addr);
-                            cur_attr = self.vram_read_for_render(1, map_addr);
+                            cur_attr = if self.is_cgb_native_mode() {
+                                self.vram_read_for_render(1, map_addr)
+                            } else {
+                                0
+                            };
                         }
                         1 => {
                             let (bank, addr) = cgb_tile_plane_addr!(false);
-                            cur_lo = self.vram_read_for_render(bank, addr);
-                        }
-                        2 => {
-                            let (bank, addr) = cgb_tile_plane_addr!(true);
-                            cur_hi = if hi_glitch {
+                            cur_lo = if tile_data_glitch_t == Some(t) {
                                 cur_tile
                             } else {
                                 self.vram_read_for_render(bank, addr)
                             };
-                            hi_glitch = false;
+                        }
+                        2 => {
+                            let (bank, addr) = cgb_tile_plane_addr!(true);
+                            cur_hi = if tile_data_glitch_t == Some(t) {
+                                cur_tile
+                            } else {
+                                self.vram_read_for_render(bank, addr)
+                            };
+                            tile_data_glitch_t = None;
                         }
                         3 => {
                             let palette = cur_attr & 0x07;
@@ -8328,7 +8352,11 @@ impl Ppu {
                     if track_sprite_priority {
                         self.cgb_line_obj_enabled[out_x] = (lcdc_cur & 0x02) != 0;
                     }
-                    let color = self.cgb_bg_color_from_color_id(pix.palette, pix.color_id);
+                    let color = if self.is_cgb_native_mode() {
+                        self.cgb_bg_color_from_color_id(pix.palette, pix.color_id)
+                    } else {
+                        self.dmg_bg_color_for_pixel(out_x, pix.color_id)
+                    };
                     self.framebuffer[row_base + out_x] = color;
                     if track_sprite_priority {
                         self.line_priority[out_x] = pix.priority;
@@ -8867,7 +8895,7 @@ mod mode3_timing_tests {
                 }
             }
             actual.render_cgb_bg_window_scanline_with_mode3_lcdc();
-            reference.render_cgb_bg_window_scanline_fetcher();
+            reference.render_bg_window_scanline_lcdc_fetcher();
             assert_eq!(
                 actual.framebuffer, reference.framebuffer,
                 "iteration={iteration}"
@@ -8961,6 +8989,48 @@ mod mode3_timing_tests {
     }
 
     #[test]
+    fn native_lcdc_tile_select_corrupts_only_the_bitplane_being_read() {
+        for revision in [CgbRevision::RevB, CgbRevision::RevC, CgbRevision::RevE] {
+            for double_speed in [false, true] {
+                // First tile: name at dot 5, low plane at 7, high plane at 9.
+                // Unsigned data is blank; signed data is solid color 3. The
+                // tile number 0x55 makes a corrupted plane alternate its bits.
+                for (fetch_dot, expected) in [
+                    (5, [3; 8]),
+                    (6, [3; 8]),
+                    (7, [2, 3, 2, 3, 2, 3, 2, 3]),
+                    (8, [2; 8]),
+                    (9, [0, 2, 0, 2, 0, 2, 0, 2]),
+                    (10, [0; 8]),
+                ] {
+                    let mut ppu = Ppu::new(Model::Cgb(revision));
+                    ppu.lcdc = 0x91;
+                    ppu.mode3_lcdc_base = 0x91;
+                    ppu.mode = MODE_TRANSFER;
+                    ppu.scx = 0;
+                    ppu.scy = 0;
+                    ppu.ly = 0;
+                    ppu.vram[0][BG_MAP_0_BASE..BG_MAP_1_BASE].fill(0x55);
+                    ppu.vram[0][0x1550..0x1560].fill(0xff);
+                    ppu.cgb_bg_color_table[..4].copy_from_slice(&[0, 1, 2, 3]);
+                    ppu.on_lcd_enable(false);
+                    // Change CPU speed after LCD enable to ensure write phase
+                    // follows the current speed, not the LCD's startup phase.
+                    ppu.on_speed_switch(double_speed);
+                    ppu.mode_clock = fetch_dot - u16::from(!double_speed);
+                    ppu.write_reg(0xff40, 0x81);
+                    ppu.render_bg_window_scanline_lcdc_fetcher();
+                    assert_eq!(
+                        ppu.framebuffer[..8],
+                        expected,
+                        "{revision:?}, double_speed={double_speed}, fetch_dot={fetch_dot}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn cgb_static_spans_match_dot_fetcher() {
         let mut actual = Ppu::new(Model::Cgb(CgbRevision::RevE));
         let mut expected = Ppu::new(Model::Cgb(CgbRevision::RevE));
@@ -9003,7 +9073,7 @@ mod mode3_timing_tests {
                             ppu.framebuffer[row..row + SCREEN_WIDTH].fill(0xdeadbeef);
                         }
                         actual.render_cgb_bg_window_scanline_with_mode3_lcdc();
-                        expected.render_cgb_bg_window_scanline_fetcher();
+                        expected.render_bg_window_scanline_lcdc_fetcher();
                         let row = usize::from(actual.ly) * SCREEN_WIDTH;
                         assert_eq!(
                             actual.framebuffer[row..row + SCREEN_WIDTH],

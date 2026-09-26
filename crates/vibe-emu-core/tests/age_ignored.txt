@@ -1,4 +1,4 @@
-# AGE: 88 passing and 31 known failures across 119 ROM/revision cases.
+# AGE: 98 passing and 21 known failures across 119 ROM/revision cases.
 # Baseline before core fixes: 4 passing and 115 failing.
 # Recheck with: cargo test -p vibe-emu-core --test age -- --ignored
 
@@ -10,18 +10,6 @@ m3-bg-bgp/m3-bg-bgp.gb::dmgC
 m3-bg-bgp/m3-bg-bgp.gb::ncmB
 m3-bg-bgp/m3-bg-bgp.gb::ncmC
 m3-bg-bgp/m3-bg-bgp.gb::ncmE
-
-# m3-bg-lcdc: PPU access, interrupt, or rendering timing still differs from hardware.
-m3-bg-lcdc/m3-bg-lcdc-ds.gb::cgbB
-m3-bg-lcdc/m3-bg-lcdc-ds.gb::cgbC
-m3-bg-lcdc/m3-bg-lcdc-ds.gb::cgbE
-m3-bg-lcdc/m3-bg-lcdc-nocgb.gb::ncmB
-m3-bg-lcdc/m3-bg-lcdc-nocgb.gb::ncmC
-m3-bg-lcdc/m3-bg-lcdc-nocgb.gb::ncmE
-m3-bg-lcdc/m3-bg-lcdc.gb::cgbB
-m3-bg-lcdc/m3-bg-lcdc.gb::cgbC
-m3-bg-lcdc/m3-bg-lcdc.gb::cgbE
-m3-bg-lcdc/m3-bg-lcdc.gb::dmgC
 
 # Mode 3 background fetch / SCX rendering differs from reference images.
 m3-bg-scx/m3-bg-scx.gb::dmgC
