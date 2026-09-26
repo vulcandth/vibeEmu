@@ -9,14 +9,3 @@ misc/boot_regs-mgb.gb # Unsupported MGB/SGB/SGB2/AGB hardware model
 misc/boot_regs-sgb.gb # Unsupported MGB/SGB/SGB2/AGB hardware model
 misc/boot_regs-sgb2.gb # Unsupported MGB/SGB/SGB2/AGB hardware model
 utils/dump_boot_hwio.gb # Diagnostic workload with no pass/fail assertion or supplied reference
-
-# Remaining timing failures (also checked against an independent emulator).
-acceptance/gpu/hblank_ly_scx_timing-C.gb # HBlank-to-LY polling interval disagrees with SCX-dependent expectations
-acceptance/gpu/ly_lyc-C.gb # CGB coincidence flag and STAT IRQ assert one sample too early at visible line transitions
-acceptance/gpu/ly_lyc_0-C.gb # CGB line 153-to-0 coincidence and mode transition samples differ
-acceptance/gpu/ly_lyc_0_write-C.gb # LYC write IRQ rounds 2 and 4 differ near the frame boundary
-acceptance/gpu/ly_lyc_144-C.gb # CGB coincidence and STAT IRQ assert one sample too early at VBlank entry
-acceptance/gpu/ly_lyc_144-GS.gb # DMG coincidence remains set one sample too long after entry to VBlank
-acceptance/gpu/ly_lyc_153-C.gb # CGB coincidence remains set one sample too long on line 153
-acceptance/gpu/ly_lyc_153_write-C.gb # LYC write IRQ rounds 2 and 4 differ near line 153
-acceptance/gpu/ly_lyc_write-C.gb # CGB LYC write produces an unexpected STAT IRQ in round 3

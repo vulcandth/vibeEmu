@@ -98,7 +98,7 @@ fn native_window_fetch_delays_hblank_at_both_screen_edges() {
 }
 
 #[test]
-fn cgb_lyc_interrupt_precedes_the_physical_scanline_transition() {
+fn cgb_lyc_interrupt_waits_for_the_physical_scanline_transition() {
     for revision in [CgbRevision::RevB, CgbRevision::RevC, CgbRevision::RevE] {
         for bulk in [false, true] {
             let mut ppu = Ppu::new(Model::Cgb(revision));
@@ -119,21 +119,29 @@ fn cgb_lyc_interrupt_precedes_the_physical_scanline_transition() {
             assert_eq!(interrupts & 2, 0);
             assert_eq!(ppu.read_reg(0xFF44), 1);
             ppu.step(1, &mut interrupts);
-            assert_eq!(interrupts & 2, 2);
+            assert_eq!(interrupts & 2, 0);
             // B/C expose the old/new LY bus overlap at this dot; E does so
-            // one dot later. LYC's edge still precedes the new readable LY.
+            // one dot later. Coincidence must still wait for the new line.
             assert_eq!(
                 ppu.read_reg(0xFF44),
                 u8::from(revision == CgbRevision::RevE)
             );
-            assert_ne!(ppu.read_reg(0xFF41) & 4, 0);
+            assert_eq!(ppu.read_reg(0xFF41) & 4, 0);
             assert_eq!((ppu.ly(), ppu.mode()), (1, 0));
             interrupts = 0;
             ppu.step(2, &mut interrupts);
             assert_eq!(ppu.read_reg(0xFF44), 2);
             ppu.step(2, &mut interrupts);
             assert_eq!((ppu.ly(), ppu.mode()), (2, 2));
-            assert_eq!(interrupts & 2, 0, "no second edge at the physical boundary");
+            assert_eq!(
+                interrupts & 2,
+                2,
+                "coincidence asserts at the physical boundary"
+            );
+            assert_ne!(ppu.read_reg(0xFF41) & 4, 0);
+            interrupts = 0;
+            ppu.step(4, &mut interrupts);
+            assert_eq!(interrupts & 2, 0, "the match must not assert twice");
         }
     }
 }

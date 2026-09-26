@@ -7,8 +7,8 @@ The archive and extracted ROMs remain cached under `test_roms/`.
 `mooneye_acceptance` already covers the acceptance directory, seven
 `emulator-only` ROMs, and two `misc` boot-DIV ROMs. `mooneye_extended` enumerates
 the remaining ROMs without duplicating those tests: 27 pass and five are
-ignored. `wilbertpol` independently enumerates its entire bundle: 103 pass and
-19 are ignored (nine timing failures, six unsupported hardware cases, and four
+ignored. `wilbertpol` independently enumerates its entire bundle: 112 pass and
+10 are ignored (six unsupported hardware cases and four
 diagnostic workloads). Each sprite-priority ROM runs twice, for DMG and CGB.
 
 ## Completion and hardware selection
@@ -35,10 +35,10 @@ diagnostic workloads). Each sprite-priority ROM runs twice, for DMG and CGB.
   being counted as passing tests.
 
 Ignore lists contain reasons and are checked for stale entries. To investigate
-one failing test without running unsupported diagnostics:
+a specific timing test without running unsupported diagnostics:
 
 ```text
-cargo test -p vibe-emu-core --test wilbertpol -- --include-ignored ly_lyc_write-C
+cargo test -p vibe-emu-core --test wilbertpol -- --exact acceptance/gpu/ly_lyc_write-C.gb
 ```
 
 ## Initial failures and fixes
@@ -57,10 +57,37 @@ are enabled in the normal test run:
   `ly_lyc_153-GS` tests.
 - Sprite-priority screenshots: wait for complete frames as described above.
 
-The remaining nine Wilbertpol timing failures are real discrepancies: all 13
-initial PPU timing failures were also run successfully with SameBoy 1.0.2 on
-the corresponding DMG/CGB profiles. Their specific coincidence, interrupt,
-and SCX timing mismatches are recorded in `wilbertpol_ignored.txt`.
+All nine remaining Wilbertpol timing failures were subsequently fixed and
+removed from the ignore list:
+
+- CGB coincidence changes at the physical line boundary, rather than four
+  dots early. Writes cannot recompute the match while the comparator is
+  holding its previous result during the counter transition.
+- CGB LYC writes settle at the end of their CPU write cycle. An intervening
+  line transition can still match the previous LYC value; a write in the
+  comparator's closed interval must not create a spurious interrupt.
+- On physical line 153, CGB starts comparing zero at dot 8 of the PPU clock.
+  DMG also blanks coincidence during the last four dots of ordinary VBlank
+  scanlines, as it does during visible-line transitions.
+- CGB samples pending interrupts at the start of a HALT idle cycle; DMG
+  samples halfway through. Sampling CGB at the end dispatched interrupts
+  one cycle too early with IME enabled. The corrected phase also preserves
+  Daid's IME-disabled wake timing without a separate extra-cycle adjustment.
+
+The full regression run also exposed a previously compensating renderer
+error in `cgb-acid-hell`: its left-edge sprite fetch adds six dots to the
+normal four-dot fetcher startup, rather than replacing those startup dots.
+Correcting this additive delay restores the screenshot with the corrected
+LYC timing. The
+[cleaned-up source](https://github.com/CelestialAmber/cgb-acid-hell/blob/main/macros/scanline_hell.asm)
+describes the sprite stall and the bitplane write that depends on it.
+
+All 13 initial PPU timing failures were independently run successfully with
+SameBoy 1.0.2 on the corresponding DMG/CGB profiles. Its `Core/display.c`,
+`Core/memory.c`, and `Core/sm83_cpu.c` also informed the investigation of
+comparator write conflicts and HALT sampling. The tests retain the supplied
+ROM assertions and image expectations; no supported assertion failures
+remain ignored in these two new runners.
 
 Source inspection used
 [Mooneye at 31510e1](https://github.com/Gekkio/mooneye-test-suite/tree/31510e12eea6286d36eea060a6adde755e1067aa)

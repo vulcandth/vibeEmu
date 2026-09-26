@@ -1240,7 +1240,9 @@ impl Mmu {
                 }
             }
             0xFF41 => self.ppu.write_stat(val, &mut self.if_reg),
-            0xFF45 => self.ppu.write_lyc(val, &mut self.if_reg),
+            0xFF45 => self
+                .ppu
+                .write_lyc(val, self.key1 & 0x80 != 0, &mut self.if_reg),
             0xFF42..=0xFF44 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self
                 .ppu
                 .write_reg_with_boot_access(addr, val, self.boot_mapped),

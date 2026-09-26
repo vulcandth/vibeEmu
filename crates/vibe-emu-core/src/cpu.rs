@@ -792,7 +792,7 @@ impl Cpu {
             if !mmu.is_cgb() {
                 // DMG samples the HALT wake signal halfway through its idle
                 // M-cycle. An IRQ raised in the second half waits until the
-                // next cycle; CGB samples at the end of the M-cycle instead.
+                // next cycle; CGB samples at the start of the M-cycle instead.
                 self.tick_clocks(mmu, 2);
                 let wake = mmu.if_reg & mmu.ie_reg & 0x1F != 0;
                 self.tick_clocks(mmu, 2);
@@ -800,13 +800,11 @@ impl Cpu {
                     return;
                 }
             } else {
+                let wake = mmu.if_reg & mmu.ie_reg & 0x1F != 0;
                 self.tick(mmu, 1);
-            }
-            // With IME off, CGB needs an extra wake-up M-cycle when an IRQ
-            // releases HALT (Daid's speed_switch_timing). With IME on, the
-            // interrupt dispatch below already accounts for wake-up.
-            if mmu.is_cgb() && !self.ime && mmu.if_reg & mmu.ie_reg & 0x1F != 0 {
-                self.tick(mmu, 1);
+                if !wake {
+                    return;
+                }
             }
             self.handle_interrupts(mmu);
             return;

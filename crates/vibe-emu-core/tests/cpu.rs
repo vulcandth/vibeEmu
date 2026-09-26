@@ -6,7 +6,7 @@ use vibe_emu_core::{
 };
 
 #[test]
-fn halt_samples_dmg_interrupts_at_the_half_cycle() {
+fn halt_samples_interrupts_at_the_model_specific_clock_phase() {
     for model in [Model::default(), Model::Cgb(CgbRevision::RevE)] {
         for irq_after in 1..=4 {
             for ime in [false, true] {
@@ -23,13 +23,15 @@ fn halt_samples_dmg_interrupts_at_the_half_cycle() {
                 cpu.ime = ime;
                 let before = cpu.cycles;
                 cpu.step(&mut mmu);
-                let deferred = model.is_dmg() && irq_after > 2;
+                let deferred = model.is_cgb() || irq_after > 2;
                 assert_eq!(cpu.halted, deferred, "{model:?}, IRQ at {irq_after}");
                 if deferred {
                     assert_eq!(cpu.cycles - before, 4);
                     assert_ne!(mmu.if_reg & 2, 0);
+                    let before_wake = cpu.cycles;
                     cpu.step(&mut mmu);
                     assert!(!cpu.halted);
+                    assert_eq!(cpu.cycles - before_wake, if ime { 24 } else { 4 });
                 }
                 if ime {
                     assert_eq!(cpu.pc, 0x48);

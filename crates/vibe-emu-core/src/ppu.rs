@@ -4701,6 +4701,22 @@ impl Ppu {
 
     fn update_lyc_compare(&mut self) {
         if self.lcdc & 0x80 != 0 {
+            // CGB holds the previous comparator result while the line counter
+            // changes. In particular, an LYC write in this interval must not
+            // create a match against the old line (Wilbertpol ly_lyc*_write).
+            if self.cgb()
+                && ((self.mode == MODE_HBLANK
+                    && !self.cgb_lcd_startup
+                    && self.mode_clock + 4 >= self.mode0_target_cycles)
+                    || (self.mode == MODE_VBLANK
+                        && self.ly < 153
+                        && self.mode_clock + 4 >= MODE1_CYCLES)
+                    || (self.mode == MODE_VBLANK
+                        && self.ly == 153
+                        && (4..8).contains(&self.mode_clock)))
+            {
+                return;
+            }
             // Use ly_for_comparison for the LYC check (differs from LY during
             // CGB line 153 quirk)
             let mut coincide = self.ly_for_comparison == self.lyc;
@@ -4716,6 +4732,13 @@ impl Ppu {
                 && self.mode == MODE_HBLANK
                 && !self.cgb_lcd_startup
                 && self.mode_clock + 4 >= self.mode0_target_cycles
+            {
+                coincide = false;
+            }
+            if !self.cgb()
+                && self.mode == MODE_VBLANK
+                && self.ly < 153
+                && self.mode_clock + 4 >= MODE1_CYCLES
             {
                 coincide = false;
             }
@@ -4745,7 +4768,14 @@ impl Ppu {
         }
     }
 
-    pub(crate) fn write_lyc(&mut self, value: u8, if_reg: &mut u8) {
+    pub(crate) fn write_lyc(&mut self, value: u8, double_speed: bool, if_reg: &mut u8) {
+        if self.cgb() && self.lcd_enabled() {
+            // CPU writes enter the MMU at the beginning of the M-cycle.
+            // CGB's LYC comparator sees the value at the end of that cycle;
+            // a line transition during the write can still match the old LYC.
+            self.queue_reg_write(0xff45, value, if double_speed { 2 } else { 4 });
+            return;
+        }
         self.write_reg(0xff45, value);
         // A write can produce a short coincidence edge immediately before
         // the line boundary clears it. Latch that edge before advancing LCD.
@@ -5945,9 +5975,13 @@ impl Ppu {
 
     fn next_vblank_event(&self) -> u16 {
         if self.ly != 153 || self.cgb_line153_ly0_triggered {
-            MODE1_CYCLES
+            if !self.cgb() && self.ly < 153 && self.mode_clock < MODE1_CYCLES - 4 {
+                MODE1_CYCLES - 4
+            } else {
+                MODE1_CYCLES
+            }
         } else if self.cgb() {
-            12
+            8
         } else if self.mode_clock < 4 {
             4
         } else {
@@ -6950,10 +6984,13 @@ impl Ppu {
 
             match self.mode {
                 MODE_HBLANK => {
-                    // The comparator changes before the physical line ends.
-                    // CGB compares the next LY here; DMG blanks coincidence
-                    // until OAM scan starts. Both precede the mode-2 IRQ.
-                    if !self.cgb_lcd_startup && self.mode_clock + 4 >= self.mode0_target_cycles {
+                    // DMG blanks coincidence before the physical line ends.
+                    // CGB retains the previous result until the new line;
+                    // advancing its comparator here raises STAT too early.
+                    if !self.cgb()
+                        && !self.cgb_lcd_startup
+                        && self.mode_clock + 4 >= self.mode0_target_cycles
+                    {
                         self.ly_for_comparison = self.next_visible_ly();
                         self.update_lyc_compare();
                     }
@@ -7027,13 +7064,12 @@ impl Ppu {
                     self.update_lyc_compare();
                     // The line-153 comparator changes after readable LY has
                     // reset: DMG blanks the match at dot 4 and compares zero
-                    // at dot 8; CGB retains its previous match until dot 12.
+                    // at dot 8; CGB retains its previous match until dot 8.
+                    // These offsets use the physical PPU clock, whose line
+                    // boundary follows the first CPU-visible LY transition.
                     // GBMicrotest observes both DMG edges, including writes
                     // of LYC=153 during the gap and an LYC=0 interrupt sled.
-                    if self.ly == 153
-                        && !self.cgb_line153_ly0_triggered
-                        && self.mode_clock >= if self.cgb() { 12 } else { 8 }
-                    {
+                    if self.ly == 153 && !self.cgb_line153_ly0_triggered && self.mode_clock >= 8 {
                         self.cgb_line153_ly0_triggered = true;
                         self.ly_for_comparison = 0;
                         self.update_lyc_compare();
@@ -8427,8 +8463,9 @@ impl Ppu {
         let window_tile_row = ((self.win_line_counter / 8) & 31) as usize;
 
         // The first BG name/data/push sequence follows four startup dots.
-        // A left-edge OBJ fetch overlaps that startup and instead establishes
-        // the six-dot fetch phase used by cgb-acid-hell's TILE_SEL writes.
+        // A left-edge OBJ fetch adds six more dots. Replacing the startup
+        // delay with the OBJ delay loses four dots and misaligns the TILE_SEL
+        // bitplane writes in cgb-acid-hell after an LYC-triggered HALT.
         let mut stall_dots: u8 = 4;
         if (self.mode3_lcdc_base & 0x02) != 0
             && self.sprite_count > 0
@@ -8436,7 +8473,7 @@ impl Ppu {
                 .iter()
                 .any(|s| s.x <= 0)
         {
-            stall_dots = 6;
+            stall_dots += 6;
         }
 
         // In the real hardware the pixel pipeline always produces 160 output pixels.
@@ -9595,9 +9632,9 @@ mod mode3_timing_tests {
         interrupts = 0;
         ppu.step(1, &mut interrupts);
         assert_eq!(ppu.read_stat(false) & 4, 0);
-        ppu.write_lyc(153, &mut interrupts);
+        ppu.write_lyc(153, false, &mut interrupts);
         assert_eq!(interrupts & 2, 0, "LYC=153 cannot retrigger in the gap");
-        ppu.write_lyc(0, &mut interrupts);
+        ppu.write_lyc(0, false, &mut interrupts);
         assert_eq!(ppu.read_stat(false) & 4, 0);
         assert_eq!(interrupts & 2, 0, "LYC=0 must wait for the comparator");
         ppu.step(3, &mut interrupts);
@@ -9621,18 +9658,54 @@ mod mode3_timing_tests {
         ppu.mode_clock = 198;
         ppu.update_lyc_compare();
         let mut interrupts = 0;
-        ppu.write_lyc(1, &mut interrupts);
+        ppu.write_lyc(1, false, &mut interrupts);
         assert_eq!(interrupts & 2, 2, "write asserts IRQ before the next dot");
         ppu.step(2, &mut interrupts);
         assert_eq!(ppu.read_stat(false) & 4, 0);
         assert_eq!(interrupts & 2, 2, "blanking must not erase a latched IRQ");
         interrupts = 0;
-        ppu.write_lyc(1, &mut interrupts);
+        ppu.write_lyc(1, false, &mut interrupts);
         assert_eq!(interrupts & 2, 0);
-        ppu.write_lyc(2, &mut interrupts);
+        ppu.write_lyc(2, false, &mut interrupts);
         assert_eq!(interrupts & 2, 0);
         ppu.step(4, &mut interrupts);
         assert_eq!(interrupts & 2, 2, "the next line can assert a fresh edge");
+    }
+
+    #[test]
+    fn cgb_lyc_write_conflicts_match_in_batched_and_single_dot_steps() {
+        // These are the three boundary cases in Wilbertpol's ly_lyc_write-C:
+        // establish a match before the latch closes, write during the closed
+        // interval, and remove a match while the new line is being latched.
+        for (clock, old_lyc, new_lyc, expected_irq) in
+            [(194, 240, 1, 2), (198, 240, 1, 0), (202, 2, 240, 2)]
+        {
+            for batched in [false, true] {
+                let mut ppu = Ppu::new(Model::Cgb(CgbRevision::RevE));
+                ppu.skip_startup_for_test();
+                ppu.lcdc = 0x91;
+                ppu.mode = MODE_HBLANK;
+                ppu.mode_clock = clock;
+                ppu.mode0_target_cycles = 204;
+                ppu.ly = 1;
+                ppu.ly_for_comparison = 1;
+                ppu.lyc = old_lyc;
+                ppu.stat = 0x40;
+                ppu.update_lyc_compare();
+                let mut interrupts = 0;
+                ppu.write_lyc(new_lyc, false, &mut interrupts);
+                assert_eq!(interrupts & 2, 0, "the write has not settled yet");
+                if batched {
+                    ppu.step(12, &mut interrupts);
+                } else {
+                    for _ in 0..12 {
+                        ppu.step(1, &mut interrupts);
+                    }
+                }
+                assert_eq!(ppu.lyc, new_lyc);
+                assert_eq!(interrupts & 2, expected_irq, "write at HBlank dot {clock}");
+            }
+        }
     }
 
     #[test]
@@ -9649,7 +9722,7 @@ mod mode3_timing_tests {
                 ppu.stat = 0x40;
                 ppu.update_lyc_compare();
                 let mut interrupts = 0;
-                let compare_at = if model.is_dmg() { 8 } else { 12 };
+                let compare_at = 8;
                 if batched {
                     ppu.step(compare_at - 1, &mut interrupts);
                 } else {
