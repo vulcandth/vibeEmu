@@ -302,7 +302,9 @@ impl Mmu {
     #[inline]
     fn power_on_div(model: Model) -> u16 {
         match model {
-            Model::Cgb(CgbRevision::RevE) => 0x0104,
+            // Approximate power-on phase, calibrated with LCD startup timing
+            // to reproduce the boot-ROM DIV value checked by BullyGB.
+            Model::Cgb(CgbRevision::RevE) => 8,
             Model::Dmg(_) => 8,
             _ => 0,
         }

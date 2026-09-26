@@ -76,7 +76,34 @@ fn ensure_test_roms() {
         ensure_bullygb_test_roms(&dir);
         ensure_hacktix_test_roms(&dir);
         ensure_gb_emulator_shootout_cpp_test_roms(&dir);
+        ensure_little_things_test_roms(&dir);
     });
+}
+
+fn ensure_little_things_test_roms(dir: &Path) {
+    let base = dir.join("little-things-gb");
+    for (release, name) in [
+        ("Double-halt-cancel-v1.0", "double-halt-cancel.gb"),
+        ("Double-halt-cancel-v1.0", "double-halt-cancel-gbconly.gb"),
+        ("Win-desync-v1.0", "windesync-validate.gb"),
+    ] {
+        let path = base.join(name);
+        if !path.exists() {
+            download_file(
+                &format!(
+                    "https://github.com/nitro2k01/little-things-gb/releases/download/{release}/{name}"
+                ),
+                &path,
+            );
+        }
+    }
+    let reference = base.join("windesync-reference-sgb.png");
+    if !reference.exists() {
+        download_file(
+            "https://raw.githubusercontent.com/nitro2k01/little-things-gb/ce015ca2949b4db2babd03fe387b8b1999a8f60a/windesync-validate/images/windesync-reference-sgb.png",
+            &reference,
+        );
+    }
 }
 
 fn ensure_gb_emulator_shootout_cpp_test_roms(dir: &Path) {

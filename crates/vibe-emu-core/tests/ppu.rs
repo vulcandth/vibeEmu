@@ -4,6 +4,126 @@ use vibe_emu_core::{
 };
 
 #[test]
+fn cgb_lcd_enable_draws_line_zero_before_advancing_ly() {
+    for compat in [false, true] {
+        let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
+        ppu.set_dmg_compat_mode(compat);
+        ppu.write_reg(0xFF40, 0);
+        ppu.write_reg(0xFF40, 0x91);
+        let mut interrupts = 0;
+        ppu.step(79, &mut interrupts);
+        assert_eq!(ppu.ly(), 0);
+        assert_eq!(ppu.read_reg(0xFF41) & 3, 0);
+        assert!(ppu.vram_read_accessible());
+        assert!(ppu.oam_read_accessible());
+        ppu.step(1, &mut interrupts);
+        assert_eq!(ppu.ly(), 0);
+        assert_eq!(ppu.mode(), 3);
+        assert!(!ppu.vram_read_accessible());
+        ppu.step(376, &mut interrupts);
+        assert_eq!(ppu.ly(), 1);
+        assert_eq!(ppu.mode(), 2);
+        ppu.step(80, &mut interrupts);
+        assert_eq!(ppu.ly(), 1);
+        assert!(!ppu.vram_read_accessible());
+
+        // Restarting the LCD must repeat the initial drawing period.
+        ppu.write_reg(0xFF40, 0);
+        ppu.write_reg(0xFF40, 0x91);
+        ppu.step(80, &mut interrupts);
+        assert_eq!((ppu.ly(), ppu.mode()), (0, 3));
+    }
+}
+
+#[test]
+fn disabled_window_pixel_depends_on_scroll_alignment_and_prior_window_start() {
+    for model in [Model::default(), Model::Cgb(CgbRevision::default())] {
+        for triggered in [false, true] {
+            for scx in 0..8u8 {
+                for wx in 0..=168u8 {
+                    let mut ppu = Ppu::new(model);
+                    // Color ID 0 must use the palette, rather than hardcoded black.
+                    ppu.set_dmg_palette([3, 2, 1, 0]);
+                    if model.is_cgb() {
+                        ppu.apply_dmg_compatibility_palettes();
+                    }
+                    ppu.write_reg(0xFF47, 0xE4);
+                    ppu.write_reg(0xFF4A, 0);
+                    ppu.write_reg(0xFF4B, 7);
+                    ppu.write_reg(0xFF40, if triggered { 0xB1 } else { 0x91 });
+                    ppu.skip_startup_for_test();
+                    // A repeating 0,1,2,3 pattern exposes both inserted pixels
+                    // and a one-pixel shift, including insertions left of X=0.
+                    for row in 0..8 {
+                        ppu.vram[0][row * 2] = 0x55;
+                        ppu.vram[0][row * 2 + 1] = 0x33;
+                    }
+                    let mut interrupts = 0;
+                    ppu.step(456, &mut interrupts);
+                    ppu.write_reg(0xFF40, 0x91);
+                    ppu.write_reg(0xFF43, scx);
+                    ppu.write_reg(0xFF4B, wx);
+                    // The effect persists beyond the immediately following line.
+                    ppu.step(456 * 4, &mut interrupts);
+                    for x in 0..160usize {
+                        let glitch =
+                            model.is_dmg() && triggered && wx <= 166 && (wx & 7) == 7 - scx;
+                        let origin = i16::from(wx) - 7;
+                        let color_id = if glitch && x as i16 == origin {
+                            0
+                        } else {
+                            (x + scx as usize - usize::from(glitch && x as i16 > origin)) & 3
+                        };
+                        let expected = if model.is_cgb() {
+                            ppu.bg_palette_color(0, color_id)
+                        } else {
+                            3 - color_id as u32
+                        };
+                        assert_eq!(
+                            ppu.framebuffer()[4 * 160 + x],
+                            expected,
+                            "{model:?}, triggered={triggered}, SCX={scx}, WX={wx}, x={x}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn disabled_window_glitch_resets_at_new_frame_and_lcd_disable() {
+    for reset_lcd in [false, true] {
+        let mut ppu = Ppu::new(Model::default());
+        ppu.set_dmg_palette([0, 1, 2, 3]);
+        ppu.write_reg(0xFF47, 0xE4);
+        ppu.write_reg(0xFF4B, 7);
+        ppu.write_reg(0xFF40, 0xB1);
+        ppu.skip_startup_for_test();
+        for row in 0..8 {
+            ppu.vram[0][row * 2] = 0xFF;
+        }
+        let mut interrupts = 0;
+        ppu.step(456, &mut interrupts);
+        ppu.write_reg(0xFF40, 0x91);
+        ppu.step(456, &mut interrupts);
+        assert_eq!(&ppu.framebuffer()[160..162], &[0, 1]);
+
+        if reset_lcd {
+            ppu.write_reg(0xFF40, 0);
+            ppu.write_reg(0xFF40, 0x91);
+            ppu.skip_startup_for_test();
+        } else {
+            for _ in 2..154 {
+                ppu.step(456, &mut interrupts);
+            }
+        }
+        ppu.step(456, &mut interrupts);
+        assert_eq!(&ppu.framebuffer()[..2], &[1, 1]);
+    }
+}
+
+#[test]
 fn sprite_tiles_do_not_depend_on_background_scroll() {
     for model in [Model::default(), Model::Cgb(CgbRevision::default())] {
         for scx in 0..8 {
@@ -249,6 +369,7 @@ fn sprite_x_priority() {
 fn cgb_obj_priority_mode_cgb() {
     let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF40, 0x82); // LCD on, sprites enabled
+    ppu.skip_startup_for_test(); // Test priority on a normal line with OAM scanning.
     ppu.write_reg(0xFF48, 0xE4);
     // two sprite tiles -> color1
     ppu.vram[0][0] = 0xFF;
@@ -283,6 +404,7 @@ fn cgb_obj_priority_mode_cgb() {
 fn cgb_obj_priority_mode_dmg() {
     let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF40, 0x82); // LCD on, sprites enabled
+    ppu.skip_startup_for_test(); // Test priority on a normal line with OAM scanning.
     ppu.write_reg(0xFF48, 0xE4);
     ppu.vram[0][0] = 0xFF;
     ppu.vram[0][1] = 0x00;
@@ -373,6 +495,7 @@ fn cgb_master_priority() {
     let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     // LCD on, OBJ enabled, master priority cleared
     ppu.write_reg(0xFF40, 0x92);
+    ppu.skip_startup_for_test(); // Test priority on a normal line with OAM scanning.
     // BG palette 0 color1 -> red
     ppu.write_reg(0xFF68, 0x80);
     ppu.write_reg(0xFF69, 0x00);

@@ -449,6 +449,10 @@ pub struct Ppu {
 
     /// Internal window line counter
     win_line_counter: u8,
+    /// A window start has occurred in this frame (retained when WIN_EN is cleared).
+    dmg_window_triggered: bool,
+    /// CGB's first scanline reports mode 0 instead of performing an OAM scan.
+    cgb_lcd_startup: bool,
 
     bgpi: u8,
     bgpd: [u8; PAL_RAM_SIZE],
@@ -998,6 +1002,8 @@ impl Ppu {
             wy: 0,
             wx: 0,
             win_line_counter: 0,
+            dmg_window_triggered: false,
+            cgb_lcd_startup: false,
             bgpi: PAL_UNUSED_BIT,
             bgpd: [0; PAL_RAM_SIZE],
             obpi: PAL_UNUSED_BIT,
@@ -4142,6 +4148,7 @@ impl Ppu {
 
     /// Skip the LCD startup delay; used to put the PPU into a known state for tests.
     pub fn skip_startup_for_test(&mut self) {
+        self.cgb_lcd_startup = false;
         self.dmg_startup_cycle = None;
         self.dmg_startup_stage = None;
         self.dmg_post_startup_line2 = false;
@@ -4226,6 +4233,8 @@ impl Ppu {
         self.dma = 0x00;
         self.bgp = 0xFC;
         self.win_line_counter = 0;
+        self.dmg_window_triggered = false;
+        self.cgb_lcd_startup = false;
 
         if self.cgb() {
             self.stat = 0x80;
@@ -5209,6 +5218,8 @@ impl Ppu {
                     self.mode0_target_cycles = MODE0_CYCLES;
                     self.lcd_off_frame_cycle_accum = 0;
                     self.win_line_counter = 0;
+                    self.dmg_window_triggered = false;
+                    self.cgb_lcd_startup = false;
                     self.ly = 0;
                     self.ly_for_comparison = 0;
                     ppu_trace!("LCD disabled");
@@ -5245,6 +5256,16 @@ impl Ppu {
                         self.mode0_target_cycles = MODE0_CYCLES;
                         self.ly = 0;
                         self.ly_for_comparison = 0;
+                    } else {
+                        // LCD enable begins line 0's initial 80-dot period. It
+                        // reports mode 0 and does not scan OAM, then enters
+                        // mode 3 without advancing LY. Treating it as ordinary
+                        // HBlank skips the first drawing period entirely.
+                        self.cgb_lcd_startup = true;
+                        self.set_mode(MODE_HBLANK);
+                        self.mode_clock = 0;
+                        self.mode0_target_cycles = MODE2_CYCLES;
+                        self.sprite_count = 0;
                     }
                 }
                 if self.lcdc & 0x80 != 0 {
@@ -5748,7 +5769,9 @@ impl Ppu {
             } else {
                 has_mode3_reg_events
                     || (window_line_active && self.mode3_wx_base <= 7)
-                    || (prev_static_window_active && self.mode3_wx_base <= 7)
+                    || (prev_static_window_active
+                        && self.mode3_wx_base <= 7
+                        && self.mode3_lcdc_base & 0x20 != 0)
                     || (prev_dynamic_window_active && self.mode3_wx_event_count > 0)
                     || (prev_dynamic_window_active
                         && window_possible_this_line
@@ -6391,6 +6414,8 @@ impl Ppu {
                 self.ly_for_comparison = 0;
                 self.mode_clock = 0;
                 self.win_line_counter = 0;
+                self.dmg_window_triggered = false;
+                self.cgb_lcd_startup = false;
                 self.dmg_mode2_vblank_irq_pending = false;
                 self.refresh_stat_irq_if_dirty(if_reg);
                 continue;
@@ -6439,6 +6464,19 @@ impl Ppu {
                             self.dmg_hblank_render_pending = false;
                         }
                         self.mode_clock -= target;
+                        if self.cgb_lcd_startup {
+                            self.cgb_lcd_startup = false;
+                            self.set_mode(MODE_TRANSFER);
+                            self.begin_mode3_line();
+                            self.mode3_target_cycles = self.compute_mode3_cycles_for_line();
+                            self.mode0_target_cycles =
+                                LINE_CYCLES.saturating_sub(MODE2_CYCLES + self.mode3_target_cycles);
+                            if self.is_dmg_mode() {
+                                self.dmg_begin_transfer_line();
+                            }
+                            self.refresh_stat_irq_if_dirty(if_reg);
+                            continue;
+                        }
                         self.ly += 1;
                         self.ly_for_comparison = self.ly;
                         self.update_lyc_compare();
@@ -6496,6 +6534,8 @@ impl Ppu {
                             self.ly = 0;
                             self.frame_ready = false;
                             self.win_line_counter = 0;
+                            self.dmg_window_triggered = false;
+                            self.cgb_lcd_startup = false;
                             self.frame_counter = self.frame_counter.wrapping_add(1);
                             self.set_mode(MODE_OAM);
                             // ly_for_comparison already 0, no need to update
@@ -6511,6 +6551,8 @@ impl Ppu {
                                 self.ly_for_comparison = 0;
                                 self.frame_ready = false;
                                 self.win_line_counter = 0;
+                                self.dmg_window_triggered = false;
+                                self.cgb_lcd_startup = false;
                                 self.frame_counter = self.frame_counter.wrapping_add(1);
                                 self.set_mode(MODE_OAM);
                             }
@@ -6615,6 +6657,17 @@ impl Ppu {
     fn render_dmg_bg_window_scanline_simple(&mut self) {
         let row_base = self.ly as usize * SCREEN_WIDTH;
         let track_bg_zero = self.sprite_count > 0;
+        // After a window start, clearing WIN_EN can insert color ID 0 at
+        // WX-7 when that position coincides with a BG tile boundary. The BG
+        // stream (but not OBJs) is delayed by one pixel, even if the insertion
+        // happens left of the visible screen. This latch lasts for the frame.
+        // See nitro2k01/little-things-gb's windesync-validate hardware capture.
+        let glitch_x = (!self.cgb()
+            && self.dmg_window_triggered
+            && self.mode3_lcdc_base & 0x20 == 0
+            && self.mode3_wx_base <= 166
+            && (self.mode3_wx_base & 7) == 7 - (self.mode3_scx_base & 7))
+            .then_some(i16::from(self.mode3_wx_base) - 7);
         let zero_event_fast_path = !self.cgb()
             && self.mode3_lcdc_event_count == 0
             && self.mode3_scx_event_count == 0
@@ -6640,7 +6693,7 @@ impl Ppu {
                 let tile_y = (py % 8) as usize;
                 self.render_dmg_static_tile_span(
                     0,
-                    SCREEN_WIDTH,
+                    glitch_x.map_or(SCREEN_WIDTH, |x| x.max(0) as usize),
                     row_base,
                     bg_map_base,
                     tile_row,
@@ -6651,6 +6704,29 @@ impl Ppu {
                     bgp,
                     track_bg_zero,
                 );
+                if let Some(x) = glitch_x {
+                    let start = (x + 1).max(0) as usize;
+                    self.render_dmg_static_tile_span(
+                        start,
+                        SCREEN_WIDTH,
+                        row_base,
+                        bg_map_base,
+                        tile_row,
+                        tile_y,
+                        scx.wrapping_add(start as u16).wrapping_sub(1),
+                        true,
+                        bg_tile_data_unsigned,
+                        bgp,
+                        track_bg_zero,
+                    );
+                    if x >= 0 {
+                        self.framebuffer[row_base + x as usize] =
+                            self.dmg_bg_color_for_pixel(x as usize, 0);
+                        if track_bg_zero {
+                            self.line_color_zero[x as usize] = true;
+                        }
+                    }
+                }
             }
 
             let mut window_drawn = false;
@@ -6688,6 +6764,7 @@ impl Ppu {
 
             if window_drawn {
                 self.win_line_counter = self.win_line_counter.wrapping_add(1);
+                self.dmg_window_triggered = true;
             }
             return;
         }
@@ -6736,7 +6813,8 @@ impl Ppu {
             };
             let scx = self.dmg_scx_for_mode3_t(fetch_t) as u16;
             let scy = self.dmg_scy_for_mode3_t(fetch_t) as u16;
-            let px = x.wrapping_add(scx) & 0xFF;
+            let shifted = glitch_x.is_some_and(|glitch| x as i16 > glitch);
+            let px = x.wrapping_add(scx).wrapping_sub(u16::from(shifted)) & 0xFF;
             let py = (self.ly as u16).wrapping_add(scy) & 0xFF;
             let tile_col = (px / 8) as usize;
             let tile_row = (py / 8) as usize;
@@ -6750,7 +6828,11 @@ impl Ppu {
             let bit = 7 - (px % 8) as usize;
             let lo = self.vram_read_for_render(0, addr_lo);
             let hi = self.vram_read_for_render(0, addr_hi);
-            let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+            let color_id = if glitch_x == Some(x as i16) {
+                0
+            } else {
+                ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1)
+            };
             let color = self.dmg_bg_color_for_pixel(x as usize, color_id);
             self.framebuffer[row_base + x as usize] = color;
             if track_bg_zero {
@@ -6812,6 +6894,7 @@ impl Ppu {
         }
         if window_drawn {
             self.win_line_counter = self.win_line_counter.wrapping_add(1);
+            self.dmg_window_triggered = true;
         }
     }
 
@@ -7529,6 +7612,11 @@ impl Ppu {
                             }
                             if wx_cur == logical_pos {
                                 bg_fifo.push_back(0);
+                                if !pop_before_fetch {
+                                    // Insertion still consumes this dot's FIFO
+                                    // output when popping follows fetching.
+                                    pop_one_dot!(t);
+                                }
                                 continue;
                             }
                         }
@@ -7562,6 +7650,7 @@ impl Ppu {
 
         if window_activations > 0 {
             self.win_line_counter = self.win_line_counter.wrapping_add(window_activations);
+            self.dmg_window_triggered = true;
         }
 
         if trace_dmg_bg_output_enabled()
@@ -7649,6 +7738,7 @@ impl Ppu {
                 self.win_line_counter,
             );
             self.win_line_counter = self.win_line_counter.wrapping_add(1);
+            self.dmg_window_triggered = true;
         }
     }
 
@@ -7985,6 +8075,7 @@ impl Ppu {
 
         if window_drawn {
             self.win_line_counter = self.win_line_counter.wrapping_add(1);
+            self.dmg_window_triggered = true;
         }
     }
 
