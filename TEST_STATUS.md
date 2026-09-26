@@ -22,6 +22,7 @@ Commands executed:
 - `cargo test --release --test dmg_acid2_rom -- --include-ignored`
 - `cargo test --release --test dmg_sound_roms -- --include-ignored`
 - `cargo test --release --test gambatte -- --include-ignored`
+- `cargo test --release --test halt_batch -- --include-ignored`
 - `cargo test --release --test halt_bug_rom -- --include-ignored`
 - `cargo test --release --test instr_timing_rom -- --include-ignored`
 - `cargo test --release --test interrupt_time_rom -- --include-ignored`
@@ -49,10 +50,10 @@ Combined exit code: 101
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
 | ROM Test Suites | 1935 | 1815 | 0 | 0 | 3750 | 51.6% |
-| Integration Tests | 154 | 2 | 0 | 0 | 156 | 98.7% |
-| Unit Tests | 70 | 0 | 0 | 0 | 70 | 100.0% |
+| Integration Tests | 164 | 2 | 0 | 0 | 166 | 98.8% |
+| Unit Tests | 99 | 0 | 0 | 0 | 99 | 100.0% |
 | Doc Tests | 16 | 0 | 0 | 0 | 16 | 100.0% |
-| **Overall** | 2175 | 1817 | 0 | 0 | 3992 | 54.5% |
+| **Overall** | 2214 | 1817 | 0 | 0 | 4031 | 54.9% |
 
 ## Detailed Results
 
@@ -3931,11 +3932,12 @@ Combined exit code: 101
 
 ### Integration Tests
 
-#### apu (66/66 passing, 100.0%)
+#### apu (69/69 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
 | `dac_off_disables_channel` | ✅ Pass |
+| `disabled_dac_is_silent_even_when_another_dac_is_on` | ✅ Pass |
 | `double_speed_preserves_lf_div_phase` | ✅ Pass |
 | `duty_step_reset_when_apu_powered_off` | ✅ Pass |
 | `frame_sequencer_tick` | ✅ Pass |
@@ -3985,6 +3987,8 @@ Combined exit code: 101
 | `nr52_bits_ignore_dac_only` | ✅ Pass |
 | `nr52_channel_status_bits` | ✅ Pass |
 | `nr52_clears_registers_when_off` | ✅ Pass |
+| `nr52_power_cycle_preserves_frontend_audio_settings` | ✅ Pass |
+| `nr52_power_cycle_preserves_output_queue_and_sample_clock` | ✅ Pass |
 | `nr52_power_toggle` | ✅ Pass |
 | `nr52_wave_ram_persist` | ✅ Pass |
 | `pcm_mask_defaults_to_full_on_reve` | ✅ Pass |
@@ -4066,7 +4070,16 @@ Combined exit code: 101
 | `stop_resets_div_and_pauses` | ✅ Pass |
 | `stop_speed_switch` | ✅ Pass |
 
-#### ppu (15/15 passing, 100.0%)
+#### halt_batch (4/4 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `bounded_runner_matches_instructions_with_sound_mmio` | ✅ Pass |
+| `bounded_runner_preserves_external_link_polling` | ✅ Pass |
+| `bounded_runner_preserves_ppu_accesses_dma_and_interrupts` | ✅ Pass |
+| `halt_batches_preserve_wakeup_dma_serial_and_frame_boundaries` | ✅ Pass |
+
+#### ppu (18/18 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
@@ -4083,8 +4096,11 @@ Combined exit code: 101
 | `register_access` | ✅ Pass |
 | `render_sprite_scanline` | ✅ Pass |
 | `sprite_8x16_tile_offset` | ✅ Pass |
+| `sprite_tiles_do_not_depend_on_background_scroll` | ✅ Pass |
 | `sprite_x_priority` | ✅ Pass |
 | `step_vblank_interrupt` | ✅ Pass |
+| `unchanged_scx_writes_with_sprites_preserve_pixels` | ✅ Pass |
+| `visible_sprites_are_not_dropped_by_fetch_timing` | ✅ Pass |
 
 #### serial (17/17 passing, 100.0%)
 
@@ -4135,7 +4151,7 @@ Combined exit code: 101
 
 ### Unit Tests
 
-#### apu (9/9 passing, 100.0%)
+#### apu (21/21 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
@@ -4144,15 +4160,29 @@ Combined exit code: 101
 | `apu::tests::dc_filter_converges_to_zero` | ✅ Pass |
 | `apu::tests::dc_filter_reduces_constant_input` | ✅ Pass |
 | `apu::tests::dc_filter_reset_when_all_dacs_off` | ✅ Pass |
+| `apu::tests::deferred_cpu_clocks_match_eager_mmio_observations` | ✅ Pass |
+| `apu::tests::deferred_waveforms_survive_frozen_divider_and_counter_wrap` | ✅ Pass |
+| `apu::tests::halt_batches_match_machine_cycle_stepping` | ✅ Pass |
+| `apu::tests::halt_scheduler_matches_machine_cycle_stepping` | ✅ Pass |
+| `apu::tests::noise_fast_ticks_match_event_loop` | ✅ Pass |
+| `apu::tests::noise_reciprocals_match_every_prescaler` | ✅ Pass |
+| `apu::tests::packed_pipeline_matches_individual_latches` | ✅ Pass |
+| `apu::tests::parallel_lfsr_matches_every_state_and_width` | ✅ Pass |
+| `apu::tests::projected_pipeline_tail_matches_each_machine_cycle` | ✅ Pass |
+| `apu::tests::quiet_intervals_match_full_stepping` | ✅ Pass |
+| `apu::tests::reciprocal_sample_deadlines_match_integer_division` | ✅ Pass |
 | `apu::tests::square_clock_2mhz_batches_multiple_edges` | ✅ Pass |
 | `apu::tests::square_clock_2mhz_consumes_remainder_after_batch` | ✅ Pass |
 | `apu::tests::wave_step_batches_to_exact_boundary` | ✅ Pass |
 | `apu::tests::wave_step_clears_just_read_after_remainder` | ✅ Pass |
+| `apu::tests::waveform_reciprocals_match_integer_division` | ✅ Pass |
 
-#### cartridge (19/19 passing, 100.0%)
+#### cartridge (21/21 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
+| `cartridge::tests::cached_rom_windows_follow_public_rom_edits` | ✅ Pass |
+| `cartridge::tests::cached_rom_windows_match_original_mapper_reads` | ✅ Pass |
 | `cartridge::tests::cart_ram_initializes_to_ff` | ✅ Pass |
 | `cartridge::tests::mbc3_rom_bank_wraps` | ✅ Pass |
 | `cartridge::tests::no_mbc_small_ram_mirrors` | ✅ Pass |
@@ -4185,6 +4215,30 @@ Combined exit code: 101
 | Test | Result |
 | --- | --- |
 | `ppu::lcd_off_frame_timing_tests::lcd_off_keeps_frame_cadence` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::batched_pop_events_preserve_capacity_overwrite (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::batched_pop_events_preserve_capacity_overwrite` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::cached_rows_follow_palette_and_direct_vram_changes (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::cached_rows_follow_palette_and_direct_vram_changes` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::cgb_static_spans_match_dot_fetcher (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::cgb_static_spans_match_dot_fetcher` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::dmg_fifo_projection_matches_each_fetcher_phase (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::dmg_fifo_projection_matches_each_fetcher_phase` | ✅ Pass |
 
 #### ppu::mode3_timing_tests::dmg_mode3_cycles_mooneye_intr2_patterns (1/1 passing, 100.0%)
 
@@ -4300,6 +4354,60 @@ Combined exit code: 101
 | --- | --- |
 | `ppu::mode3_timing_tests::dmg_mode3_cycles_two_sprites_x0` | ✅ Pass |
 
+#### ppu::mode3_timing_tests::idle_batches_match_machine_cycles (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::idle_batches_match_machine_cycles` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::nondefault_tuning_batches_match_original_dot_path (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::nondefault_tuning_batches_match_original_dot_path` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::paired_oam_scan_matches_dot_phases (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::paired_oam_scan_matches_dot_phases` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::shared_pixel_fifo_matches_deque_through_wraps (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::shared_pixel_fifo_matches_deque_through_wraps` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::shared_tile_rows_preserve_dmg_palettes_and_cgb_tags (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::shared_tile_rows_preserve_dmg_palettes_and_cgb_tags` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::stable_obj_rows_leave_dynamic_fetches_untouched (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::stable_obj_rows_leave_dynamic_fetches_untouched` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::transfer_batches_match_original_dot_path (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::transfer_batches_match_original_dot_path` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::transfer_batches_match_single_dots_across_lines (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::transfer_batches_match_single_dots_across_lines` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::tuning_environment_is_captured_at_construction (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::tuning_environment_is_captured_at_construction` | ✅ Pass |
+
 #### ppu::step_fast_path_tests::oam_fast_path_advances_without_contention (1/1 passing, 100.0%)
 
 | Test | Result |
@@ -4327,6 +4435,13 @@ Combined exit code: 101
 | `serial::tests::sc_write_with_bit7_restarts_transfer_using_current_sb` | ✅ Pass |
 | `serial::tests::serial_dot_cycles_match_speed_table` | ✅ Pass |
 
+#### timer (2/2 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `timer::tests::batched_edges_and_idle_deadlines_match_single_cycles` | ✅ Pass |
+| `timer::tests::pending_writes_and_reloads_disable_idle_prediction` | ✅ Pass |
+
 #### watchpoints (3/3 passing, 100.0%)
 
 | Test | Result |
@@ -4338,73 +4453,73 @@ Combined exit code: 101
 
 ### Doc Tests
 
-#### crates/vibe-emu-core/src/apu.rs (1/1 passing, 100.0%)
+#### crates\vibe-emu-core\src\apu.rs (1/1 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
-| `crates/vibe-emu-core/src/apu.rs - apu::Apu::enable_output (line 1123)` | ✅ Pass |
+| `crates\vibe-emu-core\src\apu.rs - apu::Apu::enable_output (line 1194)` | ✅ Pass |
 
-#### crates/vibe-emu-core/src/audio_queue.rs (1/1 passing, 100.0%)
-
-| Test | Result |
-| --- | --- |
-| `crates/vibe-emu-core/src/audio_queue.rs - audio_queue::audio_queue (line 68)` | ✅ Pass |
-
-#### crates/vibe-emu-core/src/cartridge.rs (3/3 passing, 100.0%)
+#### crates\vibe-emu-core\src\audio_queue.rs (1/1 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
-| `crates/vibe-emu-core/src/cartridge.rs - cartridge::Cartridge::from_bytes (line 805)` | ✅ Pass |
-| `crates/vibe-emu-core/src/cartridge.rs - cartridge::Cartridge::from_bytes_with_ram (line 709)` | ✅ Pass |
-| `crates/vibe-emu-core/src/cartridge.rs - cartridge::Cartridge::from_file (line 733) - compile` | ✅ Pass |
+| `crates\vibe-emu-core\src\audio_queue.rs - audio_queue::audio_queue (line 68)` | ✅ Pass |
 
-#### crates/vibe-emu-core/src/diagnostics.rs (2/2 passing, 100.0%)
+#### crates\vibe-emu-core\src\cartridge.rs (3/3 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
-| `crates/vibe-emu-core/src/diagnostics.rs - diagnostics::LogSink (line 19)` | ✅ Pass |
-| `crates/vibe-emu-core/src/diagnostics.rs - diagnostics::try_set_log_sink (line 44)` | ✅ Pass |
+| `crates\vibe-emu-core\src\cartridge.rs - cartridge::Cartridge::from_bytes (line 809)` | ✅ Pass |
+| `crates\vibe-emu-core\src\cartridge.rs - cartridge::Cartridge::from_bytes_with_ram (line 713)` | ✅ Pass |
+| `crates\vibe-emu-core\src\cartridge.rs - cartridge::Cartridge::from_file (line 737) - compile` | ✅ Pass |
 
-#### crates/vibe-emu-core/src/gameboy.rs (2/2 passing, 100.0%)
-
-| Test | Result |
-| --- | --- |
-| `crates/vibe-emu-core/src/gameboy.rs - gameboy::GameBoy::new (line 115)` | ✅ Pass |
-| `crates/vibe-emu-core/src/gameboy.rs - gameboy::GameBoy::reset (line 148)` | ✅ Pass |
-
-#### crates/vibe-emu-core/src/input.rs (1/1 passing, 100.0%)
+#### crates\vibe-emu-core\src\diagnostics.rs (2/2 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
-| `crates/vibe-emu-core/src/input.rs - input::Input::update_state (line 49)` | ✅ Pass |
+| `crates\vibe-emu-core\src\diagnostics.rs - diagnostics::LogSink (line 19)` | ✅ Pass |
+| `crates\vibe-emu-core\src\diagnostics.rs - diagnostics::try_set_log_sink (line 44)` | ✅ Pass |
 
-#### crates/vibe-emu-core/src/lib.rs (1/1 passing, 100.0%)
-
-| Test | Result |
-| --- | --- |
-| `crates/vibe-emu-core/src/lib.rs - VERSION (line 18)` | ✅ Pass |
-
-#### crates/vibe-emu-core/src/mmu.rs (1/1 passing, 100.0%)
+#### crates\vibe-emu-core\src\gameboy.rs (2/2 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
-| `crates/vibe-emu-core/src/mmu.rs - mmu::Mmu::load_cart (line 533)` | ✅ Pass |
+| `crates\vibe-emu-core\src\gameboy.rs - gameboy::GameBoy::new (line 115)` | ✅ Pass |
+| `crates\vibe-emu-core\src\gameboy.rs - gameboy::GameBoy::reset (line 148)` | ✅ Pass |
 
-#### crates/vibe-emu-core/src/serial.rs (2/2 passing, 100.0%)
-
-| Test | Result |
-| --- | --- |
-| `crates/vibe-emu-core/src/serial.rs - serial::LinkPort (line 36)` | ✅ Pass |
-| `crates/vibe-emu-core/src/serial.rs - serial::NullLinkPort::new (line 92)` | ✅ Pass |
-
-#### crates/vibe-emu-core/src/timer.rs (1/1 passing, 100.0%)
+#### crates\vibe-emu-core\src\input.rs (1/1 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
-| `crates/vibe-emu-core/src/timer.rs - timer::Timer::step (line 101)` | ✅ Pass |
+| `crates\vibe-emu-core\src\input.rs - input::Input::update_state (line 49)` | ✅ Pass |
 
-#### crates/vibe-emu-core/src/watchpoints.rs (1/1 passing, 100.0%)
+#### crates\vibe-emu-core\src\lib.rs (1/1 passing, 100.0%)
 
 | Test | Result |
 | --- | --- |
-| `crates/vibe-emu-core/src/watchpoints.rs - watchpoints::WatchpointEngine (line 74)` | ✅ Pass |
+| `crates\vibe-emu-core\src\lib.rs - VERSION (line 18)` | ✅ Pass |
+
+#### crates\vibe-emu-core\src\mmu.rs (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates\vibe-emu-core\src\mmu.rs - mmu::Mmu::load_cart (line 597)` | ✅ Pass |
+
+#### crates\vibe-emu-core\src\serial.rs (2/2 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates\vibe-emu-core\src\serial.rs - serial::LinkPort (line 36)` | ✅ Pass |
+| `crates\vibe-emu-core\src\serial.rs - serial::NullLinkPort::new (line 99)` | ✅ Pass |
+
+#### crates\vibe-emu-core\src\timer.rs (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates\vibe-emu-core\src\timer.rs - timer::Timer::step (line 120)` | ✅ Pass |
+
+#### crates\vibe-emu-core\src\watchpoints.rs (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `crates\vibe-emu-core\src\watchpoints.rs - watchpoints::WatchpointEngine (line 74)` | ✅ Pass |
