@@ -16,11 +16,33 @@ use vibe_emu_core::{
 // Most cases finish within two frames. is_if_set_during_ime0 needs ~380 ms.
 const MAX_CYCLES: u64 = 2_000_000;
 
+fn check_rom_version(path: &Path, rom: &[u8]) -> Result<(), String> {
+    let trailing_nops = match path.file_name().and_then(|name| name.to_str()) {
+        Some("line_153_lyc_a.gb") => 0,
+        Some("line_153_lyc_b.gb") => 1,
+        Some("line_153_lyc_c.gb") => 2,
+        _ => return Ok(()),
+    };
+    // Upstream PR #2 rebuilds these ROMs because the old assembler omitted
+    // +105/+106/+107 from long_delay. The pinned c-sp v7.0 bundle already
+    // matches commit 5b1a6a34989ca0527d5385e2000e22344264b4bf byte for byte.
+    // https://github.com/aappleby/gbmicrotest/pull/2
+    // The corrected delay loads BC=$0C58, loops, then adds 0/1/2 NOPs:
+    // 9 + 6 * ($0C58 - $100) + NOPs = 152 * 114 + 105/106/107 M-cycles.
+    let mut delay = vec![0xaf, 0x01, 0x58, 0x0c, 0x0b, 0xb8, 0x20, 0xfc];
+    delay.resize(delay.len() + trailing_nops, 0);
+    delay.extend_from_slice(&[0x3e, 153, 0xe0, 0x45]); // following LYC write
+    if rom.get(0x162..0x162 + delay.len()) != Some(delay.as_slice()) {
+        return Err("incorrect line-153 delay: use the rebuilt ROM from GBMicrotest PR #2".into());
+    }
+    Ok(())
+}
+
 fn run_case(path: &Path) -> Result<(), String> {
+    let rom = fs::read(path).map_err(|err| err.to_string())?;
+    check_rom_version(path, &rom)?;
     let mut gb = GameBoy::new(Model::Dmg(DmgRevision::RevC));
-    gb.mmu.load_cart(Cartridge::from_bytes(
-        fs::read(path).map_err(|err| err.to_string())?,
-    ));
+    gb.mmu.load_cart(Cartridge::from_bytes(rom));
     while gb.cpu.cycles < MAX_CYCLES {
         // Observe the result-store instruction, rather than accepting an
         // uninitialized HRAM byte or bytes copied there as DMA test code.

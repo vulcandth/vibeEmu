@@ -1361,8 +1361,8 @@ impl Ppu {
         if self.dmg_lcd_restarted && self.is_dmg_mode() {
             if self.ly == 0 { 2 } else { -2 }
         } else if !self.cgb() {
-            // The skipped boot retains the LCD/CPU half-cycle phase.
-            2
+            // The running boot LCD uses the regular fetcher origin.
+            -2
         } else {
             0
         }
@@ -4643,6 +4643,14 @@ impl Ppu {
             // Use ly_for_comparison for the LYC check (differs from LY during
             // CGB line 153 quirk)
             let mut coincide = self.ly_for_comparison == self.lyc;
+            // DMG drops the line-153 match before comparing against zero.
+            if !self.cgb()
+                && self.mode == MODE_VBLANK
+                && self.ly == 153
+                && (4..8).contains(&self.mode_clock)
+            {
+                coincide = false;
+            }
             if !self.cgb()
                 && self.mode == MODE_HBLANK
                 && !self.cgb_lcd_startup
@@ -4672,6 +4680,15 @@ impl Ppu {
     #[inline]
     fn refresh_stat_irq_if_dirty(&mut self, if_reg: &mut u8) {
         if self.stat_irq_dirty || self.dmg_mode2_vblank_irq_pending {
+            self.update_stat_irq(if_reg);
+        }
+    }
+
+    pub(crate) fn write_lyc(&mut self, value: u8, if_reg: &mut u8) {
+        self.write_reg(0xff45, value);
+        // A write can produce a short coincidence edge immediately before
+        // the line boundary clears it. Latch that edge before advancing LCD.
+        if self.lcd_enabled() {
             self.update_stat_irq(if_reg);
         }
     }
@@ -5858,6 +5875,18 @@ impl Ppu {
         self.mode0_target_cycles
     }
 
+    fn next_vblank_event(&self) -> u16 {
+        if self.ly != 153 || self.cgb_line153_ly0_triggered {
+            MODE1_CYCLES
+        } else if self.cgb() {
+            12
+        } else if self.mode_clock < 4 {
+            4
+        } else {
+            8
+        }
+    }
+
     fn next_hblank_event(&self) -> u16 {
         let compare_at = self.mode0_target_cycles.saturating_sub(4);
         let mode2_at = self.mode0_target_cycles.saturating_sub(2);
@@ -6640,7 +6669,7 @@ impl Ppu {
                     self.next_hblank_event()
                 }
             }
-            MODE_VBLANK if self.ly != 153 || self.cgb_line153_ly0_triggered => MODE1_CYCLES,
+            MODE_VBLANK => self.next_vblank_event(),
             MODE_OAM if !self.dmg_oam_dma_contention_active() => MODE2_CYCLES,
             _ => return 0,
         };
@@ -6720,9 +6749,7 @@ impl Ppu {
                     }
                 }
                 MODE_VBLANK => {
-                    if (self.ly != 153 || self.cgb_line153_ly0_triggered)
-                        && self.mode_clock.saturating_add(remaining) < MODE1_CYCLES
-                    {
+                    if self.mode_clock.saturating_add(remaining) < self.next_vblank_event() {
                         self.mode_clock += remaining;
                         return false;
                     }
@@ -6763,12 +6790,7 @@ impl Ppu {
                         }
                     }
                     MODE_VBLANK => {
-                        let boundary = if self.ly == 153 && !self.cgb_line153_ly0_triggered {
-                            12
-                        } else {
-                            MODE1_CYCLES
-                        };
-                        let next_event = boundary.saturating_sub(self.mode_clock);
+                        let next_event = self.next_vblank_event().saturating_sub(self.mode_clock);
                         if next_event > 0 {
                             increment = next_event.min(remaining);
                         }
@@ -6921,12 +6943,16 @@ impl Ppu {
                     }
                 }
                 MODE_VBLANK => {
-                    // Line 153 quirk: Both CGB and DMG set ly_for_comparison
-                    // to 0 during line 153, causing LYC=0 STAT interrupts to
-                    // fire during VBlank rather than at the start of line 0.
-                    // Comparison switches to zero at dot 12, after readable
-                    // LY has already reset. Daid's BGP loop synchronizes here.
-                    if self.ly == 153 && !self.cgb_line153_ly0_triggered && self.mode_clock >= 12 {
+                    self.update_lyc_compare();
+                    // The line-153 comparator changes after readable LY has
+                    // reset: DMG blanks the match at dot 4 and compares zero
+                    // at dot 8; CGB retains its previous match until dot 12.
+                    // GBMicrotest observes both DMG edges, including writes
+                    // of LYC=153 during the gap and an LYC=0 interrupt sled.
+                    if self.ly == 153
+                        && !self.cgb_line153_ly0_triggered
+                        && self.mode_clock >= if self.cgb() { 12 } else { 8 }
+                    {
                         self.cgb_line153_ly0_triggered = true;
                         self.ly_for_comparison = 0;
                         self.update_lyc_compare();
@@ -9194,16 +9220,16 @@ mod mode3_timing_tests {
             ppu.scx = fine_scroll as u8;
             ppu.dmg_line_bgp_base = 0xe4;
             ppu.bgp = 0xe4;
-            // Express these palette writes in renderer dots, accounting for
-            // the two-dot post-boot bus/fetcher phase.
-            ppu.mode_clock = 32 + fine_scroll;
+            // Renderer dots 30 and 15 under the regular-line fetch origin,
+            // which leads the bus-visible mode-3 origin by two dots.
+            ppu.mode_clock = 28 + fine_scroll;
             ppu.write_reg(0xff47, 0x1b);
             assert_eq!(ppu.dmg_bgp_for_pixel(14), 0xe4);
             assert_eq!(ppu.dmg_bgp_for_pixel(15), 0xff);
             assert_eq!(ppu.dmg_bgp_for_pixel(16), 0x1b);
 
             ppu.dmg_bgp_event_count = 0;
-            ppu.mode_clock = 17 + fine_scroll;
+            ppu.mode_clock = 13 + fine_scroll;
             ppu.write_reg(0xff47, 0x1b);
             assert_eq!(ppu.dmg_bgp_for_pixel(0), 0x1b);
         }
@@ -9392,7 +9418,64 @@ mod mode3_timing_tests {
     }
 
     #[test]
-    fn line_153_zero_comparison_occurs_at_dot_12() {
+    fn dmg_line_153_blanks_coincidence_between_matches() {
+        let mut ppu = Ppu::new(Model::Dmg(DmgRevision::RevC));
+        ppu.skip_startup_for_test();
+        ppu.lcdc = 0x91;
+        ppu.mode = MODE_VBLANK;
+        ppu.ly = 153;
+        ppu.ly_for_comparison = 153;
+        ppu.lyc = 153;
+        ppu.stat = 0x40;
+        ppu.update_lyc_compare();
+        let mut interrupts = 0;
+        ppu.step(3, &mut interrupts);
+        assert_eq!(ppu.read_stat(false) & 4, 4);
+        interrupts = 0;
+        ppu.step(1, &mut interrupts);
+        assert_eq!(ppu.read_stat(false) & 4, 0);
+        ppu.write_lyc(153, &mut interrupts);
+        assert_eq!(interrupts & 2, 0, "LYC=153 cannot retrigger in the gap");
+        ppu.write_lyc(0, &mut interrupts);
+        assert_eq!(ppu.read_stat(false) & 4, 0);
+        assert_eq!(interrupts & 2, 0, "LYC=0 must wait for the comparator");
+        ppu.step(3, &mut interrupts);
+        assert_eq!(interrupts & 2, 0);
+        ppu.step(1, &mut interrupts);
+        assert_eq!(ppu.read_stat(false) & 4, 4);
+        assert_eq!(interrupts & 2, 2);
+    }
+
+    #[test]
+    fn lyc_write_latches_an_edge_before_hblank_comparison_ends() {
+        let mut ppu = Ppu::new(Model::Dmg(DmgRevision::RevC));
+        ppu.skip_startup_for_test();
+        ppu.lcdc = 0x91;
+        ppu.mode = MODE_HBLANK;
+        ppu.ly = 1;
+        ppu.ly_for_comparison = 1;
+        ppu.lyc = 255;
+        ppu.stat = 0x40;
+        ppu.mode0_target_cycles = 204;
+        ppu.mode_clock = 198;
+        ppu.update_lyc_compare();
+        let mut interrupts = 0;
+        ppu.write_lyc(1, &mut interrupts);
+        assert_eq!(interrupts & 2, 2, "write asserts IRQ before the next dot");
+        ppu.step(2, &mut interrupts);
+        assert_eq!(ppu.read_stat(false) & 4, 0);
+        assert_eq!(interrupts & 2, 2, "blanking must not erase a latched IRQ");
+        interrupts = 0;
+        ppu.write_lyc(1, &mut interrupts);
+        assert_eq!(interrupts & 2, 0);
+        ppu.write_lyc(2, &mut interrupts);
+        assert_eq!(interrupts & 2, 0);
+        ppu.step(4, &mut interrupts);
+        assert_eq!(interrupts & 2, 2, "the next line can assert a fresh edge");
+    }
+
+    #[test]
+    fn line_153_zero_comparison_uses_model_timing() {
         for model in [Model::Dmg(DmgRevision::RevC), Model::Cgb(CgbRevision::RevE)] {
             for batched in [false, true] {
                 let mut ppu = Ppu::new(model);
@@ -9405,10 +9488,11 @@ mod mode3_timing_tests {
                 ppu.stat = 0x40;
                 ppu.update_lyc_compare();
                 let mut interrupts = 0;
+                let compare_at = if model.is_dmg() { 8 } else { 12 };
                 if batched {
-                    ppu.step(11, &mut interrupts);
+                    ppu.step(compare_at - 1, &mut interrupts);
                 } else {
-                    for _ in 0..11 {
+                    for _ in 0..compare_at - 1 {
                         ppu.step(1, &mut interrupts);
                     }
                 }
@@ -9419,7 +9503,7 @@ mod mode3_timing_tests {
                 assert_eq!(ppu.read_stat(false) & 4, 4);
                 assert_eq!(interrupts & 2, 2);
                 interrupts = 0;
-                ppu.step(MODE1_CYCLES - 12, &mut interrupts);
+                ppu.step(MODE1_CYCLES - compare_at, &mut interrupts);
                 assert_eq!(ppu.ly, 0);
                 assert_eq!(
                     interrupts & 2,
