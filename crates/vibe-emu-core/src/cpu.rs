@@ -328,6 +328,16 @@ impl Cpu {
                 break;
             }
             self.tick(mmu, 1);
+            if mmu.if_reg & mmu.ie_reg & 0x1F != 0 {
+                // An interrupt that arrives during STOP's settling wait
+                // takes one additional M-cycle to release the CPU.
+                self.tick(mmu, 1);
+                // STOP has consumed its second byte before entering the
+                // wait. A waking interrupt discards that prefetched byte.
+                self.pc = self.pc.wrapping_add(1);
+                self.stop_prefetch = None;
+                break;
+            }
         }
     }
 
@@ -938,6 +948,8 @@ impl Cpu {
                     mmu.key1 ^= 0x80;
                     self.double_speed = mmu.key1 & 0x80 != 0;
                     mmu.apu.on_speed_switch(self.double_speed);
+                    mmu.synchronize_ppu();
+                    mmu.ppu.on_speed_switch(self.double_speed);
                     self.speed_switch_stall(mmu);
                 } else {
                     let _ = self.fetch8(mmu);

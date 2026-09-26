@@ -58,6 +58,38 @@ fn cgb_ppu_bus_edges_distinguish_speed_revision_and_read_write_strobes() {
 }
 
 #[test]
+fn cgb_lcd_enable_speed_establishes_stat_and_ly_read_phase() {
+    for started_double_speed in [false, true] {
+        let mut mmu = Mmu::new(Model::Cgb(CgbRevision::RevE));
+        mmu.write_byte(0xFF40, 0);
+        mmu.key1 = if started_double_speed { 0x80 } else { 0 };
+        mmu.write_byte(0xFF40, 0x91);
+        // Observe the same physical PPU dots with a double-speed CPU. The
+        // live speed-switch delay is covered by AGE's repeated-switch ROMs.
+        mmu.key1 = 0x80;
+        mmu.ppu.step(251, &mut mmu.if_reg);
+        assert_eq!(
+            mmu.read_byte(0xFF41) & 3,
+            if started_double_speed { 3 } else { 0 }
+        );
+        mmu.ppu.step(203, &mut mmu.if_reg);
+        for _ in 0..152 {
+            mmu.ppu.step(456, &mut mmu.if_reg);
+        }
+        assert_eq!(mmu.ppu.ly(), 153);
+        mmu.ppu.step(1, &mut mmu.if_reg);
+        assert_eq!(mmu.read_byte(0xFF44), 153);
+        mmu.ppu.step(1, &mut mmu.if_reg);
+        assert_eq!(
+            mmu.read_byte(0xFF44),
+            if started_double_speed { 153 } else { 0 }
+        );
+        mmu.ppu.step(2, &mut mmu.if_reg);
+        assert_eq!(mmu.read_byte(0xFF44), 0);
+    }
+}
+
+#[test]
 fn hdma_wait_loop_observes_idle_ff55() {
     let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
     // Ensure the LCD is considered enabled so HDMA enters H-Blank mode.

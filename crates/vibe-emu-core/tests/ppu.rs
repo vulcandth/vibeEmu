@@ -85,7 +85,12 @@ fn cgb_lyc_interrupt_precedes_the_physical_scanline_transition() {
             assert_eq!(ppu.read_reg(0xFF44), 1);
             ppu.step(1, &mut interrupts);
             assert_eq!(interrupts & 2, 2);
-            assert_eq!(ppu.read_reg(0xFF44), 1); // LYC's edge precedes readable LY.
+            // B/C expose the old/new LY bus overlap at this dot; E does so
+            // one dot later. LYC's edge still precedes the new readable LY.
+            assert_eq!(
+                ppu.read_reg(0xFF44),
+                u8::from(revision == CgbRevision::RevE)
+            );
             assert_ne!(ppu.read_reg(0xFF41) & 4, 0);
             assert_eq!((ppu.ly(), ppu.mode()), (1, 0));
             interrupts = 0;

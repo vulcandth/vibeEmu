@@ -1,14 +1,9 @@
-# AGE: 60 passing and 59 known failures across 119 ROM/revision cases.
+# AGE: 67 passing and 52 known failures across 119 ROM/revision cases.
 # Baseline before core fixes: 4 passing and 115 failing.
 # Recheck with: cargo test -p vibe-emu-core --test age -- --ignored
 
 # HALT wake-up versus mode 0 interrupt timing.
 halt/halt-m0-interrupt-dmgC-cgbBCE.gb::dmgC
-
-# LCD startup / scanline alignment timing.
-lcd-align-ly/lcd-align-ly-cgbBC.gb::cgbB
-lcd-align-ly/lcd-align-ly-cgbBC.gb::cgbC
-lcd-align-ly/lcd-align-ly-cgbE.gb::cgbE
 
 # m3-bg-bgp: PPU access, interrupt, or rendering timing still differs from hardware.
 m3-bg-bgp/m3-bg-bgp.gb::dmgC
@@ -50,13 +45,9 @@ oam/oam-write-ncmBCE.gb::ncmB
 oam/oam-write-ncmBCE.gb::ncmC
 oam/oam-write-ncmBCE.gb::ncmE
 
-# Remaining mode 0 and interrupt-aborted speed-switch timing.
+# Remaining immediate-interrupt speed-switch timing on CGB B/C.
 speed-switch/caution/spsw-interrupts-cgbBC.gb::cgbB
 speed-switch/caution/spsw-interrupts-cgbBC.gb::cgbC
-speed-switch/caution/spsw-interrupts-cgbE.gb::cgbE
-speed-switch/spsw-mode0-cgbBCE.gb::cgbB
-speed-switch/spsw-mode0-cgbBCE.gb::cgbC
-speed-switch/spsw-mode0-cgbBCE.gb::cgbE
 
 # stat-interrupt: PPU access, interrupt, or rendering timing still differs from hardware.
 stat-interrupt/stat-int-dmgC-cgbBCE.gb::dmgC

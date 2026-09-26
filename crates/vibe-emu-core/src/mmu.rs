@@ -1227,6 +1227,9 @@ impl Mmu {
                 } else {
                     self.ppu.write_reg(addr, val);
                 }
+                if !lcd_was_on && self.ppu.lcd_enabled() {
+                    self.ppu.on_lcd_enable(self.key1 & 0x80 != 0);
+                }
                 if lcd_was_on && !self.ppu.lcd_enabled() {
                     self.complete_active_hdma();
                 }

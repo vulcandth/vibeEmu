@@ -475,7 +475,11 @@ pub struct Ppu {
     stat_mode_delay: u8,
     mode3_target_cycles: u16,
     mode0_target_cycles: u16,
-    boot_hold_cycles: u16,
+    // Boot handoff and CGB speed switching can pause the LCD clock.
+    clock_hold_cycles: u16,
+    // The native renderer's dot origin is established by the LCD-enable
+    // write. A running LCD retains that origin when the CPU changes speed.
+    cgb_lcd_started_double_speed: bool,
 
     /// Completed pixel output in 0x00RRGGBB format; updated once per frame.
     pub framebuffer: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
@@ -1023,7 +1027,8 @@ impl Ppu {
             stat_mode_delay: 0,
             mode3_target_cycles: MODE3_CYCLES,
             mode0_target_cycles: MODE0_CYCLES,
-            boot_hold_cycles: 0,
+            clock_hold_cycles: 0,
+            cgb_lcd_started_double_speed: false,
             framebuffer: [0xFFFFFF; SCREEN_WIDTH * SCREEN_HEIGHT],
             line_priority: [false; SCREEN_WIDTH],
             line_color_zero: [false; SCREEN_WIDTH],
@@ -4242,6 +4247,19 @@ impl Ppu {
         self.lcdc & 0x80 != 0
     }
 
+    pub(crate) fn on_speed_switch(&mut self, double_speed: bool) {
+        if double_speed && self.lcd_enabled() && self.is_cgb_native_mode() {
+            // Each switch into double speed shifts the running LCD clock
+            // by one dot relative to the CPU (AGE lcd-align-ly).
+            self.clock_hold_cycles += 1;
+        }
+    }
+
+    pub(crate) fn on_lcd_enable(&mut self, double_speed: bool) {
+        // MMU supplies the CPU phase after the rising LCDC enable edge.
+        self.cgb_lcd_started_double_speed = double_speed;
+    }
+
     #[inline]
     fn decode_cgb_color(lo: u8, hi: u8) -> u32 {
         let raw = ((hi as u16) << 8) | lo as u16;
@@ -4275,13 +4293,13 @@ impl Ppu {
             self.bgpi = 0xC0;
             self.obpi = 0xC1;
             self.bgpd[0] = 0xFF;
-            self.boot_hold_cycles = 0;
+            self.clock_hold_cycles = 0;
         } else {
             self.stat = 0x80;
             // PPU mode/LY values represent what the first game instruction
             // should observe, as verified by mooneye's boot_hwio test ROMs.
             // These differ from the exact handoff-moment values captured by
-            // the boot-ROM parity test because boot_hold_cycles freezes the
+            // the boot-ROM parity test because clock_hold_cycles freezes the
             // PPU while the real hardware continues clocking.
             match dmg_revision.unwrap_or_default() {
                 DmgRevision::Rev0 => {
@@ -4289,14 +4307,14 @@ impl Ppu {
                     self.ly = 0x01;
                     self.ly_for_comparison = 0x01;
                     self.lyc = 0x00;
-                    self.boot_hold_cycles = BOOT_HOLD_CYCLES_DMG0;
+                    self.clock_hold_cycles = BOOT_HOLD_CYCLES_DMG0;
                 }
                 DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => {
                     self.set_mode(MODE_HBLANK);
                     self.ly = 0x0A;
                     self.ly_for_comparison = 0x0A;
                     self.lyc = 0x00;
-                    self.boot_hold_cycles = BOOT_HOLD_CYCLES_DMGA;
+                    self.clock_hold_cycles = BOOT_HOLD_CYCLES_DMGA;
                 }
             }
         }
@@ -5196,15 +5214,26 @@ impl Ppu {
         // physical line 153 intact: the readable value resets early, with
         // revision/speed-dependent timing verified by AGE's ly ROMs.
         let mut ly = self.ly;
+        let native = self.is_cgb_native_mode();
+        let switched_double_speed = double_speed && !self.cgb_lcd_started_double_speed;
+        let ahead = if native {
+            2 + u16::from(switched_double_speed)
+        } else {
+            4
+        };
         if self.mode == MODE_VBLANK && self.lcdc & 0x80 != 0 {
-            let phase = self.mode_clock + if self.is_cgb_native_mode() { 2 } else { 4 };
+            let phase = self.mode_clock + ahead;
             if ly == 152 && phase >= MODE1_CYCLES {
                 ly = 153;
             } else if ly == 153 {
                 let reset_at = if double_speed {
-                    6
+                    if native && switched_double_speed {
+                        5
+                    } else {
+                        6
+                    }
                 } else if self.cgb() && self.cgb_revision() == CgbRevision::RevE {
-                    8
+                    if native { 5 } else { 8 }
                 } else {
                     4
                 };
@@ -5219,9 +5248,21 @@ impl Ppu {
             && self.dmg_startup_cycle.is_none()
             && !self.cgb_lcd_startup
         {
-            let ahead = if self.is_cgb_native_mode() { 2 } else { 4 };
             if self.mode_clock + ahead >= self.dmg_hblank_ly_advance_cycle() {
                 ly = self.next_visible_ly();
+            } else if native {
+                // During the counter transition both old and new LY bits
+                // drive the read bus. AGE lcd-align-ly samples this window.
+                let glitch_lead = if (double_speed && self.cgb_lcd_started_double_speed)
+                    || (!double_speed && self.cgb_revision() == CgbRevision::RevE)
+                {
+                    3
+                } else {
+                    4
+                };
+                if self.mode_clock + glitch_lead >= self.dmg_hblank_ly_advance_cycle() {
+                    ly &= self.next_visible_ly();
+                }
             }
         }
         ly
@@ -5230,7 +5271,9 @@ impl Ppu {
     pub(crate) fn read_stat(&self, double_speed: bool) -> u8 {
         // Double-speed reads observe the mode transition without the
         // normal-speed mode-bit latch delay. Mode 0 is visible on the last
-        // transfer dot to a normal-speed CGB read (AGE stat-mode tests).
+        // transfer dot to a normal-speed CGB read. Switching a running LCD
+        // to double speed retains that origin; starting the LCD in double
+        // speed uses the following dot (AGE stat-mode and spsw-mode0).
         let mut mode = if double_speed {
             self.mode
         } else {
@@ -5238,7 +5281,8 @@ impl Ppu {
         };
         if self.is_cgb_native_mode()
             && self.mode == MODE_TRANSFER
-            && self.mode_clock + u16::from(!double_speed) >= self.mode3_target_cycles
+            && self.mode_clock + u16::from(!double_speed || !self.cgb_lcd_started_double_speed)
+                >= self.mode3_target_cycles
         {
             mode = MODE_HBLANK;
         }
@@ -5358,6 +5402,10 @@ impl Ppu {
                     self.dmg_abort_mode3_object_fetch();
                 }
                 if was_on && self.lcdc & 0x80 == 0 {
+                    if self.cgb() {
+                        self.clock_hold_cycles = 0;
+                        self.cgb_lcd_started_double_speed = false;
+                    }
                     self.framebuffer.fill(0xFFFFFF);
                     self.lcd_startup_blank = false;
                     self.set_mode(MODE_HBLANK);
@@ -6388,7 +6436,7 @@ impl Ppu {
     /// the PPU's bulk stepping paths. Stop strictly before mode transitions so
     /// STAT, frame delivery, and HBlank DMA keep their original M-cycle timing.
     pub(crate) fn idle_dots(&self) -> u16 {
-        if self.boot_hold_cycles != 0
+        if self.clock_hold_cycles != 0
             || self.lcdc & 0x80 == 0
             || self.stat_mode_delay != 0
             || self.pending_reg_write_count != 0
@@ -6431,9 +6479,9 @@ impl Ppu {
 
     fn step_inner<const BATCH_TRANSFER: bool>(&mut self, cycles: u16, if_reg: &mut u8) -> bool {
         let mut remaining = cycles;
-        if self.boot_hold_cycles > 0 {
-            let consume = remaining.min(self.boot_hold_cycles);
-            self.boot_hold_cycles -= consume;
+        if self.clock_hold_cycles > 0 {
+            let consume = remaining.min(self.clock_hold_cycles);
+            self.clock_hold_cycles -= consume;
             remaining -= consume;
             if remaining == 0 {
                 return false;

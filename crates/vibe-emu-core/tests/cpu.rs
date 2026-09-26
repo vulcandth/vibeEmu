@@ -313,6 +313,45 @@ fn speed_switch_stall_runs_timer_with_lcd_disabled() {
 }
 
 #[test]
+fn timer_interrupt_wakes_speed_switch_and_returns_after_stop_padding() {
+    let model = Model::Cgb(CgbRevision::RevE);
+    let mut cpu = Cpu::new(model);
+    let mut mmu = Mmu::new(model);
+    let mut rom = vec![0; 0x8000];
+    rom[0] = 0x10; // STOP, with its second byte at address 1.
+    rom[0x50] = 0xC9; // Timer handler: RET.
+    mmu.load_cart(Cartridge::from_bytes(rom));
+    cpu.pc = 0;
+    cpu.sp = 0xD000;
+    cpu.ime = true;
+    mmu.write_byte(0xFF40, 0);
+    mmu.write_byte(0xFF04, 0);
+    mmu.write_byte(0xFF05, 0xFF);
+    mmu.write_byte(0xFF06, 0);
+    mmu.write_byte(0xFF07, 5);
+    mmu.ie_reg = 4;
+    mmu.if_reg = 0;
+    mmu.key1 = 1;
+
+    cpu.step(&mut mmu);
+
+    assert!(cpu.double_speed);
+    assert_eq!(cpu.pc, 0x50);
+    assert_eq!(
+        mmu.timer.div, 28,
+        "4 reload clocks, 4 wake clocks, 20 entry clocks"
+    );
+    assert_eq!(
+        mmu.read_byte(cpu.sp),
+        2,
+        "the return address skips STOP padding"
+    );
+    assert_eq!(mmu.read_byte(cpu.sp + 1), 0);
+    cpu.step(&mut mmu);
+    assert_eq!(cpu.pc, 2);
+}
+
+#[test]
 fn gdma_stall_advances_cpu_div() {
     // While a CGB GDMA stall is active, the CPU is blocked from executing
     // instructions, but time still advances (including the CPU divider).
