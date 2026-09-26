@@ -702,7 +702,9 @@ impl Mmu {
                 .map(|c| c.read_with_open_bus(addr, self.main_bus))
                 .unwrap_or(0xFF),
             0x8000..=0x9FFF => {
-                let accessible = self.ppu.vram_read_accessible();
+                let accessible = self
+                    .ppu
+                    .vram_read_accessible_at_speed(self.key1 & 0x80 != 0);
                 if accessible {
                     let value = self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize];
                     #[cfg(feature = "ppu-trace")]
@@ -759,7 +761,7 @@ impl Mmu {
             0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize],
             0xF000..=0xFDFF => self.wram[self.wram_bank][(addr - 0xF000) as usize],
             0xFE00..=0xFE9F => {
-                if self.ppu.oam_read_accessible() {
+                if self.ppu.oam_read_accessible_at_speed(self.key1 & 0x80 != 0) {
                     self.oam_bug_next_access = None;
                     let val = self.ppu.oam[(addr - 0xFE00) as usize];
                     if trace_oambug_enabled() && self.ppu.lcd_enabled() {
@@ -842,8 +844,11 @@ impl Mmu {
             // IF: upper 3 bits are unused and read back as 1 on hardware.
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_reg(addr),
+            0xFF41 => self.ppu.read_stat(self.key1 & 0x80 != 0),
             0xFF44 => self.ppu.read_ly(self.key1 & 0x80 != 0),
-            0xFF40..=0xFF43 | 0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.read_reg(addr),
+            0xFF40 | 0xFF42..=0xFF43 | 0xFF45 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => {
+                self.ppu.read_reg(addr)
+            }
             0xFF46 => self.ppu.dma,
             0xFF51 => {
                 if self.model.is_cgb() {
@@ -1086,7 +1091,9 @@ impl Mmu {
             0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize] = val,
             0xF000..=0xFDFF => self.wram[self.wram_bank][(addr - 0xF000) as usize] = val,
             0xFE00..=0xFE9F => {
-                let allow = self.ppu.oam_write_accessible();
+                let allow = self
+                    .ppu
+                    .oam_write_accessible_at_speed(self.key1 & 0x80 != 0);
                 if trace_lcdc_enabled() && val == 0x81 {
                     let pc_str = self
                         .last_cpu_pc

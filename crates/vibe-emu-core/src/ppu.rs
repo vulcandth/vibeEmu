@@ -4115,17 +4115,35 @@ impl Ppu {
 
     fn compute_mode3_cycles_for_line(&self) -> u16 {
         if self.is_cgb_native_mode() {
-            // CGB mode 3 duration is not constant; sprite fetches can stall the
-            // background pipeline. We model a minimal subset that is required
-            // for mid-scanline timing tests (e.g. cgb-acid-hell).
-            let mut cycles = MODE3_CYCLES;
-            if (self.lcdc & 0x02) != 0
-                && self.sprite_count > 0
-                && self.line_sprites[..self.sprite_count]
-                    .iter()
-                    .any(|s| s.x <= 0)
-            {
-                cycles = cycles.saturating_add(6);
+            // Fine-scroll pixels are discarded before visible output. OBJ
+            // fetches then wait for the BG fetch phase and take six dots.
+            let mut cycles = MODE3_CYCLES + u16::from(self.scx & 7);
+            if (self.lcdc & 0x02) != 0 {
+                let mut positions = [0i16; MAX_SPRITES_PER_LINE];
+                let mut count = 0;
+                for sprite in &self.line_sprites[..self.sprite_count] {
+                    let raw_x = sprite.x + 8;
+                    if (0..168).contains(&raw_x) {
+                        positions[count] = raw_x;
+                        count += 1;
+                    }
+                }
+                positions[..count].sort_unstable();
+                let mut previous_tile = None;
+                for &raw_x in &positions[..count] {
+                    if raw_x == 0 {
+                        // The hidden X=0 fetch always incurs the full wait.
+                        cycles += 11;
+                    } else {
+                        let position = raw_x as u16 + u16::from(self.scx & 7);
+                        let tile = position / 8;
+                        if previous_tile != Some(tile) {
+                            cycles += 5u16.saturating_sub(position & 7);
+                        }
+                        cycles += 6;
+                        previous_tile = Some(tile);
+                    }
+                }
             }
             cycles
         } else {
@@ -4534,14 +4552,64 @@ impl Ppu {
         }
     }
 
-    /// Returns `true` if OAM is accessible for CPU reads in the current PPU mode.
+    /// Returns `true` if OAM is accessible for a normal-speed CPU read.
     pub fn oam_read_accessible(&self) -> bool {
+        self.oam_read_accessible_at_speed(false)
+    }
+
+    pub(crate) fn oam_read_accessible_at_speed(&self, double_speed: bool) -> bool {
+        if self.is_cgb_native_mode() {
+            // AGE's OAM reads distinguish the normal-speed read strobe from
+            // the double-speed strobe, which locks earlier only on CGB E.
+            let early_lock = if !double_speed || self.cgb_revision() == CgbRevision::RevE {
+                2
+            } else {
+                0
+            };
+            if self.cgb_oam_pre_scan_locked(early_lock, false) {
+                return false;
+            }
+            if !double_speed
+                && self.cgb_revision() != CgbRevision::RevE
+                && self.mode == MODE_TRANSFER
+                && self.mode_clock + 1 >= self.mode3_target_cycles
+            {
+                return true;
+            }
+        }
         self.oam_accessible_internal(true)
     }
 
-    /// Returns `true` if OAM is accessible for CPU writes in the current PPU mode.
+    /// Returns `true` if OAM is accessible for a normal-speed CPU write.
     pub fn oam_write_accessible(&self) -> bool {
+        self.oam_write_accessible_at_speed(false)
+    }
+
+    pub(crate) fn oam_write_accessible_at_speed(&self, double_speed: bool) -> bool {
+        if self.is_cgb_native_mode() {
+            // The write lock also covers the end of the LCD-enable mode-0
+            // interval. Unlike reads, every tested CGB revision uses this edge.
+            if self.cgb_oam_pre_scan_locked(2, true) {
+                return false;
+            }
+            if !double_speed
+                && self.mode == MODE_TRANSFER
+                && self.mode_clock + 1 >= self.mode3_target_cycles
+            {
+                return true;
+            }
+        }
         self.oam_accessible_internal(false)
+    }
+
+    fn cgb_oam_pre_scan_locked(&self, lead: u16, include_lcd_start: bool) -> bool {
+        (self.mode == MODE_HBLANK
+            && (include_lcd_start || !self.cgb_lcd_startup)
+            && self.ly < SCREEN_HEIGHT as u8 - 1
+            && self.mode_clock + lead >= self.mode0_target_cycles)
+            || (self.mode == MODE_VBLANK
+                && self.ly == 153
+                && self.mode_clock + lead >= MODE1_CYCLES)
     }
 
     /// Returns `true` if OAM is accessible for CPU reads (backwards-compatible helper).
@@ -5017,8 +5085,21 @@ impl Ppu {
         self.oam_bug_copy_row_to_two_predecessors(accessed_oam_row);
     }
 
-    /// Returns `true` if VRAM is accessible for CPU reads in the current PPU mode.
+    /// Returns `true` if VRAM is accessible for a normal-speed CPU read.
     pub fn vram_read_accessible(&self) -> bool {
+        self.vram_read_accessible_at_speed(false)
+    }
+
+    pub(crate) fn vram_read_accessible_at_speed(&self, double_speed: bool) -> bool {
+        if self.is_cgb_native_mode() && !double_speed && self.mode == MODE_TRANSFER {
+            // The normal-speed read strobe overlaps the last transfer dot.
+            // On the LCD-enable line it also precedes the first VRAM lock.
+            if self.mode_clock + 1 >= self.mode3_target_cycles
+                || (self.mode_clock == 0 && self.ly == 0 && self.lcd_startup_blank)
+            {
+                return true;
+            }
+        }
         self.vram_accessible_internal(true)
     }
 
@@ -5110,7 +5191,7 @@ impl Ppu {
         // revision/speed-dependent timing verified by AGE's ly ROMs.
         let mut ly = self.ly;
         if self.mode == MODE_VBLANK && self.lcdc & 0x80 != 0 {
-            let phase = self.mode_clock + 4;
+            let phase = self.mode_clock + if self.is_cgb_native_mode() { 2 } else { 4 };
             if ly == 152 && phase >= MODE1_CYCLES {
                 ly = 153;
             } else if ly == 153 {
@@ -5132,12 +5213,41 @@ impl Ppu {
             && self.dmg_startup_cycle.is_none()
             && !self.cgb_lcd_startup
         {
-            let ahead = 4;
+            let ahead = if self.is_cgb_native_mode() { 2 } else { 4 };
             if self.mode_clock + ahead >= self.dmg_hblank_ly_advance_cycle() {
                 ly = self.next_visible_ly();
             }
         }
         ly
+    }
+
+    pub(crate) fn read_stat(&self, double_speed: bool) -> u8 {
+        // Double-speed reads observe the mode transition without the
+        // normal-speed mode-bit latch delay. Mode 0 is visible on the last
+        // transfer dot to a normal-speed CGB read (AGE stat-mode tests).
+        let mut mode = if double_speed {
+            self.mode
+        } else {
+            self.stat_mode
+        };
+        if self.is_cgb_native_mode()
+            && self.mode == MODE_TRANSFER
+            && self.mode_clock + u16::from(!double_speed) >= self.mode3_target_cycles
+        {
+            mode = MODE_HBLANK;
+        }
+        // B/C briefly report mode 0 at the end of VBlank in normal speed;
+        // E and double speed retain mode 1 until the next frame starts.
+        if self.cgb()
+            && self.cgb_revision() != CgbRevision::RevE
+            && !double_speed
+            && self.mode == MODE_VBLANK
+            && self.ly == 153
+            && self.mode_clock >= MODE1_CYCLES - 4
+        {
+            mode = MODE_HBLANK;
+        }
+        (self.stat & 0x78) | 0x80 | mode | if self.lyc_eq_ly { 0x04 } else { 0 }
     }
 
     /// Read a PPU register at `addr`.
@@ -5147,12 +5257,7 @@ impl Ppu {
         }
         let value = match addr {
             0xFF40 => self.lcdc,
-            0xFF41 => {
-                (self.stat & 0x78)
-                    | 0x80
-                    | (self.stat_mode & 0x03)
-                    | if self.lyc_eq_ly { 0x04 } else { 0 }
-            }
+            0xFF41 => self.read_stat(false),
             0xFF42 => self.scy,
             0xFF43 => self.scx,
             0xFF44 => self.read_ly(false),
@@ -5543,8 +5648,11 @@ impl Ppu {
 
     fn next_hblank_event(&self) -> u16 {
         let compare_at = self.mode0_target_cycles.saturating_sub(4);
+        let mode2_at = self.mode0_target_cycles.saturating_sub(2);
         if self.cgb() && !self.cgb_lcd_startup && self.mode_clock < compare_at {
             compare_at
+        } else if self.is_cgb_native_mode() && !self.cgb_lcd_startup && self.mode_clock < mode2_at {
+            mode2_at
         } else {
             self.mode0_target_cycles
         }
@@ -6503,15 +6611,21 @@ impl Ppu {
 
             match self.mode {
                 MODE_HBLANK => {
-                    // On CGB the line comparator sees the next LY before the
-                    // physical scanline ends, just like the CPU-visible LY.
-                    // This edge wakes HALT before the next line's pixel work.
+                    // The CGB line comparator sees the next LY before the
+                    // physical scanline ends. Its edge precedes both the
+                    // readable LY transition and the mode-2 interrupt edge.
                     if self.cgb()
                         && !self.cgb_lcd_startup
                         && self.mode_clock + 4 >= self.mode0_target_cycles
                     {
                         self.ly_for_comparison = self.next_visible_ly();
                         self.update_lyc_compare();
+                    }
+                    if self.is_cgb_native_mode()
+                        && !self.cgb_lcd_startup
+                        && self.mode_clock + 2 >= self.mode0_target_cycles
+                    {
+                        self.stat_irq_dirty = true;
                     }
                     if self.dmg_hblank_render_pending
                         && self.mode_clock >= self.tuning.dmg_hblank_render_delay
@@ -6532,8 +6646,16 @@ impl Ppu {
                             self.set_mode(MODE_TRANSFER);
                             self.begin_mode3_line();
                             self.mode3_target_cycles = self.compute_mode3_cycles_for_line();
-                            self.mode0_target_cycles =
-                                LINE_CYCLES.saturating_sub(MODE2_CYCLES + self.mode3_target_cycles);
+                            // Native CGB's LCD-enable line is 454 dots. Keep
+                            // the compatibility renderer's existing clock
+                            // convention separate from this native timing path.
+                            let first_line_cycles = if self.is_cgb_native_mode() {
+                                LINE_CYCLES - 2
+                            } else {
+                                LINE_CYCLES
+                            };
+                            self.mode0_target_cycles = first_line_cycles
+                                .saturating_sub(MODE2_CYCLES + self.mode3_target_cycles);
                             if self.is_dmg_mode() {
                                 self.dmg_begin_transfer_line();
                             }
@@ -8307,7 +8429,13 @@ impl Ppu {
     fn update_stat_irq(&mut self, if_reg: &mut u8) {
         let coincidence = self.lyc_eq_ly && self.stat & 0x40 != 0;
         let mode_signal = match self.mode {
-            MODE_HBLANK => self.stat & 0x08 != 0,
+            MODE_HBLANK => {
+                self.stat & 0x08 != 0
+                    || (self.is_cgb_native_mode()
+                        && !self.cgb_lcd_startup
+                        && self.mode_clock + 2 >= self.mode0_target_cycles
+                        && self.stat & 0x20 != 0)
+            }
             MODE_VBLANK => self.stat & 0x10 != 0,
             MODE_OAM => self.stat & 0x20 != 0,
             _ => false,

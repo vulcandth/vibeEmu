@@ -7,6 +7,57 @@ use vibe_emu_core::{
 };
 
 #[test]
+fn cgb_ppu_bus_edges_distinguish_speed_revision_and_read_write_strobes() {
+    for revision in [CgbRevision::RevB, CgbRevision::RevC, CgbRevision::RevE] {
+        for double_speed in [false, true] {
+            for scx in 0..8 {
+                let mut mmu = Mmu::new(Model::Cgb(revision));
+                mmu.write_byte(0xFF40, 0);
+                mmu.key1 = if double_speed { 0x80 } else { 0 };
+                mmu.write_byte(0xFF43, scx);
+                mmu.ppu.vram[0][0] = 0x42;
+                mmu.ppu.oam[0] = 0x24;
+                mmu.write_byte(0xFF40, 0x91);
+
+                mmu.ppu.step(80, &mut mmu.if_reg);
+                assert_eq!(
+                    mmu.read_byte(0x8000),
+                    if double_speed { 0xFF } else { 0x42 }
+                );
+                mmu.ppu.step(1, &mut mmu.if_reg);
+                assert_eq!(mmu.read_byte(0x8000), 0xFF);
+                mmu.ppu.step(170 + u16::from(scx), &mut mmu.if_reg);
+
+                // One dot before mode 0: normal-speed VRAM reads and OAM
+                // writes are released, but CGB E keeps OAM reads blocked.
+                assert_eq!(
+                    mmu.read_byte(0x8000),
+                    if double_speed { 0xFF } else { 0x42 }
+                );
+                let oam_read = !double_speed && revision != CgbRevision::RevE;
+                assert_eq!(mmu.read_byte(0xFE00), if oam_read { 0x24 } else { 0xFF });
+                mmu.write_byte(0xFE00, 0x55);
+                assert_eq!(mmu.ppu.oam[0], if double_speed { 0x24 } else { 0x55 });
+                mmu.ppu.step(1, &mut mmu.if_reg);
+                assert_eq!(mmu.read_byte(0x8000), 0x42);
+                assert_eq!(mmu.read_byte(0xFE00), mmu.ppu.oam[0]);
+
+                mmu.ppu.step(200 - u16::from(scx), &mut mmu.if_reg);
+                // Two dots before mode 2: writes lock on every revision;
+                // double-speed reads remain available on B/C.
+                let read_locked = !double_speed || revision == CgbRevision::RevE;
+                assert_eq!(mmu.read_byte(0xFE00), if read_locked { 0xFF } else { 0x24 });
+                let before = mmu.ppu.oam[0];
+                mmu.write_byte(0xFE00, 0x99);
+                assert_eq!(mmu.ppu.oam[0], before);
+                mmu.ppu.step(2, &mut mmu.if_reg);
+                assert_eq!(mmu.read_byte(0xFE00), 0xFF);
+            }
+        }
+    }
+}
+
+#[test]
 fn hdma_wait_loop_observes_idle_ff55() {
     let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
     // Ensure the LCD is considered enabled so HDMA enters H-Blank mode.

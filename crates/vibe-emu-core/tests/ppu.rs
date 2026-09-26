@@ -11,7 +11,7 @@ fn cgb_lyc_interrupt_precedes_the_physical_scanline_transition() {
             let mut interrupts = 0;
             ppu.write_reg(0xFF40, 0);
             ppu.write_reg(0xFF40, 0x91);
-            ppu.step(456, &mut interrupts); // Physical line 1.
+            ppu.step(454, &mut interrupts); // The LCD-enable line is two dots shorter.
             ppu.write_reg(0xFF45, 2);
             ppu.write_reg(0xFF41, 0x40);
             interrupts = 0;
@@ -26,11 +26,13 @@ fn cgb_lyc_interrupt_precedes_the_physical_scanline_transition() {
             assert_eq!(ppu.read_reg(0xFF44), 1);
             ppu.step(1, &mut interrupts);
             assert_eq!(interrupts & 2, 2);
-            assert_eq!(ppu.read_reg(0xFF44), 2);
+            assert_eq!(ppu.read_reg(0xFF44), 1); // LYC's edge precedes readable LY.
             assert_ne!(ppu.read_reg(0xFF41) & 4, 0);
             assert_eq!((ppu.ly(), ppu.mode()), (1, 0));
             interrupts = 0;
-            ppu.step(4, &mut interrupts);
+            ppu.step(2, &mut interrupts);
+            assert_eq!(ppu.read_reg(0xFF44), 2);
+            ppu.step(2, &mut interrupts);
             assert_eq!((ppu.ly(), ppu.mode()), (2, 2));
             assert_eq!(interrupts & 2, 0, "no second edge at the physical boundary");
         }
@@ -120,8 +122,10 @@ fn cgb_lcd_enable_draws_line_zero_before_advancing_ly() {
         ppu.step(1, &mut interrupts);
         assert_eq!(ppu.ly(), 0);
         assert_eq!(ppu.mode(), 3);
+        assert_eq!(ppu.vram_read_accessible(), !compat);
+        ppu.step(1, &mut interrupts);
         assert!(!ppu.vram_read_accessible());
-        ppu.step(376, &mut interrupts);
+        ppu.step(if compat { 375 } else { 373 }, &mut interrupts);
         assert_eq!(ppu.ly(), 1);
         assert_eq!(ppu.mode(), 2);
         ppu.step(80, &mut interrupts);
