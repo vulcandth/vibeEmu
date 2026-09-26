@@ -5459,8 +5459,8 @@ impl Ppu {
         };
         if self.mode == MODE_VBLANK && self.lcdc & 0x80 != 0 {
             let phase = self.mode_clock + ahead;
-            if ly == 152 && phase >= MODE1_CYCLES {
-                ly = 153;
+            if ly < 153 && phase >= MODE1_CYCLES {
+                ly += 1;
             } else if ly == 153 {
                 let reset_at = if double_speed {
                     if cgb && switched_double_speed { 5 } else { 6 }
@@ -5533,7 +5533,7 @@ impl Ppu {
 
     /// Read a PPU register at `addr`.
     pub fn read_reg(&mut self, addr: u16) -> u8 {
-        if self.dmg_compat && (0xFF68..=0xFF6B).contains(&addr) {
+        if self.dmg_compat && matches!(addr, 0xFF69 | 0xFF6B) {
             return 0xFF;
         }
         let value = match addr {
@@ -5551,7 +5551,7 @@ impl Ppu {
             0xFF4B => self.wx,
             0xFF68 => {
                 if self.cgb() {
-                    self.bgpi
+                    self.bgpi | 0x40
                 } else {
                     0xFF
                 }
@@ -5565,7 +5565,7 @@ impl Ppu {
             }
             0xFF6A => {
                 if self.cgb() {
-                    self.obpi
+                    self.obpi | 0x40
                 } else {
                     0xFF
                 }
@@ -5604,9 +5604,13 @@ impl Ppu {
 
     /// Write a PPU register at `addr`.
     pub fn write_reg(&mut self, addr: u16, val: u8) {
+        self.write_reg_with_boot_access(addr, val, false);
+    }
+
+    pub(crate) fn write_reg_with_boot_access(&mut self, addr: u16, val: u8, boot_mapped: bool) {
         // Compatibility-mode software cannot overwrite the color palettes
         // selected by the CGB boot ROM, even while the LCD is disabled.
-        if self.dmg_compat && (0xFF68..=0xFF6B).contains(&addr) {
+        if self.dmg_compat && !boot_mapped && matches!(addr, 0xFF69 | 0xFF6B) {
             return;
         }
         match addr {
@@ -9472,6 +9476,24 @@ mod mode3_timing_tests {
                 [0xff, 0xff, 0xab, 0xff, 0xff, 0xff, 0xff, 0xff]
             };
             assert_eq!(&ppu.oam[8..16], &expected);
+        }
+    }
+
+    #[test]
+    fn vblank_ly_reads_advance_before_each_physical_scanline() {
+        for model in [Model::Dmg(DmgRevision::RevC), Model::Cgb(CgbRevision::RevE)] {
+            let mut ppu = Ppu::new(model);
+            ppu.lcdc = 0x91;
+            ppu.mode = MODE_VBLANK;
+            let lead = if model.is_cgb() { 2 } else { 4 };
+            for line in 144..153 {
+                ppu.ly = line;
+                ppu.mode_clock = MODE1_CYCLES - lead - 1;
+                assert_eq!(ppu.read_ly(false), line);
+                ppu.mode_clock += 1;
+                assert_eq!(ppu.read_ly(false), line + 1);
+                assert_eq!(ppu.ly, line, "read phase must not advance the physical PPU");
+            }
         }
     }
 

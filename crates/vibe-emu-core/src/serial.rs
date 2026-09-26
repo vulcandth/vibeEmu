@@ -131,6 +131,7 @@ pub struct Serial {
     port: Box<dyn LinkPort + Send>,
     transfer: Option<TransferState>,
     model: Model,
+    dmg_compat: bool,
 }
 
 impl fmt::Debug for Serial {
@@ -191,23 +192,30 @@ impl Serial {
     pub fn new(model: Model) -> Self {
         Self {
             sb: 0,
-            sc: if model.is_cgb() { 0x7F } else { 0x7E },
+            sc: 0x7E,
             out_buf: Vec::new(),
             sb_out_buf: Vec::new(),
             port: Box::new(NullLinkPort::default()),
             transfer: None,
             model,
+            dmg_compat: false,
         }
     }
 
     #[inline]
     fn cgb_mode(&self) -> bool {
-        self.model.is_cgb()
+        self.model.is_cgb() && !self.dmg_compat
     }
 
     #[inline]
     fn dmg_revision(&self) -> DmgRevision {
         self.model.dmg_revision().unwrap_or_default()
+    }
+
+    // KEY0 disables the fast serial clock and makes SC.1 read high when
+    // CGB hardware is running a monochrome cartridge.
+    pub(crate) fn set_dmg_compat_mode(&mut self, enabled: bool) {
+        self.dmg_compat = enabled;
     }
 
     /// Attaches a link cable endpoint.
@@ -221,7 +229,7 @@ impl Serial {
             0xFF01 => self.sb,
             0xFF02 => {
                 if self.cgb_mode() {
-                    self.sc
+                    self.sc | 0x7C
                 } else {
                     self.sc | 0x7E
                 }

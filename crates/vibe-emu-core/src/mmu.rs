@@ -620,6 +620,7 @@ impl Mmu {
         self.cart = Some(cart);
         if self.model.is_cgb() && is_dmg && self.post_boot_state {
             self.ppu.apply_dmg_compatibility_palettes();
+            self.serial.set_dmg_compat_mode(true);
         }
     }
 
@@ -851,35 +852,35 @@ impl Mmu {
             }
             0xFF46 => self.ppu.dma,
             0xFF51 => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     (self.hdma.src >> 8) as u8
                 } else {
                     0xFF
                 }
             }
             0xFF52 => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     (self.hdma.src & 0x00F0) as u8
                 } else {
                     0xFF
                 }
             }
             0xFF53 => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     ((self.hdma.dst & 0x1F00) >> 8) as u8
                 } else {
                     0xFF
                 }
             }
             0xFF54 => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     (self.hdma.dst & 0x00F0) as u8
                 } else {
                     0xFF
                 }
             }
             0xFF55 => {
-                if !self.model.is_cgb() {
+                if !self.ppu.is_cgb_native_mode() {
                     0xFF
                 } else if self.hdma.active {
                     // Busy flag (bit 7) is cleared while the DMA is running.
@@ -893,14 +894,14 @@ impl Mmu {
                 }
             }
             0xFF4D => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     (self.key1 & 0x81) | 0x7E
                 } else {
                     0xFF
                 }
             }
             0xFF56 => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     self.rp | 0xC0
                 } else {
                     0xFF
@@ -908,13 +909,13 @@ impl Mmu {
             }
             0xFF4F => {
                 if self.model.is_cgb() {
-                    self.ppu.vram_bank as u8
+                    0xFE | self.ppu.vram_bank as u8
                 } else {
                     0xFF
                 }
             }
             0xFF70 => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     self.wram_bank as u8
                 } else {
                     0xFF
@@ -935,7 +936,7 @@ impl Mmu {
                 }
             }
             0xFF74 => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     self.undoc_ff74
                 } else {
                     // DMG: read-only, locked to $FF.
@@ -1240,32 +1241,34 @@ impl Mmu {
             }
             0xFF41 => self.ppu.write_stat(val, &mut self.if_reg),
             0xFF45 => self.ppu.write_lyc(val, &mut self.if_reg),
-            0xFF42..=0xFF44 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self.ppu.write_reg(addr, val),
+            0xFF42..=0xFF44 | 0xFF47..=0xFF4B | 0xFF68..=0xFF6B => self
+                .ppu
+                .write_reg_with_boot_access(addr, val, self.boot_mapped),
             0xFF51 => {
-                if self.model.is_cgb() && !self.hdma.active {
+                if self.ppu.is_cgb_native_mode() && !self.hdma.active {
                     self.hdma.src = (val as u16) << 8 | (self.hdma.src & 0x00FF);
                 }
             }
             0xFF52 => {
-                if self.model.is_cgb() && !self.hdma.active {
+                if self.ppu.is_cgb_native_mode() && !self.hdma.active {
                     self.hdma.src = (self.hdma.src & 0xFF00) | (val & 0xF0) as u16;
                 }
             }
             0xFF53 => {
-                if self.model.is_cgb() && !self.hdma.active {
+                if self.ppu.is_cgb_native_mode() && !self.hdma.active {
                     let vram_hi = (val & 0x1F) as u16;
                     let raw = (vram_hi << 8) | (self.hdma.dst & 0x00F0);
                     self.hdma.dst = Self::sanitize_vram_dma_dest(raw);
                 }
             }
             0xFF54 => {
-                if self.model.is_cgb() && !self.hdma.active {
+                if self.ppu.is_cgb_native_mode() && !self.hdma.active {
                     let raw = (self.hdma.dst & 0x1F00) | (val as u16 & 0x00F0);
                     self.hdma.dst = Self::sanitize_vram_dma_dest(raw);
                 }
             }
             0xFF55 => {
-                if !self.model.is_cgb() {
+                if !self.ppu.is_cgb_native_mode() {
                     return;
                 }
                 self.hdma.dst = Self::sanitize_vram_dma_dest(self.hdma.dst);
@@ -1289,16 +1292,17 @@ impl Mmu {
                 }
             }
             0xFF4D => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     self.key1 = (self.key1 & 0x80) | (val & 0x01);
                 }
             }
             0xFF4C => {
-                if self.model.is_cgb() {
+                if self.model.is_cgb() && self.boot_mapped {
                     // KEY0 bit 2 selects DMG compatibility mode on CGB
                     // hardware. CGB boot ROMs set this near handoff for DMG
                     // cartridges, after rendering the native CGB logo path.
                     self.ppu.set_dmg_compat_mode((val & 0x04) != 0);
+                    self.serial.set_dmg_compat_mode((val & 0x04) != 0);
                 }
             }
             0xFF56 => {
@@ -1307,7 +1311,7 @@ impl Mmu {
                 }
             }
             0xFF4F => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     self.ppu.vram_bank = (val & 0x01) as usize;
                 }
             }
@@ -1345,7 +1349,7 @@ impl Mmu {
             }
             0xFF50 => self.boot_mapped = false,
             0xFF70 => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     let bank = (val & 0x07) as usize;
                     self.wram_bank = if bank == 0 { 1 } else { bank };
                 }
@@ -1361,7 +1365,7 @@ impl Mmu {
                 }
             }
             0xFF74 => {
-                if self.model.is_cgb() {
+                if self.ppu.is_cgb_native_mode() {
                     self.undoc_ff74 = val;
                 }
             }

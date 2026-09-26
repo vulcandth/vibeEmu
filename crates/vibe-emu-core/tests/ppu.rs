@@ -151,7 +151,9 @@ fn compatibility_mode_keeps_boot_palettes_when_cgb_ports_are_written() {
             for _ in 0..64 {
                 ppu.write_reg(index + 1, 0);
             }
-            assert_eq!(ppu.read_reg(index), 0xFF);
+            // Index ports stay writable; only palette data is locked.
+            // Bit 6 reads high, and blocked data writes do not increment.
+            assert_eq!(ppu.read_reg(index), 0xC0);
             assert_eq!(ppu.read_reg(index + 1), 0xFF);
         }
         for i in 0..4 {

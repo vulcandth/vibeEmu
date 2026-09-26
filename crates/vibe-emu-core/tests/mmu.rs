@@ -7,6 +7,62 @@ use vibe_emu_core::{
 };
 
 #[test]
+fn cgb_compatibility_locks_native_io_but_keeps_palette_indices() {
+    for boot_rom in [false, true] {
+        let model = Model::Cgb(CgbRevision::RevE);
+        let mut mmu = if boot_rom {
+            Mmu::new_power_on(model)
+        } else {
+            Mmu::new(model)
+        };
+        if boot_rom {
+            mmu.load_boot_rom(vec![0; 0x900]);
+        }
+        mmu.load_cart(Cartridge::from_bytes(vec![0; 0x8000]));
+        mmu.write_byte(0xFF40, 0);
+        if boot_rom {
+            mmu.write_byte(0xFF4C, 4);
+            // The boot ROM selects compatibility mode before finishing the
+            // palette upload. Data writes must still auto-increment here.
+            mmu.write_byte(0xFF68, 0x80);
+            mmu.write_byte(0xFF69, 0x12);
+            assert_eq!(mmu.read_byte(0xFF68), 0xC1);
+            mmu.write_byte(0xFF50, 1);
+        }
+        // KEY0 cannot unlock CGB functions after boot-ROM handoff.
+        mmu.write_byte(0xFF4C, 0);
+        for addr in [
+            0xFF4D, 0xFF51, 0xFF52, 0xFF53, 0xFF54, 0xFF55, 0xFF56, 0xFF70, 0xFF74,
+        ] {
+            mmu.write_byte(addr, 0);
+            assert_eq!(mmu.read_byte(addr), 0xFF, "register {addr:04X}");
+        }
+        mmu.write_byte(0xFF4F, 1);
+        assert_eq!(mmu.read_byte(0xFF4F), 0xFE);
+        for (index, data) in [(0xFF68, 0xFF69), (0xFF6A, 0xFF6B)] {
+            mmu.write_byte(index, 0x80);
+            mmu.write_byte(data, 0x34);
+            assert_eq!(mmu.read_byte(index), 0xC0);
+            assert_eq!(mmu.read_byte(data), 0xFF);
+        }
+        mmu.write_byte(0xFF02, 0);
+        assert_eq!(mmu.read_byte(0xFF02), 0x7E);
+        mmu.write_byte(0xFF02, 0x83);
+        let mut interrupts = 0;
+        mmu.serial.step(0, 128, false, &mut interrupts);
+        assert_eq!(
+            interrupts & 8,
+            0,
+            "compatibility mode has no fast serial clock"
+        );
+        assert_ne!(mmu.read_byte(0xFF02) & 0x80, 0);
+        mmu.serial.step(128, 4096, false, &mut interrupts);
+        assert_eq!(interrupts & 8, 8);
+        assert_eq!(mmu.read_byte(0xFF02) & 0x80, 0);
+    }
+}
+
+#[test]
 fn cgb_ppu_bus_edges_distinguish_speed_revision_and_read_write_strobes() {
     for revision in [CgbRevision::RevB, CgbRevision::RevC, CgbRevision::RevE] {
         for double_speed in [false, true] {

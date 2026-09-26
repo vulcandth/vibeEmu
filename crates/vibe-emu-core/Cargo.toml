@@ -56,3 +56,13 @@ path = "tests/gambatte.rs"
 harness = false
 # Exclude from default test runs - use `cargo gambatte_test` to run explicitly
 test = false
+
+[[test]]
+name = "mooneye_extended"
+path = "tests/mooneye_extended.rs"
+harness = false
+
+[[test]]
+name = "wilbertpol"
+path = "tests/wilbertpol.rs"
+harness = false

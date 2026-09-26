@@ -477,10 +477,12 @@ fn timer_interrupt_wakes_speed_switch_and_returns_after_stop_padding() {
 fn gdma_stall_advances_cpu_div() {
     // While a CGB GDMA stall is active, the CPU is blocked from executing
     // instructions, but time still advances (including the CPU divider).
-    let program = vec![0x00]; // NOP (won't execute during the stall)
-    let mut cpu = Cpu::new(Model::default());
+    let mut program = vec![0x00; 0x8000]; // NOP (won't execute during the stall)
+    program[0x143] = 0x80; // GDMA is available only in native CGB mode.
+    let model = Model::Cgb(CgbRevision::default());
+    let mut cpu = Cpu::new(model);
     cpu.pc = 0;
-    let mut mmu = Mmu::new(Model::Cgb(CgbRevision::default()));
+    let mut mmu = Mmu::new(model);
     mmu.load_cart(Cartridge::from_bytes(program));
 
     // Point GDMA at WRAM0 -> VRAM.

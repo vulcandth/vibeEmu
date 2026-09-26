@@ -79,11 +79,11 @@ fn serial_sc_cgb_preserves_fast_clock_bit() {
     let mut serial = Serial::new(Model::from_cgb_flag(true));
 
     serial.write(0xFF02, 0x83); // bit7 + bit1 + bit0
-    assert_eq!(serial.read(0xFF02), 0x83);
+    assert_eq!(serial.read(0xFF02), 0xFF);
 
     serial.write(0xFF02, 0x02); // just fast clock bit
-    // CGB returns raw SC value (unlike DMG which masks unused bits)
-    assert_eq!(serial.read(0xFF02), 0x02);
+    // CGB keeps bit 1 writable; unused bits 2-6 still read high.
+    assert_eq!(serial.read(0xFF02), 0x7E);
 }
 
 #[test]
