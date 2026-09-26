@@ -1,39 +1,12 @@
-# AGE: 101 passing and 18 known failures across 119 ROM/revision cases.
+# AGE: 117 passing and 2 known failures across 119 ROM/revision cases.
 # Baseline before core fixes: 4 passing and 115 failing.
 # Recheck with: cargo test -p vibe-emu-core --test age -- --ignored
 
-# HALT wake-up versus mode 0 interrupt timing.
-halt/halt-m0-interrupt-dmgC-cgbBCE.gb::dmgC
-
-# m3-bg-bgp: PPU access, interrupt, or rendering timing still differs from hardware.
-m3-bg-bgp/m3-bg-bgp.gb::ncmB
-m3-bg-bgp/m3-bg-bgp.gb::ncmC
-m3-bg-bgp/m3-bg-bgp.gb::ncmE
-
-# Mode 3 background fetch / SCX rendering differs from reference images.
-m3-bg-scx/m3-bg-scx.gb::dmgC
-
-# oam: PPU access, interrupt, or rendering timing still differs from hardware.
-oam/oam-read-dmgC-cgbBC.gb::dmgC
+# DMG OAM writes at scan boundaries, including the LCD-off-history-sensitive
+# row documented in age-test-roms/src/oam/oam-write.inc.
 oam/oam-write-dmgC.gb::dmgC
 
-# stat-interrupt: PPU access, interrupt, or rendering timing still differs from hardware.
-stat-interrupt/stat-int-dmgC-cgbBCE.gb::dmgC
-stat-interrupt/stat-int-ncmBCE.gb::ncmB
-stat-interrupt/stat-int-ncmBCE.gb::ncmC
-stat-interrupt/stat-int-ncmBCE.gb::ncmE
-
-# stat-mode-sprites: PPU access, interrupt, or rendering timing still differs from hardware.
+# Sub-M-cycle OBJ stalls across SCX fine-scroll phases. The DMG OBJ scheduler
+# still rounds penalties to M-cycles; changing that also requires reconciling
+# Mooneye intr_2_mode0_timing_sprites and Mealybug OBJ-enable raster timing.
 stat-mode-sprites/stat-mode-sprites-dmgC-cgbBCE.gb::dmgC
-
-# stat-mode-window: PPU access, interrupt, or rendering timing still differs from hardware.
-stat-mode-window/stat-mode-window-dmgC.gb::dmgC
-stat-mode-window/stat-mode-window-ncmBCE.gb::ncmB
-stat-mode-window/stat-mode-window-ncmBCE.gb::ncmC
-stat-mode-window/stat-mode-window-ncmBCE.gb::ncmE
-
-# stat-mode: PPU access, interrupt, or rendering timing still differs from hardware.
-stat-mode/stat-mode-dmgC-cgbBC.gb::dmgC
-
-# vram: PPU access, interrupt, or rendering timing still differs from hardware.
-vram/vram-read-dmgC.gb::dmgC

@@ -451,7 +451,7 @@ pub struct Ppu {
     win_line_counter: u8,
     /// A window start has occurred in this frame (retained when WIN_EN is cleared).
     dmg_window_triggered: bool,
-    /// CGB's first scanline reports mode 0 instead of performing an OAM scan.
+    /// LCD enable starts with a mode-0 interval instead of an OAM scan.
     cgb_lcd_startup: bool,
     /// The LCD stays white during the first frame after it is enabled.
     lcd_startup_blank: bool,
@@ -482,9 +482,11 @@ pub struct Ppu {
     cgb_lcd_started_double_speed: bool,
     // Current CPU speed determines when native CGB LCDC writes reach the fetcher.
     cgb_double_speed: bool,
-    // A compatibility-mode LCD restart establishes the DMG fetcher origin.
+    // An LCD restart in DMG rendering mode establishes the fetcher origin.
     // KEY0 switches on an already running native LCD retain its old origin.
-    cgb_lcd_started_compat: bool,
+    dmg_lcd_restarted: bool,
+    // SCY can change after the fetcher starts but before STAT reports mode 3.
+    mode2_scy_write: Option<(u8, u8)>,
 
     /// Completed pixel output in 0x00RRGGBB format; updated once per frame.
     pub framebuffer: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
@@ -1035,7 +1037,8 @@ impl Ppu {
             clock_hold_cycles: 0,
             cgb_lcd_started_double_speed: false,
             cgb_double_speed: false,
-            cgb_lcd_started_compat: false,
+            dmg_lcd_restarted: false,
+            mode2_scy_write: None,
             framebuffer: [0xFFFFFF; SCREEN_WIDTH * SCREEN_HEIGHT],
             line_priority: [false; SCREEN_WIDTH],
             line_color_zero: [false; SCREEN_WIDTH],
@@ -1311,6 +1314,10 @@ impl Ppu {
         self.mode3_render_delay = scx_delay;
         self.mode3_last_match_x = 0;
         self.mode3_same_x_toggle = false;
+        if let Some((old, val)) = self.mode2_scy_write.take() {
+            self.mode3_scy_base = old;
+            self.record_mode3_scy_event(0, val);
+        }
     }
 
     #[inline]
@@ -1346,12 +1353,12 @@ impl Ppu {
     }
 
     #[inline]
-    fn mode3_render_offset(&self) -> u16 {
-        // Compatibility-mode bus edges precede the existing DMG fetcher
-        // timeline by two dots. Keep register events and pixel/OBJ captures
-        // on that same renderer timeline (AGE access tests and Mealybug).
-        if self.cgb_lcd_started_compat && self.is_cgb_dmg_compat_mode() {
-            2
+    fn mode3_render_offset(&self) -> i16 {
+        // Line zero retains the first-line fetcher origin. Subsequent
+        // DMG/compat lines begin fetching two dots before the bus-visible
+        // mode-3 origin. Register events share this renderer timeline.
+        if self.dmg_lcd_restarted && self.is_dmg_mode() {
+            if self.ly == 0 { 2 } else { -2 }
         } else {
             0
         }
@@ -1359,7 +1366,7 @@ impl Ppu {
 
     #[inline]
     fn mode3_render_clock(&self) -> u16 {
-        self.mode_clock.saturating_sub(self.mode3_render_offset())
+        (self.mode_clock as i16 - self.mode3_render_offset()).max(0) as u16
     }
 
     #[inline]
@@ -1615,13 +1622,15 @@ impl Ppu {
             // the next fetched BG tile one fetch slot earlier.
             bias += self.tuning.dmg_mode3_scx_event_push_state_t_adjust;
         }
-        // An uninterrupted compatibility BG fetch uses the same coarse-SCX
-        // sampling stage. Fine-scroll startup and OBJ stalls use the phase above.
-        if self.is_cgb_dmg_compat_mode()
+        // An uninterrupted DMG/compat BG fetch samples coarse SCX at the
+        // next tile-address stage. Fine-only writes and OBJ stalls retain
+        // the live fetcher's phase above.
+        if self.is_dmg_mode()
             && (self.lcdc & 2 == 0 || self.sprite_count == 0)
+            && self.lcdc & 0x20 == 0
             && (self.scx ^ val) & 0xF8 != 0
         {
-            bias = -4;
+            bias = 4;
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
         if trace_scx_events_enabled() && trace_obj_debug_line_enabled(self.ly) {
@@ -2084,6 +2093,9 @@ impl Ppu {
                 // FIFO startup, fine-scroll discard, and the palette latch
                 // place an uncontended DMG BGP edge 15 dots behind the bus.
                 15u16
+            } else if self.dmg_compat && self.lcdc & 0x20 == 0 {
+                (12 + i16::from(self.cgb_revision() == CgbRevision::RevE)
+                    - self.mode3_render_offset()) as u16
             } else if self.dmg_compat {
                 3
             } else {
@@ -2091,7 +2103,11 @@ impl Ppu {
             };
             // CGB DMG-compat warmup: 2 extra T-cycles covers writes that land
             // after the delay constant but before pixel 0 is actually output.
-            let warmup_guard = if self.dmg_compat { 2u16 } else { 0u16 };
+            let warmup_guard = if self.dmg_compat && self.lcdc & 0x20 != 0 {
+                2u16
+            } else {
+                0u16
+            };
             let warmup = delay + scx_fine + warmup_guard;
             let adjusted_t = if mode3_t < warmup {
                 0
@@ -3293,7 +3309,7 @@ impl Ppu {
             self.invalidate_mode3_obj_data();
         }
         let offset = self.mode3_render_offset();
-        if offset != 0 && self.mode_clock <= offset {
+        if offset > 0 && self.mode_clock <= offset as u16 {
             return;
         }
         let obj_fetch_active_before = self.mode3_obj_fetch_active;
@@ -4170,47 +4186,58 @@ impl Ppu {
     }
 
     fn compute_mode3_cycles_for_line(&self) -> u16 {
-        if self.is_cgb_native_mode() {
-            // Fine-scroll pixels are discarded before visible output. OBJ
-            // fetches then wait for the BG fetch phase and take six dots.
-            let mut cycles = MODE3_CYCLES + u16::from(self.scx & 7);
-            if self.lcdc & 0x20 != 0 && self.ly >= self.wy && self.wx <= WINDOW_X_MAX {
-                // Restarting the BG fetcher for the window costs six dots.
-                // At WX=0, a nonzero fine scroll adds one alignment dot
-                // (AGE stat-mode-window, in both CPU speed modes).
-                cycles += 6 + u16::from(self.wx == 0 && self.scx & 7 != 0);
-            }
-            if (self.lcdc & 0x02) != 0 {
-                let mut positions = [0i16; MAX_SPRITES_PER_LINE];
-                let mut count = 0;
-                for sprite in &self.line_sprites[..self.sprite_count] {
-                    let raw_x = sprite.x + 8;
-                    if (0..168).contains(&raw_x) {
-                        positions[count] = raw_x;
-                        count += 1;
-                    }
-                }
-                positions[..count].sort_unstable();
-                let mut previous_tile = None;
-                for &raw_x in &positions[..count] {
-                    if raw_x == 0 {
-                        // The hidden X=0 fetch always incurs the full wait.
-                        cycles += 11;
-                    } else {
-                        let position = raw_x as u16 + u16::from(self.scx & 7);
-                        let tile = position / 8;
-                        if previous_tile != Some(tile) {
-                            cycles += 5u16.saturating_sub(position & 7);
-                        }
-                        cycles += 6;
-                        previous_tile = Some(tile);
-                    }
-                }
-            }
-            cycles
-        } else {
-            self.dmg_compute_mode3_cycles_for_line()
+        if self.is_dmg_mode() && self.lcdc & 2 != 0 && self.sprite_count > 0 {
+            // The DMG OBJ scheduler measures its duration from the fetcher
+            // origin. Translate that to the bus origin on scanned lines.
+            // Its sub-M-cycle sprite penalties still need refinement (AGE
+            // stat-mode-sprites); retain the Mooneye-verified scheduler here.
+            return self
+                .dmg_compute_mode3_cycles_for_line()
+                .saturating_sub(if self.ly == 0 { 0 } else { 2 });
         }
+
+        // Fine-scroll pixels are discarded before visible output. OBJ
+        // fetches then wait for the BG fetch phase and take six dots.
+        let mut cycles = MODE3_CYCLES + u16::from(self.scx & 7);
+        if self.lcdc & 0x20 != 0
+            && self.ly >= self.wy
+            && self.wx <= if self.cgb() { WINDOW_X_MAX } else { 165 }
+        {
+            // Restarting the BG fetcher for the window costs six dots.
+            // At WX=0, a nonzero fine scroll adds one alignment dot
+            // (AGE stat-mode-window, in both CPU speed modes).
+            cycles += 6 + u16::from(self.wx == 0 && self.scx & 7 != 0);
+        }
+        if (self.lcdc & 0x02) != 0 {
+            let mut positions = [0i16; MAX_SPRITES_PER_LINE];
+            let mut count = 0;
+            for sprite in &self.line_sprites[..self.sprite_count] {
+                let raw_x = sprite.x + 8;
+                if (0..168).contains(&raw_x) {
+                    positions[count] = raw_x;
+                    count += 1;
+                }
+            }
+            positions[..count].sort_unstable();
+            let mut previous_tile = None;
+            for &raw_x in &positions[..count] {
+                if raw_x == 0 {
+                    // The first hidden X=0 fetch incurs the full wait;
+                    // subsequent objects reuse that BG-fetch alignment.
+                    cycles += if previous_tile == Some(0) { 6 } else { 11 };
+                    previous_tile = Some(0);
+                } else {
+                    let position = raw_x as u16 + u16::from(self.scx & 7);
+                    let tile = position / 8;
+                    if previous_tile != Some(tile) {
+                        cycles += 5u16.saturating_sub(position & 7);
+                    }
+                    cycles += 6;
+                    previous_tile = Some(tile);
+                }
+            }
+        }
+        cycles
     }
 
     /// Create a PPU in the default post-boot DMG state.
@@ -4326,6 +4353,8 @@ impl Ppu {
     /// has finished executing.
     pub fn apply_boot_state(&mut self, dmg_revision: Option<DmgRevision>) {
         self.lcd_startup_blank = false;
+        self.mode2_scy_write = None;
+        self.dmg_lcd_restarted = false;
         if let Some(rev) = dmg_revision {
             self.model = Model::Dmg(rev);
         }
@@ -4339,7 +4368,9 @@ impl Ppu {
         if self.cgb() {
             self.stat = 0x80;
             self.set_mode(MODE_VBLANK);
-            self.mode_clock = 164;
+            // Physical LCD phase at the skipped CGB boot handoff. LY and
+            // coincidence reads have their own offsets from this clock.
+            self.mode_clock = 166;
             self.ly = 0x90;
             self.ly_for_comparison = 0x90;
             self.lyc = 0;
@@ -4603,6 +4634,13 @@ impl Ppu {
             // Use ly_for_comparison for the LYC check (differs from LY during
             // CGB line 153 quirk)
             let mut coincide = self.ly_for_comparison == self.lyc;
+            if !self.cgb()
+                && self.mode == MODE_HBLANK
+                && !self.cgb_lcd_startup
+                && self.mode_clock + 4 >= self.mode0_target_cycles
+            {
+                coincide = false;
+            }
             if coincide
                 && !self.cgb()
                 && let Some(stage) = self.dmg_startup_stage
@@ -4635,24 +4673,22 @@ impl Ppu {
     }
 
     pub(crate) fn oam_read_accessible_at_speed(&self, double_speed: bool) -> bool {
-        if self.cgb() {
-            // AGE's OAM reads distinguish the normal-speed read strobe from
-            // the double-speed strobe, which locks earlier only on CGB E.
-            let early_lock = if !double_speed || self.cgb_revision() == CgbRevision::RevE {
-                2
-            } else {
-                0
-            };
-            if self.cgb_oam_pre_scan_locked(early_lock, false) {
-                return false;
-            }
-            if !double_speed
-                && self.cgb_revision() != CgbRevision::RevE
-                && self.mode == MODE_TRANSFER
-                && self.mode_clock + 1 >= self.mode3_target_cycles
-            {
-                return true;
-            }
+        // AGE's OAM reads distinguish the normal-speed read strobe from
+        // the double-speed strobe, which locks earlier only on CGB E.
+        let early_lock = if !double_speed || self.cgb_revision() == CgbRevision::RevE {
+            2
+        } else {
+            0
+        };
+        if self.cgb_oam_pre_scan_locked(early_lock, false) {
+            return false;
+        }
+        if !double_speed
+            && (!self.cgb() || self.cgb_revision() != CgbRevision::RevE)
+            && self.mode == MODE_TRANSFER
+            && self.mode_clock + 1 >= self.mode3_target_cycles
+        {
+            return true;
         }
         self.oam_accessible_internal(true)
     }
@@ -4663,6 +4699,14 @@ impl Ppu {
     }
 
     pub(crate) fn oam_write_accessible_at_speed(&self, double_speed: bool) -> bool {
+        if !self.cgb() {
+            if self.mode == MODE_TRANSFER && self.mode_clock + 1 >= self.mode3_target_cycles {
+                return true;
+            }
+            if self.mode == MODE_OAM && self.mode_clock >= MODE2_CYCLES - 2 {
+                return true;
+            }
+        }
         if self.cgb() {
             // The write lock also covers the end of the LCD-enable mode-0
             // interval. Unlike reads, every tested CGB revision uses this edge.
@@ -5168,11 +5212,14 @@ impl Ppu {
     }
 
     pub(crate) fn vram_read_accessible_at_speed(&self, double_speed: bool) -> bool {
-        if self.cgb() && !double_speed && self.mode == MODE_TRANSFER {
+        if !self.cgb() && self.mode == MODE_OAM && self.mode_clock >= MODE2_CYCLES - 2 {
+            return false;
+        }
+        if !double_speed && self.mode == MODE_TRANSFER {
             // The normal-speed read strobe overlaps the last transfer dot.
             // On the LCD-enable line it also precedes the first VRAM lock.
             if self.mode_clock + 1 >= self.mode3_target_cycles
-                || (self.mode_clock == 0 && self.ly == 0 && self.lcd_startup_blank)
+                || (self.cgb() && self.mode_clock == 0 && self.ly == 0 && self.lcd_startup_blank)
             {
                 return true;
             }
@@ -5320,7 +5367,7 @@ impl Ppu {
     pub(crate) fn read_stat(&self, double_speed: bool) -> u8 {
         // Double-speed reads observe the mode transition without the
         // normal-speed mode-bit latch delay. Mode 0 is visible on the last
-        // transfer dot to a normal-speed CGB read. Switching a running LCD
+        // transfer dot to a normal-speed read. Switching a running LCD
         // to double speed retains that origin; starting the LCD in double
         // speed uses the following dot (AGE stat-mode and spsw-mode0).
         let mut mode = if double_speed {
@@ -5328,21 +5375,20 @@ impl Ppu {
         } else {
             self.stat_mode
         };
-        if self.cgb()
-            && self.mode == MODE_TRANSFER
+        if self.mode == MODE_TRANSFER
             && self.mode_clock + u16::from(!double_speed || !self.cgb_lcd_started_double_speed)
                 >= self.mode3_target_cycles
         {
             mode = MODE_HBLANK;
         }
-        // B/C briefly report mode 0 at the end of VBlank in normal speed;
-        // E and double speed retain mode 1 until the next frame starts.
-        if self.cgb()
-            && self.cgb_revision() != CgbRevision::RevE
+        // DMG and CGB B/C briefly report mode 0 at the end of VBlank.
+        // DMG's window is two dots, versus four on B/C; E and double
+        // speed retain mode 1 until the next frame starts.
+        if (!self.cgb() || self.cgb_revision() != CgbRevision::RevE)
             && !double_speed
             && self.mode == MODE_VBLANK
             && self.ly == 153
-            && self.mode_clock >= MODE1_CYCLES - 4
+            && self.mode_clock >= MODE1_CYCLES - if self.cgb() { 4 } else { 2 }
         {
             mode = MODE_HBLANK;
         }
@@ -5457,6 +5503,8 @@ impl Ppu {
                     }
                     self.framebuffer.fill(0xFFFFFF);
                     self.lcd_startup_blank = false;
+                    self.mode2_scy_write = None;
+                    self.dmg_lcd_restarted = false;
                     self.set_mode(MODE_HBLANK);
                     self.mode_clock = 0;
                     self.mode3_target_cycles = MODE3_CYCLES;
@@ -5479,7 +5527,7 @@ impl Ppu {
                     self.dmg_prev2_line_window_active = false;
                 }
                 if !was_on && self.lcdc & 0x80 != 0 {
-                    self.cgb_lcd_started_compat = self.is_cgb_dmg_compat_mode();
+                    self.dmg_lcd_restarted = self.is_dmg_mode();
                     self.framebuffer.fill(0xFFFFFF);
                     self.lcd_startup_blank = true;
                     ppu_trace!(
@@ -5494,27 +5542,16 @@ impl Ppu {
                         self.debug_lcd_enable_timer = Some(0);
                         self.debug_prev_mode = self.mode;
                     }
-                    if !self.cgb() {
-                        self.dmg_startup_cycle = Some(0);
-                        self.dmg_startup_stage = Some(0);
-                        self.dmg_post_startup_line2 = false;
-                        self.set_mode(MODE_HBLANK);
-                        self.mode_clock = 0;
-                        self.mode3_target_cycles = MODE3_CYCLES;
-                        self.mode0_target_cycles = MODE0_CYCLES;
-                        self.ly = 0;
-                        self.ly_for_comparison = 0;
-                    } else {
-                        // LCD enable begins line 0's initial 80-dot period. It
-                        // reports mode 0 and does not scan OAM, then enters
-                        // mode 3 without advancing LY. Treating it as ordinary
-                        // HBlank skips the first drawing period entirely.
-                        self.cgb_lcd_startup = true;
-                        self.set_mode(MODE_HBLANK);
-                        self.mode_clock = 0;
-                        self.mode0_target_cycles = MODE2_CYCLES;
-                        self.sprite_count = 0;
-                    }
+                    self.dmg_startup_cycle = None;
+                    self.dmg_startup_stage = None;
+                    self.dmg_post_startup_line2 = false;
+                    // LCD enable begins an 80-dot mode-0 interval without
+                    // scanning OAM, followed by the first pixel transfer.
+                    self.cgb_lcd_startup = true;
+                    self.set_mode(MODE_HBLANK);
+                    self.mode_clock = 0;
+                    self.mode0_target_cycles = MODE2_CYCLES;
+                    self.sprite_count = 0;
                 }
                 if self.lcdc & 0x80 != 0 {
                     self.update_lyc_compare();
@@ -5540,6 +5577,13 @@ impl Ppu {
             }
             0xFF42 => {
                 let old = self.scy;
+                if self.is_dmg_mode()
+                    && self.mode == MODE_OAM
+                    && self.mode_clock >= MODE2_CYCLES - 2
+                    && self.mode3_render_offset() < 0
+                {
+                    self.mode2_scy_write = Some((old, val));
+                }
                 if self.should_record_mode3_reg_event() {
                     self.record_mode3_scy_event(self.mode3_render_clock(), val);
                 }
@@ -5612,7 +5656,7 @@ impl Ppu {
                     {
                         self.mode3_target_cycles
                             .saturating_add(self.mode_clock)
-                            .saturating_sub(self.mode3_render_offset())
+                            .saturating_add_signed(-self.mode3_render_offset())
                     } else {
                         u16::MAX
                     };
@@ -5755,9 +5799,9 @@ impl Ppu {
     fn next_hblank_event(&self) -> u16 {
         let compare_at = self.mode0_target_cycles.saturating_sub(4);
         let mode2_at = self.mode0_target_cycles.saturating_sub(2);
-        if self.cgb() && !self.cgb_lcd_startup && self.mode_clock < compare_at {
+        if !self.cgb_lcd_startup && self.mode_clock < compare_at {
             compare_at
-        } else if self.is_cgb_native_mode() && !self.cgb_lcd_startup && self.mode_clock < mode2_at {
+        } else if !self.cgb_lcd_startup && self.mode_clock < mode2_at {
             mode2_at
         } else {
             self.mode0_target_cycles
@@ -6094,7 +6138,17 @@ impl Ppu {
                     self.mode3_wy_event_count
                 );
             }
-            if use_fetcher {
+            if self.is_dmg_mode()
+                && self.mode3_scx_events[..self.mode3_scx_event_count]
+                    .iter()
+                    .any(|ev| (ev.val ^ self.mode3_scx_base) & 0xf8 != 0)
+                && self.mode3_scy_event_count == 0
+                && self.mode3_lcdc_base & 0x20 == 0
+                && self.mode3_lcdc_event_count == 0
+                && (self.mode3_lcdc_base & 2 == 0 || self.sprite_count == 0)
+            {
+                self.render_bg_window_scanline_lcdc_fetcher();
+            } else if use_fetcher {
                 self.render_dmg_bg_window_scanline_with_mode3_fetcher();
             } else if cgb_render {
                 self.render_cgb_bg_window_scanline_with_mode3_lcdc();
@@ -6402,7 +6456,7 @@ impl Ppu {
         }
         let mut dots = self
             .mode3_target_cycles
-            .saturating_sub(self.mode_clock + 2)
+            .saturating_sub(self.mode3_render_clock().max(self.mode_clock) + 2)
             .min(SCREEN_WIDTH as u16 - self.mode3_lcd_x);
         // An underfilled startup FIFO can empty before its fetcher is ready.
         // Keep that stall on the dot path. Otherwise each refill starts the
@@ -6647,12 +6701,11 @@ impl Ppu {
                         }
                     }
                     MODE_VBLANK => {
-                        let boundary =
-                            if !self.cgb() && self.ly == 153 && !self.cgb_line153_ly0_triggered {
-                                12
-                            } else {
-                                MODE1_CYCLES
-                            };
+                        let boundary = if self.ly == 153 && !self.cgb_line153_ly0_triggered {
+                            12
+                        } else {
+                            MODE1_CYCLES
+                        };
                         let next_event = boundary.saturating_sub(self.mode_clock);
                         if next_event > 0 {
                             increment = next_event.min(remaining);
@@ -6732,20 +6785,14 @@ impl Ppu {
 
             match self.mode {
                 MODE_HBLANK => {
-                    // The CGB line comparator sees the next LY before the
-                    // physical scanline ends. Its edge precedes both the
-                    // readable LY transition and the mode-2 interrupt edge.
-                    if self.cgb()
-                        && !self.cgb_lcd_startup
-                        && self.mode_clock + 4 >= self.mode0_target_cycles
-                    {
+                    // The comparator changes before the physical line ends.
+                    // CGB compares the next LY here; DMG blanks coincidence
+                    // until OAM scan starts. Both precede the mode-2 IRQ.
+                    if !self.cgb_lcd_startup && self.mode_clock + 4 >= self.mode0_target_cycles {
                         self.ly_for_comparison = self.next_visible_ly();
                         self.update_lyc_compare();
                     }
-                    if self.is_cgb_native_mode()
-                        && !self.cgb_lcd_startup
-                        && self.mode_clock + 2 >= self.mode0_target_cycles
-                    {
+                    if !self.cgb_lcd_startup && self.mode_clock + 2 >= self.mode0_target_cycles {
                         self.stat_irq_dirty = true;
                     }
                     if self.dmg_hblank_render_pending
@@ -6767,13 +6814,16 @@ impl Ppu {
                             self.set_mode(MODE_TRANSFER);
                             self.begin_mode3_line();
                             self.mode3_target_cycles = self.compute_mode3_cycles_for_line();
-                            // CGB's LCD-enable line is 454 dots in both native
-                            // and DMG compatibility modes (AGE STAT/OAM/VRAM).
+                            // The LCD-enable line is 454 dots on both DMG
+                            // and CGB; subsequent scanlines last 456 dots.
                             let first_line_cycles = LINE_CYCLES - 2;
                             self.mode0_target_cycles = first_line_cycles
                                 .saturating_sub(MODE2_CYCLES + self.mode3_target_cycles);
                             if self.is_dmg_mode() {
                                 self.dmg_begin_transfer_line();
+                                for _ in 0..(-self.mode3_render_offset()).max(0) {
+                                    self.mode3_latch_sprite_attributes();
+                                }
                             }
                             self.refresh_stat_irq_if_dirty(if_reg);
                             continue;
@@ -6785,10 +6835,6 @@ impl Ppu {
                             self.lcd_startup_blank = false;
                             self.frame_ready = true;
                             self.set_mode(MODE_VBLANK);
-                            if self.is_dmg_mode() {
-                                self.dmg_mode2_vblank_irq_pending = true;
-                                self.stat_irq_dirty = true;
-                            }
                             *if_reg |= 0x01;
                             #[cfg(feature = "ppu-trace")]
                             if let Some(after) = debug_cycles_after
@@ -6798,6 +6844,7 @@ impl Ppu {
                             }
                         } else {
                             self.set_mode(MODE_OAM);
+                            self.update_lyc_compare();
                             #[cfg(feature = "ppu-trace")]
                             if let Some(after) = debug_cycles_after
                                 && after <= 512
@@ -6815,13 +6862,9 @@ impl Ppu {
                     // Line 153 quirk: Both CGB and DMG set ly_for_comparison
                     // to 0 during line 153, causing LYC=0 STAT interrupts to
                     // fire during VBlank rather than at the start of line 0.
-                    // DMG compares against zero at dot 12, after readable LY
-                    // has already reset. Daid's BGP loop synchronizes here.
-                    // Keep the existing CGB comparison phase separate.
-                    if self.ly == 153
-                        && !self.cgb_line153_ly0_triggered
-                        && (self.cgb() || self.mode_clock >= 12)
-                    {
+                    // Comparison switches to zero at dot 12, after readable
+                    // LY has already reset. Daid's BGP loop synchronizes here.
+                    if self.ly == 153 && !self.cgb_line153_ly0_triggered && self.mode_clock >= 12 {
                         self.cgb_line153_ly0_triggered = true;
                         self.ly_for_comparison = 0;
                         self.update_lyc_compare();
@@ -6876,6 +6919,9 @@ impl Ppu {
                             .saturating_sub(MODE2_CYCLES.saturating_add(self.mode3_target_cycles));
                         if self.is_dmg_mode() {
                             self.dmg_begin_transfer_line();
+                            for _ in 0..(-self.mode3_render_offset()).max(0) {
+                                self.mode3_latch_sprite_attributes();
+                            }
                         }
                         if self.dmg_post_startup_line2 {
                             self.dmg_post_startup_line2 = false;
@@ -6900,11 +6946,11 @@ impl Ppu {
                         // Complete the deferred renderer dots before replaying
                         // this line, without advancing the bus or IRQ clocks.
                         let offset = self.mode3_render_offset();
-                        for _ in 0..offset {
+                        for _ in 0..offset.max(0) {
                             self.mode_clock += 1;
                             self.mode3_latch_sprite_attributes();
                         }
-                        self.mode_clock -= offset;
+                        self.mode_clock -= offset.max(0) as u16;
                         self.complete_stable_obj_rows();
                         self.mode_clock -= target;
                         if self.is_dmg_mode() {
@@ -8157,7 +8203,11 @@ impl Ppu {
         let mut event_idx = 0usize;
         let events = &self.mode3_lcdc_events[..self.mode3_lcdc_event_count];
 
-        let scx = self.scx;
+        let scx = if self.mode3_scx_event_count > 0 {
+            self.mode3_scx_base
+        } else {
+            self.scx
+        };
         let scy = self.scy;
         let ly = self.ly;
         let row_base = ly as usize * SCREEN_WIDTH;
@@ -8182,8 +8232,6 @@ impl Ppu {
         let bg_y = ly.wrapping_add(scy);
         let bg_tile_row = ((bg_y / 8) & 31) as usize;
         let bg_tile_y_raw = (bg_y & 7) as usize;
-
-        let bg_col_base = (scx as u16 / 8) & 31;
 
         let mut window_active = false;
         let mut window_drawn = false;
@@ -8287,7 +8335,19 @@ impl Ppu {
                     let tile_col = if window_active {
                         (tile_fetch_index & 31) as usize
                     } else {
-                        ((bg_col_base + tile_fetch_index) & 31) as usize
+                        // Fine-scroll discard is latched at line start, but
+                        // each tile address samples SCX again. Preserve the
+                        // carry when a write also changes its low three bits.
+                        let fetch_scx = Self::mode3_reg_value_at_t(
+                            scx,
+                            &self.mode3_scx_events,
+                            self.mode3_scx_event_count,
+                            t,
+                        );
+                        let pixel = i32::from(fetch_scx) - i32::from(scx & 7)
+                            + i32::from(tile_fetch_index) * 8
+                            + i32::from(!self.cgb());
+                        ((pixel >> 3) & 31) as usize
                     };
 
                     let map_addr = tile_map_base + tile_row * 32 + tile_col;
@@ -8572,8 +8632,7 @@ impl Ppu {
         let mode_signal = match self.mode {
             MODE_HBLANK => {
                 self.stat & 0x08 != 0
-                    || (self.is_cgb_native_mode()
-                        && !self.cgb_lcd_startup
+                    || (!self.cgb_lcd_startup
                         && self.mode_clock + 2 >= self.mode0_target_cycles
                         && self.stat & 0x20 != 0)
             }
@@ -9034,39 +9093,172 @@ mod mode3_timing_tests {
     }
 
     #[test]
-    fn dmg_line_153_zero_comparison_occurs_at_dot_12() {
-        for batched in [false, true] {
-            let mut ppu = Ppu::new(Model::Dmg(DmgRevision::RevC));
-            ppu.skip_startup_for_test();
-            ppu.lcdc = 0x91;
-            ppu.mode = MODE_VBLANK;
-            ppu.ly = 153;
-            ppu.ly_for_comparison = 153;
-            ppu.lyc = 0;
-            ppu.stat = 0x40;
-            ppu.update_lyc_compare();
-            let mut interrupts = 0;
-            if batched {
-                ppu.step(11, &mut interrupts);
-            } else {
-                for _ in 0..11 {
-                    ppu.step(1, &mut interrupts);
+    fn lcd_enable_uses_a_short_first_line_without_oam_scan() {
+        for model in [Model::Dmg(DmgRevision::RevC), Model::Cgb(CgbRevision::RevE)] {
+            for fine_scroll in 0..8 {
+                let mut ppu = Ppu::new(model);
+                ppu.write_reg(0xff40, 0);
+                ppu.write_reg(0xff43, fine_scroll);
+                ppu.oam[..4].copy_from_slice(&[16, 8, 0, 0]);
+                ppu.write_reg(0xff40, 0x91);
+                let mut interrupts = 0;
+                ppu.step(79, &mut interrupts);
+                assert_eq!((ppu.ly, ppu.mode), (0, MODE_HBLANK));
+                ppu.step(1, &mut interrupts);
+                assert_eq!((ppu.ly, ppu.mode), (0, MODE_TRANSFER));
+                assert_eq!(ppu.sprite_count, 0);
+                ppu.step(172 + u16::from(fine_scroll), &mut interrupts);
+                assert_eq!(ppu.mode, MODE_HBLANK);
+                ppu.step(202 - u16::from(fine_scroll), &mut interrupts);
+                assert_eq!((ppu.ly, ppu.mode, ppu.mode_clock), (1, MODE_OAM, 0));
+                ppu.step(456, &mut interrupts);
+                assert_eq!((ppu.ly, ppu.mode, ppu.mode_clock), (2, MODE_OAM, 0));
+            }
+        }
+    }
+
+    #[test]
+    fn dmg_bus_locks_and_stat_change_on_different_dots() {
+        let mut ppu = Ppu::new(Model::Dmg(DmgRevision::RevC));
+        ppu.lcdc = 0x91;
+        ppu.skip_startup_for_test();
+        let mut interrupts = 0;
+        ppu.step(77, &mut interrupts);
+        assert!(ppu.vram_read_accessible());
+        assert!(!ppu.oam_write_accessible());
+        ppu.step(1, &mut interrupts);
+        assert_eq!(ppu.read_stat(false) & 3, MODE_OAM);
+        assert!(!ppu.vram_read_accessible());
+        assert!(!ppu.oam_read_accessible());
+        assert!(ppu.oam_write_accessible());
+        ppu.step(2 + 170, &mut interrupts);
+        assert_eq!(ppu.read_stat(false) & 3, MODE_TRANSFER);
+        assert!(!ppu.vram_read_accessible());
+        assert!(!ppu.oam_read_accessible());
+        ppu.step(1, &mut interrupts);
+        assert_eq!(ppu.mode, MODE_TRANSFER);
+        assert_eq!(ppu.read_stat(false) & 3, MODE_HBLANK);
+        assert!(ppu.vram_read_accessible());
+        assert!(ppu.oam_read_accessible());
+    }
+
+    #[test]
+    fn dmg_line_comparator_blanks_before_the_mode2_interrupt() {
+        let mut ppu = Ppu::new(Model::Dmg(DmgRevision::RevC));
+        ppu.lcdc = 0x91;
+        ppu.mode = MODE_HBLANK;
+        ppu.mode_clock = 199;
+        ppu.mode0_target_cycles = 204;
+        ppu.ly = 5;
+        ppu.ly_for_comparison = 5;
+        ppu.lyc = 5;
+        ppu.stat = 0x20;
+        ppu.update_lyc_compare();
+        assert_ne!(ppu.read_stat(false) & 4, 0);
+        let mut interrupts = 0;
+        ppu.step(1, &mut interrupts);
+        assert_eq!(ppu.read_stat(false) & 4, 0);
+        ppu.write_reg(0xff45, 6);
+        assert_eq!(ppu.read_stat(false) & 4, 0);
+        assert_eq!(interrupts & 2, 0);
+        ppu.step(2, &mut interrupts);
+        assert_eq!(ppu.mode, MODE_HBLANK);
+        assert_eq!(interrupts & 2, 2);
+        ppu.step(2, &mut interrupts);
+        assert_eq!((ppu.mode, ppu.ly), (MODE_OAM, 6));
+        assert_ne!(ppu.read_stat(false) & 4, 0);
+
+        ppu.set_mode(MODE_VBLANK);
+        ppu.ly = 153;
+        ppu.mode_clock = 452;
+        assert_eq!(ppu.read_stat(false) & 3, MODE_VBLANK);
+        ppu.step(2, &mut interrupts);
+        assert_eq!(ppu.read_stat(false) & 3, MODE_HBLANK);
+    }
+
+    #[test]
+    fn restarted_dmg_fetcher_batches_match_single_dots() {
+        for model in [
+            Model::Dmg(DmgRevision::RevC),
+            Model::Cgb(CgbRevision::RevB),
+            Model::Cgb(CgbRevision::RevE),
+        ] {
+            for fine_scroll in 0..8 {
+                let make_ppu = || {
+                    let mut ppu = Ppu::new(model);
+                    if model.is_cgb() {
+                        ppu.apply_dmg_compatibility_palettes();
+                    }
+                    ppu.write_reg(0xff40, 0);
+                    ppu.write_reg(0xff43, fine_scroll);
+                    ppu.write_reg(0xff40, 0x91);
+                    ppu
+                };
+                let mut fast = make_ppu();
+                let mut reference = make_ppu();
+                let mut fast_if = 0;
+                let mut reference_if = 0;
+                // Cross both first-line and ordinary fetcher origins, and
+                // write SCY in the two-dot window preceding STAT mode 3.
+                for cycles in [454 + 78, 2, 170, 2, 456, 2048] {
+                    let hblank = fast.step(cycles, &mut fast_if);
+                    let mut reference_hblank = false;
+                    for _ in 0..cycles {
+                        reference_hblank |= reference.step_inner::<false>(1, &mut reference_if);
+                    }
+                    assert_eq!(hblank, reference_hblank);
+                    assert_eq!(fast_if, reference_if);
+                    assert_eq!(
+                        (fast.mode, fast.mode_clock),
+                        (reference.mode, reference.mode_clock)
+                    );
+                    assert_fifo_timing_equal(&fast, &reference);
+                    assert_eq!(fast.framebuffer(), reference.framebuffer());
+                    if cycles == 454 + 78 {
+                        fast.write_reg(0xff42, 8);
+                        reference.write_reg(0xff42, 8);
+                    }
                 }
             }
-            assert_eq!(ppu.read_ly(false), 0);
-            assert_eq!(ppu.read_stat(false) & 4, 0);
-            assert_eq!(interrupts & 2, 0);
-            ppu.step(1, &mut interrupts);
-            assert_eq!(ppu.read_stat(false) & 4, 4);
-            assert_eq!(interrupts & 2, 2);
-            interrupts = 0;
-            ppu.step(MODE1_CYCLES - 12, &mut interrupts);
-            assert_eq!(ppu.ly, 0);
-            assert_eq!(
-                interrupts & 2,
-                0,
-                "line zero must not trigger a second edge"
-            );
+        }
+    }
+
+    #[test]
+    fn line_153_zero_comparison_occurs_at_dot_12() {
+        for model in [Model::Dmg(DmgRevision::RevC), Model::Cgb(CgbRevision::RevE)] {
+            for batched in [false, true] {
+                let mut ppu = Ppu::new(model);
+                ppu.skip_startup_for_test();
+                ppu.lcdc = 0x91;
+                ppu.mode = MODE_VBLANK;
+                ppu.ly = 153;
+                ppu.ly_for_comparison = 153;
+                ppu.lyc = 0;
+                ppu.stat = 0x40;
+                ppu.update_lyc_compare();
+                let mut interrupts = 0;
+                if batched {
+                    ppu.step(11, &mut interrupts);
+                } else {
+                    for _ in 0..11 {
+                        ppu.step(1, &mut interrupts);
+                    }
+                }
+                assert_eq!(ppu.read_ly(false), 0);
+                assert_eq!(ppu.read_stat(false) & 4, 0);
+                assert_eq!(interrupts & 2, 0);
+                ppu.step(1, &mut interrupts);
+                assert_eq!(ppu.read_stat(false) & 4, 4);
+                assert_eq!(interrupts & 2, 2);
+                interrupts = 0;
+                ppu.step(MODE1_CYCLES - 12, &mut interrupts);
+                assert_eq!(ppu.ly, 0);
+                assert_eq!(
+                    interrupts & 2,
+                    0,
+                    "line zero must not trigger a second edge"
+                );
+            }
         }
     }
 
