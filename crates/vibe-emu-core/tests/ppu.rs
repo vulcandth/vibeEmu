@@ -4,6 +4,47 @@ use vibe_emu_core::{
 };
 
 #[test]
+fn lcd_startup_blanks_only_the_first_frame_without_stopping_the_ppu() {
+    for model in [Model::default(), Model::Cgb(CgbRevision::default())] {
+        let mut ppu = Ppu::new(model);
+        assert!(ppu.framebuffer().iter().all(|&pixel| pixel == 0xFFFFFF));
+        ppu.set_dmg_palette([0xFFFFFF, 0, 0, 0]);
+        ppu.write_reg(0xFF47, 0xE4);
+        ppu.write_reg(0xFF4B, 7);
+        for row in 0..8 {
+            ppu.vram[0][row * 2] = 0xFF;
+        }
+        ppu.write_reg(0xFF40, 0xB1);
+        let mut interrupts = 0;
+        for first_frame in [true, false] {
+            ppu.clear_frame_flag();
+            let mut dots = 0;
+            while !ppu.frame_ready() {
+                assert!(dots < 70_224 * 2);
+                ppu.step(4, &mut interrupts);
+                dots += 4;
+            }
+            assert_eq!(ppu.ly(), 144);
+            assert_ne!(interrupts & 1, 0, "VBlank must still fire");
+            assert!(ppu.window_line_counter() > 0, "window must still advance");
+            let expected = if first_frame { 0xFFFFFF } else { 0 };
+            assert!(
+                ppu.framebuffer().iter().all(|&pixel| pixel == expected),
+                "{model:?}, first_frame={first_frame}"
+            );
+        }
+        ppu.write_reg(0xFF40, 0);
+        assert!(ppu.framebuffer().iter().all(|&pixel| pixel == 0xFFFFFF));
+        ppu.write_reg(0xFF40, 0xB1);
+        ppu.clear_frame_flag();
+        for _ in 0..144 {
+            ppu.step(456, &mut interrupts);
+        }
+        assert!(ppu.framebuffer().iter().all(|&pixel| pixel == 0xFFFFFF));
+    }
+}
+
+#[test]
 fn cgb_lcd_enable_draws_line_zero_before_advancing_ly() {
     for compat in [false, true] {
         let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
@@ -461,6 +502,7 @@ fn obj_priority_color0() {
 fn cgb_bg_attr_priority() {
     let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF40, 0x93); // BG and OBJ
+    ppu.skip_startup_for_test(); // Exercise rendering after the blank startup frame.
     // BG palette 0 color1 -> red
     ppu.write_reg(0xFF68, 0x80);
     ppu.write_reg(0xFF69, 0x00);
@@ -530,6 +572,7 @@ fn cgb_master_priority() {
 fn cgb_bg_palette() {
     let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF40, 0x91);
+    ppu.skip_startup_for_test();
     // palette 2 color 1 -> red
     ppu.write_reg(0xFF68, 0x80 | 0x10); // index 0x10 with auto inc
     ppu.write_reg(0xFF69, 0x00); // color 0
@@ -551,6 +594,7 @@ fn cgb_bg_palette() {
 fn cgb_bg_bank_select() {
     let mut ppu = Ppu::new(Model::Cgb(CgbRevision::default()));
     ppu.write_reg(0xFF40, 0x91);
+    ppu.skip_startup_for_test();
     // palette 0 color 1 -> red
     ppu.write_reg(0xFF68, 0x80); // index 0 with auto inc
     ppu.write_reg(0xFF69, 0x00); // color 0 lo
@@ -604,6 +648,7 @@ fn bg_disable_yields_color0() {
     // LCD enabled, background/window disabled
     ppu.write_reg(0xFF40, 0x80);
     ppu.write_reg(0xFF47, 0xFC); // default palette
+    ppu.skip_startup_for_test();
     let mut if_reg = 0u8;
     ppu.step(456, &mut if_reg);
     assert_eq!(ppu.framebuffer[0], 0x009BBC0F);

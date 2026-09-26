@@ -453,6 +453,8 @@ pub struct Ppu {
     dmg_window_triggered: bool,
     /// CGB's first scanline reports mode 0 instead of performing an OAM scan.
     cgb_lcd_startup: bool,
+    /// The LCD stays white during the first frame after it is enabled.
+    lcd_startup_blank: bool,
 
     bgpi: u8,
     bgpd: [u8; PAL_RAM_SIZE],
@@ -1004,6 +1006,7 @@ impl Ppu {
             win_line_counter: 0,
             dmg_window_triggered: false,
             cgb_lcd_startup: false,
+            lcd_startup_blank: false,
             bgpi: PAL_UNUSED_BIT,
             bgpd: [0; PAL_RAM_SIZE],
             obpi: PAL_UNUSED_BIT,
@@ -1021,7 +1024,7 @@ impl Ppu {
             mode3_target_cycles: MODE3_CYCLES,
             mode0_target_cycles: MODE0_CYCLES,
             boot_hold_cycles: 0,
-            framebuffer: [0; SCREEN_WIDTH * SCREEN_HEIGHT],
+            framebuffer: [0xFFFFFF; SCREEN_WIDTH * SCREEN_HEIGHT],
             line_priority: [false; SCREEN_WIDTH],
             line_color_zero: [false; SCREEN_WIDTH],
             cgb_line_obj_enabled: [true; SCREEN_WIDTH],
@@ -4148,6 +4151,7 @@ impl Ppu {
 
     /// Skip the LCD startup delay; used to put the PPU into a known state for tests.
     pub fn skip_startup_for_test(&mut self) {
+        self.lcd_startup_blank = false;
         self.cgb_lcd_startup = false;
         self.dmg_startup_cycle = None;
         self.dmg_startup_stage = None;
@@ -4226,6 +4230,7 @@ impl Ppu {
     /// Initialize registers to the state expected after the boot ROM
     /// has finished executing.
     pub fn apply_boot_state(&mut self, dmg_revision: Option<DmgRevision>) {
+        self.lcd_startup_blank = false;
         if let Some(rev) = dmg_revision {
             self.model = Model::Dmg(rev);
         }
@@ -5212,6 +5217,8 @@ impl Ppu {
                     self.dmg_abort_mode3_object_fetch();
                 }
                 if was_on && self.lcdc & 0x80 == 0 {
+                    self.framebuffer.fill(0xFFFFFF);
+                    self.lcd_startup_blank = false;
                     self.set_mode(MODE_HBLANK);
                     self.mode_clock = 0;
                     self.mode3_target_cycles = MODE3_CYCLES;
@@ -5234,6 +5241,8 @@ impl Ppu {
                     self.dmg_prev2_line_window_active = false;
                 }
                 if !was_on && self.lcdc & 0x80 != 0 {
+                    self.framebuffer.fill(0xFFFFFF);
+                    self.lcd_startup_blank = true;
                     ppu_trace!(
                         "LCD enabled: mode={} ly={} mode_clock={}",
                         self.mode,
@@ -6095,6 +6104,11 @@ impl Ppu {
                 }
             }
         }
+        if self.lcd_startup_blank {
+            // LCD output is suppressed, but fetches, window counters, STAT,
+            // VRAM access and frame delivery still run for the first frame.
+            self.framebuffer[row_base..row_base + SCREEN_WIDTH].fill(0xFFFFFF);
+        }
     }
 
     /// Next native-CGB OBJ latch or end-of-transfer housekeeping dot.
@@ -6481,6 +6495,7 @@ impl Ppu {
                         self.ly_for_comparison = self.ly;
                         self.update_lyc_compare();
                         if self.ly == SCREEN_HEIGHT as u8 {
+                            self.lcd_startup_blank = false;
                             self.frame_ready = true;
                             self.set_mode(MODE_VBLANK);
                             if self.is_dmg_mode() {

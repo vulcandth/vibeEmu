@@ -3,6 +3,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod audio;
+mod input_timing;
 mod keybinds;
 mod network_link;
 mod ui;
@@ -446,7 +447,7 @@ enum EmuCommand {
     SetPaused(bool),
     Reset,
     SetSpeed(Speed),
-    UpdateInput(u8),
+    UpdateInput { state: u8, at: Instant },
     UpdateBreakpoints(Vec<ui::debugger::BreakpointSpec>),
     SetRegister { reg: RegisterId, value: u16 },
     Shutdown,
@@ -644,6 +645,25 @@ struct EmuThreadChannels {
     frame_pool_rx: cb::Receiver<Vec<u32>>,
 }
 
+fn poll_frame_commands(
+    rx: &mpsc::Receiver<EmuCommand>,
+    deferred: &mut std::collections::VecDeque<EmuCommand>,
+    input: &mut input_timing::InputQueue,
+) {
+    while let Ok(command) = rx.try_recv() {
+        if !deferred.is_empty() {
+            // A reset/pause/register edit must retain its order relative to
+            // later button edges, even though controls wait for this frame.
+            deferred.push_back(command);
+            continue;
+        }
+        match command {
+            EmuCommand::UpdateInput { state, at } => input.push(at, state),
+            other => deferred.push_back(other),
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_emulator_thread(
     gb: Arc<Mutex<GameBoy>>,
@@ -669,9 +689,11 @@ fn run_emulator_thread(
     let mut next_frame = Instant::now() + FRAME_TIME;
     let mut breakpoints: HashSet<(u8, u16)> = HashSet::new();
     let mut cumulative_bgb_timestamp: u32 = 0;
+    let mut input_queue = input_timing::InputQueue::default();
+    let mut deferred_commands = std::collections::VecDeque::new();
 
     loop {
-        while let Ok(cmd) = rx.try_recv() {
+        while let Some(cmd) = deferred_commands.pop_front().or_else(|| rx.try_recv().ok()) {
             match cmd {
                 EmuCommand::SetPaused(p) => {
                     debug!("[emu] SetPaused({p})");
@@ -681,6 +703,7 @@ fn run_emulator_thread(
                 EmuCommand::Reset => {
                     info!("[reset] emu-thread reset start");
                     if let Ok(mut gb) = gb.lock() {
+                        input_queue.apply_all(&mut gb.mmu);
                         if gb.mmu.boot_rom.is_some() {
                             gb.reset_power_on();
                         } else {
@@ -694,11 +717,11 @@ fn run_emulator_thread(
                 }
                 EmuCommand::SetSpeed(s) => {
                     speed = s;
+                    next_frame = Instant::now()
+                        + Duration::from_secs_f64(1.0 / (GB_FPS * speed.factor as f64));
                 }
-                EmuCommand::UpdateInput(input) => {
-                    if let Ok(mut gb) = gb.lock() {
-                        gb.mmu.input.set_state(input);
-                    }
+                EmuCommand::UpdateInput { state, at } => {
+                    input_queue.push(at, state);
                 }
                 EmuCommand::UpdateBreakpoints(bps) => {
                     breakpoints.clear();
@@ -737,11 +760,19 @@ fn run_emulator_thread(
         }
 
         if paused {
+            if let Ok(mut gb) = gb.lock() {
+                input_queue.apply_all(&mut gb.mmu);
+            }
             std::thread::sleep(Duration::from_millis(10));
             continue;
         }
 
         let frame_duration = Duration::from_secs_f64(1.0 / (GB_FPS * speed.factor as f64));
+        let input_frame = input_timing::InputFrame {
+            start: next_frame - frame_duration,
+            duration: frame_duration,
+            fast: speed.fast,
+        };
 
         if !speed.fast {
             let now = Instant::now();
@@ -761,6 +792,9 @@ fn run_emulator_thread(
             // Fast forward: run as fast as possible, reset timing when we exit fast mode
             next_frame = Instant::now() + frame_duration;
         }
+        // Include transitions received during the pacing sleep. Their host
+        // timestamps locate them within the frame about to be emulated.
+        poll_frame_commands(&rx, &mut deferred_commands, &mut input_queue);
 
         let mut frame_buf = frame_pool_rx
             .try_recv()
@@ -771,6 +805,7 @@ fn run_emulator_thread(
         if let Ok(mut gb) = gb.lock() {
             let GameBoy { cpu, mmu, .. } = &mut *gb;
             mmu.ppu.clear_frame_flag();
+            let frame_start_dots = cpu.cycles;
 
             let mut ext_clock_active = false;
             let mut ext_clock_bits_remaining: u8 = 0;
@@ -778,6 +813,10 @@ fn run_emulator_thread(
             let mut ext_clock_dot_cycles_per_bit: u32 = 512;
 
             while !mmu.ppu.frame_ready() {
+                poll_frame_commands(&rx, &mut deferred_commands, &mut input_queue);
+                let elapsed = cpu.cycles - frame_start_dots;
+                input_queue.apply_due(mmu, elapsed, input_frame);
+                let input_budget = input_queue.budget(elapsed, input_frame);
                 // Check breakpoints before executing
                 if !breakpoints.is_empty() {
                     let pc = cpu.pc;
@@ -802,9 +841,9 @@ fn run_emulator_thread(
                 // Active serial transfers retain M-cycle polling in the core.
                 // Idle batches stop before PPU events, including frame delivery.
                 if breakpoints.is_empty() {
-                    cpu.run_for_dots(mmu, 4096);
+                    cpu.run_for_dots(mmu, input_budget);
                 } else {
-                    cpu.step_with_halt_batch(mmu, 256);
+                    cpu.step_with_halt_batch(mmu, input_budget.min(256));
                 }
                 let dot_div_delta = mmu.dot_div.wrapping_sub(prev_dot_div) as u32;
 
@@ -1682,7 +1721,10 @@ impl VibeEmuApp {
 
         if new_state != self.joypad_state {
             self.joypad_state = new_state;
-            let _ = self.emu_tx.send(EmuCommand::UpdateInput(new_state));
+            let _ = self.emu_tx.send(EmuCommand::UpdateInput {
+                state: new_state,
+                at: Instant::now(),
+            });
         }
 
         if new_fast_forward != self.fast_forward {
@@ -6410,6 +6452,31 @@ fn main() {
 mod tests {
     use super::{TileUsageSource, TileUsageSummary, VibeEmuApp};
     use crate::ui::snapshot::PpuSnapshot;
+
+    #[test]
+    fn frame_polling_keeps_controls_before_later_input_edges() {
+        use super::{EmuCommand, poll_frame_commands};
+        let (tx, rx) = std::sync::mpsc::channel();
+        let at = std::time::Instant::now();
+        tx.send(EmuCommand::UpdateInput { state: 0xFE, at })
+            .unwrap();
+        tx.send(EmuCommand::Reset).unwrap();
+        tx.send(EmuCommand::UpdateInput { state: 0xFD, at })
+            .unwrap();
+        let mut deferred = std::collections::VecDeque::new();
+        let mut input = crate::input_timing::InputQueue::default();
+        poll_frame_commands(&rx, &mut deferred, &mut input);
+        let mut mmu = vibe_emu_core::mmu::Mmu::new(Default::default());
+        mmu.input.write(0x20);
+        input.apply_all(&mut mmu);
+        assert_eq!(mmu.input.read() & 0xF, 0xE);
+        assert!(matches!(deferred.pop_front(), Some(EmuCommand::Reset)));
+        assert!(matches!(
+            deferred.pop_front(),
+            Some(EmuCommand::UpdateInput { state: 0xFD, .. })
+        ));
+        assert!(deferred.is_empty());
+    }
 
     fn test_ppu_snapshot() -> PpuSnapshot {
         PpuSnapshot {

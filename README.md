@@ -246,13 +246,6 @@ Unit tests for the emulation core can be executed with:
 cargo test -p vibe-emu-core
 ```
 
-The core suite downloads test ROMs into the ignored
-`crates/vibe-emu-core/test_roms/` cache when needed. This includes nitro2k01's
-[little-things-gb](https://github.com/nitro2k01/little-things-gb) v1.0
-double-halt-cancel ROMs (DMG and CGB) and windesync-validate, which is checked
-against the author's digital hardware capture. Run these regressions with
-`cargo test -p vibe-emu-core --test little_things`.
-
 If you are iterating on the frontend, run its tests with:
 
 ```bash
