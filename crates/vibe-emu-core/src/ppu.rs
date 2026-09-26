@@ -1425,6 +1425,19 @@ impl Ppu {
             }
             if (changed & 0x20) != 0 {
                 bias += self.tuning.dmg_mode3_lcdc_win_en_t_bias;
+                if !self.cgb() && self.sprite_count == 0 && self.mode3_wx_event_count == 0 {
+                    // With stable WX and no OBJ stalls, the falling edge is
+                    // consumed at the next tile-address stage. The rising edge
+                    // can still arm the WX comparator on the current dot.
+                    if val & 0x20 == 0 {
+                        bias += 1;
+                    }
+                    // The WX=0 replay omits the first hidden window tile;
+                    // translate the live timestamp by that same eight dots.
+                    if self.mode3_wx_base == 0 {
+                        bias -= 8;
+                    }
+                }
             }
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
@@ -1633,8 +1646,15 @@ impl Ppu {
             && (self.lcdc & 2 == 0 || self.sprite_count == 0)
             && self.lcdc & 0x20 == 0
             && (self.scx ^ val) & 0xF8 != 0
+            && ((self.scx ^ val) & 7 == 0 || mode3_t >= 16)
         {
             bias = 4;
+        }
+        if !self.cgb() && self.sprite_count == 0 && mode3_t < 16 && (self.scx ^ val) & 7 != 0 {
+            // Initial fine-scroll discard samples SCX before PUSH/coarse-map
+            // adjustments apply. A write can make the comparator wrap and
+            // discard another tile (gbmicrotest ppu_scx_vs_bgp).
+            bias = self.tuning.dmg_mode3_scx_event_t_bias;
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
         if trace_scx_events_enabled() && trace_obj_debug_line_enabled(self.ly) {
@@ -3035,6 +3055,11 @@ impl Ppu {
         }
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
         let mut bias = self.tuning.dmg_bg_en_sample_t_bias;
+        // A rising BG-enable edge enters the output gate one dot after the
+        // falling-edge sampling phase on an uninterrupted DMG line.
+        if !self.cgb() && self.mode3_lcdc_base & 1 == 0 && self.sprite_count == 0 {
+            bias += 1;
+        }
         if !self.cgb() && matches!(self.dmg_revision(), DmgRevision::RevB) {
             // DMG-CPU B samples BG enable transitions one dot later than the
             // default DMG profile used by the blob screenshots.
@@ -3270,6 +3295,42 @@ impl Ppu {
     #[inline]
     fn dmg_oam_dma_contention_active(&self) -> bool {
         !self.cgb() && (1..=0xA0).contains(&self.oam_dma_current_dest)
+    }
+
+    // DMG shares the VRAM address bus between OAM DMA and PPU fetches:
+    // competing address bits are ORed and the fetched byte also reaches OAM.
+    // CPU VRAM locks must not substitute $FF for this bus value. Only the
+    // read half of a fetch drives the bus; PUSH does not. The first five
+    // mode-3 dots precede the fetcher's VRAM reads.
+    pub(crate) fn dmg_oam_dma_vram_conflict(&mut self, source: u16) {
+        if self.cgb()
+            || self.mode != MODE_TRANSFER
+            || self.mode_clock < 5
+            || !self.lcd_enabled()
+            || !self.dmg_oam_dma_contention_active()
+        {
+            return;
+        }
+        let state = self.mode3_fetcher_state;
+        if !matches!(state, 1 | 3 | 5) {
+            return;
+        }
+        let y = self.ly.wrapping_add(self.scy);
+        let x = (self.scx as i16 + (self.mode3_position_in_line + 8).max(0)) as u8;
+        let map = if self.lcdc & 8 == 0 {
+            BG_MAP_0_BASE
+        } else {
+            BG_MAP_1_BASE
+        };
+        let tile_addr = map + (y as usize / 8) * 32 + (x as usize / 8);
+        let addr = if state == 1 {
+            tile_addr
+        } else {
+            let tile = self.vram[0][tile_addr];
+            Self::bg_tile_row_plane_addr(tile, y as usize & 7, self.lcdc & 0x10 != 0, state == 5)
+        };
+        self.oam[self.oam_dma_current_dest as usize - 1] =
+            self.vram[0][addr | (source as usize & 0x1fff)];
     }
 
     fn complete_stable_obj_rows(&mut self) {
@@ -5576,6 +5637,9 @@ impl Ppu {
                     // models. A subsequent enable starts a fresh LCD clock,
                     // even if the game turns it off immediately after boot.
                     self.clock_hold_cycles = 0;
+                    // The late-line-153 flag also applies to skipped DMG boot.
+                    // Retaining it ends the restarted LCD's VBlank at line 144.
+                    self.cgb_line153_ly0_triggered = false;
                     if self.cgb() {
                         self.cgb_lcd_started_double_speed = false;
                     }
@@ -6110,7 +6174,13 @@ impl Ppu {
             None
         };
 
-        let bg_enabled = cgb_render || (self.mode3_lcdc_base & 0x01 != 0);
+        // LCDC.0 may rise during mode 3 even if BG was off at line entry.
+        // Render those pixels and let the per-pixel output gate mask the rest.
+        let bg_enabled = cgb_render
+            || (self.mode3_lcdc_base & 0x01 != 0)
+            || self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+                .iter()
+                .any(|ev| ev.val & 1 != 0);
         let master_priority = !cgb_render || (self.lcdc & 0x01 != 0);
 
         // Pre-fill the scanline. When the background is disabled via LCDC bit 0
@@ -6165,6 +6235,10 @@ impl Ppu {
                 cgb_has_mode3_reg_events
             } else {
                 has_mode3_reg_events
+                    || (window_line_active
+                        && self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+                            .iter()
+                            .any(|ev| (ev.val ^ self.mode3_lcdc_base) & 0x20 != 0))
                     || (window_line_active && self.mode3_wx_base <= 7)
                     || (prev_static_window_active
                         && self.mode3_wx_base <= 7
@@ -6233,6 +6307,9 @@ impl Ppu {
                 && self.mode3_scx_events[..self.mode3_scx_event_count]
                     .iter()
                     .any(|ev| (ev.val ^ self.mode3_scx_base) & 0xf8 != 0)
+                && !self.mode3_scx_events[..self.mode3_scx_event_count]
+                    .iter()
+                    .any(|ev| ev.t < 16 && (ev.val ^ self.mode3_scx_base) & 7 != 0)
                 && self.mode3_scy_event_count == 0
                 && self.mode3_lcdc_base & 0x20 == 0
                 && self.mode3_lcdc_event_count == 0
@@ -7450,7 +7527,13 @@ impl Ppu {
             let first_x = self.line_sprites[0].x;
             first_x <= -1 || first_x >= 8
         };
-        if has_window_activity {
+        // The fixed output schedule assumes the original fine-scroll discard.
+        // Early SCX writes can extend it, so replay the actual FIFO pops instead.
+        if has_window_activity
+            || self.mode3_scx_events[..self.mode3_scx_event_count]
+                .iter()
+                .any(|ev| ev.t < 16 && (ev.val ^ self.mode3_scx_base) & 7 != 0)
+        {
             use_t_schedule = false;
         }
 
@@ -7589,7 +7672,9 @@ impl Ppu {
 
                     window_is_being_fetched = false;
 
-                    if had_fifo_pixel && position_in_line >= 0 && position_in_line < SCREEN_WIDTH as i16 {
+                    // A late WX activation can shift LCD output relative to
+                    // the fetch position. Keep emitting through LCD pixel 159.
+                    if had_fifo_pixel && position_in_line >= 0 && (if use_pop_schedule || use_t_schedule { position_in_line < SCREEN_WIDTH as i16 } else { lcd_x < SCREEN_WIDTH as i16 }) {
                         let out_x = if use_pop_schedule {
                             position_in_line as usize
                         } else if use_t_schedule {
@@ -7801,7 +7886,12 @@ impl Ppu {
                     wx_triggered = true;
                     window_is_being_fetched = true;
                     fetcher_state = FETCH_GET_TILE_T1;
-                    if activated_on_pos6 && !self.cgb() && !win_en_just_enabled && lcd_x > 0 {
+                    if activated_on_pos6
+                        && !self.cgb()
+                        && (!win_en_just_enabled
+                            || (self.sprite_count == 0 && self.mode3_wx_event_count == 0))
+                        && lcd_x > 0
+                    {
                         lcd_x -= 1;
                     }
                     if window_activations == 0 {
@@ -8047,6 +8137,9 @@ impl Ppu {
                     if bg_fifo.is_empty() {
                         if !self.cgb()
                             && wy_triggered
+                            // LY >= WY alone does not arm this glitch: the
+                            // window must have been enabled to latch WY.
+                            && (has_window_activity || self.dmg_window_triggered)
                             && (lcdc_cur & 0x20) == 0
                             && !disable_window_pixel_insertion_glitch
                         {
@@ -8776,6 +8869,52 @@ mod mode3_timing_tests {
             ppu.step(1, &mut interrupts);
             assert_eq!((ppu.mode, ppu.mode_clock), (MODE_TRANSFER, 0));
         }
+    }
+
+    #[test]
+    fn lcd_restart_preserves_all_ten_vblank_lines() {
+        let mut ppu = Ppu::default();
+        ppu.apply_boot_state(Some(DmgRevision::RevC));
+        assert!(ppu.cgb_line153_ly0_triggered);
+        ppu.write_reg(0xff40, 0);
+        ppu.write_reg(0xff40, 0x91);
+        let mut interrupts = 0;
+        for _ in 0..456 * 145 {
+            ppu.step(1, &mut interrupts);
+            if ppu.mode == MODE_VBLANK {
+                break;
+            }
+        }
+        assert_eq!((ppu.mode, ppu.ly), (MODE_VBLANK, 144));
+        ppu.step(456 * 9, &mut interrupts);
+        assert_eq!((ppu.mode, ppu.ly), (MODE_VBLANK, 153));
+        ppu.step(456, &mut interrupts);
+        assert_eq!((ppu.mode, ppu.ly), (MODE_OAM, 0));
+    }
+
+    #[test]
+    fn dmg_dma_vram_conflict_uses_the_combined_address() {
+        let mut ppu = Ppu {
+            lcdc: 0x91,
+            mode: MODE_TRANSFER,
+            mode_clock: 9,
+            mode3_fetcher_state: 1,
+            mode3_position_in_line: -8,
+            oam_dma_current_dest: 1,
+            ..Ppu::default()
+        };
+        ppu.vram[0][0x1800] = 0x12;
+        ppu.vram[0][0x1820] = 0x34;
+        ppu.dmg_oam_dma_vram_conflict(0x8020);
+        assert_eq!(ppu.oam[0], 0x34);
+        ppu.mode_clock = 1; // CPU-locked, but no PPU VRAM read yet.
+        ppu.oam[0] = 0x56;
+        ppu.dmg_oam_dma_vram_conflict(0x8020);
+        assert_eq!(ppu.oam[0], 0x56);
+        ppu.mode_clock = 9;
+        ppu.mode3_fetcher_state = 6; // PUSH cannot overwrite DMA data.
+        ppu.dmg_oam_dma_vram_conflict(0x8020);
+        assert_eq!(ppu.oam[0], 0x56);
     }
 
     #[test]

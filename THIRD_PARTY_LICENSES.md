@@ -39,7 +39,7 @@ For the authoritative license texts see:
 ### SameBoy (reference implementation)
 
 Used by:
-- [SameBoy](https://github.com/LIJI32/SameBoy) - APU implementation derived from `Core/apu.c` and OAM scan-boundary corruption derived from `Core/memory.c`
+- [SameBoy](https://github.com/LIJI32/SameBoy) - APU implementation and DMG PPU/DMA contention algorithms
 
 License text:
 ```text
@@ -67,8 +67,9 @@ SOFTWARE.
 ```
 
 vibeEmu's APU implementation (`crates/vibe-emu-core/src/apu.rs`) incorporates
-code and algorithms derived from SameBoy's `Core/apu.c`. The OAM scan-boundary
-corruption in `crates/vibe-emu-core/src/ppu.rs` follows `Core/memory.c`.
+code and algorithms derived from SameBoy's `Core/apu.c`. DMG PPU/OAM contention
+and VRAM-to-OAM DMA bus-conflict handling in `crates/vibe-emu-core/src/ppu.rs`
+also use algorithms from SameBoy's `Core/memory.c` and `Core/display.c`.
 
 For the authoritative full license text and source code, see:
 - <https://github.com/LIJI32/SameBoy>

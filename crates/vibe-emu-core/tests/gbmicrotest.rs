@@ -1,6 +1,8 @@
-//! GBMicrotest from the pinned c-sp bundle, using its documented HRAM protocol.
+//! GBMicrotest from the pinned c-sp bundle, using HRAM and source-audited probe results.
 //! Upstream verifies DMG hardware; these cases run on DMG revision C.
 mod common;
+#[path = "gbmicrotest/probes.rs"]
+mod probes;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -41,6 +43,10 @@ fn check_rom_version(path: &Path, rom: &[u8]) -> Result<(), String> {
 fn run_case(path: &Path) -> Result<(), String> {
     let rom = fs::read(path).map_err(|err| err.to_string())?;
     check_rom_version(path, &rom)?;
+    let name = path.file_name().unwrap().to_str().unwrap();
+    if probes::handles(name) {
+        return probes::run(name, rom);
+    }
     let mut gb = GameBoy::new(Model::Dmg(DmgRevision::RevC));
     gb.mmu.load_cart(Cartridge::from_bytes(rom));
     while gb.cpu.cycles < MAX_CYCLES {

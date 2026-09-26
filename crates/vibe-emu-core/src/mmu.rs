@@ -991,6 +991,10 @@ impl Mmu {
             addr
         };
 
+        // DMA owns the VRAM bus independently of the CPU access lock.
+        if (0x8000..=0x9fff).contains(&addr) {
+            return self.ppu.vram[self.ppu.vram_bank][(addr & 0x1fff) as usize];
+        }
         self.read_byte_inner(addr, true)
     }
 
@@ -1455,6 +1459,10 @@ impl Mmu {
                 }
             }
 
+            if self.dma_source & 0xe000 == 0x8000 {
+                self.ppu
+                    .dmg_oam_dma_vram_conflict(self.dma_source.wrapping_add(elapsed / per_byte));
+            }
             self.dma_cycles -= 1;
         }
     }

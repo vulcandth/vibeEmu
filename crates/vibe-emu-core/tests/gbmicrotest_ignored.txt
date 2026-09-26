@@ -1,40 +1,12 @@
-# GBMicrotest: 480 passing, 33 ignored out of 513 ROMs.
+# GBMicrotest: 510 passing, 3 ignored out of 513 ROMs.
 # Initial baseline: 153 passing, 360 failures/noncompletion.
-# 31 ignored ROMs are manual probes; 2 report failures.
+# None of the bundled probes requires user interaction. Source audit and
+# alternate result protocols: gbmicrotest_probes.md.
 # Recheck: cargo test -p vibe-emu-core --test gbmicrotest -- --ignored
 
-# Visual/interactive probes: no HRAM completion result (temp.gb also faults).
-000-oam_lock.gb
-000-write_to_x8000.gb
-001-vram_unlocked.gb
-002-vram_locked.gb
-004-tima_boot_phase.gb
-004-tima_cycle_timer.gb
-007-lcd_on_stat.gb
-400-dma.gb
-500-scx-timing.gb
-800-ppu-latch-scx.gb
-801-ppu-latch-scy.gb
-802-ppu-latch-tileselect.gb
-803-ppu-latch-bgdisplay.gb
-audio_testbench.gb
-cpu_bus_1.gb
-dma_basic.gb
-flood_vram.gb
-lcdon_write_timing.gb
-ly_while_lcd_off.gb
-minimal.gb
-mode2_stat_int_to_oam_unlock.gb
-oam_sprite_trashing.gb
-poweron.gb
-ppu_scx_vs_bgp.gb
-ppu_sprite_testbench.gb
-ppu_spritex_vs_scx.gb
-ppu_win_vs_wx.gb
-ppu_wx_early.gb
+# Unfinished source: a lone NOP followed by empty ROM; no success condition.
+# Both vibeEmu and SameBoy eventually execute invalid instructions.
 temp.gb
-toggle_lcdc.gb
-wave_write_to_0xC003.gb
 
 # Expected values need hardware/source reconciliation; SameBoy 1.0.2 agrees:
 # halt_op_dupe_delay: DIV=$01 after ~256 dots, but the ROM expects $55.
