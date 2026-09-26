@@ -313,6 +313,57 @@ fn speed_switch_stall_runs_timer_with_lcd_disabled() {
 }
 
 #[test]
+fn pending_speed_switch_interrupt_uses_revision_specific_entry_timing() {
+    for revision in [CgbRevision::RevB, CgbRevision::RevC, CgbRevision::RevE] {
+        for double_speed in [false, true] {
+            for bit in 0..5 {
+                let model = Model::Cgb(revision);
+                let mut cpu = Cpu::new(model);
+                let mut mmu = Mmu::new(model);
+                let mut rom = vec![0; 0x8000];
+                rom[..3].copy_from_slice(&[0xfb, 0x10, 0]); // EI; STOP padding
+                let vector = 0x40 + bit * 8;
+                rom[vector] = 0xc9; // RET
+                mmu.load_cart(Cartridge::from_bytes(rom));
+                mmu.write_byte(0xff40, 0);
+                cpu.pc = 0;
+                cpu.sp = 0xd000;
+                cpu.ime = false;
+                cpu.double_speed = double_speed;
+                mmu.key1 = if double_speed { 0x81 } else { 1 };
+                mmu.ie_reg = 1 << bit;
+                mmu.if_reg = 1 << bit;
+
+                cpu.step(&mut mmu); // EI defers dispatch through STOP.
+                assert_eq!(cpu.pc, 1);
+                cpu.step(&mut mmu);
+
+                assert_eq!(cpu.pc, vector as u16);
+                assert_eq!(cpu.double_speed, !double_speed);
+                assert_eq!(
+                    mmu.timer.div,
+                    if revision == CgbRevision::RevE {
+                        20
+                    } else {
+                        16
+                    }
+                );
+                assert_eq!(
+                    mmu.read_byte(cpu.sp),
+                    2,
+                    "pending IRQ returns to the prefetched byte"
+                );
+                assert_eq!(mmu.if_reg & mmu.ie_reg & 0x1f, 0);
+                cpu.step(&mut mmu); // RET
+                assert_eq!(cpu.pc, 2);
+                cpu.step(&mut mmu); // The padding byte is fetched as NOP.
+                assert_eq!(cpu.pc, 3);
+            }
+        }
+    }
+}
+
+#[test]
 fn timer_interrupt_wakes_speed_switch_and_returns_after_stop_padding() {
     let model = Model::Cgb(CgbRevision::RevE);
     let mut cpu = Cpu::new(model);

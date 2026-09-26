@@ -222,5 +222,8 @@ fn daid_ppu_scanline_bgp_dmg() {
         .set_dmg_palette([0xFFFFFF, 0xAAAAAA, 0x555555, 0x000000]);
 
     run_for_frames(&mut gb, 60);
-    assert_framebuffer_matches_png(&gb, "daid/ppu_scanline_bgp_0.dmg.png");
+    // Upstream accepts three hardware captures (testroms/daid.py). The DMG-C
+    // palette latch modeled here combines old/new BGP for the transition dot,
+    // matching the OR variant also exercised by AGE's m3-bg-bgp.
+    assert_framebuffer_matches_png(&gb, "daid/ppu_scanline_bgp_1.dmg.png");
 }

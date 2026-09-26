@@ -2080,7 +2080,15 @@ impl Ppu {
             }
         } else {
             let scx_fine = (self.scx & 7) as u16;
-            let delay = if self.dmg_compat { 3u16 } else { 6u16 };
+            let delay = if !self.cgb() && self.lcdc & 0x20 == 0 {
+                // FIFO startup, fine-scroll discard, and the palette latch
+                // place an uncontended DMG BGP edge 15 dots behind the bus.
+                15u16
+            } else if self.dmg_compat {
+                3
+            } else {
+                6
+            };
             // CGB DMG-compat warmup: 2 extra T-cycles covers writes that land
             // after the delay constant but before pixel 0 is actually output.
             let warmup_guard = if self.dmg_compat { 2u16 } else { 0u16 };
@@ -2321,6 +2329,9 @@ impl Ppu {
             let mut current = self.dmg_line_bgp_base;
             let x = x as u8;
             let dmg_obj_phase_mix = !self.cgb() && (self.lcdc & 0x02) != 0;
+            // DMG BGP changes mix old/new values for the transition pixel.
+            // Pixel zero bypasses that mixed value (AGE m3-bg-bgp).
+            let dmg_bg_phase_mix = !self.cgb() && (self.lcdc & 0x22) == 0;
             for (i, ev) in self.dmg_bgp_events[..self.dmg_bgp_event_count]
                 .iter()
                 .enumerate()
@@ -2338,7 +2349,7 @@ impl Ppu {
                 if x < transition_x {
                     break;
                 }
-                if dmg_obj_phase_mix
+                if ((dmg_bg_phase_mix && x > 0) || dmg_obj_phase_mix)
                     && ev.t != 0
                     && x == transition_x
                     && !(self.ly == 0 && phase == 1 && self.sprite_count == 0)
@@ -6636,7 +6647,13 @@ impl Ppu {
                         }
                     }
                     MODE_VBLANK => {
-                        let next_event = MODE1_CYCLES.saturating_sub(self.mode_clock);
+                        let boundary =
+                            if !self.cgb() && self.ly == 153 && !self.cgb_line153_ly0_triggered {
+                                12
+                            } else {
+                                MODE1_CYCLES
+                            };
+                        let next_event = boundary.saturating_sub(self.mode_clock);
                         if next_event > 0 {
                             increment = next_event.min(remaining);
                         }
@@ -6798,9 +6815,13 @@ impl Ppu {
                     // Line 153 quirk: Both CGB and DMG set ly_for_comparison
                     // to 0 during line 153, causing LYC=0 STAT interrupts to
                     // fire during VBlank rather than at the start of line 0.
-                    // On CGB, this happens immediately when line 153 starts.
-                    // On DMG, this also happens at the start of line 153.
-                    if self.ly == 153 && !self.cgb_line153_ly0_triggered {
+                    // DMG compares against zero at dot 12, after readable LY
+                    // has already reset. Daid's BGP loop synchronizes here.
+                    // Keep the existing CGB comparison phase separate.
+                    if self.ly == 153
+                        && !self.cgb_line153_ly0_triggered
+                        && (self.cgb() || self.mode_clock >= 12)
+                    {
                         self.cgb_line153_ly0_triggered = true;
                         self.ly_for_comparison = 0;
                         self.update_lyc_compare();
@@ -8985,6 +9006,67 @@ mod mode3_timing_tests {
                     iteration += 1;
                 }
             }
+        }
+    }
+
+    #[test]
+    fn dmg_palette_transition_mixes_values_except_at_pixel_zero() {
+        for fine_scroll in 0..8 {
+            let mut ppu = Ppu::new(Model::Dmg(DmgRevision::RevC));
+            ppu.lcdc = 0x91;
+            ppu.mode3_lcdc_base = 0x91;
+            ppu.mode = MODE_TRANSFER;
+            ppu.mode3_target_cycles = MODE3_CYCLES + fine_scroll;
+            ppu.scx = fine_scroll as u8;
+            ppu.dmg_line_bgp_base = 0xe4;
+            ppu.bgp = 0xe4;
+            ppu.mode_clock = 30 + fine_scroll;
+            ppu.write_reg(0xff47, 0x1b);
+            assert_eq!(ppu.dmg_bgp_for_pixel(14), 0xe4);
+            assert_eq!(ppu.dmg_bgp_for_pixel(15), 0xff);
+            assert_eq!(ppu.dmg_bgp_for_pixel(16), 0x1b);
+
+            ppu.dmg_bgp_event_count = 0;
+            ppu.mode_clock = 15 + fine_scroll;
+            ppu.write_reg(0xff47, 0x1b);
+            assert_eq!(ppu.dmg_bgp_for_pixel(0), 0x1b);
+        }
+    }
+
+    #[test]
+    fn dmg_line_153_zero_comparison_occurs_at_dot_12() {
+        for batched in [false, true] {
+            let mut ppu = Ppu::new(Model::Dmg(DmgRevision::RevC));
+            ppu.skip_startup_for_test();
+            ppu.lcdc = 0x91;
+            ppu.mode = MODE_VBLANK;
+            ppu.ly = 153;
+            ppu.ly_for_comparison = 153;
+            ppu.lyc = 0;
+            ppu.stat = 0x40;
+            ppu.update_lyc_compare();
+            let mut interrupts = 0;
+            if batched {
+                ppu.step(11, &mut interrupts);
+            } else {
+                for _ in 0..11 {
+                    ppu.step(1, &mut interrupts);
+                }
+            }
+            assert_eq!(ppu.read_ly(false), 0);
+            assert_eq!(ppu.read_stat(false) & 4, 0);
+            assert_eq!(interrupts & 2, 0);
+            ppu.step(1, &mut interrupts);
+            assert_eq!(ppu.read_stat(false) & 4, 4);
+            assert_eq!(interrupts & 2, 2);
+            interrupts = 0;
+            ppu.step(MODE1_CYCLES - 12, &mut interrupts);
+            assert_eq!(ppu.ly, 0);
+            assert_eq!(
+                interrupts & 2,
+                0,
+                "line zero must not trigger a second edge"
+            );
         }
     }
 

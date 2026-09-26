@@ -1,4 +1,4 @@
-use crate::hardware::{DmgRevision, Model};
+use crate::hardware::{CgbRevision, DmgRevision, Model};
 use crate::ppu::OamBugAccess;
 
 // CPU flag bits as documented in gbdev.io/pandocs/The_CPU_Flags.html
@@ -585,11 +585,19 @@ impl Cpu {
 
             self.ime = false;
 
-            // Interrupt entry consumes 5 M-cycles total. Two of those cycles are the
+            // Interrupt entry normally consumes 5 M-cycles total. Two of those cycles are the
             // stack pushes; the other 3 are internal cycles that occur before the
             // pushes. Ordering matters because IE/IF can change while the CPU is
             // acknowledging the interrupt (Pinball Deluxe relies on this).
-            self.tick(mmu, 3);
+            // On CGB B/C an interrupt already pending at a speed-switching
+            // STOP reuses one entry M-cycle. Interrupts arriving during the
+            // settling wait discard the prefetch and use the normal entry.
+            let immediate_stop_irq = self.stop_prefetch.is_some()
+                && matches!(
+                    mmu.model().cgb_revision(),
+                    Some(CgbRevision::RevB | CgbRevision::RevC)
+                );
+            self.tick(mmu, if immediate_stop_irq { 2 } else { 3 });
 
             // Interrupt entry pushes the return address onto the stack.
             // If the upper-byte push targets IE ($FFFF), the write can change
