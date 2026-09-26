@@ -53,11 +53,11 @@ Combined exit code: 101
 
 | Category | Passed | Failed | Ignored | Measured | Total | Pass % |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM Test Suites | 2863 | 1530 | 0 | 0 | 4393 | 65.2% |
+| ROM Test Suites | 2895 | 1498 | 0 | 0 | 4393 | 65.9% |
 | Integration Tests | 178 | 2 | 0 | 0 | 180 | 98.9% |
-| Unit Tests | 115 | 0 | 0 | 0 | 115 | 100.0% |
+| Unit Tests | 117 | 0 | 0 | 0 | 117 | 100.0% |
 | Doc Tests | 16 | 0 | 0 | 0 | 16 | 100.0% |
-| **Overall** | 3172 | 1532 | 0 | 0 | 4704 | 67.4% |
+| **Overall** | 3206 | 1500 | 0 | 0 | 4706 | 68.1% |
 
 ## Detailed Results
 
@@ -290,7 +290,7 @@ Combined exit code: 101
 | `dmg_sound_11_regs_after_power` | ✅ Pass |
 | `dmg_sound_12_wave_write_while_on` | ✅ Pass |
 
-#### gambatte (1957/3429 passing, 57.1%)
+#### gambatte (1959/3429 passing, 57.1%)
 
 | Test | Result |
 | --- | --- |
@@ -1443,6 +1443,7 @@ Combined exit code: 101
 | `scx_during_m3/scx_0063c0/scx_during_m3_ds_6.gbc` | ✅ Pass |
 | `scx_during_m3/scx_0063c0/scx_during_m3_ds_7.gbc` | ✅ Pass |
 | `scx_during_m3/scx_0063c0/scx_during_m3_ds_8.gbc` | ✅ Pass |
+| `scx_during_m3/scx_0360c0/scx_during_m3_1.gbc` | ✅ Pass |
 | `scx_during_m3/scx_0360c0/scx_during_m3_ds_1.gbc` | ✅ Pass |
 | `scx_during_m3/scx_0360c0/scx_during_m3_ds_2.gbc` | ✅ Pass |
 | `scx_during_m3/scx_0360c0/scx_during_m3_ds_3.gbc` | ✅ Pass |
@@ -2250,6 +2251,7 @@ Combined exit code: 101
 | `window/m2int_wxA7_m3stat_ds_1_cgb04c_out0.gbc` | ✅ Pass |
 | `window/m2int_wxA7_m3stat_ds_2_cgb04c_out0.gbc` | ✅ Pass |
 | `window/m2int_wxDefault_m3stat_ds_2_cgb04c_out0.gbc` | ✅ Pass |
+| `window/on_screen/wxA5_weoff_at_xposA5.gbc` | ✅ Pass |
 | `window/on_screen/wxA6_late_we_reenable_4.gbc` | ✅ Pass |
 | `bgen/bgoff_bgon_sprite_above_window.gbc` | ❌ Fail |
 | `bgen/bgoff_bgon_sprite_below_window.gbc` | ❌ Fail |
@@ -3102,7 +3104,6 @@ Combined exit code: 101
 | `scx_during_m3/scx_0063c0/scx_during_m3_4.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_5.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0063c0/scx_during_m3_6.gbc` | ❌ Fail |
-| `scx_during_m3/scx_0360c0/scx_during_m3_1.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_2.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_3.gbc` | ❌ Fail |
 | `scx_during_m3/scx_0360c0/scx_during_m3_4.gbc` | ❌ Fail |
@@ -3708,7 +3709,6 @@ Combined exit code: 101
 | `window/on_screen/weon_wx18_weoff_weon_wx80.gbc` | ❌ Fail |
 | `window/on_screen/wx17_weoff_wxA5_weon.gbc` | ❌ Fail |
 | `window/on_screen/wx17_wxA5.gbc` | ❌ Fail |
-| `window/on_screen/wxA5_weoff_at_xposA5.gbc` | ❌ Fail |
 | `window/on_screen/wxA6_3.gbc` | ❌ Fail |
 | `window/on_screen/wxA6_late_we_reenable_1.gbc` | ❌ Fail |
 | `window/on_screen/wxA6_late_we_reenable_2.gbc` | ❌ Fail |
@@ -3724,10 +3724,25 @@ Combined exit code: 101
 | `window/on_screen/wxA6_wy8F.gbc` | ❌ Fail |
 | `window/reenable_ds_cgb04c_out3.gbc` | ❌ Fail |
 
-#### gbmicrotest (480/513 passing, 93.6%)
+#### gbmicrotest (510/513 passing, 99.4%)
 
 | Test | Result |
 | --- | --- |
+| `000-oam_lock.gb` | ✅ Pass |
+| `000-write_to_x8000.gb` | ✅ Pass |
+| `001-vram_unlocked.gb` | ✅ Pass |
+| `002-vram_locked.gb` | ✅ Pass |
+| `004-tima_boot_phase.gb` | ✅ Pass |
+| `004-tima_cycle_timer.gb` | ✅ Pass |
+| `007-lcd_on_stat.gb` | ✅ Pass |
+| `400-dma.gb` | ✅ Pass |
+| `500-scx-timing.gb` | ✅ Pass |
+| `800-ppu-latch-scx.gb` | ✅ Pass |
+| `801-ppu-latch-scy.gb` | ✅ Pass |
+| `802-ppu-latch-tileselect.gb` | ✅ Pass |
+| `803-ppu-latch-bgdisplay.gb` | ✅ Pass |
+| `audio_testbench.gb` | ✅ Pass |
+| `cpu_bus_1.gb` | ✅ Pass |
 | `div_inc_timing_a.gb` | ✅ Pass |
 | `div_inc_timing_b.gb` | ✅ Pass |
 | `dma_0x1000.gb` | ✅ Pass |
@@ -3735,7 +3750,9 @@ Combined exit code: 101
 | `dma_0xA000.gb` | ✅ Pass |
 | `dma_0xC000.gb` | ✅ Pass |
 | `dma_0xE000.gb` | ✅ Pass |
+| `dma_basic.gb` | ✅ Pass |
 | `dma_timing_a.gb` | ✅ Pass |
+| `flood_vram.gb` | ✅ Pass |
 | `halt_bug.gb` | ✅ Pass |
 | `halt_op_dupe.gb` | ✅ Pass |
 | `hblank_int_di_timing_a.gb` | ✅ Pass |
@@ -3891,6 +3908,7 @@ Combined exit code: 101
 | `lcdon_to_stat3_b.gb` | ✅ Pass |
 | `lcdon_to_stat3_c.gb` | ✅ Pass |
 | `lcdon_to_stat3_d.gb` | ✅ Pass |
+| `lcdon_write_timing.gb` | ✅ Pass |
 | `line_144_oam_int_a.gb` | ✅ Pass |
 | `line_144_oam_int_b.gb` | ✅ Pass |
 | `line_144_oam_int_c.gb` | ✅ Pass |
@@ -3928,6 +3946,7 @@ Combined exit code: 101
 | `line_153_lyc_int_a.gb` | ✅ Pass |
 | `line_153_lyc_int_b.gb` | ✅ Pass |
 | `line_65_ly.gb` | ✅ Pass |
+| `ly_while_lcd_off.gb` | ✅ Pass |
 | `lyc1_int_halt_a.gb` | ✅ Pass |
 | `lyc1_int_halt_b.gb` | ✅ Pass |
 | `lyc1_int_if_edge_a.gb` | ✅ Pass |
@@ -3946,6 +3965,8 @@ Combined exit code: 101
 | `lyc_int_halt_b.gb` | ✅ Pass |
 | `mbc1_ram_banks.gb` | ✅ Pass |
 | `mbc1_rom_banks.gb` | ✅ Pass |
+| `minimal.gb` | ✅ Pass |
+| `mode2_stat_int_to_oam_unlock.gb` | ✅ Pass |
 | `oam_int_halt_a.gb` | ✅ Pass |
 | `oam_int_halt_b.gb` | ✅ Pass |
 | `oam_int_if_edge_a.gb` | ✅ Pass |
@@ -3967,6 +3988,7 @@ Combined exit code: 101
 | `oam_read_l1_d.gb` | ✅ Pass |
 | `oam_read_l1_e.gb` | ✅ Pass |
 | `oam_read_l1_f.gb` | ✅ Pass |
+| `oam_sprite_trashing.gb` | ✅ Pass |
 | `oam_write_l0_a.gb` | ✅ Pass |
 | `oam_write_l0_b.gb` | ✅ Pass |
 | `oam_write_l0_c.gb` | ✅ Pass |
@@ -3978,6 +4000,7 @@ Combined exit code: 101
 | `oam_write_l1_d.gb` | ✅ Pass |
 | `oam_write_l1_e.gb` | ✅ Pass |
 | `oam_write_l1_f.gb` | ✅ Pass |
+| `poweron.gb` | ✅ Pass |
 | `poweron_bgp_000.gb` | ✅ Pass |
 | `poweron_div_000.gb` | ✅ Pass |
 | `poweron_div_004.gb` | ✅ Pass |
@@ -4042,6 +4065,7 @@ Combined exit code: 101
 | `poweron_vram_184.gb` | ✅ Pass |
 | `poweron_wx_000.gb` | ✅ Pass |
 | `poweron_wy_000.gb` | ✅ Pass |
+| `ppu_scx_vs_bgp.gb` | ✅ Pass |
 | `ppu_sprite0_scx0_a.gb` | ✅ Pass |
 | `ppu_sprite0_scx0_b.gb` | ✅ Pass |
 | `ppu_sprite0_scx1_a.gb` | ✅ Pass |
@@ -4058,6 +4082,10 @@ Combined exit code: 101
 | `ppu_sprite0_scx6_b.gb` | ✅ Pass |
 | `ppu_sprite0_scx7_a.gb` | ✅ Pass |
 | `ppu_sprite0_scx7_b.gb` | ✅ Pass |
+| `ppu_sprite_testbench.gb` | ✅ Pass |
+| `ppu_spritex_vs_scx.gb` | ✅ Pass |
+| `ppu_win_vs_wx.gb` | ✅ Pass |
+| `ppu_wx_early.gb` | ✅ Pass |
 | `sprite4_0_a.gb` | ✅ Pass |
 | `sprite4_0_b.gb` | ✅ Pass |
 | `sprite4_1_a.gb` | ✅ Pass |
@@ -4138,6 +4166,7 @@ Combined exit code: 101
 | `timer_tima_write_f.gb` | ✅ Pass |
 | `timer_tma_write_a.gb` | ✅ Pass |
 | `timer_tma_write_b.gb` | ✅ Pass |
+| `toggle_lcdc.gb` | ✅ Pass |
 | `vblank2_int_halt_a.gb` | ✅ Pass |
 | `vblank2_int_halt_b.gb` | ✅ Pass |
 | `vblank2_int_if_a.gb` | ✅ Pass |
@@ -4172,6 +4201,7 @@ Combined exit code: 101
 | `vram_write_l1_b.gb` | ✅ Pass |
 | `vram_write_l1_c.gb` | ✅ Pass |
 | `vram_write_l1_d.gb` | ✅ Pass |
+| `wave_write_to_0xC003.gb` | ✅ Pass |
 | `win0_a.gb` | ✅ Pass |
 | `win0_b.gb` | ✅ Pass |
 | `win0_scx3_a.gb` | ✅ Pass |
@@ -4208,39 +4238,9 @@ Combined exit code: 101
 | `win8_b.gb` | ✅ Pass |
 | `win9_a.gb` | ✅ Pass |
 | `win9_b.gb` | ✅ Pass |
-| `000-oam_lock.gb` | ❌ Fail |
-| `000-write_to_x8000.gb` | ❌ Fail |
-| `001-vram_unlocked.gb` | ❌ Fail |
-| `002-vram_locked.gb` | ❌ Fail |
-| `004-tima_boot_phase.gb` | ❌ Fail |
-| `004-tima_cycle_timer.gb` | ❌ Fail |
-| `007-lcd_on_stat.gb` | ❌ Fail |
-| `400-dma.gb` | ❌ Fail |
-| `500-scx-timing.gb` | ❌ Fail |
-| `800-ppu-latch-scx.gb` | ❌ Fail |
-| `801-ppu-latch-scy.gb` | ❌ Fail |
-| `802-ppu-latch-tileselect.gb` | ❌ Fail |
-| `803-ppu-latch-bgdisplay.gb` | ❌ Fail |
-| `audio_testbench.gb` | ❌ Fail |
-| `cpu_bus_1.gb` | ❌ Fail |
-| `dma_basic.gb` | ❌ Fail |
-| `flood_vram.gb` | ❌ Fail |
 | `halt_op_dupe_delay.gb` | ❌ Fail |
-| `lcdon_write_timing.gb` | ❌ Fail |
-| `ly_while_lcd_off.gb` | ❌ Fail |
-| `minimal.gb` | ❌ Fail |
-| `mode2_stat_int_to_oam_unlock.gb` | ❌ Fail |
-| `oam_sprite_trashing.gb` | ❌ Fail |
-| `poweron.gb` | ❌ Fail |
-| `ppu_scx_vs_bgp.gb` | ❌ Fail |
-| `ppu_sprite_testbench.gb` | ❌ Fail |
-| `ppu_spritex_vs_scx.gb` | ❌ Fail |
-| `ppu_win_vs_wx.gb` | ❌ Fail |
-| `ppu_wx_early.gb` | ❌ Fail |
 | `stat_write_glitch_l154_d.gb` | ❌ Fail |
 | `temp.gb` | ❌ Fail |
-| `toggle_lcdc.gb` | ❌ Fail |
-| `wave_write_to_0xC003.gb` | ❌ Fail |
 
 #### halt_bug_rom (1/1 passing, 100.0%)
 
@@ -4936,6 +4936,12 @@ Combined exit code: 101
 | --- | --- |
 | `ppu::mode3_timing_tests::dmg_bus_locks_and_stat_change_on_different_dots` | ✅ Pass |
 
+#### ppu::mode3_timing_tests::dmg_dma_vram_conflict_uses_the_combined_address (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::dmg_dma_vram_conflict_uses_the_combined_address` | ✅ Pass |
+
 #### ppu::mode3_timing_tests::dmg_fifo_projection_matches_each_fetcher_phase (1/1 passing, 100.0%)
 
 | Test | Result |
@@ -5091,6 +5097,12 @@ Combined exit code: 101
 | Test | Result |
 | --- | --- |
 | `ppu::mode3_timing_tests::lcd_restart_discards_boot_hold` | ✅ Pass |
+
+#### ppu::mode3_timing_tests::lcd_restart_preserves_all_ten_vblank_lines (1/1 passing, 100.0%)
+
+| Test | Result |
+| --- | --- |
+| `ppu::mode3_timing_tests::lcd_restart_preserves_all_ten_vblank_lines` | ✅ Pass |
 
 #### ppu::mode3_timing_tests::line_153_zero_comparison_uses_model_timing (1/1 passing, 100.0%)
 
