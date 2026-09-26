@@ -1,4 +1,4 @@
-# AGE: 67 passing and 52 known failures across 119 ROM/revision cases.
+# AGE: 88 passing and 31 known failures across 119 ROM/revision cases.
 # Baseline before core fixes: 4 passing and 115 failing.
 # Recheck with: cargo test -p vibe-emu-core --test age -- --ignored
 
@@ -24,26 +24,11 @@ m3-bg-lcdc/m3-bg-lcdc.gb::cgbE
 m3-bg-lcdc/m3-bg-lcdc.gb::dmgC
 
 # Mode 3 background fetch / SCX rendering differs from reference images.
-m3-bg-scx/m3-bg-scx-ds.gb::cgbB
-m3-bg-scx/m3-bg-scx-ds.gb::cgbC
-m3-bg-scx/m3-bg-scx-ds.gb::cgbE
-m3-bg-scx/m3-bg-scx-nocgb.gb::ncmB
-m3-bg-scx/m3-bg-scx-nocgb.gb::ncmC
-m3-bg-scx/m3-bg-scx-nocgb.gb::ncmE
-m3-bg-scx/m3-bg-scx.gb::cgbB
-m3-bg-scx/m3-bg-scx.gb::cgbC
-m3-bg-scx/m3-bg-scx.gb::cgbE
 m3-bg-scx/m3-bg-scx.gb::dmgC
 
 # oam: PPU access, interrupt, or rendering timing still differs from hardware.
 oam/oam-read-dmgC-cgbBC.gb::dmgC
-oam/oam-read-ncmBC.gb::ncmB
-oam/oam-read-ncmBC.gb::ncmC
-oam/oam-read-ncmE.gb::ncmE
 oam/oam-write-dmgC.gb::dmgC
-oam/oam-write-ncmBCE.gb::ncmB
-oam/oam-write-ncmBCE.gb::ncmC
-oam/oam-write-ncmBCE.gb::ncmE
 
 # Remaining immediate-interrupt speed-switch timing on CGB B/C.
 speed-switch/caution/spsw-interrupts-cgbBC.gb::cgbB
@@ -66,12 +51,6 @@ stat-mode-window/stat-mode-window-ncmBCE.gb::ncmE
 
 # stat-mode: PPU access, interrupt, or rendering timing still differs from hardware.
 stat-mode/stat-mode-dmgC-cgbBC.gb::dmgC
-stat-mode/stat-mode-ncmBC.gb::ncmB
-stat-mode/stat-mode-ncmBC.gb::ncmC
-stat-mode/stat-mode-ncmE.gb::ncmE
 
 # vram: PPU access, interrupt, or rendering timing still differs from hardware.
 vram/vram-read-dmgC.gb::dmgC
-vram/vram-read-ncmBCE.gb::ncmB
-vram/vram-read-ncmBCE.gb::ncmC
-vram/vram-read-ncmBCE.gb::ncmE

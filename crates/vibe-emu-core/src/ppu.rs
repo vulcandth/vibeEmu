@@ -480,6 +480,9 @@ pub struct Ppu {
     // The native renderer's dot origin is established by the LCD-enable
     // write. A running LCD retains that origin when the CPU changes speed.
     cgb_lcd_started_double_speed: bool,
+    // A compatibility-mode LCD restart establishes the DMG fetcher origin.
+    // KEY0 switches on an already running native LCD retain its old origin.
+    cgb_lcd_started_compat: bool,
 
     /// Completed pixel output in 0x00RRGGBB format; updated once per frame.
     pub framebuffer: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
@@ -1029,6 +1032,7 @@ impl Ppu {
             mode0_target_cycles: MODE0_CYCLES,
             clock_hold_cycles: 0,
             cgb_lcd_started_double_speed: false,
+            cgb_lcd_started_compat: false,
             framebuffer: [0xFFFFFF; SCREEN_WIDTH * SCREEN_HEIGHT],
             line_priority: [false; SCREEN_WIDTH],
             line_color_zero: [false; SCREEN_WIDTH],
@@ -1339,6 +1343,23 @@ impl Ppu {
     }
 
     #[inline]
+    fn mode3_render_offset(&self) -> u16 {
+        // Compatibility-mode bus edges precede the existing DMG fetcher
+        // timeline by two dots. Keep register events and pixel/OBJ captures
+        // on that same renderer timeline (AGE access tests and Mealybug).
+        if self.cgb_lcd_started_compat && self.is_cgb_dmg_compat_mode() {
+            2
+        } else {
+            0
+        }
+    }
+
+    #[inline]
+    fn mode3_render_clock(&self) -> u16 {
+        self.mode_clock.saturating_sub(self.mode3_render_offset())
+    }
+
+    #[inline]
     fn should_record_mode3_reg_event(&self) -> bool {
         self.mode == MODE_TRANSFER
             && self.ly < SCREEN_HEIGHT as u8
@@ -1542,14 +1563,18 @@ impl Ppu {
 
     fn record_mode3_scx_event(&mut self, mode3_t: u16, val: u8) {
         let max_t = self.mode3_target_cycles.saturating_sub(1) as i16;
-        let mut bias = self.tuning.dmg_mode3_scx_event_t_bias;
-        if self.cgb() {
-            // Native CGB samples SCX event timing slightly earlier than the
-            // DMG-oriented baseline used by the fetcher model. This also
-            // applies to CGB DMG-compat mode.
-            bias -= 1;
-        }
+        // Native CGB SCX writes map to the tile-address sampling stage,
+        // four dots before their position in the replay fetcher timeline.
+        // The DMG conflict bias would select the preceding tile instead.
+        let mut bias = if self.is_cgb_native_mode() {
+            -4
+        } else {
+            self.tuning.dmg_mode3_scx_event_t_bias
+        };
         if self.is_cgb_dmg_compat_mode() {
+            // Retain the DMG fetcher phase for compatibility-mode fine-scroll
+            // writes and writes interrupted by an OBJ fetch.
+            bias -= 1;
             let changed = self.scx ^ val;
             if (changed & 0xF8) != 0 {
                 // On CGB in DMG compatibility mode, coarse SCX bits are sampled
@@ -1583,6 +1608,14 @@ impl Ppu {
             // writes that land in PUSH with a shallow FIFO can be observed by
             // the next fetched BG tile one fetch slot earlier.
             bias += self.tuning.dmg_mode3_scx_event_push_state_t_adjust;
+        }
+        // An uninterrupted compatibility BG fetch uses the same coarse-SCX
+        // sampling stage. Fine-scroll startup and OBJ stalls use the phase above.
+        if self.is_cgb_dmg_compat_mode()
+            && (self.lcdc & 2 == 0 || self.sprite_count == 0)
+            && (self.scx ^ val) & 0xF8 != 0
+        {
+            bias = -4;
         }
         let t = (mode3_t as i16 + bias).clamp(0, max_t) as u16;
         if trace_scx_events_enabled() && trace_obj_debug_line_enabled(self.ly) {
@@ -1935,7 +1968,7 @@ impl Ppu {
         if prev_active == self.mode3_obj_fetch_active {
             return;
         }
-        let t = self.clamp_mode3_t_for_events(self.mode_clock);
+        let t = self.clamp_mode3_t_for_events(self.mode3_render_clock());
         Self::push_mode3_reg_event(
             &mut self.mode3_obj_fetch_events,
             &mut self.mode3_obj_fetch_event_count,
@@ -3055,7 +3088,8 @@ impl Ppu {
             tuning.fetch_t_bias
         } + self.dmg_obj_size_fetch_t_compat_adjust();
         let fetch_px_term = tuning.fetch_sample_px.clamp(0, 7) - 7;
-        let t = (self.mode_clock as i16 + fetch_t_bias + fetch_px_term).clamp(0, max_t) as u16;
+        let t = (self.mode3_render_clock() as i16 + fetch_t_bias + fetch_px_term).clamp(0, max_t)
+            as u16;
         (self.dmg_lcdc_for_mode3_t(t) & 0x04) != 0
     }
 
@@ -3241,6 +3275,10 @@ impl Ppu {
         if (1..=0xA0).contains(&self.oam_dma_current_dest) {
             self.invalidate_mode3_obj_data();
         }
+        let offset = self.mode3_render_offset();
+        if offset != 0 && self.mode_clock <= offset {
+            return;
+        }
         let obj_fetch_active_before = self.mode3_obj_fetch_active;
         // Use the same simplified DMG pipeline model as
         // `dmg_compute_mode3_cycles_for_line` to decide *when* an object match
@@ -3261,7 +3299,7 @@ impl Ppu {
             None
         };
         if let Some(mut cap_x) = cap_base_x {
-            let phase = ((self.mode_clock >> 2) & 1) as i16;
+            let phase = ((self.mode3_render_clock() >> 2) & 1) as i16;
             let cap_bias =
                 obj_size_tuning.capture_bias + phase * obj_size_tuning.capture_phase_weight;
             if cap_bias < 0 {
@@ -3364,7 +3402,7 @@ impl Ppu {
                             self.line_sprites[idx].clear_fetch_state();
                             self.line_sprites[idx].fetched = true;
                             if !self.line_sprites[idx].fetch_t_valid {
-                                self.line_sprites[idx].fetch_t = self.mode_clock;
+                                self.line_sprites[idx].fetch_t = self.mode3_render_clock();
                                 self.line_sprites[idx].fetch_t_valid = true;
                             }
                             self.mode3_obj_fetch_stage = MODE3_OBJ_FETCH_STAGE_ATTR_1;
@@ -3384,8 +3422,8 @@ impl Ppu {
                             } else {
                                 obj_size_tuning.fetch_t_bias
                             } + self.dmg_obj_size_fetch_t_compat_adjust();
-                            let sample_t =
-                                (self.mode_clock as i16 + low_bias).clamp(0, max_t) as u16;
+                            let sample_t = (self.mode3_render_clock() as i16 + low_bias)
+                                .clamp(0, max_t) as u16;
                             let mut size_16 = if obj_size_tuning.fetch_use_live_lcdc {
                                 (self.lcdc & 0x04) != 0
                             } else {
@@ -3432,8 +3470,8 @@ impl Ppu {
                                 + obj_size_tuning.fetch_hi_t_delta
                                 + self.dmg_obj_size_fetch_t_compat_adjust()
                                 + self.dmg_obj_size_fetch_hi_t_compat_adjust();
-                            let sample_t =
-                                (self.mode_clock as i16 + high_bias).clamp(0, max_t) as u16;
+                            let sample_t = (self.mode3_render_clock() as i16 + high_bias)
+                                .clamp(0, max_t) as u16;
                             let mut size_16 = if obj_size_tuning.fetch_use_live_lcdc {
                                 (self.lcdc & 0x04) != 0
                             } else {
@@ -3528,7 +3566,7 @@ impl Ppu {
 
                     self.line_sprites[idx].clear_fetch_state();
                     self.line_sprites[idx].fetch_t_valid = true;
-                    self.line_sprites[idx].fetch_t = self.mode_clock;
+                    self.line_sprites[idx].fetch_t = self.mode3_render_clock();
                     self.mode3_obj_fetch_active = true;
                     self.mode3_obj_fetch_stage = MODE3_OBJ_FETCH_STAGE_ATTR_0;
                     self.mode3_obj_fetch_sprite_index = idx;
@@ -3583,13 +3621,13 @@ impl Ppu {
                     &mut self.mode3_bg_fifo,
                     &mut self.mode3_fetcher_state,
                 );
-                self.record_mode3_pop_event(self.mode_clock, self.mode3_position_in_line);
+                self.record_mode3_pop_event(self.mode3_render_clock(), self.mode3_position_in_line);
                 if self.mode3_lcd_x > prev_lcd_x {
                     let out_x = self.mode3_lcd_x.saturating_sub(1) as usize;
                     if out_x < SCREEN_WIDTH {
                         self.dmg_line_bgp_at_pixel[out_x] = self.bgp;
                         self.dmg_line_lcdc_at_pixel[out_x] = self.lcdc;
-                        self.dmg_line_mode3_t_at_pixel[out_x] = self.mode_clock;
+                        self.dmg_line_mode3_t_at_pixel[out_x] = self.mode3_render_clock();
                     }
                 }
             }
@@ -3884,14 +3922,10 @@ impl Ppu {
         let window_line_possible =
             (self.lcdc & 0x20) != 0 && self.ly >= self.wy && self.wx <= WINDOW_X_MAX;
 
-        // Fast path: keep the baseline model for lines without sprites.
+        // Discard exactly SCX & 7 pixels, rather than rounding the delay to
+        // CPU M-cycles. AGE probes each fine-scroll value at the bus boundary.
         if sprite_len == 0 && !window_line_possible {
-            let scx_delay = match self.scx & 0x07 {
-                0 => 0,
-                1..=4 => 4,
-                _ => 8,
-            };
-            return MODE3_CYCLES + scx_delay;
+            return MODE3_CYCLES + u16::from(self.scx & 7);
         }
 
         // Sorted by X ascending already (DMG priority path). Ensure it here for safety.
@@ -4582,7 +4616,7 @@ impl Ppu {
     }
 
     pub(crate) fn oam_read_accessible_at_speed(&self, double_speed: bool) -> bool {
-        if self.is_cgb_native_mode() {
+        if self.cgb() {
             // AGE's OAM reads distinguish the normal-speed read strobe from
             // the double-speed strobe, which locks earlier only on CGB E.
             let early_lock = if !double_speed || self.cgb_revision() == CgbRevision::RevE {
@@ -4610,7 +4644,7 @@ impl Ppu {
     }
 
     pub(crate) fn oam_write_accessible_at_speed(&self, double_speed: bool) -> bool {
-        if self.is_cgb_native_mode() {
+        if self.cgb() {
             // The write lock also covers the end of the LCD-enable mode-0
             // interval. Unlike reads, every tested CGB revision uses this edge.
             if self.cgb_oam_pre_scan_locked(2, true) {
@@ -5115,7 +5149,7 @@ impl Ppu {
     }
 
     pub(crate) fn vram_read_accessible_at_speed(&self, double_speed: bool) -> bool {
-        if self.is_cgb_native_mode() && !double_speed && self.mode == MODE_TRANSFER {
+        if self.cgb() && !double_speed && self.mode == MODE_TRANSFER {
             // The normal-speed read strobe overlaps the last transfer dot.
             // On the LCD-enable line it also precedes the first VRAM lock.
             if self.mode_clock + 1 >= self.mode3_target_cycles
@@ -5214,9 +5248,9 @@ impl Ppu {
         // physical line 153 intact: the readable value resets early, with
         // revision/speed-dependent timing verified by AGE's ly ROMs.
         let mut ly = self.ly;
-        let native = self.is_cgb_native_mode();
+        let cgb = self.cgb();
         let switched_double_speed = double_speed && !self.cgb_lcd_started_double_speed;
-        let ahead = if native {
+        let ahead = if cgb {
             2 + u16::from(switched_double_speed)
         } else {
             4
@@ -5227,13 +5261,9 @@ impl Ppu {
                 ly = 153;
             } else if ly == 153 {
                 let reset_at = if double_speed {
-                    if native && switched_double_speed {
-                        5
-                    } else {
-                        6
-                    }
-                } else if self.cgb() && self.cgb_revision() == CgbRevision::RevE {
-                    if native { 5 } else { 8 }
+                    if cgb && switched_double_speed { 5 } else { 6 }
+                } else if cgb && self.cgb_revision() == CgbRevision::RevE {
+                    5
                 } else {
                     4
                 };
@@ -5250,7 +5280,7 @@ impl Ppu {
         {
             if self.mode_clock + ahead >= self.dmg_hblank_ly_advance_cycle() {
                 ly = self.next_visible_ly();
-            } else if native {
+            } else if cgb {
                 // During the counter transition both old and new LY bits
                 // drive the read bus. AGE lcd-align-ly samples this window.
                 let glitch_lead = if (double_speed && self.cgb_lcd_started_double_speed)
@@ -5279,7 +5309,7 @@ impl Ppu {
         } else {
             self.stat_mode
         };
-        if self.is_cgb_native_mode()
+        if self.cgb()
             && self.mode == MODE_TRANSFER
             && self.mode_clock + u16::from(!double_speed || !self.cgb_lcd_started_double_speed)
                 >= self.mode3_target_cycles
@@ -5387,7 +5417,7 @@ impl Ppu {
                     && was_on
                     && self.mode_clock <= self.mode3_target_cycles
                 {
-                    self.record_mode3_lcdc_event(self.mode_clock, val);
+                    self.record_mode3_lcdc_event(self.mode3_render_clock(), val);
                 }
 
                 self.lcdc = val;
@@ -5430,6 +5460,7 @@ impl Ppu {
                     self.dmg_prev2_line_window_active = false;
                 }
                 if !was_on && self.lcdc & 0x80 != 0 {
+                    self.cgb_lcd_started_compat = self.is_cgb_dmg_compat_mode();
                     self.framebuffer.fill(0xFFFFFF);
                     self.lcd_startup_blank = true;
                     ppu_trace!(
@@ -5491,7 +5522,7 @@ impl Ppu {
             0xFF42 => {
                 let old = self.scy;
                 if self.should_record_mode3_reg_event() {
-                    self.record_mode3_scy_event(self.mode_clock, val);
+                    self.record_mode3_scy_event(self.mode3_render_clock(), val);
                 }
                 self.scy = val;
                 if self.should_trace_lcd_reg_write() {
@@ -5516,7 +5547,7 @@ impl Ppu {
                 // repeated scroll writes must not turn a static sprite-heavy
                 // scanline into a different background fetch schedule.
                 if self.scx != val && self.should_record_mode3_reg_event() {
-                    self.record_mode3_scx_event(self.mode_clock, val);
+                    self.record_mode3_scx_event(self.mode3_render_clock(), val);
                 }
                 if trace_scx_writes_enabled()
                     && trace_frame_window_enabled(self.frame_counter)
@@ -5552,7 +5583,7 @@ impl Ppu {
                     // granularity, the final mode-3 write can spill into the
                     // first HBlank tick while still affecting tail pixels.
                     let mode3_t = if self.mode == MODE_TRANSFER {
-                        self.mode_clock
+                        self.mode3_render_clock()
                     } else if self.mode == MODE_HBLANK
                         && self.mode_clock <= 8
                         && (self.dmg_hblank_render_pending
@@ -5560,7 +5591,9 @@ impl Ppu {
                                 && (self.lcdc & 0x02) != 0
                                 && self.mode3_lcdc_event_count > 0))
                     {
-                        self.mode3_target_cycles.saturating_add(self.mode_clock)
+                        self.mode3_target_cycles
+                            .saturating_add(self.mode_clock)
+                            .saturating_sub(self.mode3_render_offset())
                     } else {
                         u16::MAX
                     };
@@ -5576,7 +5609,7 @@ impl Ppu {
                     && self.ly < SCREEN_HEIGHT as u8
                     && (self.lcdc & 0x80) != 0
                 {
-                    let t = self.clamp_mode3_t_for_events(self.mode_clock);
+                    let t = self.clamp_mode3_t_for_events(self.mode3_render_clock());
                     if !self.cgb() {
                         // DMG palette registers exhibit a short transitional
                         // value window during mode-3 contention.
@@ -5609,7 +5642,7 @@ impl Ppu {
             0xFF4A => {
                 let old = self.wy;
                 if self.should_record_mode3_reg_event() {
-                    self.record_mode3_wy_event(self.mode_clock, val);
+                    self.record_mode3_wy_event(self.mode3_render_clock(), val);
                 }
                 self.wy = val;
                 if self.should_trace_lcd_reg_write() {
@@ -5630,7 +5663,7 @@ impl Ppu {
             0xFF4B => {
                 let old = self.wx;
                 if self.should_record_mode3_reg_event() {
-                    self.record_mode3_wx_event(self.mode_clock, val);
+                    self.record_mode3_wx_event(self.mode3_render_clock(), val);
                 }
                 self.wx = val;
                 if self.should_trace_lcd_reg_write() {
@@ -6388,6 +6421,7 @@ impl Ppu {
             self.mode3_bg_fifo = 8 - phase;
             self.mode3_fetcher_state = phase.min(6);
         }
+        let render_clock = self.mode3_render_clock();
         let start = usize::from(self.mode3_lcd_x);
         let end = start + usize::from(dots);
         self.dmg_line_bgp_at_pixel[start..end].fill(self.bgp);
@@ -6405,7 +6439,7 @@ impl Ppu {
             .zip(&mut self.mode3_pop_events[count..count + added])
             .enumerate()
         {
-            let t = self.mode_clock + offset as u16 + 1;
+            let t = render_clock + offset as u16 + 1;
             *time = t;
             *event = Mode3PopEvent {
                 t,
@@ -6413,13 +6447,13 @@ impl Ppu {
             };
         }
         for (offset, time) in overflow_times.iter_mut().enumerate() {
-            *time = self.mode_clock + (added + offset) as u16 + 1;
+            *time = render_clock + (added + offset) as u16 + 1;
         }
         self.mode3_pop_event_count += added;
         if added < usize::from(dots) {
             // Match record_mode3_pop_event's overwrite-last behavior at capacity.
             self.mode3_pop_events[MODE3_POP_EVENTS_MAX - 1] = Mode3PopEvent {
-                t: self.mode_clock + dots,
+                t: render_clock + dots,
                 position_in_line: self.mode3_position_in_line + dots as i16,
             };
         }
@@ -6700,14 +6734,9 @@ impl Ppu {
                             self.set_mode(MODE_TRANSFER);
                             self.begin_mode3_line();
                             self.mode3_target_cycles = self.compute_mode3_cycles_for_line();
-                            // Native CGB's LCD-enable line is 454 dots. Keep
-                            // the compatibility renderer's existing clock
-                            // convention separate from this native timing path.
-                            let first_line_cycles = if self.is_cgb_native_mode() {
-                                LINE_CYCLES - 2
-                            } else {
-                                LINE_CYCLES
-                            };
+                            // CGB's LCD-enable line is 454 dots in both native
+                            // and DMG compatibility modes (AGE STAT/OAM/VRAM).
+                            let first_line_cycles = LINE_CYCLES - 2;
                             self.mode0_target_cycles = first_line_cycles
                                 .saturating_sub(MODE2_CYCLES + self.mode3_target_cycles);
                             if self.is_dmg_mode() {
@@ -6831,6 +6860,14 @@ impl Ppu {
                     self.mode3_latch_sprite_attributes();
                     let target = self.mode3_target_cycles;
                     if self.mode_clock >= target {
+                        // Complete the deferred renderer dots before replaying
+                        // this line, without advancing the bus or IRQ clocks.
+                        let offset = self.mode3_render_offset();
+                        for _ in 0..offset {
+                            self.mode_clock += 1;
+                            self.mode3_latch_sprite_attributes();
+                        }
+                        self.mode_clock -= offset;
                         self.complete_stable_obj_rows();
                         self.mode_clock -= target;
                         if self.is_dmg_mode() {
@@ -7750,13 +7787,14 @@ impl Ppu {
                     } else if (position_in_line + 16) < 8 {
                         scx_cur >> 3
                     } else {
-                        let cgb_non_obj_bias = if self.is_cgb_dmg_compat_mode()
-                            && !self.mode3_obj_fetch_active_for_t(t)
-                        {
-                            1
-                        } else {
-                            0
-                        };
+                        // The CGB tile-address counter trails the output
+                        // position by one dot outside OBJ fetches.
+                        let cgb_non_obj_bias =
+                            if self.cgb() && !self.mode3_obj_fetch_active_for_t(t) {
+                                1
+                            } else {
+                                0
+                            };
                         (((scx_cur as i16 + position_in_line + 8 - cgb_non_obj_bias) >> 3) & 0x1F)
                             as u8
                     };
@@ -9149,6 +9187,7 @@ mod mode3_timing_tests {
                 if model.is_cgb() {
                     ppu.apply_dmg_compatibility_palettes();
                 }
+                ppu.write_reg(0xFF40, 0);
                 ppu.write_reg(0xFF40, 0x93);
                 ppu.oam[..4].copy_from_slice(&[16, 167, 1, 0]);
                 ppu.vram[0][16] = 0xFF;

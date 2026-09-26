@@ -36,6 +36,41 @@ fn mode2_interrupt_is_an_entry_pulse_not_the_entire_oam_scan() {
 }
 
 #[test]
+fn cgb_compatibility_bus_edges_follow_each_fine_scroll_dot() {
+    for revision in [CgbRevision::RevB, CgbRevision::RevC, CgbRevision::RevE] {
+        for scx in 0..8 {
+            let mut ppu = Ppu::new(Model::Cgb(revision));
+            ppu.set_dmg_compat_mode(true);
+            ppu.write_reg(0xFF40, 0);
+            ppu.write_reg(0xFF43, scx);
+            ppu.write_reg(0xFF40, 0x91);
+            let mut interrupts = 0;
+            ppu.step(454, &mut interrupts);
+            assert_eq!((ppu.ly(), ppu.mode()), (1, 2));
+
+            // AGE's read strobe sees the bus unlock on the last transfer
+            // dot. CGB E keeps OAM reads locked through that dot.
+            ppu.step(80 + 172 + u16::from(scx) - 2, &mut interrupts);
+            assert_eq!(ppu.read_reg(0xFF41) & 3, 3);
+            assert!(!ppu.vram_read_accessible());
+            assert!(!ppu.oam_read_accessible());
+            assert!(!ppu.oam_write_accessible());
+            ppu.step(1, &mut interrupts);
+            assert_eq!(ppu.mode(), 3);
+            assert_eq!(ppu.read_reg(0xFF41) & 3, 0);
+            assert!(ppu.vram_read_accessible());
+            assert_eq!(ppu.oam_read_accessible(), revision != CgbRevision::RevE);
+            assert!(ppu.oam_write_accessible());
+            ppu.step(1, &mut interrupts);
+            assert_eq!(ppu.mode(), 0);
+            assert!(ppu.oam_read_accessible());
+            ppu.step(204 - u16::from(scx), &mut interrupts);
+            assert_eq!((ppu.ly(), ppu.mode()), (2, 2));
+        }
+    }
+}
+
+#[test]
 fn native_window_fetch_delays_hblank_at_both_screen_edges() {
     // Transfer lengths derived from AGE's normal/double-speed STAT samples.
     for (wx, scx, length) in [
@@ -186,10 +221,10 @@ fn cgb_lcd_enable_draws_line_zero_before_advancing_ly() {
         ppu.step(1, &mut interrupts);
         assert_eq!(ppu.ly(), 0);
         assert_eq!(ppu.mode(), 3);
-        assert_eq!(ppu.vram_read_accessible(), !compat);
+        assert!(ppu.vram_read_accessible());
         ppu.step(1, &mut interrupts);
         assert!(!ppu.vram_read_accessible());
-        ppu.step(if compat { 375 } else { 373 }, &mut interrupts);
+        ppu.step(373, &mut interrupts);
         assert_eq!(ppu.ly(), 1);
         assert_eq!(ppu.mode(), 2);
         ppu.step(80, &mut interrupts);
