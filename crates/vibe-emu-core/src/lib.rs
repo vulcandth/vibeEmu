@@ -84,3 +84,6 @@ pub mod serial;
 
 /// Divider/timer unit.
 pub mod timer;
+
+/// Super Game Boy host hardware.
+pub mod sgb;

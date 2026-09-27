@@ -42,6 +42,7 @@ pub enum EmulationMode {
     Auto,
     ForceDmg,
     ForceCgb,
+    ForceCgbSgb,
     ForceMgb,
     ForceSgb,
     ForceSgb2,
@@ -55,7 +56,7 @@ impl EmulationMode {
         match self {
             Self::Auto => Model::from_cgb_flag(cart_cgb),
             Self::ForceDmg => Model::from_cgb_flag(false),
-            Self::ForceCgb => Model::from_cgb_flag(true),
+            Self::ForceCgb | Self::ForceCgbSgb => Model::from_cgb_flag(true),
             Self::ForceMgb => Model::Mgb,
             Self::ForceSgb => Model::Sgb,
             Self::ForceSgb2 => Model::Sgb2,

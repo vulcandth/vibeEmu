@@ -171,11 +171,20 @@ Common arguments:
 - `--dmg`: force DMG mode.
 - `--dmg-neutral`: use neutral DMG palette settings.
 - `--cgb`: force CGB mode.
-- `--model <dmg|mgb|sgb|sgb2|cgb|agb0|agb>`: select the hardware model.
+- `--model <dmg|mgb|sgb|sgb2|cgb|cgb-sgb|agb0|agb>`: select the hardware model.
   The same models are available in the desktop emulation mode menu.
   AGB0/AGB run GB/GBC cartridges using the original/revised Advance boot ROM.
-  SGB/SGB2 currently emulate the Game Boy subsystem; SNES borders, sound, and
-  multiplayer commands are not implemented. SGB uses the faster NTSC clock.
+  SGB/SGB2 support game-supplied palettes, attribute maps, borders, screen masks,
+  and up to four controllers through a high-level SGB host. SGB uses the faster
+  NTSC clock. Borders display at 256x224, including in screenshots.
+  On desktop, connected gamepads occupy stable player slots; the keyboard also
+  controls player 1. No SNES BIOS is required. SNES sound commands, uploaded SNES
+  programs, BIOS menus/animations, and OBJ_TRN are not emulated; Game Boy audio
+  continues to work. Games without their own border use a plain backdrop.
+  `cgb-sgb` ("CGB + SGB (hybrid)" in the UI) combines native CGB colors and timing
+  with live SGB commands. It is a fictional system, like BGB's SGB + GBC mode.
+  Games that only upload borders when booted as an SGB may not show a border in
+  this mode; it does not perform an SGB preboot to extract a border.
 - `--bootrom <path>`: load a boot ROM file matching the selected model.
   Saved DMG/CGB boot ROM paths apply only to those models; use this override
   for MGB, SGB, SGB2, AGB0, or AGB. Boot ROMs are optional.

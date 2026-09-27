@@ -3,6 +3,7 @@
 pub struct Input {
     p1: u8,
     state: u8,
+    extra_players: [u8; 3],
 }
 
 impl Input {
@@ -11,6 +12,7 @@ impl Input {
         Self {
             p1: 0xCF,
             state: 0xFF,
+            extra_players: [0xff; 3],
         }
     }
 
@@ -25,6 +27,45 @@ impl Input {
             res |= 0x0F;
         }
         res
+    }
+
+    /// Read a zero-based SGB controller, combining selected button groups.
+    pub fn read_player(&self, player: usize) -> u8 {
+        let state = if player == 0 {
+            self.state
+        } else {
+            self.extra_players.get(player - 1).copied().unwrap_or(0xff)
+        };
+        let mut low = 15;
+        if self.p1 & 0x10 == 0 {
+            low &= state & 15;
+        }
+        if self.p1 & 0x20 == 0 {
+            low &= state >> 4;
+        }
+        (self.p1 & 0xf0) | low
+    }
+
+    /// Set a zero-based SGB controller's active-low button state.
+    pub fn set_player_state(&mut self, player: usize, state: u8) {
+        if player == 0 {
+            self.state = state;
+        } else if let Some(slot) = self.extra_players.get_mut(player - 1) {
+            *slot = state;
+        }
+    }
+
+    /// Update an SGB controller and request a joypad interrupt on a press.
+    /// Invalid player indices are ignored, just as in `set_player_state`.
+    pub fn update_player_state(&mut self, player: usize, state: u8, if_reg: &mut u8) {
+        if player == 0 {
+            self.update_state(state, if_reg);
+        } else if let Some(slot) = self.extra_players.get_mut(player - 1) {
+            if *slot & !state != 0 {
+                *if_reg |= 0x10;
+            }
+            *slot = state;
+        }
     }
 
     /// Write to the P1 register (selects button row).

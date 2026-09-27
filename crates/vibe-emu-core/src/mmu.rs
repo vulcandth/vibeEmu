@@ -622,6 +622,9 @@ impl Mmu {
     /// assert!(mmu.cart.is_some());
     /// ```
     pub fn load_cart(&mut self, cart: Cartridge) {
+        if let Some(sgb) = &mut self.ppu.sgb {
+            sgb.set_cartridge_header(&cart.rom);
+        }
         let is_dmg = !cart.cgb;
         if self.post_boot_state {
             if self.model.is_sgb() {
@@ -897,7 +900,18 @@ impl Mmu {
                 }
                 0xFF
             }
-            0xFF00 => self.input.read(),
+            0xFF00 => {
+                if let Some(sgb) = &self.ppu.sgb {
+                    let value = self.input.read_player(sgb.current_player());
+                    if value & 0x30 == 0x30 {
+                        (value & 0xf0) | sgb.controller_id()
+                    } else {
+                        value
+                    }
+                } else {
+                    self.input.read()
+                }
+            }
             0xFF01 | 0xFF02 => self.serial.read(addr),
             0xFF04..=0xFF07 => self.timer.read(addr),
             // IF: upper 3 bits are unused and read back as 1 on hardware.
@@ -1234,7 +1248,12 @@ impl Mmu {
                     self.oam_bug_next_access = None;
                 }
             }
-            0xFF00 => self.input.write(val),
+            0xFF00 => {
+                if let Some(sgb) = &mut self.ppu.sgb {
+                    sgb.write_joyp(val);
+                }
+                self.input.write(val);
+            }
             0xFF01 | 0xFF02 => self.serial.write(addr, val),
             0xFF04 => {
                 self.reset_div();

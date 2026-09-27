@@ -140,6 +140,21 @@ impl GameBoy {
         }
     }
 
+    /// Enable the optional SGB command host on the selected hardware.
+    /// On CGB this creates a fictional CGB + SGB hybrid: CGB CPU/PPU timing and
+    /// colors with SGB borders, masks and multiplayer. Reset preserves the mode.
+    pub fn enable_sgb_extensions(&mut self) {
+        self.mmu.ppu.enable_sgb_extensions();
+        if let Some(cart) = &self.mmu.cart {
+            self.mmu
+                .ppu
+                .sgb
+                .as_mut()
+                .unwrap()
+                .set_cartridge_header(&cart.rom);
+        }
+    }
+
     /// Load a cartridge and apply header-dependent CPU state when skipping boot.
     /// Prefer this to loading directly into the MMU for AGB compatibility mode.
     pub fn load_cart(&mut self, cart: Cartridge) {
@@ -201,10 +216,14 @@ impl GameBoy {
     /// assert!(gb.mmu.cart.is_some()); // cartridge preserved
     /// ```
     pub fn reset(&mut self) {
+        let sgb_extensions = self.mmu.ppu.sgb.is_some();
         let cart = self.mmu.cart.take();
         let boot = self.mmu.boot_rom.take();
         self.cpu = Cpu::new(self.model);
         self.mmu.reset_post_boot_in_place(self.model);
+        if sgb_extensions {
+            self.enable_sgb_extensions();
+        }
         if let Some(c) = cart {
             self.load_cart(c);
         }
@@ -218,10 +237,14 @@ impl GameBoy {
     ///
     /// This is useful when you want to re-run the boot ROM sequence.
     pub fn reset_power_on(&mut self) {
+        let sgb_extensions = self.mmu.ppu.sgb.is_some();
         let cart = self.mmu.cart.take();
         let boot = self.mmu.boot_rom.take();
         self.cpu = Cpu::new_power_on();
         self.mmu.reset_power_on_in_place(self.model);
+        if sgb_extensions {
+            self.enable_sgb_extensions();
+        }
         if let Some(c) = cart {
             self.load_cart(c);
         }

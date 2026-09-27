@@ -48,8 +48,6 @@ mod about_assets {
 const DEFAULT_WINDOW_SCALE: u32 = 2;
 const MAX_WINDOW_SCALE: usize = 6;
 const MAX_RECENT_ROMS: usize = 10;
-const GB_WIDTH: f32 = 160.0;
-const GB_HEIGHT: f32 = 144.0;
 const MENU_BAR_HEIGHT: f32 = 24.0;
 const STATUS_BAR_HEIGHT: f32 = 24.0;
 const GB_FPS: f64 = 59.7275;
@@ -66,6 +64,7 @@ const APP_SHORT_DESCRIPTION: &str =
 struct GamepadInput {
     gilrs: Gilrs,
     active: Option<GamepadId>,
+    players: [Option<GamepadId>; 4],
     axis_deadzone: f32,
 }
 
@@ -76,29 +75,50 @@ impl GamepadInput {
         Some(Self {
             gilrs,
             active: None,
+            players: [None; 4],
             axis_deadzone: 0.45,
         })
     }
 
-    fn sample(&mut self) -> (u8, bool) {
+    fn sample(&mut self, multiplayer: bool) -> ([u8; 4], bool) {
         while let Some(ev) = self.gilrs.next_event() {
             self.active = Some(ev.id);
         }
-
-        let active = self
+        for slot in &mut self.players {
+            if slot.is_some_and(|id| !self.gilrs.gamepad(id).is_connected()) {
+                *slot = None;
+            }
+        }
+        for (id, _) in self.gilrs.gamepads().filter(|(_, gp)| gp.is_connected()) {
+            if !self.players.contains(&Some(id))
+                && let Some(slot) = self.players.iter_mut().find(|slot| slot.is_none())
+            {
+                *slot = Some(id);
+            }
+        }
+        let mut states = [0xff; 4];
+        let mut fast_forward = false;
+        if multiplayer {
+            for (player, id) in self.players.iter().enumerate() {
+                if let Some(id) = id {
+                    let (state, fast) = self.sample_pad(*id);
+                    states[player] = state;
+                    if player == 0 {
+                        fast_forward = fast;
+                    }
+                }
+            }
+        } else if let Some(id) = self
             .active
             .filter(|&id| self.gilrs.gamepad(id).is_connected())
-            .or_else(|| {
-                self.gilrs
-                    .gamepads()
-                    .find(|(_, gp)| gp.is_connected())
-                    .map(|(id, _)| id)
-            });
+            .or_else(|| self.players.iter().flatten().next().copied())
+        {
+            (states[0], fast_forward) = self.sample_pad(id);
+        }
+        (states, fast_forward)
+    }
 
-        let Some(id) = active else {
-            return (0xFF, false);
-        };
-
+    fn sample_pad(&self, id: GamepadId) -> (u8, bool) {
         let gp = self.gilrs.gamepad(id);
 
         let mut state = 0xFFu8;
@@ -246,7 +266,7 @@ struct Args {
     cgb: bool,
 
     /// Select hardware, overriding automatic cartridge detection.
-    #[arg(long, value_parser = ["dmg", "mgb", "sgb", "sgb2", "cgb", "agb0", "agb"], conflicts_with_all = ["dmg", "cgb"])]
+    #[arg(long, value_parser = ["dmg", "mgb", "sgb", "sgb2", "cgb", "cgb-sgb", "agb0", "agb"], conflicts_with_all = ["dmg", "cgb"])]
     model: Option<String>,
 
     #[arg(long)]
@@ -452,6 +472,7 @@ enum EmuCommand {
     Reset,
     SetSpeed(Speed),
     UpdateInput { state: u8, at: Instant },
+    UpdateSgbInput([u8; 3]),
     UpdateBreakpoints(Vec<ui::debugger::BreakpointSpec>),
     SetRegister { reg: RegisterId, value: u16 },
     Shutdown,
@@ -727,6 +748,15 @@ fn run_emulator_thread(
                 EmuCommand::UpdateInput { state, at } => {
                     input_queue.push(at, state);
                 }
+                EmuCommand::UpdateSgbInput(states) => {
+                    if let Ok(mut gb) = gb.lock() {
+                        let mmu = &mut gb.mmu;
+                        for (player, state) in states.into_iter().enumerate() {
+                            mmu.input
+                                .update_player_state(player + 1, state, &mut mmu.if_reg);
+                        }
+                    }
+                }
                 EmuCommand::UpdateBreakpoints(bps) => {
                     breakpoints.clear();
                     for bp in bps {
@@ -918,7 +948,8 @@ fn run_emulator_thread(
                     ext_clock_dot_cycles_per_bit = 512;
                 }
             }
-            frame_buf.copy_from_slice(mmu.ppu.framebuffer());
+            frame_buf.clear();
+            frame_buf.extend_from_slice(mmu.ppu.display_framebuffer());
         }
 
         if let Some((bank, addr)) = bp_hit {
@@ -957,6 +988,7 @@ struct VibeEmuApp {
     keybinds: KeyBindings,
     keybinds_path: std::path::PathBuf,
     joypad_state: u8,
+    sgb_joypad_states: [u8; 3],
     fast_forward: bool,
     pending_rom_load: Option<std::path::PathBuf>,
 
@@ -1296,6 +1328,10 @@ impl VibeEmuApp {
             None
         };
 
+        let framebuffer = gb
+            .lock()
+            .map(|gb| gb.mmu.ppu.display_framebuffer().to_vec())
+            .unwrap_or_else(|_| vec![0; 160 * 144]);
         let mut app = Self {
             gb,
             emu_tx,
@@ -1307,7 +1343,7 @@ impl VibeEmuApp {
 
             ui_config_path,
             ui_config,
-            framebuffer: vec![0u32; 160 * 144],
+            framebuffer,
             texture: None,
             display_horizontal_filter,
             display_vertical_filter,
@@ -1317,6 +1353,7 @@ impl VibeEmuApp {
             keybinds,
             keybinds_path,
             joypad_state: 0xFF,
+            sgb_joypad_states: [0xff; 3],
             fast_forward: false,
             pending_rom_load: None,
 
@@ -1483,11 +1520,20 @@ impl VibeEmuApp {
         self.save_ui_config();
     }
 
+    fn frame_dimensions(&self) -> (usize, usize) {
+        if self.framebuffer.len() == 256 * 224 {
+            (256, 224)
+        } else {
+            (160, 144)
+        }
+    }
+
     fn apply_window_scale(&self, ctx: &egui::Context) {
+        let (width, height) = self.frame_dimensions();
         let scale = (self.selected_window_scale + 1) as f32;
         let new_size = egui::vec2(
-            GB_WIDTH * scale,
-            GB_HEIGHT * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
+            width as f32 * scale,
+            height as f32 * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
         );
         ctx.send_viewport_cmd_to(
             egui::ViewportId::ROOT,
@@ -1534,6 +1580,7 @@ impl VibeEmuApp {
             (EmulationMode::ForceMgb, "Force MGB"),
             (EmulationMode::ForceSgb, "Force SGB"),
             (EmulationMode::ForceSgb2, "Force SGB2"),
+            (EmulationMode::ForceCgbSgb, "CGB + SGB (hybrid)"),
             (EmulationMode::ForceAgb0, "Force AGB0"),
             (EmulationMode::ForceAgb, "Force AGB"),
         ] {
@@ -1737,8 +1784,16 @@ impl VibeEmuApp {
 
         #[cfg(not(target_os = "android"))]
         if let Some(gamepad) = &mut self.gamepad {
-            let (pad_state, pad_ff) = gamepad.sample();
-            new_state &= pad_state;
+            let (pad_states, pad_ff) = gamepad.sample(
+                self.emulation_mode.model(false).is_sgb()
+                    || self.emulation_mode == EmulationMode::ForceCgbSgb,
+            );
+            new_state &= pad_states[0];
+            let extra = [pad_states[1], pad_states[2], pad_states[3]];
+            if extra != self.sgb_joypad_states {
+                self.sgb_joypad_states = extra;
+                let _ = self.emu_tx.send(EmuCommand::UpdateSgbInput(extra));
+            }
             new_fast_forward |= pad_ff;
         }
 
@@ -1986,15 +2041,14 @@ impl VibeEmuApp {
     }
 
     fn update_texture(&mut self, ctx: &egui::Context) {
-        const SRC_WIDTH: usize = 160;
-        const SRC_HEIGHT: usize = 144;
+        let (src_width, src_height) = self.frame_dimensions();
 
         let scale = self
             .current_display_scale
             .round()
             .clamp(1.0, MAX_WINDOW_SCALE as f32) as usize;
-        let out_width = SRC_WIDTH * scale;
-        let out_height = SRC_HEIGHT * scale;
+        let out_width = src_width * scale;
+        let out_height = src_height * scale;
 
         let horizontal_linear = self.display_horizontal_filter == AxisFilter::Linear && scale > 1;
         let vertical_linear = self.display_vertical_filter == AxisFilter::Linear && scale > 1;
@@ -2003,17 +2057,17 @@ impl VibeEmuApp {
         for out_y in 0..out_height {
             let src_y = out_y / scale;
             let sub_y = out_y % scale;
-            let src_y_next = (src_y + 1).min(SRC_HEIGHT - 1);
+            let src_y_next = (src_y + 1).min(src_height - 1);
 
             for out_x in 0..out_width {
                 let src_x = out_x / scale;
                 let sub_x = out_x % scale;
-                let src_x_next = (src_x + 1).min(SRC_WIDTH - 1);
+                let src_x_next = (src_x + 1).min(src_width - 1);
 
-                let top_left = self.framebuffer[src_y * SRC_WIDTH + src_x];
-                let top_right = self.framebuffer[src_y * SRC_WIDTH + src_x_next];
-                let bottom_left = self.framebuffer[src_y_next * SRC_WIDTH + src_x];
-                let bottom_right = self.framebuffer[src_y_next * SRC_WIDTH + src_x_next];
+                let top_left = self.framebuffer[src_y * src_width + src_x];
+                let top_right = self.framebuffer[src_y * src_width + src_x_next];
+                let bottom_left = self.framebuffer[src_y_next * src_width + src_x];
+                let bottom_right = self.framebuffer[src_y_next * src_width + src_x_next];
 
                 let top = if horizontal_linear {
                     Self::lerp_rgb(top_left, top_right, sub_x, scale)
@@ -2089,8 +2143,7 @@ impl VibeEmuApp {
     }
 
     fn save_current_frame_screenshot(&self) -> std::io::Result<std::path::PathBuf> {
-        const WIDTH: usize = 160;
-        const HEIGHT: usize = 144;
+        let (width, height) = self.frame_dimensions();
 
         let output_dir = self.screenshot_output_dir();
         std::fs::create_dir_all(&output_dir)?;
@@ -2108,14 +2161,14 @@ impl VibeEmuApp {
 
         let file = std::fs::File::create(&output_path)?;
         let writer = BufWriter::new(file);
-        let mut encoder = png::Encoder::new(writer, WIDTH as u32, HEIGHT as u32);
+        let mut encoder = png::Encoder::new(writer, width as u32, height as u32);
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         let mut png_writer = encoder
             .write_header()
             .map_err(|e| std::io::Error::other(format!("PNG header write failed: {e}")))?;
 
-        let mut rgb_data = Vec::with_capacity(WIDTH * HEIGHT * 3);
+        let mut rgb_data = Vec::with_capacity(width * height * 3);
         for &pixel in &self.framebuffer {
             rgb_data.push(((pixel >> 16) & 0xFF) as u8);
             rgb_data.push(((pixel >> 8) & 0xFF) as u8);
@@ -2164,6 +2217,9 @@ impl VibeEmuApp {
                     if let Some(data) = bootrom_data {
                         gb.mmu.load_boot_rom(data);
                     }
+                    if self.emulation_mode == EmulationMode::ForceCgbSgb {
+                        gb.enable_sgb_extensions();
+                    }
                     gb.load_cart(cart);
                     self._audio_stream =
                         audio::start_stream(&mut gb.mmu.apu, true, self.sound_enabled.clone());
@@ -2206,7 +2262,11 @@ impl eframe::App for VibeEmuApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_input(ctx);
         self.handle_file_drop(ctx);
+        let previous_dimensions = self.frame_dimensions();
         self.poll_frames();
+        if previous_dimensions != self.frame_dimensions() {
+            self.apply_window_scale(ctx);
+        }
         self.update_texture(ctx);
 
         if let Some(path) = self.pending_rom_load.take() {
@@ -2447,8 +2507,9 @@ impl eframe::App for VibeEmuApp {
             .frame(egui::Frame::NONE)
             .show_inside(ui, |ui| {
                 let available = ui.available_size();
-                let scale = (available.x / GB_WIDTH)
-                    .min(available.y / GB_HEIGHT)
+                let (width, height) = self.frame_dimensions();
+                let scale = (available.x / width as f32)
+                    .min(available.y / height as f32)
                     .floor()
                     .max(1.0);
                 self.current_display_scale = scale;
@@ -2459,7 +2520,7 @@ impl eframe::App for VibeEmuApp {
                 }
 
                 if let Some(tex) = &self.texture {
-                    let size = egui::vec2(GB_WIDTH * scale, GB_HEIGHT * scale);
+                    let size = egui::vec2(width as f32 * scale, height as f32 * scale);
                     let offset = (available - size) / 2.0;
                     let rect = egui::Rect::from_min_size(
                         ui.min_rect().min + egui::vec2(offset.x, offset.y),
@@ -6063,6 +6124,7 @@ fn main() {
             "sgb" => EmulationMode::ForceSgb,
             "sgb2" => EmulationMode::ForceSgb2,
             "cgb" => EmulationMode::ForceCgb,
+            "cgb-sgb" => EmulationMode::ForceCgbSgb,
             "agb0" => EmulationMode::ForceAgb0,
             "agb" => EmulationMode::ForceAgb,
             _ => unreachable!("clap validates model"),
@@ -6121,6 +6183,9 @@ fn main() {
     };
     if let Some(data) = bootrom_data {
         gb.mmu.load_boot_rom(data);
+    }
+    if load_config.emulation_mode == EmulationMode::ForceCgbSgb {
+        gb.enable_sgb_extensions();
     }
     if let Some(c) = cart {
         gb.load_cart(c);
@@ -6308,9 +6373,13 @@ fn main() {
         .window_size
         .scale_factor_px()
         .unwrap_or(DEFAULT_WINDOW_SCALE) as f32;
+    let (width, height) = gb
+        .lock()
+        .map(|gb| gb.mmu.ppu.display_dimensions())
+        .unwrap_or((160, 144));
     let initial_size = [
-        GB_WIDTH * scale,
-        GB_HEIGHT * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
+        width as f32 * scale,
+        height as f32 * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
     ];
     let mut wgpu_setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
 
@@ -6478,7 +6547,7 @@ mod tests {
     #[test]
     fn hardware_model_cli_selection() {
         use clap::Parser;
-        for model in ["dmg", "mgb", "sgb", "sgb2", "cgb", "agb0", "agb"] {
+        for model in ["dmg", "mgb", "sgb", "sgb2", "cgb", "cgb-sgb", "agb0", "agb"] {
             let args = super::Args::try_parse_from(["vibeemu", "--model", model]).unwrap();
             assert_eq!(args.model.as_deref(), Some(model));
             assert!(super::Args::try_parse_from(["vibeemu", "--model", model, "--cgb"]).is_err());

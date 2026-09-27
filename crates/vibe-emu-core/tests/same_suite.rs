@@ -42,13 +42,39 @@ fn parse_cgb_revision_from_path<P: AsRef<Path>>(rom_path: P) -> Option<CgbRevisi
 }
 
 fn run_same_suite<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> bool {
+    run_same_suite_model(rom_path, max_cycles, None)
+}
+
+fn run_same_suite_model<P: AsRef<Path>>(
+    rom_path: P,
+    max_cycles: u64,
+    model: Option<Model>,
+) -> bool {
     let rom = std::fs::read(&rom_path).expect("rom not found");
     let cart = Cartridge::from_bytes(rom);
-    let mut gb = if let Some(rev) = parse_cgb_revision_from_path(&rom_path) {
+    let mut gb = if let Some(model) = model {
+        GameBoy::new(model)
+    } else if rom_path
+        .as_ref()
+        .to_string_lossy()
+        .replace("\\", "/")
+        .contains("/sgb/")
+    {
+        GameBoy::new(Model::Sgb)
+    } else if let Some(rev) = parse_cgb_revision_from_path(&rom_path) {
         GameBoy::new(Model::Cgb(rev))
     } else {
         GameBoy::new(Model::from_cgb_flag(cart.cgb))
     };
+    if gb.model.is_cgb()
+        && rom_path
+            .as_ref()
+            .to_string_lossy()
+            .replace("\\", "/")
+            .contains("/sgb/")
+    {
+        gb.enable_sgb_extensions();
+    }
     gb.mmu.load_cart(cart);
     let start = Instant::now();
     while gb.cpu.cycles < max_cycles {
@@ -95,7 +121,14 @@ fn run_same_suite<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> bo
 fn run_same_suite_gb<P: AsRef<std::path::Path>>(rom_path: P, max_cycles: u64) -> GameBoy {
     let rom = std::fs::read(&rom_path).expect("rom not found");
     let cart = Cartridge::from_bytes(rom);
-    let mut gb = if let Some(rev) = parse_cgb_revision_from_path(&rom_path) {
+    let mut gb = if rom_path
+        .as_ref()
+        .to_string_lossy()
+        .replace("\\", "/")
+        .contains("/sgb/")
+    {
+        GameBoy::new(Model::Sgb)
+    } else if let Some(rev) = parse_cgb_revision_from_path(&rom_path) {
         GameBoy::new(Model::Cgb(rev))
     } else {
         GameBoy::new(Model::from_cgb_flag(cart.cgb))
@@ -983,21 +1016,29 @@ fn same_suite__ppu__blocking_bgpi_increase_gb() {
 }
 
 #[test]
-#[ignore]
 fn same_suite__sgb__command_mlt_req_gb() {
-    let passed = run_same_suite(
-        common::rom_path("same-suite/sgb/command_mlt_req.gb"),
-        20_000_000,
-    );
-    assert!(passed, "test failed");
+    for model in [Model::Sgb, Model::Sgb2, Model::from_cgb_flag(true)] {
+        assert!(
+            run_same_suite_model(
+                common::rom_path("same-suite/sgb/command_mlt_req.gb"),
+                20_000_000,
+                Some(model)
+            ),
+            "{model:?} failed"
+        );
+    }
 }
 
 #[test]
-#[ignore]
 fn same_suite__sgb__command_mlt_req_1_incrementing_gb() {
-    let passed = run_same_suite(
-        common::rom_path("same-suite/sgb/command_mlt_req_1_incrementing.gb"),
-        20_000_000,
-    );
-    assert!(passed, "test failed");
+    for model in [Model::Sgb, Model::Sgb2, Model::from_cgb_flag(true)] {
+        assert!(
+            run_same_suite_model(
+                common::rom_path("same-suite/sgb/command_mlt_req_1_incrementing.gb"),
+                20_000_000,
+                Some(model)
+            ),
+            "{model:?} failed"
+        );
+    }
 }

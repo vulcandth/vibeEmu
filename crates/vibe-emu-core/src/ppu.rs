@@ -491,6 +491,8 @@ pub struct Ppu {
 
     /// Completed pixel output in 0x00RRGGBB format; updated once per frame.
     pub framebuffer: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
+    /// Optional SNES-side Super Game Boy host.
+    pub sgb: Option<Box<crate::sgb::Sgb>>,
     line_priority: [bool; SCREEN_WIDTH],
     line_color_zero: [bool; SCREEN_WIDTH],
     cgb_line_obj_enabled: [bool; SCREEN_WIDTH],
@@ -1042,6 +1044,7 @@ impl Ppu {
             dmg_lcd_restarted: false,
             mode2_scy_write: None,
             framebuffer: [0xFFFFFF; SCREEN_WIDTH * SCREEN_HEIGHT],
+            sgb: model.is_sgb().then(|| Box::new(crate::sgb::Sgb::default())),
             line_priority: [false; SCREEN_WIDTH],
             line_color_zero: [false; SCREEN_WIDTH],
             cgb_line_obj_enabled: [true; SCREEN_WIDTH],
@@ -1134,7 +1137,12 @@ impl Ppu {
                 let ram_off = palette * 8 + color_id * 2;
                 let table_off = palette * 4 + color_id;
                 self.cgb_bg_color_table[table_off] =
-                    Self::decode_cgb_color(self.bgpd[ram_off], self.bgpd[ram_off + 1]);
+                    Self::decode_cgb_color(self.bgpd[ram_off], self.bgpd[ram_off + 1])
+                        | if self.sgb.is_some() {
+                            (color_id as u32) << 24
+                        } else {
+                            0
+                        };
             }
         }
     }
@@ -1145,11 +1153,21 @@ impl Ppu {
                 let ram_off = palette * 8 + color_id * 2;
                 let table_off = palette * 4 + color_id;
                 self.cgb_obj_color_table[table_off] =
-                    Self::decode_cgb_color(self.obpd[ram_off], self.obpd[ram_off + 1]);
+                    Self::decode_cgb_color(self.obpd[ram_off], self.obpd[ram_off + 1])
+                        | if self.sgb.is_some() {
+                            (color_id as u32) << 24
+                        } else {
+                            0
+                        };
             }
         }
     }
 
+    // With an SGB host, carry the LCD shade (native CGB color ID in hybrid mode)
+    // in the unused high byte through every
+    // renderer path. capture_line extracts it and restores 0x00RRGGBB before
+    // exposing the line. This remains unambiguous even with duplicate custom
+    // colors, and includes mid-line BGP/OBP changes and sprite priority.
     fn refresh_dmg_bg_color_table(&mut self) {
         for entry in &mut self.tile_row_cache {
             entry.key = u32::MAX;
@@ -1163,7 +1181,12 @@ impl Ppu {
                     self.dmg_palette[shade]
                 };
                 let off = ((bgp as usize) << 2) | color_id as usize;
-                self.dmg_bg_color_table[off] = color;
+                self.dmg_bg_color_table[off] = color
+                    | if self.sgb.is_some() {
+                        (shade as u32) << 24
+                    } else {
+                        0
+                    };
             }
         }
     }
@@ -1175,7 +1198,12 @@ impl Ppu {
             } else {
                 self.dmg_palette[shade]
             };
-            self.dmg_obj_color_table[0][shade] = color;
+            self.dmg_obj_color_table[0][shade] = color
+                | if self.sgb.is_some() {
+                    (shade as u32) << 24
+                } else {
+                    0
+                };
         }
         for shade in 0..4 {
             let color = if self.dmg_compat {
@@ -1183,7 +1211,12 @@ impl Ppu {
             } else {
                 self.dmg_palette[shade]
             };
-            self.dmg_obj_color_table[1][shade] = color;
+            self.dmg_obj_color_table[1][shade] = color
+                | if self.sgb.is_some() {
+                    (shade as u32) << 24
+                } else {
+                    0
+                };
         }
     }
 
@@ -4612,6 +4645,31 @@ impl Ppu {
         self.win_line_counter
     }
 
+    /// Attach the high-level SGB host to this PPU, including CGB hardware.
+    /// Hybrid CGB output keeps its native colors; SGB transfers use color IDs.
+    pub fn enable_sgb_extensions(&mut self) {
+        if self.sgb.is_none() {
+            self.sgb = Some(Box::new(crate::sgb::Sgb::default()));
+            self.refresh_palette_color_tables();
+        }
+    }
+
+    /// Frontend output dimensions, including the border on SGB models.
+    pub fn display_dimensions(&self) -> (usize, usize) {
+        if self.sgb.is_some() {
+            (crate::sgb::WIDTH, crate::sgb::HEIGHT)
+        } else {
+            (SCREEN_WIDTH, SCREEN_HEIGHT)
+        }
+    }
+
+    /// Frontend RGB output. Debuggers can still inspect the original GB framebuffer.
+    pub fn display_framebuffer(&self) -> &[u32] {
+        self.sgb
+            .as_ref()
+            .map_or(&self.framebuffer[..], |sgb| sgb.framebuffer())
+    }
+
     /// Returns the current framebuffer. Call `frame_ready()` to check if a
     /// frame is complete. After presenting, call `clear_frame_flag()`.
     pub fn framebuffer(&self) -> &[u32; SCREEN_WIDTH * SCREEN_HEIGHT] {
@@ -4635,7 +4693,7 @@ impl Ppu {
 
     /// Get a CGB background palette color as 0x00RRGGBB.
     pub fn bg_palette_color(&self, palette: usize, color_id: usize) -> u32 {
-        self.cgb_bg_color_table[palette * 4 + color_id]
+        self.cgb_bg_color_table[palette * 4 + color_id] & 0xffffff
     }
 
     /// Return a 0x00RRGGBB colour from **OBJ** palette RAM.
@@ -4646,7 +4704,7 @@ impl Ppu {
     /// This is identical to `bg_palette_color` but uses the object-palette
     /// data (OBPD) instead of BGPD.
     pub fn ob_palette_color(&self, palette: usize, color_id: usize) -> u32 {
-        self.cgb_obj_color_table[palette * 4 + color_id]
+        self.cgb_obj_color_table[palette * 4 + color_id] & 0xffffff
     }
 
     fn sanitize_palette_index(value: u8) -> u8 {
@@ -6656,6 +6714,14 @@ impl Ppu {
             // VRAM access and frame delivery still run for the first frame.
             self.framebuffer[row_base..row_base + SCREEN_WIDTH].fill(0xFFFFFF);
         }
+        let native_color = self.is_cgb_native_mode();
+        if let Some(sgb) = &mut self.sgb {
+            sgb.capture_line(
+                self.ly as usize,
+                &mut self.framebuffer[row_base..row_base + SCREEN_WIDTH],
+                native_color,
+            );
+        }
     }
 
     /// Next native-CGB OBJ latch or end-of-transfer housekeeping dot.
@@ -6966,6 +7032,9 @@ impl Ppu {
                 while self.lcd_off_frame_cycle_accum >= FRAME_DOT_CYCLES {
                     self.lcd_off_frame_cycle_accum -= FRAME_DOT_CYCLES;
                     self.frame_ready = true;
+                    if let Some(sgb) = &mut self.sgb {
+                        sgb.finish_frame(self.lcdc & 0x80 != 0);
+                    }
                     self.frame_counter = self.frame_counter.wrapping_add(1);
                 }
                 self.dmg_hblank_render_pending = false;
@@ -7062,6 +7131,9 @@ impl Ppu {
                         if self.ly == SCREEN_HEIGHT as u8 {
                             self.lcd_startup_blank = false;
                             self.frame_ready = true;
+                            if let Some(sgb) = &mut self.sgb {
+                                sgb.finish_frame(self.lcdc & 0x80 != 0);
+                            }
                             self.set_mode(MODE_VBLANK);
                             *if_reg |= 0x01;
                             #[cfg(feature = "ppu-trace")]

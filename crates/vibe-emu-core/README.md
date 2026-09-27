@@ -46,6 +46,7 @@ aims for cycle-accurate emulation of the CPU, MMU, PPU, and APU.
 - Pixel Processing Unit (PPU) — DMG and CGB rendering modes
 - Audio Processing Unit (APU) with all four channels
 - Game Boy Color (CGB) support including double-speed mode and CGB palettes
+- SGB/SGB2 color palettes, attribute maps, game borders, masks, and controller multiplexing
 - Serial link port emulation
 - Timer and interrupt handling
 - Optional tracing features behind feature flags (`ppu-trace`, `apu-trace`,
@@ -127,3 +128,34 @@ boot ROM behavior; supply the matching image to `Mmu::load_boot_rom` when
 starting with `GameBoy::new_power_on`. Skipping boot initializes their shared
 register state. Power-on phases remain approximations calibrated against ROM
 measurements; boot tests cover both real and skipped boot paths.
+
+## Super Game Boy output
+
+Call `GameBoy::enable_sgb_extensions()` on a CGB machine to enable the fictional
+CGB + SGB hybrid. The hardware model, boot registers and clock remain CGB;
+native CGB pixels retain their colors underneath the SGB border. SGB transfers
+use the rendered two-bit color IDs in native CGB mode, and palette-mapped LCD
+shades in monochrome mode. Both reset methods preserve this configuration.
+Hybrid mode accepts live commands and does not preboot as SGB to obtain borders.
+
+
+For `Model::Sgb` and `Model::Sgb2`, use `ppu.display_dimensions()` and
+`ppu.display_framebuffer()` for the 256x224 image with borders. Other models
+return their normal 160x144 output through the same API. `ppu.framebuffer()`
+remains the uncolorized Game Boy LCD image for debugging and ROM comparisons.
+Set controllers 1?4 with `mmu.input.set_player_state(player, active_low_buttons)`
+using zero-based player indices 0?3;
+`ppu.sgb.as_ref().unwrap().player_count()` reports the game's requested count.
+
+The high-level host supports PAL01/23/03/12, PAL_SET/TRN, ATTR_BLK/LIN/DIV/CHR,
+ATTR_TRN/SET, CHR_TRN/PCT_TRN, MASK_EN, MLT_REQ, and ICON_EN command disabling.
+Transfers reconstruct data from the LCD's palette-mapped shades after three
+frames. Screen freeze preserves the shade image while allowing palettes and
+borders to change. Commands require the cartridge's SGB flag and licensee marker.
+No SNES BIOS is needed. SNES sound, native SNES programs, OBJ_TRN, BIOS menus,
+and startup/border animations are not implemented. Unsupported command IDs are
+reported by `Sgb::unsupported_commands()` as a bit mask.
+
+Protocol references: [Pan Docs](https://gbdev.io/pandocs/SGB_Command_Summary.html),
+[SameBoy's high-level host](https://github.com/LIJI32/SameBoy/blob/master/Core/sgb.c),
+and [SameSuite's SGB hardware tests](https://github.com/LIJI32/SameSuite/tree/master/sgb).
