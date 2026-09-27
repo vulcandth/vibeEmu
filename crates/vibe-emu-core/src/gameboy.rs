@@ -155,6 +155,54 @@ impl GameBoy {
         }
     }
 
+    /// Run an isolated SGB startup and retain only its first completed border.
+    ///
+    /// This implements "GBC + initial SGB border": the main machine's CPU,
+    /// RAM, cartridge saves, RTC and boot ROM are not advanced or changed.
+    /// The donor has no save paths, audio output, input or serial connection.
+    /// `boot_rom` is the SGB (not CGB) boot ROM; `None` skips its execution.
+    /// A 600-frame limit matches SameBoy's border-borrowing window. The dot
+    /// budget also bounds broken ROMs that never reach a frame boundary.
+    /// Returns false for an ineligible ROM, timeout or CPU fault.
+    pub fn borrow_sgb_border(&mut self, boot_rom: Option<&[u8]>, max_frames: u32) -> bool {
+        let Some(cart) = self.mmu.cart.as_ref() else {
+            return false;
+        };
+        if !self.model.is_cgb()
+            || !cart.cgb
+            || cart.rom.get(0x146) != Some(&3)
+            || cart.rom.get(0x14b) != Some(&0x33)
+        {
+            return false;
+        }
+        let mut donor_cart = Cartridge::from_bytes(cart.rom.clone());
+        donor_cart.ram.clone_from(&cart.ram);
+        let mut donor = if let Some(boot) = boot_rom {
+            let mut donor = Self::new_power_on(Model::Sgb);
+            donor.mmu.load_boot_rom(boot.to_vec());
+            donor
+        } else {
+            Self::new(Model::Sgb)
+        };
+        donor.load_cart(donor_cart);
+        let deadline = u64::from(max_frames) * 70_224;
+        while donor.cpu.cycles < deadline {
+            let before = donor.cpu.cycles;
+            donor.cpu.run_for_dots(&mut donor.mmu, 4096);
+            if donor.cpu.faulted || donor.cpu.cycles == before {
+                return false;
+            }
+            if donor.mmu.ppu.frame_ready() {
+                donor.mmu.ppu.clear_frame_flag();
+                if let Some(border) = donor.mmu.ppu.sgb.as_ref().and_then(|sgb| sgb.border()) {
+                    self.mmu.ppu.set_sgb_border(border);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Load a cartridge and apply header-dependent CPU state when skipping boot.
     /// Prefer this to loading directly into the MMU for AGB compatibility mode.
     pub fn load_cart(&mut self, cart: Cartridge) {
@@ -216,13 +264,28 @@ impl GameBoy {
     /// assert!(gb.mmu.cart.is_some()); // cartridge preserved
     /// ```
     pub fn reset(&mut self) {
-        let sgb_extensions = self.mmu.ppu.sgb.is_some();
+        let sgb_extensions = self
+            .mmu
+            .ppu
+            .sgb
+            .as_ref()
+            .is_some_and(|sgb| sgb.is_command_host());
+        let border = self
+            .mmu
+            .ppu
+            .sgb
+            .as_ref()
+            .filter(|sgb| !sgb.is_command_host())
+            .and_then(|sgb| sgb.border());
         let cart = self.mmu.cart.take();
         let boot = self.mmu.boot_rom.take();
         self.cpu = Cpu::new(self.model);
         self.mmu.reset_post_boot_in_place(self.model);
         if sgb_extensions {
             self.enable_sgb_extensions();
+        }
+        if let Some(border) = border {
+            self.mmu.ppu.set_sgb_border(border);
         }
         if let Some(c) = cart {
             self.load_cart(c);
@@ -237,13 +300,28 @@ impl GameBoy {
     ///
     /// This is useful when you want to re-run the boot ROM sequence.
     pub fn reset_power_on(&mut self) {
-        let sgb_extensions = self.mmu.ppu.sgb.is_some();
+        let sgb_extensions = self
+            .mmu
+            .ppu
+            .sgb
+            .as_ref()
+            .is_some_and(|sgb| sgb.is_command_host());
+        let border = self
+            .mmu
+            .ppu
+            .sgb
+            .as_ref()
+            .filter(|sgb| !sgb.is_command_host())
+            .and_then(|sgb| sgb.border());
         let cart = self.mmu.cart.take();
         let boot = self.mmu.boot_rom.take();
         self.cpu = Cpu::new_power_on();
         self.mmu.reset_power_on_in_place(self.model);
         if sgb_extensions {
             self.enable_sgb_extensions();
+        }
+        if let Some(border) = border {
+            self.mmu.ppu.set_sgb_border(border);
         }
         if let Some(c) = cart {
             self.load_cart(c);
@@ -264,6 +342,32 @@ impl Default for GameBoy {
 mod tests {
     use super::*;
     use crate::hardware::{CgbRevision, DmgRevision};
+
+    #[test]
+    fn resets_preserve_the_external_serial_device_but_clear_transfers() {
+        let mut gb = GameBoy::new(Model::Sgb);
+        gb.mmu
+            .ppu
+            .set_dmg_palette([0xffffff, 0xaaaaaa, 0x555555, 0]);
+        gb.mmu
+            .serial
+            .connect(Box::new(crate::serial::NullLinkPort::new(true)));
+        for power_on in [false, true] {
+            gb.mmu.serial.write(0xff01, 0x12);
+            gb.mmu.serial.write(0xff02, 0x81);
+            if power_on {
+                gb.reset_power_on();
+            } else {
+                gb.reset();
+            }
+            assert_eq!(gb.mmu.serial.read(0xff02) & 0x80, 0);
+            assert_eq!(gb.mmu.ppu.dmg_palette(), [0xffffff, 0xaaaaaa, 0x555555, 0]);
+            gb.mmu.serial.write(0xff01, 0x42);
+            gb.mmu.serial.write(0xff02, 0x81);
+            gb.mmu.serial.step(0, 4096, false, &mut gb.mmu.if_reg);
+            assert_eq!(gb.mmu.serial.read(0xff01), 0x42);
+        }
+    }
 
     fn dummy_rom(cgb: bool) -> Vec<u8> {
         let mut rom = vec![0; 0x8000];

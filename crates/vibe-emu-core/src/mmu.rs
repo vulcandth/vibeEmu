@@ -595,6 +595,8 @@ impl Mmu {
         let output_state = self.apu.take_output_state();
         let mut replacement = Box::new(Self::new(model));
         replacement.apu.restore_output_state(output_state);
+        replacement.serial.connect(self.serial.take_port());
+        replacement.ppu.set_dmg_palette(self.ppu.dmg_palette());
         *self = *replacement;
     }
 
@@ -602,6 +604,8 @@ impl Mmu {
         let output_state = self.apu.take_output_state();
         let mut replacement = Box::new(Self::new_power_on(model));
         replacement.apu.restore_output_state(output_state);
+        replacement.serial.connect(self.serial.take_port());
+        replacement.ppu.set_dmg_palette(self.ppu.dmg_palette());
         *self = *replacement;
     }
 
@@ -901,7 +905,7 @@ impl Mmu {
                 0xFF
             }
             0xFF00 => {
-                if let Some(sgb) = &self.ppu.sgb {
+                if let Some(sgb) = self.ppu.sgb.as_ref().filter(|sgb| sgb.is_command_host()) {
                     let value = self.input.read_player(sgb.current_player());
                     if value & 0x30 == 0x30 {
                         (value & 0xf0) | sgb.controller_id()

@@ -9,7 +9,7 @@ class EmulatorViewModel : ViewModel() {
     val emulator: Emulator = Emulator()
 
     val emuDispatcher: ExecutorCoroutineDispatcher = Executors
-        .newSingleThreadExecutor { r -> Thread(r, "EmuThread").apply { isDaemon = true } }
+        .newSingleThreadExecutor { r -> Thread(null, r, "EmuThread", 8L * 1024 * 1024).apply { isDaemon = true } }
         .asCoroutineDispatcher()
 
     override fun onCleared() {

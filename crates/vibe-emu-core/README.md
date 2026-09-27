@@ -122,7 +122,7 @@ startup registers as well as memory state. `Model::is_cgb()` includes AGB;
 `Model::clock_hz()` for pacing (SGB1 uses the NTSC SNES-derived clock).
 
 SGB support covers the Game Boy subsystem, including header-dependent boot
-timing. SNES-side borders, audio, and multiplayer commands are not implemented.
+timing, plus the high-level graphics and controller host described below.
 AGB models run GB/GBC software, not native GBA software. AGB0 and AGB differ in
 boot ROM behavior; supply the matching image to `Mmu::load_boot_rom` when
 starting with `GameBoy::new_power_on`. Skipping boot initializes their shared
@@ -138,10 +138,21 @@ use the rendered two-bit color IDs in native CGB mode, and palette-mapped LCD
 shades in monochrome mode. Both reset methods preserve this configuration.
 Hybrid mode accepts live commands and does not preboot as SGB to obtain borders.
 
+For the separate **GBC + initial SGB border** mode, load the cartridge into a
+normal CGB `GameBoy`, then call `gb.borrow_sgb_border(sgb_boot_rom, 600)`.
+This runs a temporary SGB machine, copies the first completed border, and
+discards the donor. It neither advances the CGB CPU nor changes its RAM,
+boot ROM or cartridge save. The donor has no save paths or external devices.
+Pass `None` to skip the donor boot ROM. Only cartridges with both CGB and SGB
+headers are eligible. False means no border was captured within the bounded
+startup window; gameplay continues as normal CGB. Both reset methods retain
+the captured border without enabling JOYP commands or SGB multiplayer.
+
 
 For `Model::Sgb` and `Model::Sgb2`, use `ppu.display_dimensions()` and
-`ppu.display_framebuffer()` for the 256x224 image with borders. Other models
-return their normal 160x144 output through the same API. `ppu.framebuffer()`
+`ppu.display_framebuffer()` for the 256x224 image with borders. CGB hybrids and
+machines with a borrowed border use the same dimensions; unextended models
+return their normal 160x144 output. `ppu.framebuffer()`
 remains the uncolorized Game Boy LCD image for debugging and ROM comparisons.
 Set controllers 1?4 with `mmu.input.set_player_state(player, active_low_buttons)`
 using zero-based player indices 0?3;

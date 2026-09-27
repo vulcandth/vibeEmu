@@ -1,5 +1,6 @@
 package com.example.vibeemua
 
+import android.hardware.input.InputManager
 import android.graphics.Bitmap
 import android.graphics.Paint
 import android.graphics.Rect
@@ -14,12 +15,17 @@ import android.view.SurfaceView
 import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import com.example.vibeemua.AudioPlayer
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -106,9 +112,9 @@ import kotlin.math.abs
 import android.content.res.Configuration
 import androidx.compose.ui.graphics.RectangleShape
 
-private fun computeDestRect(canvasWidth: Int, canvasHeight: Int, out: Rect) {
+private fun computeDestRect(canvasWidth: Int, canvasHeight: Int, out: Rect, sourceWidth: Int, sourceHeight: Int) {
     // Letterbox while preserving aspect ratio.
-    val targetRatio = FB_WIDTH.toFloat() / FB_HEIGHT.toFloat()
+    val targetRatio = sourceWidth.toFloat() / sourceHeight
     val canvasRatio = canvasWidth.toFloat() / canvasHeight.toFloat()
     if (canvasRatio > targetRatio) {
         val scaledWidth = (canvasHeight * targetRatio).toInt()
@@ -182,15 +188,44 @@ private enum class OptionsPage {
     Input,
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), InputManager.InputDeviceListener {
     private val vm: EmulatorViewModel by viewModels()
     private lateinit var audioPlayer: AudioPlayer
+    private var gameplayInputEnabled = false
 
-    private val controllerPressedMaskState = mutableIntStateOf(0)
+    private val controllerSlots = ControllerSlots()
+    private val controllerPressedMasksState = mutableStateOf(List(4) { 0 })
+    private val controllerNamesState = mutableStateOf(List(4) { "No controller" })
+    private val keyboardPressedMaskState = mutableIntStateOf(0)
+
+    private fun publishControllers() {
+        controllerPressedMasksState.value = controllerSlots.pressedMasks()
+        controllerNamesState.value = controllerSlots.deviceIds().map { id ->
+            id?.let { InputDevice.getDevice(it)?.name } ?: "No controller"
+        }
+    }
+
+    override fun onInputDeviceAdded(deviceId: Int) {
+        if (isGameControllerDevice(InputDevice.getDevice(deviceId))) {
+            controllerSlots.assign(deviceId)
+            publishControllers()
+        }
+    }
+    override fun onInputDeviceRemoved(deviceId: Int) {
+        controllerSlots.remove(deviceId)
+        publishControllers()
+    }
+    override fun onInputDeviceChanged(deviceId: Int) {
+        if (isGameControllerDevice(InputDevice.getDevice(deviceId))) onInputDeviceAdded(deviceId)
+        else onInputDeviceRemoved(deviceId)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         InputMappingStore.init(this)
+        val inputManager = getSystemService(InputManager::class.java)
+        inputManager.registerInputDeviceListener(this, null)
+        inputManager.inputDeviceIds.forEach(::onInputDeviceAdded)
         audioPlayer = AudioPlayer(vm.emulator, lifecycleScope)
         enableEdgeToEdge()
         setContent {
@@ -198,7 +233,17 @@ class MainActivity : ComponentActivity() {
                 EmulatorScreen(
                     vm.emulator,
                     vm.emuDispatcher,
-                    controllerPressedMask = controllerPressedMaskState.intValue,
+                    controllerPressedMasks = controllerPressedMasksState.value,
+                    keyboardPressedMask = keyboardPressedMaskState.intValue,
+                    controllerNames = controllerNamesState.value,
+                    onGameplayInputChanged = { enabled ->
+                        gameplayInputEnabled = enabled
+                        if (!enabled) {
+                            controllerSlots.releaseButtons()
+                            keyboardPressedMaskState.intValue = 0
+                            publishControllers()
+                        }
+                    },
                     onRomLoaded = {
                         audioPlayer.start()
                         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -208,16 +253,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun setControllerMaskBit(mask: Int, pressed: Boolean) {
-        val cur = controllerPressedMaskState.intValue
-        val next = if (pressed) (cur or mask) else (cur and mask.inv())
-        if (next != cur) controllerPressedMaskState.intValue = next
+    private fun setControllerMaskBit(mask: Int, pressed: Boolean, deviceId: Int?) {
+        if (deviceId != null) {
+            controllerSlots.setButton(deviceId, mask, pressed)
+            publishControllers()
+        } else {
+            val current = keyboardPressedMaskState.intValue
+            keyboardPressedMaskState.intValue = if (pressed) current or mask else current and mask.inv()
+        }
     }
 
+    // This is the public Activity callback; AndroidX's internal superclass is
+    // restricted, but forwarding unhandled events preserves Compose dispatch.
+    @android.annotation.SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (KeyCapture.isCapturing()) {
             if (KeyCapture.maybeConsumeKeyDown(event)) return true
         }
+        if (!gameplayInputEnabled) return super.dispatchKeyEvent(event)
 
         val isController = isGameControllerDevice(event.device)
         val mappings = InputMappingStore.get()
@@ -225,11 +278,11 @@ class MainActivity : ComponentActivity() {
         if (mask != 0) {
             when (event.action) {
                 KeyEvent.ACTION_DOWN -> {
-                    setControllerMaskBit(mask, true)
+                    setControllerMaskBit(mask, true, if (isController) event.deviceId else null)
                     return true
                 }
                 KeyEvent.ACTION_UP -> {
-                    setControllerMaskBit(mask, false)
+                    setControllerMaskBit(mask, false, if (isController) event.deviceId else null)
                     return true
                 }
             }
@@ -244,6 +297,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        if (!gameplayInputEnabled) return super.dispatchGenericMotionEvent(event)
         if (event.action == MotionEvent.ACTION_MOVE && isGameControllerDevice(event.device)) {
             val device = event.device
             if (device != null && (event.source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) {
@@ -262,10 +316,8 @@ class MainActivity : ComponentActivity() {
                 if (hatY <= -0.5f || ly <= -threshold) dpadBits = dpadBits or MASK_UP
                 if (hatY >= 0.5f || ly >= threshold) dpadBits = dpadBits or MASK_DOWN
 
-                val cur = controllerPressedMaskState.intValue
-                val cleared = cur and (MASK_UP or MASK_DOWN or MASK_LEFT or MASK_RIGHT).inv()
-                val next = cleared or dpadBits
-                if (next != cur) controllerPressedMaskState.intValue = next
+                controllerSlots.setDirections(event.deviceId, dpadBits)
+                publishControllers()
                 return true
             }
         }
@@ -274,7 +326,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        vm.emulator.setPaused(false)
+        vm.emulator.setForeground(true)
         if (vm.emulator.isReady()) {
             audioPlayer.start()
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -283,7 +335,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        vm.emulator.setPaused(true)
+        controllerSlots.releaseButtons()
+        keyboardPressedMaskState.intValue = 0
+        publishControllers()
+        vm.emulator.setForeground(false)
         audioPlayer.stop()
         vm.emulator.saveRam()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -291,7 +346,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        vm.emulator.setPaused(!hasFocus)
+        vm.emulator.setForeground(hasFocus)
         if (!hasFocus) {
             audioPlayer.stop()
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -302,6 +357,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        getSystemService(InputManager::class.java).unregisterInputDeviceListener(this)
         super.onDestroy()
         audioPlayer.stop()
     }
@@ -317,7 +373,10 @@ class MainActivity : ComponentActivity() {
 fun EmulatorScreen(
     emulator: Emulator,
     emuDispatcher: kotlinx.coroutines.CoroutineDispatcher,
-    controllerPressedMask: Int = 0,
+    controllerPressedMasks: List<Int> = List(4) { 0 },
+    keyboardPressedMask: Int = 0,
+    controllerNames: List<String> = List(4) { "No controller" },
+    onGameplayInputChanged: (Boolean) -> Unit = {},
     onRomLoaded: () -> Unit = {},
     onOpenInstances: () -> Unit = {},
 ) {
@@ -331,29 +390,22 @@ fun EmulatorScreen(
     var options by remember { mutableStateOf(optionsRepository.load()) }
     var screen by rememberSaveable { mutableStateOf(UiScreen.Instances) }
 
-    val bootRomDmgFile = remember(context) { File(context.filesDir, "bootrom_dmg.bin") }
-    val bootRomCgbFile = remember(context) { File(context.filesDir, "bootrom_cgb.bin") }
+    val scope = rememberCoroutineScope()
+    var loading by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var currentInstanceId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    fun currentDmgBootRomBytes(): ByteArray? {
-        if (!options.dmgBootRomEnabled) return null
-        return try {
-            if (bootRomDmgFile.exists()) bootRomDmgFile.readBytes() else null
-        } catch (_: Throwable) {
-            null
+    fun readBootRoms(selected: AppOptions): Map<BootRomMode, ByteArray> =
+        selected.enabledBootRoms.associateWith { mode ->
+            val bytes = File(context.filesDir, mode.fileName).readBytes()
+            require(mode.acceptsSize(bytes.size)) { "Invalid ${mode.label} boot ROM size: ${bytes.size} bytes" }
+            bytes
         }
-    }
 
-    fun currentCgbBootRomBytes(): ByteArray? {
-        if (!options.cgbBootRomEnabled) return null
-        return try {
-            if (bootRomCgbFile.exists()) bootRomCgbFile.readBytes() else null
-        } catch (_: Throwable) {
-            null
-        }
-    }
+    var appliedSerial by remember { mutableStateOf<SerialPeripheral?>(null) }
 
     fun applySerialPeripheral(peripheral: SerialPeripheral) {
-        if (!emulator.isReady()) return
+        if (!emulator.isReady() || appliedSerial == peripheral) return
         when (peripheral) {
             SerialPeripheral.None -> emulator.disableMobileAdapter()
             SerialPeripheral.MobileAdapterGb -> {
@@ -363,6 +415,8 @@ fun EmulatorScreen(
                     // Fall back to None; UI will reflect this on next state update.
                     options = options.copy(serialPeripheral = SerialPeripheral.None)
                     optionsRepository.save(options)
+                    appliedSerial = SerialPeripheral.None
+                    return
                 }
             }
         }
@@ -372,11 +426,8 @@ fun EmulatorScreen(
         emulator.setDmgNeutralPalette(newOptions.dmgNeutralPalette)
         applySerialPeripheral(newOptions.serialPeripheral)
 
-        // Update boot ROM(s) for future resets/loads.
-        val dmgBytes = currentDmgBootRomBytes()
-        val cgbBytes = currentCgbBootRomBytes()
-        if (dmgBytes != null) emulator.setBootRom(BootRomMode.Dmg, dmgBytes) else emulator.clearBootRom(BootRomMode.Dmg)
-        if (cgbBytes != null) emulator.setBootRom(BootRomMode.Cgb, cgbBytes) else emulator.clearBootRom(BootRomMode.Cgb)
+        emulator.setShowBorder(newOptions.showSgbBorder)
+        appliedSerial = options.serialPeripheral
     }
 
     var status by rememberSaveable { mutableStateOf("Select an instance to play") }
@@ -384,10 +435,16 @@ fun EmulatorScreen(
     var inputState by remember { mutableStateOf(0xFF) }
     var menuExpanded by remember { mutableStateOf(false) }
 
-    LaunchedEffect(screen) {
+    BackHandler(enabled = screen == UiScreen.Emulator && !loading) {
+        menuExpanded = true
+    }
+
+    LaunchedEffect(screen, menuExpanded, loading) {
         // Pause emulation whenever we're not actively on the gameplay screen.
         // This prevents the core from running (and mutating SRAM) while the user is managing instances.
-        emulator.setPaused(screen != UiScreen.Emulator)
+        val gameplay = screen == UiScreen.Emulator && !menuExpanded && !loading
+        emulator.setPaused(!gameplay)
+        onGameplayInputChanged(gameplay)
 
         // Also flush SRAM/RTC to disk when leaving gameplay so exports see the latest data.
         if (screen != UiScreen.Emulator) {
@@ -399,8 +456,8 @@ fun EmulatorScreen(
     var actionPressedMask by remember { mutableStateOf(0) }
     var metaPressedMask by remember { mutableStateOf(0) }
 
-    val frameBuffer = remember { IntArray(FB_WIDTH * FB_HEIGHT) }
-    val bitmap = remember { Bitmap.createBitmap(FB_WIDTH, FB_HEIGHT, Bitmap.Config.ARGB_8888) }
+    val frameBuffer = remember { IntArray(FrameSize.MAX_PIXELS) }
+    var frameSize by remember { mutableStateOf(FrameSize(FB_WIDTH, FB_HEIGHT)) }
     val paint = remember {
         Paint().apply {
             // Nearest-neighbor scaling is both faster and more correct for pixel art.
@@ -414,31 +471,59 @@ fun EmulatorScreen(
     // Core runs on a dedicated thread (provided by activity).
 
     fun loadInstance(instance: GameInstance) {
-        val repo = GameInstancesRepository(context)
-        val romFile = repo.romFile(instance.id)
-        val dmgBootRom = currentDmgBootRomBytes()
-        val cgbBootRom = currentCgbBootRomBytes()
-
-        if (romFile.exists() && emulator.loadRomFromFile(romFile.absolutePath, options.emulationMode, dmgBootRom, cgbBootRom)) {
-            romLabel = instance.nickname
-            status = "Running ${instance.nickname} (${options.emulationMode.label})"
-            inputState = 0xFF
-            emulator.updateInput(inputState)
-            applyRuntimeOptions(options)
-            screen = UiScreen.Emulator
-            onRomLoaded()
-        } else {
-            status = "Failed to load instance"
+        if (loading) return
+        loading = true
+        loadError = null
+        emulator.setPaused(true)
+        val selected = options
+        scope.launch {
+            try {
+                val loaded = withContext(emuDispatcher) {
+                    val romFile = GameInstancesRepository(context).romFile(instance.id)
+                    val boots = readBootRoms(selected)
+                    romFile.exists() && emulator.loadRomFromFile(romFile.absolutePath, selected.emulationMode, boots)
+                }
+                check(loaded) { "Failed to load instance or boot ROM" }
+                currentInstanceId = instance.id
+                romLabel = instance.nickname
+                status = "Running ${instance.nickname} (${selected.emulationMode.label})"
+                inputState = 0xFF
+                emulator.updateInput(inputState)
+                appliedSerial = null
+                applyRuntimeOptions(selected)
+                hasFrame = false
+                screen = UiScreen.Emulator
+                emulator.setPaused(false)
+                onRomLoaded()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                loadError = e.message ?: "Failed to load instance"
+            } finally { loading = false }
         }
+    }
+
+    if (loading) {
+        AlertDialog(onDismissRequest = {}, confirmButton = {},
+            title = { Text("Loading game") },
+            text = { Text("Preparing the game and its initial SGB border, if selected...") })
+    }
+    loadError?.let { error ->
+        AlertDialog(onDismissRequest = { loadError = null },
+            confirmButton = { TextButton(onClick = { loadError = null }) { Text("OK") } },
+            title = { Text("Unable to load game") }, text = { Text(error) })
     }
 
     LaunchedEffect(Unit) {
         // Drive emulation off the main thread to reduce UI contention.
-        val targetFrameNs = 16_740_000L // ~59.7 fps
         withContext(emuDispatcher) {
+            var bitmap = Bitmap.createBitmap(FB_WIDTH, FB_HEIGHT, Bitmap.Config.ARGB_8888)
             var nextFrameDeadline = System.nanoTime()
             val maxFrameSkip = 4
             while (isActive) {
+                // Pacing sleeps alone do not yield a single-thread dispatcher.
+                kotlinx.coroutines.yield()
+                val targetFrameNs = emulator.frameDurationNs
                 if (emulator.isReady() && !emulator.isPaused()) {
                     // Pace the loop to ~59fps to avoid running too fast.
                     val now = System.nanoTime()
@@ -461,8 +546,12 @@ fun EmulatorScreen(
                     nextFrameDeadline = catchupDeadline
 
                     val updated = emulator.renderFrame(frameBuffer)
-                    if (updated) {
-                        bitmap.setPixels(frameBuffer, 0, FB_WIDTH, 0, 0, FB_WIDTH, FB_HEIGHT)
+                    if (updated != null) {
+                        if (bitmap.width != updated.width || bitmap.height != updated.height) {
+                            bitmap.recycle()
+                            bitmap = Bitmap.createBitmap(updated.width, updated.height, Bitmap.Config.ARGB_8888)
+                        }
+                        bitmap.setPixels(frameBuffer, 0, updated.width, 0, 0, updated.width, updated.height)
                         surfaceHolder?.let { h ->
                             val canvas = try {
                                 if (Build.VERSION.SDK_INT >= 26) h.lockHardwareCanvas() else h.lockCanvas()
@@ -470,13 +559,15 @@ fun EmulatorScreen(
                                 h.lockCanvas()
                             }
                             if (canvas != null) {
-                                computeDestRect(canvas.width, canvas.height, destRect)
+                                computeDestRect(canvas.width, canvas.height, destRect, updated.width, updated.height)
+                                canvas.drawColor(android.graphics.Color.BLACK)
                                 canvas.drawBitmap(bitmap, null, destRect, paint)
                                 h.unlockCanvasAndPost(canvas)
                             }
                         }
-                        if (!hasFrame) {
+                        if (!hasFrame || frameSize != updated) {
                             withContext(Dispatchers.Main.immediate) {
+                                frameSize = updated
                                 hasFrame = true
                             }
                         }
@@ -496,11 +587,16 @@ fun EmulatorScreen(
         }
     }
 
-    LaunchedEffect(dpadPressedMask, actionPressedMask, metaPressedMask, controllerPressedMask) {
-        val pressed = (dpadPressedMask or actionPressedMask or metaPressedMask) or controllerPressedMask
-        val nextState = 0xFF and pressed.inv()
-        inputState = nextState
-        emulator.updateInput(nextState)
+    LaunchedEffect(dpadPressedMask, actionPressedMask, metaPressedMask, controllerPressedMasks, keyboardPressedMask, emulator.isSgbHost, loading) {
+        if (!loading) {
+            val touchAndKeyboard = dpadPressedMask or actionPressedMask or metaPressedMask or keyboardPressedMask
+            val firstPad = if (emulator.isSgbHost) controllerPressedMasks[0] else controllerPressedMasks.fold(0) { a, b -> a or b }
+            inputState = 0xFF and (touchAndKeyboard or firstPad).inv()
+            emulator.updateInput(inputState)
+            for (player in 1..3) {
+                emulator.updateInput(if (emulator.isSgbHost) 0xFF and controllerPressedMasks[player].inv() else 0xFF, player)
+            }
+        }
     }
 
     val showTopBar = (!isLandscape && !isTv) && screen == UiScreen.Emulator
@@ -597,6 +693,9 @@ fun EmulatorScreen(
                     applyRuntimeOptions(updated)
                 },
                 onBack = { screen = UiScreen.Emulator },
+                controllerNames = controllerNames,
+                canReload = currentInstanceId != null && !loading,
+                onReload = { currentInstanceId?.let { GameInstancesRepository(context).get(it)?.let(::loadInstance) } },
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
@@ -672,6 +771,7 @@ fun EmulatorScreen(
                             modifier = Modifier.weight(1f, fill = true),
                             compactHeight = compactHeight,
                             showTouchControls = showTouchControls,
+                            frameSize = frameSize,
                             hasFrame = hasFrame,
                             surfaceHolder = surfaceHolder,
                             onSurfaceHolderChanged = { surfaceHolder = it },
@@ -690,6 +790,7 @@ fun EmulatorScreen(
                         modifier = Modifier.fillMaxSize(),
                         compactHeight = compactHeight,
                         showTouchControls = showTouchControls,
+                        frameSize = frameSize,
                         hasFrame = hasFrame,
                         surfaceHolder = surfaceHolder,
                         onSurfaceHolderChanged = { surfaceHolder = it },
@@ -701,8 +802,8 @@ fun EmulatorScreen(
                         onMetaMaskChange = { metaPressedMask = it },
                     )
 
-                    // Overlay hamburger menu for landscape phones so the game can reach top/bottom.
-                    if (!isTv && isLandscape && screen == UiScreen.Emulator) {
+                    // Back opens this menu on TV; the controller then navigates the UI.
+                    if ((isTv || isLandscape) && screen == UiScreen.Emulator) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -767,6 +868,7 @@ private fun PortraitPlayLayout(
     modifier: Modifier,
     compactHeight: Boolean,
     showTouchControls: Boolean,
+    frameSize: FrameSize,
     hasFrame: Boolean,
     surfaceHolder: SurfaceHolder?,
     onSurfaceHolderChanged: (SurfaceHolder?) -> Unit,
@@ -796,6 +898,7 @@ private fun PortraitPlayLayout(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f, fill = true),
+                frameSize = frameSize,
                 hasFrame = hasFrame,
                 surfaceHolder = surfaceHolder,
                 onSurfaceHolderChanged = onSurfaceHolderChanged,
@@ -847,6 +950,7 @@ private fun LandscapePlayLayout(
     modifier: Modifier,
     compactHeight: Boolean,
     showTouchControls: Boolean,
+    frameSize: FrameSize,
     hasFrame: Boolean,
     surfaceHolder: SurfaceHolder?,
     onSurfaceHolderChanged: (SurfaceHolder?) -> Unit,
@@ -860,7 +964,7 @@ private fun LandscapePlayLayout(
     val hGap = if (compactHeight) 10.dp else 16.dp
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val aspect = FB_WIDTH.toFloat() / FB_HEIGHT.toFloat()
+        val aspect = frameSize.aspect
         val desiredGameWidth = maxHeight * aspect
 
         val minControlWidth = if (compactHeight) 132.dp else 156.dp
@@ -915,6 +1019,7 @@ private fun LandscapePlayLayout(
                 modifier = Modifier
                     .width(gameColumnWidth)
                     .fillMaxHeight(),
+                frameSize = frameSize,
                 hasFrame = hasFrame,
                 surfaceHolder = surfaceHolder,
                 onSurfaceHolderChanged = onSurfaceHolderChanged,
@@ -947,6 +1052,7 @@ private fun LandscapePlayLayout(
 @Composable
 private fun GameView(
     modifier: Modifier,
+    frameSize: FrameSize,
     hasFrame: Boolean,
     surfaceHolder: SurfaceHolder?,
     onSurfaceHolderChanged: (SurfaceHolder?) -> Unit,
@@ -956,7 +1062,7 @@ private fun GameView(
         contentAlignment = Alignment.Center,
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val aspect = FB_WIDTH.toFloat() / FB_HEIGHT.toFloat()
+            val aspect = frameSize.aspect
             val gameWidth = minOf(maxWidth, (maxHeight.value * aspect).dp)
             val gameHeight = (gameWidth.value / aspect).dp
 
@@ -995,14 +1101,17 @@ private fun OptionsScreen(
     options: AppOptions,
     onOptionsChange: (AppOptions) -> Unit,
     onBack: () -> Unit,
+    controllerNames: List<String>,
+    canReload: Boolean,
+    onReload: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
 
     var page by remember { mutableStateOf(OptionsPage.Root) }
 
-    val bootRomDmgFile = remember(context) { File(context.filesDir, "bootrom_dmg.bin") }
-    val bootRomCgbFile = remember(context) { File(context.filesDir, "bootrom_cgb.bin") }
+    var pendingBootMode by rememberSaveable { mutableStateOf(BootRomMode.Dmg) }
+    var bootError by remember { mutableStateOf<String?>(null) }
 
     var mappings by remember { mutableStateOf(InputMappingsRepository(context).load()) }
 
@@ -1011,35 +1120,19 @@ private fun OptionsScreen(
         InputMappingStore.set(context, next)
     }
 
-    val pickDmgBootRom = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        val bytes = try {
-            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-        } catch (_: Throwable) {
-            null
-        }
-        if (bytes != null) {
+    val pickBootRom = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        if (uri != null) {
             try {
-                bootRomDmgFile.writeBytes(bytes)
-                onOptionsChange(options.copy(dmgBootRomEnabled = true))
-            } catch (_: Throwable) {
-            }
-        }
-    }
-
-    val pickCgbBootRom = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        val bytes = try {
-            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-        } catch (_: Throwable) {
-            null
-        }
-        if (bytes != null) {
-            try {
-                bootRomCgbFile.writeBytes(bytes)
-                onOptionsChange(options.copy(cgbBootRomEnabled = true))
-            } catch (_: Throwable) {
-            }
+                val mode = pendingBootMode
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: error("Cannot read the selected file")
+                require(mode.acceptsSize(bytes.size)) {
+                    "${mode.label} boot ROM must be ${if (mode.color) "2048 or 2304" else "256"} bytes"
+                }
+                File(context.filesDir, mode.fileName).writeBytes(bytes)
+                onOptionsChange(options.copy(enabledBootRoms = options.enabledBootRoms + mode))
+                bootError = null
+            } catch (e: Exception) { bootError = e.message ?: "Unable to import boot ROM" }
         }
     }
 
@@ -1087,7 +1180,7 @@ private fun OptionsScreen(
 
                     ListItem(
                         headlineContent = { Text("Boot ROM") },
-                        supportingContent = { Text("Select DMG/CGB boot ROM files") },
+                        supportingContent = { Text("Separate boot ROM files for all seven models") },
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { page = OptionsPage.BootRom }
@@ -1112,6 +1205,7 @@ private fun OptionsScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
+                        .verticalScroll(rememberScrollState())
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -1130,9 +1224,17 @@ private fun OptionsScreen(
                         }
                     }
                     Text(
-                        text = "Hardware mode takes effect next time you load a ROM.",
+                        text = "Model and boot ROM changes take effect on the next load. Reset retains the current machine and initial border.",
                         style = MaterialTheme.typography.bodySmall,
                     )
+
+                    OutlinedButton(enabled = canReload, onClick = onReload) { Text("Apply and reload current game") }
+                    Text("SGB + GBC accepts live SGB commands. Initial border starts normal CGB gameplay after capture; it has no SGB multiplayer or later border changes.", style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Show SGB border", modifier = Modifier.weight(1f))
+                        Switch(checked = options.showSgbBorder, onCheckedChange = { onOptionsChange(options.copy(showSgbBorder = it)) })
+                    }
+                    Text("Game Boy audio is supported. SNES audio commands and uploaded SNES programs are not emulated.", style = MaterialTheme.typography.bodySmall)
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1173,35 +1275,33 @@ private fun OptionsScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
+                        .verticalScroll(rememberScrollState())
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text(text = "DMG boot ROM", style = MaterialTheme.typography.titleMedium)
-                    Text(text = if (options.dmgBootRomEnabled && bootRomDmgFile.exists()) "Set" else "Not set", style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { pickDmgBootRom.launch("application/octet-stream") }) { Text("Choose") }
-                        OutlinedButton(
-                            onClick = {
-                                try { bootRomDmgFile.delete() } catch (_: Throwable) {}
-                                onOptionsChange(options.copy(dmgBootRomEnabled = false))
-                            }
-                        ) { Text("Clear") }
+                    Text("Initial-border mode uses the SGB boot ROM for capture and the CGB boot ROM for gameplay.")
+                    Text("Boot ROMs are optional. Changes take effect on the next game load.", style = MaterialTheme.typography.bodySmall)
+                    bootError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    BootRomMode.entries.forEach { mode ->
+                        val file = File(context.filesDir, mode.fileName)
+                        Text("${mode.label} boot ROM", style = MaterialTheme.typography.titleMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(if (file.exists()) "Imported" else "Not set", modifier = Modifier.weight(1f))
+                            Switch(enabled = file.exists(), checked = mode in options.enabledBootRoms,
+                                onCheckedChange = { enabled -> onOptionsChange(options.copy(enabledBootRoms =
+                                    if (enabled) options.enabledBootRoms + mode else options.enabledBootRoms - mode)) })
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { pendingBootMode = mode; pickBootRom.launch("*/*") }) { Text("Choose") }
+                            OutlinedButton(onClick = {
+                                if (!file.exists() || file.delete()) {
+                                    onOptionsChange(options.copy(enabledBootRoms = options.enabledBootRoms - mode))
+                                } else { bootError = "Could not clear ${mode.label} boot ROM" }
+                            }) { Text("Clear") }
+                        }
+                        HorizontalDivider()
                     }
-                    Text(text = "Used in DMG mode. Takes effect on next ROM load/reset.", style = MaterialTheme.typography.bodySmall)
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(text = "CGB boot ROM", style = MaterialTheme.typography.titleMedium)
-                    Text(text = if (options.cgbBootRomEnabled && bootRomCgbFile.exists()) "Set" else "Not set", style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { pickCgbBootRom.launch("application/octet-stream") }) { Text("Choose") }
-                        OutlinedButton(
-                            onClick = {
-                                try { bootRomCgbFile.delete() } catch (_: Throwable) {}
-                                onOptionsChange(options.copy(cgbBootRomEnabled = false))
-                            }
-                        ) { Text("Clear") }
-                    }
-                    Text(text = "Used in CGB mode. Takes effect on next ROM load/reset.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(enabled = canReload, onClick = onReload) { Text("Apply and reload current game") }
                 }
             }
 
@@ -1213,6 +1313,11 @@ private fun OptionsScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    item {
+                        Text("Keyboard and touch control player 1. SGB games can use up to four controllers. Other modes combine controllers into player 1.")
+                        controllerNames.forEachIndexed { player, name -> Text("Player ${player + 1}: $name") }
+                    }
+
                     item {
                         Text(text = "Key mapping", style = MaterialTheme.typography.titleMedium)
                     }
@@ -1289,7 +1394,7 @@ private fun DpadPad(
 ) {
     var sizePx by remember { mutableStateOf(IntSize.Zero) }
     val pointers = remember { mutableMapOf<Int, Offset>() }
-    BoxWithConstraints(
+    Box(
         modifier = Modifier
             .size(padSize)
             .onSizeChanged { sizePx = it }
@@ -1410,7 +1515,7 @@ private fun ActionPad(
 ) {
     var sizePx by remember { mutableStateOf(IntSize.Zero) }
     val pointers = remember { mutableMapOf<Int, Offset>() }
-    BoxWithConstraints(
+    Box(
         modifier = Modifier
             .size(padSize)
             .onSizeChanged { sizePx = it }

@@ -3234,6 +3234,11 @@ impl Ppu {
         x
     }
 
+    /// Current user-selected DMG colors in 0x00RRGGBB order (not BGP register data).
+    pub fn dmg_palette(&self) -> [u32; 4] {
+        self.dmg_palette
+    }
+
     /// Set a runtime DMG palette. Colors are in 0x00RRGGBB order.
     pub fn set_dmg_palette(&mut self, pal: [u32; 4]) {
         self.dmg_palette = pal;
@@ -4648,10 +4653,19 @@ impl Ppu {
     /// Attach the high-level SGB host to this PPU, including CGB hardware.
     /// Hybrid CGB output keeps its native colors; SGB transfers use color IDs.
     pub fn enable_sgb_extensions(&mut self) {
-        if self.sgb.is_none() {
+        if self.sgb.as_ref().is_none_or(|sgb| !sgb.is_command_host()) {
             self.sgb = Some(Box::new(crate::sgb::Sgb::default()));
             self.refresh_palette_color_tables();
         }
+    }
+
+    /// Display a captured border without exposing SGB commands or controllers.
+    pub fn set_sgb_border(&mut self, border: crate::sgb::SgbBorder) {
+        self.sgb = Some(Box::new(crate::sgb::Sgb::from_border(
+            border,
+            &self.framebuffer,
+        )));
+        self.refresh_palette_color_tables();
     }
 
     /// Frontend output dimensions, including the border on SGB models.
@@ -7033,7 +7047,7 @@ impl Ppu {
                     self.lcd_off_frame_cycle_accum -= FRAME_DOT_CYCLES;
                     self.frame_ready = true;
                     if let Some(sgb) = &mut self.sgb {
-                        sgb.finish_frame(self.lcdc & 0x80 != 0);
+                        sgb.finish_lcd_off_frame(&self.framebuffer);
                     }
                     self.frame_counter = self.frame_counter.wrapping_add(1);
                 }

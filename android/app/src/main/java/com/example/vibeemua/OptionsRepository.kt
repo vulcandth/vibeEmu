@@ -6,48 +6,35 @@ data class AppOptions(
     val emulationMode: EmulationMode = EmulationMode.Auto,
     val dmgNeutralPalette: Boolean = false,
     val serialPeripheral: SerialPeripheral = SerialPeripheral.None,
-    val dmgBootRomEnabled: Boolean = false,
-    val cgbBootRomEnabled: Boolean = false,
+    val enabledBootRoms: Set<BootRomMode> = emptySet(),
+    val showSgbBorder: Boolean = true,
 )
 
 class OptionsRepository(context: Context) {
     private val prefs = context.getSharedPreferences("vibeEmuA_options", Context.MODE_PRIVATE)
 
     fun load(): AppOptions {
-        val modeOrdinal = prefs.getInt(KEY_EMULATION_MODE, EmulationMode.Auto.ordinal)
-        val mode = EmulationMode.entries.getOrNull(modeOrdinal) ?: EmulationMode.Auto
-        val dmgNeutral = prefs.getBoolean(KEY_DMG_NEUTRAL, false)
-
-        val serialOrdinal = prefs.getInt(KEY_SERIAL_PERIPHERAL, SerialPeripheral.None.ordinal)
-        val serial = SerialPeripheral.entries.getOrNull(serialOrdinal) ?: SerialPeripheral.None
-
-        val dmgBootRomEnabled = prefs.getBoolean(KEY_DMG_BOOTROM_ENABLED, false)
-        val cgbBootRomEnabled = prefs.getBoolean(KEY_CGB_BOOTROM_ENABLED, false)
-
+        val modeId = prefs.getInt("emulation_mode", EmulationMode.Auto.nativeId)
+        val serialOrdinal = prefs.getInt("serial_peripheral", SerialPeripheral.None.ordinal)
         return AppOptions(
-            emulationMode = mode,
-            dmgNeutralPalette = dmgNeutral,
-            serialPeripheral = serial,
-            dmgBootRomEnabled = dmgBootRomEnabled,
-            cgbBootRomEnabled = cgbBootRomEnabled,
+            emulationMode = EmulationMode.entries.firstOrNull { it.nativeId == modeId } ?: EmulationMode.Auto,
+            dmgNeutralPalette = prefs.getBoolean("dmg_neutral_palette", false),
+            serialPeripheral = SerialPeripheral.entries.getOrNull(serialOrdinal) ?: SerialPeripheral.None,
+            // DMG/CGB keys and filenames remain compatible with existing installs.
+            enabledBootRoms = BootRomMode.entries.filterTo(mutableSetOf()) {
+                prefs.getBoolean(it.preferenceKey, false)
+            },
+            showSgbBorder = prefs.getBoolean("show_sgb_border", true),
         )
     }
 
     fun save(options: AppOptions) {
-        prefs.edit()
-            .putInt(KEY_EMULATION_MODE, options.emulationMode.ordinal)
-            .putBoolean(KEY_DMG_NEUTRAL, options.dmgNeutralPalette)
-            .putInt(KEY_SERIAL_PERIPHERAL, options.serialPeripheral.ordinal)
-            .putBoolean(KEY_DMG_BOOTROM_ENABLED, options.dmgBootRomEnabled)
-            .putBoolean(KEY_CGB_BOOTROM_ENABLED, options.cgbBootRomEnabled)
-            .apply()
-    }
-
-    private companion object {
-        const val KEY_EMULATION_MODE = "emulation_mode"
-        const val KEY_DMG_NEUTRAL = "dmg_neutral_palette"
-        const val KEY_SERIAL_PERIPHERAL = "serial_peripheral"
-        const val KEY_DMG_BOOTROM_ENABLED = "dmg_bootrom_enabled"
-        const val KEY_CGB_BOOTROM_ENABLED = "cgb_bootrom_enabled"
+        val editor = prefs.edit()
+            .putInt("emulation_mode", options.emulationMode.nativeId)
+            .putBoolean("dmg_neutral_palette", options.dmgNeutralPalette)
+            .putInt("serial_peripheral", options.serialPeripheral.ordinal)
+            .putBoolean("show_sgb_border", options.showSgbBorder)
+        BootRomMode.entries.forEach { editor.putBoolean(it.preferenceKey, it in options.enabledBootRoms) }
+        editor.apply()
     }
 }

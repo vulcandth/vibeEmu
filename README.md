@@ -98,6 +98,11 @@ For detailed platform-specific instructions, troubleshooting, and build configur
 The Android project lives in `android/` and builds its native library from the
 same workspace sources via `cargo-ndk`.
 
+Android supports all seven hardware models, both SGB/GBC hybrid modes,
+independent boot ROM imports, optional SGB borders and four-controller SGB
+input. Model and boot changes apply on load; Options also offers an explicit
+reload action. See [SGB.md](SGB.md) for mode behavior and frontend coverage.
+
 On Windows, a wrapper-based debug build looks like this:
 
 ```powershell
@@ -171,7 +176,7 @@ Common arguments:
 - `--dmg`: force DMG mode.
 - `--dmg-neutral`: use neutral DMG palette settings.
 - `--cgb`: force CGB mode.
-- `--model <dmg|mgb|sgb|sgb2|cgb|cgb-sgb|agb0|agb>`: select the hardware model.
+- `--model <dmg|mgb|sgb|sgb2|cgb|sgb-cgb|cgb-sgb-border|auto-cgb|auto-sgb|agb0|agb>`: select the hardware model or hybrid mode.
   The same models are available in the desktop emulation mode menu.
   AGB0/AGB run GB/GBC cartridges using the original/revised Advance boot ROM.
   SGB/SGB2 support game-supplied palettes, attribute maps, borders, screen masks,
@@ -181,13 +186,22 @@ Common arguments:
   controls player 1. No SNES BIOS is required. SNES sound commands, uploaded SNES
   programs, BIOS menus/animations, and OBJ_TRN are not emulated; Game Boy audio
   continues to work. Games without their own border use a plain backdrop.
-  `cgb-sgb` ("CGB + SGB (hybrid)" in the UI) combines native CGB colors and timing
-  with live SGB commands. It is a fictional system, like BGB's SGB + GBC mode.
+  `sgb-cgb` ("SGB + GBC" in the UI, also accepts the older `cgb-sgb` spelling)
+  combines native CGB colors and timing with live SGB commands, like BGB's
+  fictional simultaneous mode.
   Games that only upload borders when booted as an SGB may not show a border in
   this mode; it does not perform an SGB preboot to extract a border.
+  `cgb-sgb-border` ("GBC + initial SGB border") captures a dual-mode game's
+  initial border during an isolated SGB startup, then starts normal CGB gameplay.
+  Capture stops at the first completed border or after 600 emulated frames.
+  CGB gameplay has no SGB multiplayer, palette commands, or subsequent border changes.
+  `auto-cgb` / `auto-sgb` detect both header flags and choose which system to
+  prefer for dual-mode games. The legacy "Game Boy or GBC" option ignores SGB.
 - `--bootrom <path>`: load a boot ROM file matching the selected model.
-  Saved DMG/CGB boot ROM paths apply only to those models; use this override
-  for MGB, SGB, SGB2, AGB0, or AGB. Boot ROMs are optional.
+  Settings provides separate saved paths for DMG, MGB, SGB, SGB2, CGB, AGB0,
+  and AGB. Boot ROMs are optional; a blank path skips boot execution.
+- `--sgb-bootrom <path>`: override the SGB boot ROM used for initial-border
+  capture; `--bootrom` independently selects the CGB gameplay boot ROM.
 - `--headless`: run without a window or audio output.
 - `--frames <n>`: in headless mode, stop after `n` frames.
 - `--seconds <n>`: in headless mode, stop after about `n` seconds.
@@ -250,6 +264,15 @@ open the VRAM Viewer and serial peripheral settings. Screenshot hotkeys are conf
 folder next to the loaded ROM. Display filtering is configurable in
 **Options → Settings... → Emulation**, including separate horizontal/vertical
 sampling and optional scanline/LCD grid effects.
+The same settings page includes all model boot ROM paths and **Show SGB border**.
+Hiding a border crops the composed image (including SGB colors and masks) to
+160x144; screenshots follow the selected view. Use **Apply and reload current ROM**
+after changing the model or boot ROM paths. Reset retains the current machine's
+settings and any captured initial border. Window Scale also offers integer-scaled
+and fit-to-screen fullscreen modes.
+
+See [SGB modes and UI review](SGB.md) for the BGB/SameBoy research, behavior,
+settings coverage, and test strategy.
 
 ## Testing
 

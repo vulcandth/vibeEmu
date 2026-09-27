@@ -8,6 +8,15 @@ pub const WIDTH: usize = 256;
 /// Height of the visible SNES output.
 pub const HEIGHT: usize = 224;
 
+/// A game-supplied border, independent of the SGB command host and game state.
+#[derive(Debug, Clone)]
+pub struct SgbBorder {
+    tiles: [u8; 8192],
+    map: [u16; 1024],
+    palettes: [u16; 64],
+    backdrop: u16,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Transfer {
     Palettes,
@@ -26,6 +35,7 @@ pub struct Sgb {
     stop: bool,
     joyp: u8,
     enabled: bool,
+    borrowed_border: bool,
     players: u8,
     player_mask: u8,
     player: u8,
@@ -57,6 +67,7 @@ impl Default for Sgb {
             stop: false,
             joyp: 0x30,
             enabled: true,
+            borrowed_border: false,
             players: 1,
             player_mask: 0,
             player: 0,
@@ -83,7 +94,42 @@ impl Default for Sgb {
 impl Sgb {
     /// Configure command acceptance from the SGB flag and new licensee marker.
     pub fn set_cartridge_header(&mut self, rom: &[u8]) {
-        self.enabled = rom.get(0x146) == Some(&3) && rom.get(0x14b) == Some(&0x33);
+        self.enabled =
+            !self.borrowed_border && rom.get(0x146) == Some(&3) && rom.get(0x14b) == Some(&0x33);
+    }
+
+    /// Whether JOYP is connected to an SGB host. A borrowed border is display only.
+    pub fn is_command_host(&self) -> bool {
+        !self.borrowed_border
+    }
+
+    /// Snapshot the first completed PCT_TRN, after its LCD transfer has finished.
+    pub fn border(&self) -> Option<SgbBorder> {
+        self.border_enabled.then(|| SgbBorder {
+            tiles: self.tiles,
+            map: self.border_map,
+            palettes: self.border_palettes,
+            backdrop: self.palettes[0][0],
+        })
+    }
+
+    pub(crate) fn from_border(border: SgbBorder, screen: &[u32; 160 * 144]) -> Self {
+        let mut sgb = Self {
+            tiles: border.tiles,
+            border_map: border.map,
+            border_palettes: border.palettes,
+            border_enabled: true,
+            borrowed_border: true,
+            enabled: false,
+            // Before the first LCD frame (including LCD-off boot time), keep
+            // the recipient's native image instead of SGB palette color zero.
+            native_screen: Some(screen.to_vec()),
+            native_displayed: Some(screen.to_vec()),
+            ..Self::default()
+        };
+        sgb.palettes[0][0] = border.backdrop;
+        sgb.render();
+        sgb
     }
 
     /// Number of controllers requested by the game (one, two or four).
@@ -328,7 +374,7 @@ impl Sgb {
     }
 
     pub(crate) fn capture_line(&mut self, y: usize, pixels: &mut [u32], native_color: bool) {
-        if native_color {
+        if native_color || self.borrowed_border {
             self.native_screen.get_or_insert_with(|| vec![0; 160 * 144]);
         } else {
             self.native_screen = None;
@@ -340,6 +386,20 @@ impl Sgb {
                 screen[y * 160 + x] = *pixel;
             }
         }
+    }
+
+    pub(crate) fn finish_lcd_off_frame(&mut self, screen: &[u32; 160 * 144]) {
+        if self.borrowed_border {
+            // A real SGB holds its last LCD image when the GB LCD stops.
+            // A borrowed border must instead follow the recipient CGB's blank
+            // framebuffer, including during boot and between scene changes.
+            self.native_screen.as_mut().unwrap().copy_from_slice(screen);
+            self.native_displayed
+                .as_mut()
+                .unwrap()
+                .copy_from_slice(screen);
+        }
+        self.finish_frame(false);
     }
 
     pub(crate) fn finish_frame(&mut self, lcd_enabled: bool) {

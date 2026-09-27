@@ -1,14 +1,39 @@
 package com.example.vibeemua
 
-enum class EmulationMode(val label: String) {
-    Auto("Auto"),
-    ForceDmg("Force DMG"),
-    ForceCgb("Force CGB"),
+// IDs are persisted and passed to JNI; never renumber existing entries.
+enum class EmulationMode(val nativeId: Int, val label: String) {
+    Auto(0, "Game Boy or GBC (no SGB)"),
+    ForceDmg(1, "Force DMG"),
+    ForceCgb(2, "Force CGB"),
+    ForceMgb(3, "Force MGB"),
+    ForceSgb(4, "Force SGB"),
+    ForceSgb2(5, "Force SGB2"),
+    ForceAgb0(6, "Force AGB0"),
+    ForceAgb(7, "Force AGB"),
+    CgbSgb(8, "SGB + GBC"),
+    CgbInitialBorder(9, "GBC + initial SGB border"),
+    AutoPreferCgb(10, "Automatic, prefer GBC"),
+    AutoPreferSgb(11, "Automatic, prefer SGB"),
 }
 
-enum class BootRomMode {
-    Dmg,
-    Cgb,
+enum class BootRomMode(val nativeId: Int, val label: String, val color: Boolean = false) {
+    Dmg(0, "DMG"), Cgb(1, "CGB", true), Mgb(2, "MGB"),
+    Sgb(3, "SGB"), Sgb2(4, "SGB2"), Agb0(5, "AGB0", true), Agb(6, "AGB", true);
+
+    val fileName: String get() = "bootrom_${name.lowercase()}.bin"
+    val preferenceKey: String get() = "${name.lowercase()}_bootrom_enabled"
+    fun acceptsSize(size: Int): Boolean = if (color) size == 0x800 || size == 0x900 else size == 0x100
+}
+
+data class FrameSize(val width: Int, val height: Int) {
+    val aspect: Float get() = width.toFloat() / height
+    companion object {
+        const val MAX_PIXELS = 256 * 224
+        fun fromPacked(value: Int): FrameSize? {
+            val size = FrameSize(value ushr 16, value and 0xffff)
+            return size.takeIf { it == FrameSize(160, 144) || it == FrameSize(256, 224) }
+        }
+    }
 }
 
 class NativeBridge {
@@ -22,15 +47,19 @@ class NativeBridge {
     external fun destroy(handle: Long)
     external fun loadRom(handle: Long, rom: ByteArray): Boolean
     external fun loadRomFile(handle: Long, path: String): Boolean
-    external fun runFrame(handle: Long, buffer: IntArray): Boolean
+    external fun runFrame(handle: Long, buffer: IntArray): Int
     external fun setInput(handle: Long, state: Int)
+    external fun setPlayerInput(handle: Long, player: Int, state: Int)
+    external fun setShowBorder(handle: Long, show: Boolean)
+    external fun clockHz(handle: Long): Int
+    external fun sgbHost(handle: Long): Boolean
     external fun reset(handle: Long)
     external fun drainAudio(handle: Long, buffer: ShortArray): Int
     external fun saveRam(handle: Long)
 
     external fun setDmgNeutralPalette(handle: Long, enabled: Boolean)
 
-    external fun setBootRom(handle: Long, mode: Int, data: ByteArray)
+    external fun setBootRom(handle: Long, mode: Int, data: ByteArray): Boolean
     external fun clearBootRom(handle: Long, mode: Int)
 
     external fun enableMobileAdapter(handle: Long, configPath: String): Boolean
@@ -38,17 +67,27 @@ class NativeBridge {
 }
 
 class Emulator(private val native: NativeBridge = NativeBridge()) {
-    private var handle: Long = 0
-    private var romLoaded: Boolean = false
+    @Volatile private var handle: Long = 0
+    @Volatile private var romLoaded: Boolean = false
+    @Volatile var isSgbHost: Boolean = false
+        private set
+    @Volatile var frameDurationNs: Long = 70_224_000_000_000L / 4_194_304L
+        private set
 
     private val nativeLock = Any()
 
     @Volatile
     private var paused: Boolean = false
 
+    @Volatile private var foreground: Boolean = true
+
     fun isReady(): Boolean = handle != 0L && romLoaded
 
-    fun isPaused(): Boolean = paused
+    fun isPaused(): Boolean = paused || !foreground
+
+    fun setForeground(foreground: Boolean) {
+        this.foreground = foreground
+    }
 
     fun setPaused(paused: Boolean) {
         this.paused = paused
@@ -57,29 +96,27 @@ class Emulator(private val native: NativeBridge = NativeBridge()) {
     fun loadRomFromFile(
         path: String,
         emulationMode: EmulationMode,
-        dmgBootRom: ByteArray?,
-        cgbBootRom: ByteArray?,
+        bootRoms: Map<BootRomMode, ByteArray>,
     ): Boolean {
         synchronized(nativeLock) {
+            romLoaded = false
             if (handle != 0L) {
                 native.destroy(handle)
                 handle = 0
             }
 
-            handle = native.create(emulationMode.ordinal)
+            handle = native.create(emulationMode.nativeId)
             if (handle == 0L) {
                 romLoaded = false
                 return false
             }
 
-            // Configure boot ROM(s) before loading the game cartridge.
-            native.clearBootRom(handle, BootRomMode.Dmg.ordinal)
-            native.clearBootRom(handle, BootRomMode.Cgb.ordinal)
-            if (dmgBootRom != null) {
-                native.setBootRom(handle, BootRomMode.Dmg.ordinal, dmgBootRom)
-            }
-            if (cgbBootRom != null) {
-                native.setBootRom(handle, BootRomMode.Cgb.ordinal, cgbBootRom)
+            for ((mode, bytes) in bootRoms) {
+                if (!native.setBootRom(handle, mode.nativeId, bytes)) {
+                    native.destroy(handle)
+                    handle = 0
+                    return false
+                }
             }
 
             romLoaded = native.loadRomFile(handle, path)
@@ -87,6 +124,10 @@ class Emulator(private val native: NativeBridge = NativeBridge()) {
                 native.destroy(handle)
                 handle = 0
             }
+            if (romLoaded) {
+                isSgbHost = native.sgbHost(handle)
+                frameDurationNs = 70_224_000_000_000L / native.clockHz(handle)
+            } else { isSgbHost = false }
             return romLoaded
         }
     }
@@ -102,7 +143,7 @@ class Emulator(private val native: NativeBridge = NativeBridge()) {
     fun setBootRom(mode: BootRomMode, data: ByteArray) {
         synchronized(nativeLock) {
             if (handle != 0L) {
-                native.setBootRom(handle, mode.ordinal, data)
+                native.setBootRom(handle, mode.nativeId, data)
             }
         }
     }
@@ -110,28 +151,36 @@ class Emulator(private val native: NativeBridge = NativeBridge()) {
     fun clearBootRom(mode: BootRomMode) {
         synchronized(nativeLock) {
             if (handle != 0L) {
-                native.clearBootRom(handle, mode.ordinal)
+                native.clearBootRom(handle, mode.nativeId)
             }
         }
     }
 
-    fun renderFrame(out: IntArray): Boolean {
-        if (!isReady() || paused) return false
+    fun renderFrame(out: IntArray): FrameSize? {
+        if (!isReady() || isPaused()) return null
         synchronized(nativeLock) {
-            if (!isReady() || paused) return false
-            return native.runFrame(handle, out)
+            if (!isReady() || isPaused()) return null
+            return FrameSize.fromPacked(native.runFrame(handle, out))
         }
     }
 
-    fun updateInput(state: Int) {
+    fun updateInput(state: Int, player: Int = 0) {
+        if (!isReady()) return
         synchronized(nativeLock) {
             if (handle != 0L) {
-                native.setInput(handle, state)
+                native.setPlayerInput(handle, player, state)
             }
+        }
+    }
+
+    fun setShowBorder(show: Boolean) {
+        synchronized(nativeLock) {
+            if (handle != 0L) native.setShowBorder(handle, show)
         }
     }
 
     fun reset() {
+        if (!isReady()) return
         synchronized(nativeLock) {
             if (handle != 0L) {
                 native.reset(handle)
@@ -151,14 +200,15 @@ class Emulator(private val native: NativeBridge = NativeBridge()) {
     }
 
     fun drainAudio(buffer: ShortArray): Int {
-        if (!isReady() || paused) return 0
+        if (!isReady() || isPaused()) return 0
         synchronized(nativeLock) {
-            if (!isReady() || paused) return 0
+            if (!isReady() || isPaused()) return 0
             return native.drainAudio(handle, buffer)
         }
     }
 
     fun saveRam() {
+        if (!isReady()) return
         synchronized(nativeLock) {
             if (handle != 0L) {
                 native.saveRam(handle)

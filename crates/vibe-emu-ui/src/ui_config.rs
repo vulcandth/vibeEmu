@@ -40,9 +40,12 @@ impl Default for SerialConfig {
 pub enum EmulationMode {
     #[default]
     Auto,
+    AutoPreferCgb,
+    AutoPreferSgb,
     ForceDmg,
     ForceCgb,
     ForceCgbSgb,
+    CgbInitialSgbBorder,
     ForceMgb,
     ForceSgb,
     ForceSgb2,
@@ -54,9 +57,13 @@ impl EmulationMode {
     pub fn model(self, cart_cgb: bool) -> vibe_emu_core::hardware::Model {
         use vibe_emu_core::hardware::Model;
         match self {
-            Self::Auto => Model::from_cgb_flag(cart_cgb),
+            Self::Auto | Self::AutoPreferCgb | Self::AutoPreferSgb => {
+                Model::from_cgb_flag(cart_cgb)
+            }
             Self::ForceDmg => Model::from_cgb_flag(false),
-            Self::ForceCgb | Self::ForceCgbSgb => Model::from_cgb_flag(true),
+            Self::ForceCgb | Self::ForceCgbSgb | Self::CgbInitialSgbBorder => {
+                Model::from_cgb_flag(true)
+            }
             Self::ForceMgb => Model::Mgb,
             Self::ForceSgb => Model::Sgb,
             Self::ForceSgb2 => Model::Sgb2,
@@ -64,7 +71,33 @@ impl EmulationMode {
             Self::ForceAgb => Model::Agb,
         }
     }
+
+    pub fn model_for_cart(
+        self,
+        cart: &vibe_emu_core::cartridge::Cartridge,
+    ) -> vibe_emu_core::hardware::Model {
+        let sgb = cart.rom.get(0x146) == Some(&3) && cart.rom.get(0x14b) == Some(&0x33);
+        if sgb && (self == Self::AutoPreferSgb || (self == Self::AutoPreferCgb && !cart.cgb)) {
+            vibe_emu_core::hardware::Model::Sgb
+        } else {
+            self.model(cart.cgb)
+        }
+    }
 }
+
+/// Stable ordering used by boot ROM settings, loaders and validation.
+pub const BOOT_MODELS: [(&str, vibe_emu_core::hardware::Model); 7] = {
+    use vibe_emu_core::hardware::{CgbRevision, DmgRevision, Model};
+    [
+        ("DMG", Model::Dmg(DmgRevision::RevB)),
+        ("MGB", Model::Mgb),
+        ("SGB", Model::Sgb),
+        ("SGB2", Model::Sgb2),
+        ("CGB", Model::Cgb(CgbRevision::RevE)),
+        ("AGB0", Model::Agb0),
+        ("AGB", Model::Agb),
+    ]
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -139,6 +172,12 @@ impl WindowSize {
 pub struct UiConfig {
     pub dmg_bootrom_path: Option<PathBuf>,
     pub cgb_bootrom_path: Option<PathBuf>,
+    pub mgb_bootrom_path: Option<PathBuf>,
+    pub sgb_bootrom_path: Option<PathBuf>,
+    pub sgb2_bootrom_path: Option<PathBuf>,
+    pub agb0_bootrom_path: Option<PathBuf>,
+    pub agb_bootrom_path: Option<PathBuf>,
+    pub show_sgb_border: bool,
     pub recent_roms: Vec<PathBuf>,
     pub window_size: WindowSize,
     pub sound_enabled: bool,
@@ -152,6 +191,12 @@ impl Default for UiConfig {
         Self {
             dmg_bootrom_path: None,
             cgb_bootrom_path: None,
+            mgb_bootrom_path: None,
+            sgb_bootrom_path: None,
+            sgb2_bootrom_path: None,
+            agb0_bootrom_path: None,
+            agb_bootrom_path: None,
+            show_sgb_border: true,
             recent_roms: Vec::new(),
             window_size: WindowSize::default(),
             sound_enabled: true,
@@ -159,6 +204,32 @@ impl Default for UiConfig {
             video_filter: VideoFilterConfig::default(),
             serial: SerialConfig::default(),
         }
+    }
+}
+
+impl UiConfig {
+    pub fn bootrom_paths(&self) -> [Option<PathBuf>; 7] {
+        [
+            self.dmg_bootrom_path.clone(),
+            self.mgb_bootrom_path.clone(),
+            self.sgb_bootrom_path.clone(),
+            self.sgb2_bootrom_path.clone(),
+            self.cgb_bootrom_path.clone(),
+            self.agb0_bootrom_path.clone(),
+            self.agb_bootrom_path.clone(),
+        ]
+    }
+
+    pub fn set_bootrom_paths(&mut self, paths: [Option<PathBuf>; 7]) {
+        [
+            self.dmg_bootrom_path,
+            self.mgb_bootrom_path,
+            self.sgb_bootrom_path,
+            self.sgb2_bootrom_path,
+            self.cgb_bootrom_path,
+            self.agb0_bootrom_path,
+            self.agb_bootrom_path,
+        ] = paths;
     }
 }
 
@@ -209,4 +280,62 @@ pub fn save_to_file(path: &PathBuf, cfg: &UiConfig) -> std::io::Result<()> {
 
     let text = toml::to_string_pretty(cfg).unwrap_or_else(|_| String::new());
     std::fs::write(path, text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vibe_emu_core::{cartridge::Cartridge, hardware::Model};
+
+    #[test]
+    fn old_settings_and_all_model_bootroms_round_trip() {
+        let mut cfg: UiConfig = toml::from_str("dmg_bootrom_path = 'old-dmg.bin'\ncgb_bootrom_path = 'old-cgb.bin'\nemulation_mode = 'force-cgb-sgb'\n").unwrap();
+        assert_eq!(cfg.emulation_mode, EmulationMode::ForceCgbSgb);
+        assert!(cfg.show_sgb_border);
+        assert_eq!(cfg.bootrom_paths()[4], Some(PathBuf::from("old-cgb.bin")));
+        assert!(cfg.sgb_bootrom_path.is_none());
+        let paths = BOOT_MODELS.map(|(label, _)| Some(PathBuf::from(format!("{label}.bin"))));
+        cfg.set_bootrom_paths(paths.clone());
+        cfg.emulation_mode = EmulationMode::CgbInitialSgbBorder;
+        cfg.show_sgb_border = false;
+        let restored: UiConfig = toml::from_str(&toml::to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(restored.bootrom_paths(), paths);
+        assert_eq!(restored.emulation_mode, cfg.emulation_mode);
+        assert!(!restored.show_sgb_border);
+    }
+
+    #[test]
+    fn automatic_modes_honor_both_flags_and_licensee() {
+        for cgb in [false, true] {
+            for sgb in [false, true] {
+                for licensee in [0, 0x33] {
+                    let mut rom = vec![0; 0x8000];
+                    rom[0x143] = if cgb { 0x80 } else { 0 };
+                    rom[0x146] = if sgb { 3 } else { 0 };
+                    rom[0x14b] = licensee;
+                    let cart = Cartridge::from_bytes(rom);
+                    assert_eq!(
+                        EmulationMode::Auto.model_for_cart(&cart),
+                        Model::from_cgb_flag(cgb)
+                    );
+                    assert_eq!(
+                        EmulationMode::AutoPreferCgb.model_for_cart(&cart),
+                        if !cgb && sgb && licensee == 0x33 {
+                            Model::Sgb
+                        } else {
+                            Model::from_cgb_flag(cgb)
+                        }
+                    );
+                    assert_eq!(
+                        EmulationMode::AutoPreferSgb.model_for_cart(&cart),
+                        if sgb && licensee == 0x33 {
+                            Model::Sgb
+                        } else {
+                            Model::from_cgb_flag(cgb)
+                        }
+                    );
+                }
+            }
+        }
+    }
 }

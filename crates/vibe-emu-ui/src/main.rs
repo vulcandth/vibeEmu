@@ -266,11 +266,15 @@ struct Args {
     cgb: bool,
 
     /// Select hardware, overriding automatic cartridge detection.
-    #[arg(long, value_parser = ["dmg", "mgb", "sgb", "sgb2", "cgb", "cgb-sgb", "agb0", "agb"], conflicts_with_all = ["dmg", "cgb"])]
+    #[arg(long, value_parser = ["dmg", "mgb", "sgb", "sgb2", "cgb", "cgb-sgb", "sgb-cgb", "cgb-sgb-border", "auto-cgb", "auto-sgb", "agb0", "agb"], conflicts_with_all = ["dmg", "cgb"])]
     model: Option<String>,
 
     #[arg(long)]
     bootrom: Option<std::path::PathBuf>,
+
+    /// SGB boot ROM for the initial-border donor (independent of --bootrom).
+    #[arg(long)]
+    sgb_bootrom: Option<std::path::PathBuf>,
 
     #[arg(long)]
     debug: bool,
@@ -428,37 +432,112 @@ struct LoadConfig {
     emulation_mode: EmulationMode,
     dmg_neutral: bool,
     bootrom_override: Option<Vec<u8>>,
-    dmg_bootrom_path: Option<std::path::PathBuf>,
-    cgb_bootrom_path: Option<std::path::PathBuf>,
+    bootrom_paths: [Option<std::path::PathBuf>; 7],
+    sgb_bootrom_override: Option<Vec<u8>>,
 }
 
-fn configured_bootrom_data(load_config: &LoadConfig, model: Model) -> Option<Vec<u8>> {
-    if let Some(data) = &load_config.bootrom_override {
-        return Some(data.clone());
-    }
-
-    // Saved paths belong specifically to DMG/CGB. Other hardware uses --bootrom.
-    if !matches!(model, Model::Dmg(_) | Model::Cgb(_)) {
-        return None;
-    }
-    let cgb_mode = model.is_cgb();
-    let configured_path = if cgb_mode {
-        load_config.cgb_bootrom_path.as_ref()
+fn validate_bootrom(data: &[u8], model: Model) -> Result<(), String> {
+    let valid = if model.is_cgb() {
+        matches!(data.len(), 0x800 | 0x900)
     } else {
-        load_config.dmg_bootrom_path.as_ref()
-    }?;
+        data.len() == 0x100
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "Invalid {model:?} boot ROM size: {} bytes (expected {})",
+            data.len(),
+            if model.is_cgb() {
+                "2048 or 2304"
+            } else {
+                "256"
+            }
+        ))
+    }
+}
 
-    match std::fs::read(configured_path) {
-        Ok(data) => Some(data),
-        Err(e) => {
-            warn!(
-                "Failed to read {} boot ROM {}: {e}",
-                if cgb_mode { "CGB" } else { "DMG" },
-                configured_path.display()
-            );
-            None
+fn configured_bootrom_data(
+    config: &LoadConfig,
+    model: Model,
+    donor: bool,
+) -> Result<Option<Vec<u8>>, String> {
+    let override_data = if donor {
+        &config.sgb_bootrom_override
+    } else {
+        &config.bootrom_override
+    };
+    let mut data = if let Some(data) = override_data {
+        Some(data.clone())
+    } else {
+        let index = match model {
+            Model::Dmg(_) => 0,
+            Model::Mgb => 1,
+            Model::Sgb => 2,
+            Model::Sgb2 => 3,
+            Model::Cgb(_) => 4,
+            Model::Agb0 => 5,
+            Model::Agb => 6,
+        };
+        config.bootrom_paths[index]
+            .as_ref()
+            .map(|path| {
+                std::fs::read(path)
+                    .map_err(|e| format!("Cannot read {model:?} boot ROM {}: {e}", path.display()))
+            })
+            .transpose()?
+    };
+    if let Some(data) = &data {
+        validate_bootrom(data, model)?;
+    }
+    // Compact CGB dumps omit the cartridge-header hole at 0100..01FF.
+    // The MMU indexes mapped ROM bytes by their CPU address.
+    if model.is_cgb()
+        && let Some(data) = &mut data
+        && data.len() == 0x800
+    {
+        data.splice(0x100..0x100, [0; 0x100]);
+    }
+    Ok(data)
+}
+
+/// Shared by command-line startup and interactive loads so both paths use identical models and BIOSes.
+fn create_machine(cart: Option<Cartridge>, config: &LoadConfig) -> Result<GameBoy, String> {
+    let model = cart.as_ref().map_or_else(
+        || config.emulation_mode.model(false),
+        |cart| config.emulation_mode.model_for_cart(cart),
+    );
+    let boot = configured_bootrom_data(config, model, false)?;
+    let mut gb = if boot.is_some() {
+        GameBoy::new_power_on(model)
+    } else {
+        GameBoy::new(model)
+    };
+    if let Some(boot) = boot {
+        gb.mmu.load_boot_rom(boot);
+    }
+    if config.emulation_mode == EmulationMode::ForceCgbSgb {
+        gb.enable_sgb_extensions();
+    }
+    if let Some(cart) = cart {
+        gb.load_cart(cart);
+    }
+    if config.emulation_mode == EmulationMode::CgbInitialSgbBorder
+        && gb.mmu.cart.as_ref().is_some_and(|cart| {
+            cart.cgb && cart.rom.get(0x146) == Some(&3) && cart.rom.get(0x14b) == Some(&0x33)
+        })
+    {
+        let boot = configured_bootrom_data(config, Model::Sgb, true)?;
+        if !gb.borrow_sgb_border(boot.as_deref(), 600) {
+            info!("No initial SGB border supplied within 600 frames; continuing in CGB mode");
         }
     }
+    if config.dmg_neutral {
+        gb.mmu
+            .ppu
+            .set_dmg_palette([0xffffff, 0xaaaaaa, 0x555555, 0]);
+    }
+    Ok(gb)
 }
 
 #[derive(Clone, Copy)]
@@ -1004,8 +1083,11 @@ struct VibeEmuApp {
     // Options window state
     emulation_mode: EmulationMode,
     bootrom_override: Option<Vec<u8>>,
-    dmg_bootrom_path: String,
-    cgb_bootrom_path: String,
+    bootrom_paths: [String; 7],
+    sgb_bootrom_override: Option<Vec<u8>>,
+    dmg_neutral: bool,
+    loading: Option<mpsc::Receiver<Result<(GameBoy, std::path::PathBuf), String>>>,
+    load_error: Option<String>,
     selected_window_scale: usize,
     current_display_scale: f32,
     rebinding: Option<RebindTarget>,
@@ -1247,9 +1329,8 @@ impl VibeEmuApp {
             WindowSize::X4 => 3,
             WindowSize::X5 => 4,
             WindowSize::X6 => 5,
-            WindowSize::Fullscreen | WindowSize::FullscreenStretched => {
-                (DEFAULT_WINDOW_SCALE - 1) as usize
-            }
+            WindowSize::Fullscreen => 6,
+            WindowSize::FullscreenStretched => 7,
         }
     }
 
@@ -1261,6 +1342,8 @@ impl VibeEmuApp {
             3 => WindowSize::X4,
             4 => WindowSize::X5,
             5 => WindowSize::X6,
+            6 => WindowSize::Fullscreen,
+            7 => WindowSize::FullscreenStretched,
             _ => WindowSize::X2,
         }
     }
@@ -1316,10 +1399,10 @@ impl VibeEmuApp {
 
         let LoadConfig {
             emulation_mode,
-            dmg_neutral: _,
+            dmg_neutral,
             bootrom_override,
-            dmg_bootrom_path,
-            cgb_bootrom_path,
+            bootrom_paths,
+            sgb_bootrom_override,
         } = load_config;
 
         let audio_stream = if let Ok(mut gb_lock) = gb.lock() {
@@ -1366,12 +1449,14 @@ impl VibeEmuApp {
             legal_document: None,
             emulation_mode,
             bootrom_override,
-            dmg_bootrom_path: dmg_bootrom_path
-                .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            cgb_bootrom_path: cgb_bootrom_path
-                .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_default(),
+            bootrom_paths: bootrom_paths.map(|p| {
+                p.map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            }),
+            sgb_bootrom_override,
+            dmg_neutral,
+            loading: None,
+            load_error: None,
             selected_window_scale,
             current_display_scale: 1.0,
             rebinding: None,
@@ -1452,37 +1537,21 @@ impl VibeEmuApp {
     }
 
     fn persist_bootrom_paths(&mut self) {
-        self.ui_config.dmg_bootrom_path = Self::optional_path_from_input(&self.dmg_bootrom_path);
-        self.ui_config.cgb_bootrom_path = Self::optional_path_from_input(&self.cgb_bootrom_path);
+        self.ui_config.set_bootrom_paths(
+            self.bootrom_paths
+                .each_ref()
+                .map(|p| Self::optional_path_from_input(p)),
+        );
         self.save_ui_config();
     }
 
-    fn configured_bootrom_data(&self, model: Model) -> Option<Vec<u8>> {
-        if let Some(data) = &self.bootrom_override {
-            return Some(data.clone());
-        }
-
-        // Saved paths belong specifically to DMG/CGB. Other hardware uses --bootrom.
-        if !matches!(model, Model::Dmg(_) | Model::Cgb(_)) {
-            return None;
-        }
-        let cgb_mode = model.is_cgb();
-        let configured_path = if cgb_mode {
-            Self::optional_path_from_input(&self.cgb_bootrom_path)
-        } else {
-            Self::optional_path_from_input(&self.dmg_bootrom_path)
-        }?;
-
-        match std::fs::read(&configured_path) {
-            Ok(data) => Some(data),
-            Err(e) => {
-                warn!(
-                    "Failed to read {} boot ROM {}: {e}",
-                    if cgb_mode { "CGB" } else { "DMG" },
-                    configured_path.display()
-                );
-                None
-            }
+    fn load_config(&self) -> LoadConfig {
+        LoadConfig {
+            emulation_mode: self.emulation_mode,
+            dmg_neutral: self.dmg_neutral,
+            bootrom_override: self.bootrom_override.clone(),
+            sgb_bootrom_override: self.sgb_bootrom_override.clone(),
+            bootrom_paths: self.ui_config.bootrom_paths(),
         }
     }
 
@@ -1521,14 +1590,30 @@ impl VibeEmuApp {
     }
 
     fn frame_dimensions(&self) -> (usize, usize) {
-        if self.framebuffer.len() == 256 * 224 {
+        if self.ui_config.show_sgb_border && self.framebuffer.len() == 256 * 224 {
             (256, 224)
         } else {
             (160, 144)
         }
     }
 
+    fn frame_pixel(&self, x: usize, y: usize) -> u32 {
+        if !self.ui_config.show_sgb_border && self.framebuffer.len() == 256 * 224 {
+            self.framebuffer[(y + 40) * 256 + x + 48]
+        } else {
+            self.framebuffer[y * self.frame_dimensions().0 + x]
+        }
+    }
+
     fn apply_window_scale(&self, ctx: &egui::Context) {
+        let fullscreen = self.selected_window_size().is_fullscreen();
+        ctx.send_viewport_cmd_to(
+            egui::ViewportId::ROOT,
+            egui::ViewportCommand::Fullscreen(fullscreen),
+        );
+        if fullscreen {
+            return;
+        }
         let (width, height) = self.frame_dimensions();
         let scale = (self.selected_window_scale + 1) as f32;
         let new_size = egui::vec2(
@@ -1549,7 +1634,7 @@ impl VibeEmuApp {
             .radio_value(
                 &mut self.emulation_mode,
                 EmulationMode::Auto,
-                "Auto (detect from ROM)",
+                "Game Boy or GBC (no SGB)",
             )
             .clicked()
         {
@@ -1577,10 +1662,16 @@ impl VibeEmuApp {
         }
 
         for (mode, label) in [
+            (EmulationMode::AutoPreferCgb, "Automatic, prefer GBC"),
+            (EmulationMode::AutoPreferSgb, "Automatic, prefer SGB"),
             (EmulationMode::ForceMgb, "Force MGB"),
             (EmulationMode::ForceSgb, "Force SGB"),
             (EmulationMode::ForceSgb2, "Force SGB2"),
-            (EmulationMode::ForceCgbSgb, "CGB + SGB (hybrid)"),
+            (EmulationMode::ForceCgbSgb, "SGB + GBC"),
+            (
+                EmulationMode::CgbInitialSgbBorder,
+                "GBC + initial SGB border",
+            ),
             (EmulationMode::ForceAgb0, "Force AGB0"),
             (EmulationMode::ForceAgb, "Force AGB"),
         ] {
@@ -1593,6 +1684,18 @@ impl VibeEmuApp {
             self.persist_runtime_settings();
         }
 
+        ui.separator();
+        ui.label("Mode changes apply when a ROM is loaded.");
+        if ui
+            .add_enabled(
+                self.current_rom_path.is_some() && self.loading.is_none(),
+                egui::Button::new("Apply and reload current ROM"),
+            )
+            .clicked()
+        {
+            self.pending_rom_load = self.current_rom_path.clone();
+            close_requested = true;
+        }
         close_requested
     }
 
@@ -1784,10 +1887,14 @@ impl VibeEmuApp {
 
         #[cfg(not(target_os = "android"))]
         if let Some(gamepad) = &mut self.gamepad {
-            let (pad_states, pad_ff) = gamepad.sample(
-                self.emulation_mode.model(false).is_sgb()
-                    || self.emulation_mode == EmulationMode::ForceCgbSgb,
-            );
+            let multiplayer = self.gb.lock().is_ok_and(|gb| {
+                gb.mmu
+                    .ppu
+                    .sgb
+                    .as_ref()
+                    .is_some_and(|sgb| sgb.is_command_host())
+            });
+            let (pad_states, pad_ff) = gamepad.sample(multiplayer);
             new_state &= pad_states[0];
             let extra = [pad_states[1], pad_states[2], pad_states[3]];
             if extra != self.sgb_joypad_states {
@@ -2064,10 +2171,10 @@ impl VibeEmuApp {
                 let sub_x = out_x % scale;
                 let src_x_next = (src_x + 1).min(src_width - 1);
 
-                let top_left = self.framebuffer[src_y * src_width + src_x];
-                let top_right = self.framebuffer[src_y * src_width + src_x_next];
-                let bottom_left = self.framebuffer[src_y_next * src_width + src_x];
-                let bottom_right = self.framebuffer[src_y_next * src_width + src_x_next];
+                let top_left = self.frame_pixel(src_x, src_y);
+                let top_right = self.frame_pixel(src_x_next, src_y);
+                let bottom_left = self.frame_pixel(src_x, src_y_next);
+                let bottom_right = self.frame_pixel(src_x_next, src_y_next);
 
                 let top = if horizontal_linear {
                     Self::lerp_rgb(top_left, top_right, sub_x, scale)
@@ -2169,7 +2276,7 @@ impl VibeEmuApp {
             .map_err(|e| std::io::Error::other(format!("PNG header write failed: {e}")))?;
 
         let mut rgb_data = Vec::with_capacity(width * height * 3);
-        for &pixel in &self.framebuffer {
+        for pixel in (0..height).flat_map(|y| (0..width).map(move |x| self.frame_pixel(x, y))) {
             rgb_data.push(((pixel >> 16) & 0xFF) as u8);
             rgb_data.push(((pixel >> 8) & 0xFF) as u8);
             rgb_data.push((pixel & 0xFF) as u8);
@@ -2190,49 +2297,64 @@ impl VibeEmuApp {
     }
 
     fn load_rom(&mut self, path: std::path::PathBuf) {
-        match Cartridge::from_file(&path) {
-            Ok(cart) => {
-                let model = self.emulation_mode.model(cart.cgb);
-                let cgb_mode = model.is_cgb();
-                let bootrom_data = self.configured_bootrom_data(model);
-                info!(
-                    "Loading ROM: {} (CGB header: {}, mode: {:?} → cgb_mode: {}, bootrom: {})",
-                    cart.title,
-                    cart.cgb,
-                    self.emulation_mode,
-                    cgb_mode,
-                    if bootrom_data.is_some() {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    }
-                );
+        if self.loading.is_some() {
+            return;
+        }
+        // Save before re-reading this cartridge: applying a model must not lose current SRAM.
+        if let Ok(mut gb) = self.gb.lock() {
+            gb.mmu.save_cart_ram();
+        }
+        self.paused = true;
+        let _ = self.emu_tx.send(EmuCommand::SetPaused(true));
+        self.load_error = None;
+        let config = self.load_config();
+        let (tx, rx) = mpsc::channel();
+        self.loading = Some(rx);
+        thread::Builder::new()
+            .name("rom-loader".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
+                let result = Cartridge::from_file(&path)
+                    .map_err(|e| format!("Cannot load {}: {e}", path.display()))
+                    .and_then(|cart| create_machine(Some(cart), &config))
+                    .map(|gb| (gb, path));
+                let _ = tx.send(result);
+            })
+            .expect("ROM loader thread");
+    }
+
+    fn poll_rom_load(&mut self) {
+        let Some(rx) = &self.loading else { return };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => Err("ROM loader stopped unexpectedly".into()),
+        };
+        self.loading = None;
+        match result {
+            Ok((mut next, path)) => {
                 if let Ok(mut gb) = self.gb.lock() {
-                    gb.mmu.save_cart_ram();
-                    if bootrom_data.is_some() {
-                        *gb = GameBoy::new_power_on(model);
-                    } else {
-                        *gb = GameBoy::new(model);
-                    }
-                    if let Some(data) = bootrom_data {
-                        gb.mmu.load_boot_rom(data);
-                    }
-                    if self.emulation_mode == EmulationMode::ForceCgbSgb {
-                        gb.enable_sgb_extensions();
-                    }
-                    gb.load_cart(cart);
+                    // Keep an attached link/mobile peripheral across a model reload.
+                    next.mmu.serial.connect(gb.mmu.serial.take_port());
+                    *gb = next;
                     self._audio_stream =
                         audio::start_stream(&mut gb.mmu.apu, true, self.sound_enabled.clone());
+                    gb.mmu.input.set_state(self.joypad_state);
+                    for (i, state) in self.sgb_joypad_states.iter().enumerate() {
+                        gb.mmu.input.set_player_state(i + 1, *state);
+                    }
+                    self.framebuffer = gb.mmu.ppu.display_framebuffer().to_vec();
                 }
+                while self.frame_rx.try_recv().is_ok() {}
                 self.current_rom_path = Some(path.clone());
                 self.add_recent_rom(&path);
                 self.debugger_state.load_symbols_for_rom_path(Some(&path));
                 self.paused = false;
                 let _ = self.emu_tx.send(EmuCommand::SetPaused(false));
-                info!("ROM loaded successfully");
             }
             Err(e) => {
-                error!("Failed to load ROM: {e}");
+                error!("{e}");
+                self.load_error = Some(e);
             }
         }
     }
@@ -2263,6 +2385,10 @@ impl eframe::App for VibeEmuApp {
         self.handle_input(ctx);
         self.handle_file_drop(ctx);
         let previous_dimensions = self.frame_dimensions();
+        self.poll_rom_load();
+        if self.loading.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        }
         self.poll_frames();
         if previous_dimensions != self.frame_dimensions() {
             self.apply_window_scale(ctx);
@@ -2339,7 +2465,7 @@ impl eframe::App for VibeEmuApp {
                 });
 
                 ui.menu_button("Emulation", |ui| {
-                    let has_rom_loaded = self.current_rom_path.is_some();
+                    let has_rom_loaded = self.current_rom_path.is_some() && self.loading.is_none();
                     if ui
                         .add_enabled(
                             has_rom_loaded,
@@ -2415,6 +2541,17 @@ impl eframe::App for VibeEmuApp {
                                 ui.close();
                             }
                         }
+                        for (index, label) in [
+                            (6, "Fullscreen (integer scaling)"),
+                            (7, "Fullscreen (fit to screen)"),
+                        ] {
+                            if ui
+                                .radio_value(&mut self.selected_window_scale, index, label)
+                                .clicked()
+                            {
+                                ui.close();
+                            }
+                        }
                         if self.selected_window_scale != prev_scale {
                             self.apply_window_scale(&ctx);
                             self.persist_runtime_settings();
@@ -2450,7 +2587,9 @@ impl eframe::App for VibeEmuApp {
                 let total_width = ui.available_width();
 
                 ui.horizontal(|ui| {
-                    let status_text = if self.paused {
+                    let status_text = if self.loading.is_some() {
+                        ("Loading / capturing SGB border...", egui::Color32::YELLOW)
+                    } else if self.paused {
                         ("⏸ Paused", egui::Color32::YELLOW)
                     } else if self.fast_forward {
                         ("⏩ Fast", egui::Color32::GREEN)
@@ -2508,13 +2647,11 @@ impl eframe::App for VibeEmuApp {
             .show_inside(ui, |ui| {
                 let available = ui.available_size();
                 let (width, height) = self.frame_dimensions();
-                let scale = (available.x / width as f32)
-                    .min(available.y / height as f32)
-                    .floor()
-                    .max(1.0);
+                let fit = (available.x / width as f32).min(available.y / height as f32);
+                let scale = if self.selected_window_size().use_integer_scaling() { fit.floor().max(1.0) } else { fit.max(0.01) };
                 self.current_display_scale = scale;
                 let menu_scale = (scale as usize).clamp(1, MAX_WINDOW_SCALE) - 1;
-                if self.selected_window_scale != menu_scale {
+                if !self.selected_window_size().is_fullscreen() && self.selected_window_scale != menu_scale {
                     self.selected_window_scale = menu_scale;
                     self.ui_config.window_size = self.selected_window_size();
                 }
@@ -2558,6 +2695,22 @@ impl eframe::App for VibeEmuApp {
             self.show_watchpoints = false;
         }
 
+        if let Some(error) = self.load_error.clone() {
+            let mut open = true;
+            egui::Window::new("ROM load failed")
+                .open(&mut open)
+                .show(&ctx, |ui| {
+                    ui.label(error);
+                    ui.label("Check the boot ROM settings, then reload the ROM.");
+                    if ui.button("Open settings").clicked() {
+                        self.show_options = true;
+                        self.options_tab = OptionsTab::Emulation;
+                    }
+                });
+            if !open {
+                self.load_error = None;
+            }
+        }
         if self.show_options {
             self.draw_options_window(&ctx);
         }
@@ -2733,7 +2886,7 @@ impl VibeEmuApp {
             *VIEWPORT_OPTIONS,
             egui::ViewportBuilder::default()
                 .with_title("Options")
-                .with_inner_size([400.0, 380.0]),
+                .with_inner_size([560.0, 640.0]),
             |ui, class| {
                 if ui.ctx().input(|i| i.viewport().close_requested()) {
                     self.show_options = false;
@@ -2776,8 +2929,16 @@ impl VibeEmuApp {
         ui.separator();
         ui.add_space(8.0);
 
+        egui::ScrollArea::vertical().show(ui, |ui| {
         match self.options_tab {
             OptionsTab::Keybinds => {
+                ui.label("Keyboard controls player 1. In SGB multiplayer, gamepads occupy players 1–4 in connection order.");
+                #[cfg(not(target_os = "android"))]
+                if let Some(gamepad) = &self.gamepad {
+                    for (player, id) in gamepad.players.iter().enumerate() {
+                        ui.label(format!("Player {}: {}", player + 1, id.map(|id| gamepad.gilrs.gamepad(id).name().to_owned()).unwrap_or_else(|| "no gamepad".into())));
+                    }
+                }
                 if self.rebinding.is_some() {
                     ui.horizontal(|ui| {
                         ui.colored_label(egui::Color32::YELLOW, "Waiting for key...");
@@ -2865,52 +3026,46 @@ impl VibeEmuApp {
                     });
             }
             OptionsTab::Emulation => {
-                ui.horizontal(|ui| {
-                    ui.label("DMG Boot ROM:");
-                    let browse_button_width = 82.0;
-                    let path_width =
-                        (ui.available_width() - browse_button_width - ui.spacing().item_spacing.x)
-                            .max(120.0);
-                    if ui
-                        .add_sized(
-                            [path_width, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.dmg_bootrom_path),
-                        )
-                        .changed()
-                    {
-                        self.persist_bootrom_paths();
+                ui.menu_button("Emulation mode", |ui| { self.draw_emulation_mode_submenu(ui); });
+                ui.label("Boot ROMs (blank = skip boot). Changes apply on the next ROM load.");
+                ui.label("Initial-border mode uses SGB for capture and CGB for gameplay.");
+                if self.bootrom_override.is_some() || self.sgb_bootrom_override.is_some() {
+                    ui.label("Command-line boot ROM overrides are active.");
+                    if ui.button("Use saved boot ROM settings instead").clicked() {
+                        self.bootrom_override = None;
+                        self.sgb_bootrom_override = None;
                     }
-                    if ui.button("Browse...").clicked()
-                        && let Some(path) = FileDialog::new().pick_file()
-                    {
-                        self.dmg_bootrom_path = path.to_string_lossy().to_string();
-                        self.persist_bootrom_paths();
+                }
+                for (index, (label, model)) in ui_config::BOOT_MODELS.into_iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{label}:"));
+                        let mut changed = ui.add(egui::TextEdit::singleline(&mut self.bootrom_paths[index]).desired_width(230.0)).changed();
+                        if ui.button("Browse...").clicked() && let Some(path) = FileDialog::new().pick_file() {
+                            self.bootrom_paths[index] = path.to_string_lossy().into_owned();
+                            changed = true;
+                        }
+                        if ui.button("Clear").clicked() { self.bootrom_paths[index].clear(); changed = true; }
+                        if changed { self.persist_bootrom_paths(); }
+                    });
+                    if let Some(path) = Self::optional_path_from_input(&self.bootrom_paths[index]) {
+                        let validation = std::fs::metadata(&path).map_err(|e| e.to_string()).and_then(|meta| {
+                            let size = meta.len();
+                            if (model.is_cgb() && matches!(size, 0x800 | 0x900)) || (!model.is_cgb() && size == 0x100) { Ok(()) }
+                            else { Err(format!("Unexpected boot ROM size: {size} bytes")) }
+                        });
+                        if let Err(e) = validation { ui.colored_label(egui::Color32::RED, e); }
                     }
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label("CGB Boot ROM:");
-                    let browse_button_width = 82.0;
-                    let path_width =
-                        (ui.available_width() - browse_button_width - ui.spacing().item_spacing.x)
-                            .max(120.0);
-                    if ui
-                        .add_sized(
-                            [path_width, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.cgb_bootrom_path),
-                        )
-                        .changed()
-                    {
-                        self.persist_bootrom_paths();
-                    }
-                    if ui.button("Browse...").clicked()
-                        && let Some(path) = FileDialog::new().pick_file()
-                    {
-                        self.cgb_bootrom_path = path.to_string_lossy().to_string();
-                        self.persist_bootrom_paths();
-                    }
-                });
-
+                }
+                if ui.add_enabled(self.current_rom_path.is_some() && self.loading.is_none(), egui::Button::new("Apply and reload current ROM")).clicked() {
+                    self.pending_rom_load = self.current_rom_path.clone();
+                }
+                if ui.checkbox(&mut self.ui_config.show_sgb_border, "Show SGB border").changed() {
+                    self.save_ui_config();
+                    self.apply_window_scale(ctx);
+                }
+                ui.label("SGB + GBC keeps both command sets active. Initial border runs normal CGB after capture (no SGB multiplayer or later border changes).");
+                ui.label("SGB audio commands and uploaded SNES programs are not emulated.");
+                if let Some(error) = &self.load_error { ui.colored_label(egui::Color32::RED, error); }
                 ui.add_space(10.0);
                 ui.separator();
                 ui.add_space(6.0);
@@ -3014,6 +3169,7 @@ impl VibeEmuApp {
                 }
             }
         }
+        });
     }
 
     fn draw_debugger_window(&mut self, ctx: &egui::Context) {
@@ -6124,7 +6280,10 @@ fn main() {
             "sgb" => EmulationMode::ForceSgb,
             "sgb2" => EmulationMode::ForceSgb2,
             "cgb" => EmulationMode::ForceCgb,
-            "cgb-sgb" => EmulationMode::ForceCgbSgb,
+            "cgb-sgb" | "sgb-cgb" => EmulationMode::ForceCgbSgb,
+            "cgb-sgb-border" => EmulationMode::CgbInitialSgbBorder,
+            "auto-cgb" => EmulationMode::AutoPreferCgb,
+            "auto-sgb" => EmulationMode::AutoPreferSgb,
             "agb0" => EmulationMode::ForceAgb0,
             "agb" => EmulationMode::ForceAgb,
             _ => unreachable!("clap validates model"),
@@ -6137,23 +6296,20 @@ fn main() {
         ui_config.emulation_mode
     };
 
-    let bootrom_data = args
-        .bootrom
-        .as_ref()
-        .and_then(|path| match std::fs::read(path) {
-            Ok(data) => Some(data),
-            Err(e) => {
-                warn!("Failed to read bootrom: {e}");
-                None
-            }
-        });
-
+    let read_override = |path: &Option<std::path::PathBuf>| {
+        path.as_ref().map(|p| {
+            std::fs::read(p).unwrap_or_else(|e| {
+                error!("Cannot read boot ROM {}: {e}", p.display());
+                std::process::exit(1);
+            })
+        })
+    };
     let load_config = LoadConfig {
         emulation_mode,
         dmg_neutral: args.dmg_neutral,
-        bootrom_override: bootrom_data,
-        dmg_bootrom_path: ui_config.dmg_bootrom_path.clone(),
-        cgb_bootrom_path: ui_config.cgb_bootrom_path.clone(),
+        bootrom_override: read_override(&args.bootrom),
+        sgb_bootrom_override: read_override(&args.sgb_bootrom),
+        bootrom_paths: ui_config.bootrom_paths(),
     };
 
     let cart: Option<Cartridge> = rom_path
@@ -6171,25 +6327,16 @@ fn main() {
         std::process::exit(1);
     }
 
-    let model = load_config
-        .emulation_mode
-        .model(cart.as_ref().is_some_and(|c| c.cgb));
-    let bootrom_data = configured_bootrom_data(&load_config, model);
-
-    let mut gb = if bootrom_data.is_some() {
-        GameBoy::new_power_on(model)
-    } else {
-        GameBoy::new(model)
+    let (mut gb, initial_error) = match create_machine(cart, &load_config) {
+        Ok(gb) => (gb, None),
+        Err(e) => {
+            error!("{e}");
+            if headless {
+                std::process::exit(1);
+            }
+            (GameBoy::default(), Some(e))
+        }
     };
-    if let Some(data) = bootrom_data {
-        gb.mmu.load_boot_rom(data);
-    }
-    if load_config.emulation_mode == EmulationMode::ForceCgbSgb {
-        gb.enable_sgb_extensions();
-    }
-    if let Some(c) = cart {
-        gb.load_cart(c);
-    }
 
     if headless {
         enum Limit {
@@ -6344,7 +6491,7 @@ fn main() {
         factor: 1.0,
         fast: false,
     };
-    let initial_paused = rom_path.is_none();
+    let initial_paused = rom_path.is_none() || initial_error.is_some();
     let frame_pool_tx_clone = frame_pool_tx.clone();
     let emu_ext_clock = Arc::clone(&external_clock_pending);
     let emu_slave_ready = Arc::clone(&slave_ready);
@@ -6375,7 +6522,13 @@ fn main() {
         .unwrap_or(DEFAULT_WINDOW_SCALE) as f32;
     let (width, height) = gb
         .lock()
-        .map(|gb| gb.mmu.ppu.display_dimensions())
+        .map(|gb| {
+            if ui_config.show_sgb_border {
+                gb.mmu.ppu.display_dimensions()
+            } else {
+                (160, 144)
+            }
+        })
         .unwrap_or((160, 144));
     let initial_size = [
         width as f32 * scale,
@@ -6500,6 +6653,7 @@ fn main() {
         renderer,
         viewport: egui::ViewportBuilder::default()
             .with_title("vibeEmu")
+            .with_fullscreen(ui_config.window_size.is_fullscreen())
             .with_inner_size(initial_size)
             .with_icon(load_window_icon().unwrap_or_default()),
         wgpu_options: egui_wgpu::WgpuConfiguration {
@@ -6515,7 +6669,7 @@ fn main() {
         "vibeEmu",
         native_options,
         Box::new(move |cc| {
-            Ok(Box::new(VibeEmuApp::new(
+            let mut app = VibeEmuApp::new(
                 cc,
                 gb,
                 to_emu_tx,
@@ -6532,7 +6686,12 @@ fn main() {
                 local_timestamp,
                 link_doublespeed,
                 slave_ready,
-            )))
+            );
+            if initial_error.is_some() {
+                app.paused = true;
+            }
+            app.load_error = initial_error;
+            Ok(Box::new(app))
         }),
     ) {
         error!("eframe error: {e}");
@@ -6547,13 +6706,102 @@ mod tests {
     #[test]
     fn hardware_model_cli_selection() {
         use clap::Parser;
-        for model in ["dmg", "mgb", "sgb", "sgb2", "cgb", "cgb-sgb", "agb0", "agb"] {
+        for model in [
+            "dmg",
+            "mgb",
+            "sgb",
+            "sgb2",
+            "cgb",
+            "cgb-sgb",
+            "sgb-cgb",
+            "cgb-sgb-border",
+            "auto-cgb",
+            "auto-sgb",
+            "agb0",
+            "agb",
+        ] {
             let args = super::Args::try_parse_from(["vibeemu", "--model", model]).unwrap();
             assert_eq!(args.model.as_deref(), Some(model));
             assert!(super::Args::try_parse_from(["vibeemu", "--model", model, "--cgb"]).is_err());
             assert!(super::Args::try_parse_from(["vibeemu", "--model", model, "--dmg"]).is_err());
         }
         assert!(super::Args::try_parse_from(["vibeemu", "--model", "invalid"]).is_err());
+    }
+
+    #[test]
+    fn bootrom_selection_and_hybrid_load_paths() {
+        use super::*;
+        let directory =
+            std::env::temp_dir().join(format!("vibeemu-boot-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let paths = ui_config::BOOT_MODELS.map(|(label, model)| {
+            let path = directory.join(format!("{label}.bin"));
+            let data = vec![label.as_bytes()[0]; if model.is_cgb() { 0x900 } else { 0x100 }];
+            std::fs::write(&path, data).unwrap();
+            Some(path)
+        });
+        let mut config = LoadConfig {
+            emulation_mode: EmulationMode::ForceDmg,
+            dmg_neutral: false,
+            bootrom_override: None,
+            sgb_bootrom_override: None,
+            bootrom_paths: paths,
+        };
+        for (mode, (label, model)) in [
+            EmulationMode::ForceDmg,
+            EmulationMode::ForceMgb,
+            EmulationMode::ForceSgb,
+            EmulationMode::ForceSgb2,
+            EmulationMode::ForceCgb,
+            EmulationMode::ForceAgb0,
+            EmulationMode::ForceAgb,
+        ]
+        .into_iter()
+        .zip(ui_config::BOOT_MODELS)
+        {
+            config.emulation_mode = mode;
+            let data = configured_bootrom_data(&config, model, false)
+                .unwrap()
+                .unwrap();
+            assert_eq!(data[0], label.as_bytes()[0]);
+            let gb = create_machine(None, &config).unwrap();
+            assert_eq!(gb.cpu.pc, 0);
+            assert_eq!(gb.mmu.boot_rom.as_ref().unwrap(), &data);
+        }
+        config.emulation_mode = EmulationMode::ForceCgbSgb;
+        assert!(
+            create_machine(None, &config)
+                .unwrap()
+                .mmu
+                .ppu
+                .sgb
+                .unwrap()
+                .is_command_host()
+        );
+        config.bootrom_override = Some(vec![0xa5; 0x800]);
+        let data = configured_bootrom_data(&config, Model::from_cgb_flag(true), false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(data.len(), 0x900);
+        assert_eq!(data[0x100], 0);
+        assert_eq!(data[0x200], 0xa5);
+        config.sgb_bootrom_override = Some(vec![0x37; 0x100]);
+        assert_eq!(
+            configured_bootrom_data(&config, Model::Sgb, true)
+                .unwrap()
+                .unwrap()[0],
+            0x37
+        );
+        assert!(configured_bootrom_data(&config, Model::Sgb, false).is_err());
+        config.bootrom_override = None;
+        config.sgb_bootrom_override = None;
+        config.bootrom_paths[2] = Some(directory.join("missing.bin"));
+        assert!(configured_bootrom_data(&config, Model::Sgb, true).is_err());
+        config.emulation_mode = EmulationMode::CgbInitialSgbBorder;
+        // No SGB header: an unrelated missing donor ROM must not block CGB play.
+        let gb = create_machine(Some(Cartridge::from_bytes(vec![0; 0x8000])), &config).unwrap();
+        assert!(gb.mmu.ppu.sgb.is_none());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

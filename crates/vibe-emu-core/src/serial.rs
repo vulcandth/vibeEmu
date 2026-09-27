@@ -223,6 +223,12 @@ impl Serial {
         self.port = port;
     }
 
+    /// Detach the external device without carrying serial registers or an
+    /// in-flight transfer into a replacement machine of a different model.
+    pub fn take_port(&mut self) -> Box<dyn LinkPort + Send> {
+        std::mem::replace(&mut self.port, Box::new(NullLinkPort::default()))
+    }
+
     /// Reads the SB/SC registers.
     pub fn read(&self, addr: u16) -> u8 {
         match addr {
@@ -645,6 +651,25 @@ mod tests {
         assert_eq!(serial.read(0xFF02) & 0x80, 0);
         assert_ne!(if_reg & 0x08, 0);
         assert_eq!(serial.read(0xFF01), 0x34);
+    }
+
+    #[test]
+    fn moving_a_device_does_not_move_model_or_pending_transfer() {
+        let mut old = Serial::new(Model::from_cgb_flag(true));
+        old.connect(Box::new(FixedInLinkPort::new(0x34)));
+        old.write(0xff01, 0x12);
+        old.write(0xff02, 0x83);
+        let mut next = Serial::new(Model::Sgb);
+        next.connect(old.take_port());
+        assert_eq!(next.read(0xff02) & 0x80, 0);
+        next.write(0xff01, 0x56);
+        next.write(0xff02, 0x83);
+        let mut irq = 0;
+        next.step(0, 128, false, &mut irq);
+        assert_eq!(irq, 0, "SGB must not acquire the CGB fast serial clock");
+        next.step(128, 4096, false, &mut irq);
+        assert_eq!(next.read(0xff01), 0x34);
+        assert_ne!(irq & 8, 0);
     }
 
     #[test]

@@ -1,3 +1,7 @@
+#[path = "common/sgb_rom.rs"]
+mod sgb_rom;
+use sgb_rom::initial_border_rom;
+
 use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
 
 fn machine(model: Model, enhanced: bool) -> GameBoy {
@@ -245,4 +249,110 @@ fn hybrid_keeps_cgb_colors_timing_and_host_across_resets() {
     assert!(gb.model.is_cgb());
     assert!(gb.mmu.ppu.sgb.is_some());
     assert_eq!(gb.cpu.pc, 0);
+}
+
+#[test]
+fn initial_border_runs_sgb_startup_then_keeps_cgb_state_and_joyp() {
+    for boot in [false, true] {
+        let mut gb = GameBoy::new(Model::from_cgb_flag(true));
+        gb.load_cart(Cartridge::from_bytes(initial_border_rom()));
+        gb.mmu.cart.as_mut().unwrap().ram[0] = 0x57;
+        gb.mmu.wram[0][0] = 0x23;
+        // Snapshot reads include palette data; turn off its auto-increment.
+        gb.mmu.write_byte(0xff68, 0);
+        gb.mmu.write_byte(0xff6a, 0);
+        let before = gb.capture_boot_handoff_snapshot();
+        // Distinct SGB boot ROM: jump to the standard unmap at 00FE.
+        let mut sgb_boot = vec![0; 256];
+        sgb_boot[..3].copy_from_slice(&[0xc3, 0xfc, 0]);
+        sgb_boot[252..].copy_from_slice(&[0x3e, 1, 0xe0, 0x50]);
+        assert!(gb.borrow_sgb_border(boot.then_some(sgb_boot.as_slice()), 120));
+        assert_eq!(gb.capture_boot_handoff_snapshot(), before);
+        assert_eq!(gb.mmu.cart.as_ref().unwrap().ram[0], 0x57);
+        let host = gb.mmu.ppu.sgb.as_ref().unwrap();
+        assert!(!host.is_command_host());
+        assert_eq!(host.player_count(), 1);
+        assert_eq!(gb.mmu.ppu.display_framebuffer()[0], 0x00ff00);
+        assert_eq!(
+            gb.mmu.ppu.display_framebuffer()[40 * 256 + 48],
+            gb.mmu.ppu.framebuffer()[0],
+            "capture must display native pixels before the first CGB frame"
+        );
+        command(&mut gb, 0x11, &[3]);
+        command(&mut gb, 0x17, &[2]); // CGB writes cannot mask gameplay
+        assert_eq!(gb.mmu.ppu.sgb.as_ref().unwrap().player_count(), 1);
+        gb.cpu.run_for_dots(&mut gb.mmu, 1024);
+        assert_eq!(gb.mmu.wram[0][0], 0x42, "CGB code path");
+        frame(&mut gb);
+        frame(&mut gb);
+        for y in 0..144 {
+            for x in 0..160 {
+                assert_eq!(
+                    gb.mmu.ppu.display_framebuffer()[(y + 40) * 256 + x + 48],
+                    gb.mmu.ppu.framebuffer()[y * 160 + x],
+                    "borrowed border must keep native CGB pixels"
+                );
+            }
+        }
+        gb.mmu.write_byte(0xff40, 0);
+        frame(&mut gb);
+        assert_eq!(
+            gb.mmu.ppu.display_framebuffer()[40 * 256 + 48],
+            0xffffff,
+            "LCD-off in initial-border mode must blank like CGB, not freeze like SGB"
+        );
+        assert_eq!(gb.mmu.ppu.display_framebuffer()[0], 0x00ff00);
+        for reset in [false, true] {
+            if reset {
+                gb.reset_power_on();
+            } else {
+                gb.reset();
+            }
+            assert!(!gb.mmu.ppu.sgb.as_ref().unwrap().is_command_host());
+            assert_eq!(gb.mmu.ppu.display_framebuffer()[0], 0x00ff00);
+            assert_eq!(
+                gb.mmu.ppu.display_framebuffer()[40 * 256 + 48],
+                gb.mmu.ppu.framebuffer()[0]
+            );
+            let mut plain = GameBoy::new(Model::from_cgb_flag(true));
+            for value in [0x00, 0x10, 0x20, 0x30] {
+                gb.mmu.write_byte(0xff00, value);
+                plain.mmu.write_byte(0xff00, value);
+                assert_eq!(gb.mmu.read_byte(0xff00), plain.mmu.read_byte(0xff00));
+            }
+        }
+    }
+}
+
+#[test]
+fn initial_border_times_out_and_skips_ineligible_or_faulted_roms() {
+    for kind in 0..5 {
+        let mut rom = initial_border_rom();
+        match kind {
+            0 => rom[0x143] = 0,
+            1 => rom[0x146] = 0,
+            2 => rom[0x14b] = 0,
+            3 => rom[0x100..0x102].copy_from_slice(&[0x18, 0xfe]),
+            _ => rom[0x100] = 0xd3,
+        }
+        let mut gb = GameBoy::new(Model::from_cgb_flag(true));
+        gb.load_cart(Cartridge::from_bytes(rom));
+        gb.mmu.write_byte(0xff68, 0);
+        gb.mmu.write_byte(0xff6a, 0);
+        let before = gb.capture_boot_handoff_snapshot();
+        assert!(!gb.borrow_sgb_border(None, 2));
+        assert_eq!(gb.capture_boot_handoff_snapshot(), before);
+        assert!(gb.mmu.ppu.sgb.is_none());
+    }
+}
+
+#[test]
+fn simultaneous_hybrid_does_not_run_the_sgb_only_startup_path() {
+    let mut gb = GameBoy::new(Model::from_cgb_flag(true));
+    gb.enable_sgb_extensions();
+    gb.load_cart(Cartridge::from_bytes(initial_border_rom()));
+    gb.cpu.run_for_dots(&mut gb.mmu, 1024);
+    assert_eq!(gb.mmu.wram[0][0], 0x42);
+    assert!(gb.mmu.ppu.sgb.as_ref().unwrap().border().is_none());
+    assert!(gb.mmu.ppu.sgb.as_ref().unwrap().is_command_host());
 }
