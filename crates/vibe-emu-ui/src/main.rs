@@ -502,17 +502,20 @@ fn configured_bootrom_data(
 }
 
 /// Shared by command-line startup and interactive loads so both paths use identical models and BIOSes.
-fn create_machine(cart: Option<Cartridge>, config: &LoadConfig) -> Result<GameBoy, String> {
+fn create_machine(cart: Option<Cartridge>, config: &LoadConfig) -> Result<Box<GameBoy>, String> {
     let model = cart.as_ref().map_or_else(
         || config.emulation_mode.model(false),
         |cart| config.emulation_mode.model_for_cart(cart),
     );
     let boot = configured_bootrom_data(config, model, false)?;
-    let mut gb = if boot.is_some() {
+    // Keep machine ownership on the heap across startup, loader messages and
+    // UI replacement. Returning GameBoy by value creates several large stack
+    // temporaries, overflowing the Windows main thread before the window opens.
+    let mut gb = Box::new(if boot.is_some() {
         GameBoy::new_power_on(model)
     } else {
         GameBoy::new(model)
-    };
+    });
     if let Some(boot) = boot {
         gb.mmu.load_boot_rom(boot);
     }
@@ -539,6 +542,11 @@ fn create_machine(cart: Option<Cartridge>, config: &LoadConfig) -> Result<GameBo
     }
     Ok(gb)
 }
+
+// Constructors and initial-border capture can hold a second machine while
+// assembling its PPU/MMU. Keep that work off the platform event-loop stack,
+// including in debug builds, and transfer only boxed ownership to the UI.
+const ROM_LOADER_STACK_SIZE: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
 struct Speed {
@@ -770,7 +778,7 @@ fn poll_frame_commands(
 
 #[allow(clippy::too_many_arguments)]
 fn run_emulator_thread(
-    gb: Arc<Mutex<GameBoy>>,
+    gb: Arc<Mutex<Box<GameBoy>>>,
     mut speed: Speed,
     initial_paused: bool,
     channels: EmuThreadChannels,
@@ -918,7 +926,7 @@ fn run_emulator_thread(
         let mut bp_hit: Option<(u8, u16)> = None;
 
         if let Ok(mut gb) = gb.lock() {
-            let GameBoy { cpu, mmu, .. } = &mut *gb;
+            let GameBoy { cpu, mmu, .. } = &mut **gb;
             mmu.ppu.clear_frame_flag();
             let frame_start_dots = cpu.cycles;
 
@@ -1045,8 +1053,10 @@ fn run_emulator_thread(
     }
 }
 
+type RomLoadResult = Result<(Box<GameBoy>, std::path::PathBuf), String>;
+
 struct VibeEmuApp {
-    gb: Arc<Mutex<GameBoy>>,
+    gb: Arc<Mutex<Box<GameBoy>>>,
     emu_tx: mpsc::Sender<EmuCommand>,
     frame_rx: cb::Receiver<EmuEvent>,
     frame_pool_tx: cb::Sender<Vec<u32>>,
@@ -1086,7 +1096,7 @@ struct VibeEmuApp {
     bootrom_paths: [String; 7],
     sgb_bootrom_override: Option<Vec<u8>>,
     dmg_neutral: bool,
-    loading: Option<mpsc::Receiver<Result<(GameBoy, std::path::PathBuf), String>>>,
+    loading: Option<mpsc::Receiver<RomLoadResult>>,
     load_error: Option<String>,
     selected_window_scale: usize,
     current_display_scale: f32,
@@ -1370,7 +1380,7 @@ impl VibeEmuApp {
     #[allow(clippy::too_many_arguments)]
     fn new(
         _cc: &eframe::CreationContext<'_>,
-        gb: Arc<Mutex<GameBoy>>,
+        gb: Arc<Mutex<Box<GameBoy>>>,
         emu_tx: mpsc::Sender<EmuCommand>,
         frame_rx: cb::Receiver<EmuEvent>,
         frame_pool_tx: cb::Sender<Vec<u32>>,
@@ -2312,7 +2322,7 @@ impl VibeEmuApp {
         self.loading = Some(rx);
         thread::Builder::new()
             .name("rom-loader".into())
-            .stack_size(16 * 1024 * 1024)
+            .stack_size(ROM_LOADER_STACK_SIZE)
             .spawn(move || {
                 let result = Cartridge::from_file(&path)
                     .map_err(|e| format!("Cannot load {}: {e}", path.display()))
@@ -3387,7 +3397,7 @@ impl VibeEmuApp {
 
     fn do_single_step(&mut self) {
         if let Ok(mut gb) = self.gb.lock() {
-            let GameBoy { cpu, mmu, .. } = &mut *gb;
+            let GameBoy { cpu, mmu, .. } = &mut **gb;
             cpu.step(mmu);
             // Update snapshot immediately after step so disassembly shows correct memory
             self.debugger_snapshot = Some(UiSnapshot::from_gb(&mut gb, true));
@@ -3527,7 +3537,7 @@ impl VibeEmuApp {
                     }
                 }
 
-                let GameBoy { cpu, mmu, .. } = &mut *gb;
+                let GameBoy { cpu, mmu, .. } = &mut **gb;
                 cpu.step(mmu);
             }
 
@@ -6327,18 +6337,27 @@ fn main() {
         std::process::exit(1);
     }
 
-    let (mut gb, initial_error) = match create_machine(cart, &load_config) {
+    let startup_config = load_config.clone();
+    let machine = thread::Builder::new()
+        .name("startup-loader".into())
+        .stack_size(ROM_LOADER_STACK_SIZE)
+        .spawn(move || create_machine(cart, &startup_config))
+        .expect("startup loader thread")
+        .join()
+        .expect("startup loader panicked");
+    let (mut gb, initial_error) = match machine {
         Ok(gb) => (gb, None),
         Err(e) => {
             error!("{e}");
             if headless {
                 std::process::exit(1);
             }
-            (GameBoy::default(), Some(e))
+            (Box::<GameBoy>::default(), Some(e))
         }
     };
 
     if headless {
+        let gb = gb.as_mut();
         enum Limit {
             Frames(usize),
             Seconds(u64),
