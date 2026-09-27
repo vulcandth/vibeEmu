@@ -1,6 +1,5 @@
 use crate::{apu::ApuBootSnapshot, cpu::Cpu, hardware::Model, mmu::Mmu};
 
-#[cfg(test)]
 use crate::cartridge::Cartridge;
 
 /// CPU register snapshot for boot-handoff parity checks.
@@ -141,6 +140,47 @@ impl GameBoy {
         }
     }
 
+    /// Load a cartridge and apply header-dependent CPU state when skipping boot.
+    /// Prefer this to loading directly into the MMU for AGB compatibility mode.
+    pub fn load_cart(&mut self, cart: Cartridge) {
+        if !self.mmu.boot_mapped && self.cpu.pc == 0x100 && self.cpu.cycles == 0 {
+            if self.model == Model::Mgb {
+                self.cpu.f = if cart.rom.get(0x14d) == Some(&0) {
+                    0x80
+                } else {
+                    0xb0
+                };
+            }
+            if self.model.is_agb() && !cart.cgb {
+                let nintendo = cart.rom.get(0x14b) == Some(&1)
+                    || (cart.rom.get(0x14b) == Some(&0x33)
+                        && cart.rom.get(0x144..0x146) == Some(b"01"));
+                let checksum = if nintendo {
+                    cart.rom
+                        .get(0x134..0x144)
+                        .unwrap_or(&[])
+                        .iter()
+                        .fold(0u8, |sum, b| sum.wrapping_add(*b))
+                } else {
+                    0
+                };
+                self.cpu.b = checksum.wrapping_add(1);
+                self.cpu.f = (if self.cpu.b == 0 { 0x80 } else { 0 })
+                    | (if checksum & 0xf == 0xf { 0x20 } else { 0 });
+                self.cpu.d = 0;
+                self.cpu.e = 8;
+                let hl: u16 = if matches!(checksum, 0x43 | 0x58) {
+                    0x991a
+                } else {
+                    0x007c
+                };
+                self.cpu.h = (hl >> 8) as u8;
+                self.cpu.l = hl as u8;
+            }
+        }
+        self.mmu.load_cart(cart);
+    }
+
     /// Resets to the post-boot state, preserving cartridge and boot ROM.
     ///
     /// # Examples
@@ -166,7 +206,7 @@ impl GameBoy {
         self.cpu = Cpu::new(self.model);
         self.mmu.reset_post_boot_in_place(self.model);
         if let Some(c) = cart {
-            self.mmu.load_cart(c);
+            self.load_cart(c);
         }
         if let Some(b) = boot {
             self.mmu.boot_rom = Some(b);
@@ -183,7 +223,7 @@ impl GameBoy {
         self.cpu = Cpu::new_power_on();
         self.mmu.reset_power_on_in_place(self.model);
         if let Some(c) = cart {
-            self.mmu.load_cart(c);
+            self.load_cart(c);
         }
         if let Some(b) = boot {
             self.mmu.load_boot_rom(b);

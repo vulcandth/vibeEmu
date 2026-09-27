@@ -55,7 +55,7 @@ impl CgbRevision {
 
 /// Hardware model and revision of the emulated system.
 ///
-/// Combines the system family (DMG or CGB) with its board/silicon revision
+/// Combines the system family with its board/silicon revision
 /// into a single typed value. This eliminates the `cgb: bool` parameter that
 /// was previously threaded through every constructor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -64,19 +64,29 @@ pub enum Model {
     Dmg(DmgRevision),
     /// Game Boy Color (CGB) with the given board revision.
     Cgb(CgbRevision),
+    /// Game Boy Pocket / Light.
+    Mgb,
+    /// Super Game Boy (NTSC clock), Game Boy subsystem.
+    Sgb,
+    /// Super Game Boy 2, Game Boy subsystem.
+    Sgb2,
+    /// Game Boy Advance in GB compatibility mode, original boot ROM.
+    Agb0,
+    /// Game Boy Advance in GB compatibility mode, revised boot ROM.
+    Agb,
 }
 
 impl Model {
-    /// Returns `true` when this model is a CGB (Game Boy Color).
+    /// Returns `true` when this model has Color hardware (CGB or AGB).
     #[inline]
     pub const fn is_cgb(self) -> bool {
-        matches!(self, Model::Cgb(_))
+        matches!(self, Model::Cgb(_) | Model::Agb0 | Model::Agb)
     }
 
-    /// Returns `true` when this model is a DMG (original Game Boy).
+    /// Returns `true` when this model has monochrome hardware (DMG, MGB or SGB).
     #[inline]
     pub const fn is_dmg(self) -> bool {
-        matches!(self, Model::Dmg(_))
+        !self.is_cgb()
     }
 
     /// Returns the DMG board revision, if this is a DMG model.
@@ -84,16 +94,37 @@ impl Model {
     pub const fn dmg_revision(self) -> Option<DmgRevision> {
         match self {
             Model::Dmg(rev) => Some(rev),
-            Model::Cgb(_) => None,
+            _ => None,
         }
     }
 
-    /// Returns the CGB board revision, if this is a CGB model.
+    /// Returns the CGB timing profile. AGB inherits the late CGB profile;
+    /// AGB-specific differences are selected with [`Self::is_agb`].
     #[inline]
     pub const fn cgb_revision(self) -> Option<CgbRevision> {
         match self {
             Model::Cgb(rev) => Some(rev),
-            Model::Dmg(_) => None,
+            Model::Agb0 | Model::Agb => Some(CgbRevision::RevE),
+            _ => None,
+        }
+    }
+
+    /// Whether this is an Advance running a GB/GBC cartridge.
+    pub const fn is_agb(self) -> bool {
+        matches!(self, Self::Agb0 | Self::Agb)
+    }
+
+    /// Whether this is a Super Game Boy's monochrome subsystem.
+    pub const fn is_sgb(self) -> bool {
+        matches!(self, Self::Sgb | Self::Sgb2)
+    }
+
+    /// Dot clock in Hz. SGB1 derives its clock from the NTSC SNES master clock.
+    pub const fn clock_hz(self) -> u32 {
+        if matches!(self, Self::Sgb) {
+            4_295_454
+        } else {
+            4_194_304
         }
     }
 

@@ -520,6 +520,7 @@ pub struct Ppu {
     mode3_last_match_x: u8,
     mode3_same_x_toggle: bool,
     pub(crate) oam_dma_current_dest: u8,
+    pub(crate) mgb_halted_dma_bus: Option<[u8; 2]>,
     /// Indicates a completed frame is available in `framebuffer`
     frame_ready: bool,
     stat_irq_line: bool,
@@ -1069,6 +1070,7 @@ impl Ppu {
             mode3_last_match_x: 0,
             mode3_same_x_toggle: false,
             oam_dma_current_dest: 0xA1,
+            mgb_halted_dma_bus: None,
             frame_ready: false,
             stat_irq_line: false,
             stat_irq_dirty: true,
@@ -3282,6 +3284,9 @@ impl Ppu {
     #[inline]
     fn oam_read_for_ppu(&self, addr: usize) -> u8 {
         let addr = addr.min(0x9F);
+        if let Some(bus) = self.mgb_halted_dma_bus {
+            return bus[addr & 1];
+        }
         // DMG models expose OAM DMA word-level contention on the PPU OAM read
         // path during active transfers.
         if self.dmg_oam_dma_contention_active() {
@@ -3836,7 +3841,7 @@ impl Ppu {
             let base = self.oam_scan_index * 4;
             match self.oam_scan_phase {
                 0 => {
-                    if !self.dmg_oam_dma_contention_active() {
+                    if !self.dmg_oam_dma_contention_active() || self.mgb_halted_dma_bus.is_some() {
                         self.mode2_y_bus = self.oam_read_for_ppu(base);
                         self.mode2_x_bus = self.oam_read_for_ppu(base + 1);
                     }
@@ -4258,10 +4263,16 @@ impl Ppu {
     fn compute_mode3_cycles_for_line(&self) -> u16 {
         if self.is_cgb_dmg_compat_mode() && self.lcdc & 2 != 0 && self.sprite_count > 0 {
             // Compatibility rendering retains its existing OBJ fetch schedule.
-            // Translate the fetcher origin to the bus origin on scanned lines.
-            return self
-                .dmg_compute_mode3_cycles_for_line()
-                .saturating_sub(if self.ly == 0 { 0 } else { 2 });
+            // Translate the CGB fetcher origin to the bus origin on scanned
+            // lines. AGB retains the full compatibility-mode OBJ duration
+            // measured by Mooneye intr_2_mode0_timing_sprites.
+            return self.dmg_compute_mode3_cycles_for_line().saturating_sub(
+                if self.ly == 0 || self.model.is_agb() {
+                    0
+                } else {
+                    2
+                },
+            );
         }
 
         // Fine-scroll pixels are discarded before visible output. OBJ
@@ -4423,7 +4434,9 @@ impl Ppu {
         self.lcd_startup_blank = false;
         self.mode2_scy_write = None;
         self.dmg_lcd_restarted = false;
-        if let Some(rev) = dmg_revision {
+        if let Some(rev) = dmg_revision
+            && matches!(self.model, Model::Dmg(_))
+        {
             self.model = Model::Dmg(rev);
         }
         self.lcdc = 0x91;
@@ -4476,6 +4489,19 @@ impl Ppu {
         self.lyc_eq_ly = self.ly_for_comparison == self.lyc;
         self.stat_irq_line = false;
         self.dmg_mode2_vblank_irq_pending = false;
+    }
+
+    pub(crate) fn apply_sgb_boot_phase(&mut self, frame_dot: u32) {
+        self.ly = (frame_dot / 456) as u8;
+        self.mode_clock = (frame_dot % 456) as u16;
+        self.set_mode(MODE_VBLANK);
+        self.ly_for_comparison = if self.ly == 153 && self.mode_clock >= 8 {
+            0
+        } else {
+            self.ly
+        };
+        self.cgb_line153_ly0_triggered = self.ly == 153 && self.mode_clock >= 8;
+        self.lyc_eq_ly = self.ly_for_comparison == self.lyc;
     }
 
     /// Apply the DMG boot ROM's logo/tile-map writes when skipping boot ROM

@@ -6,10 +6,9 @@ The archive and extracted ROMs remain cached under `test_roms/`.
 
 `mooneye_acceptance` already covers the acceptance directory, seven
 `emulator-only` ROMs, and two `misc` boot-DIV ROMs. `mooneye_extended` enumerates
-the remaining ROMs without duplicating those tests: 27 pass and five are
-ignored. `wilbertpol` independently enumerates its entire bundle: 112 pass and
-10 are ignored (six unsupported hardware cases and four
-diagnostic workloads). Each sprite-priority ROM runs twice, for DMG and CGB.
+the remaining ROMs without duplicating those tests. `wilbertpol` independently
+enumerates its entire bundle. Each sprite-priority ROM runs twice, for DMG
+and CGB. Only non-asserting utilities and logic-analysis workloads are ignored.
 
 ## Completion and hardware selection
 
@@ -21,8 +20,8 @@ diagnostic workloads). Each sprite-priority ROM runs twice, for DMG and CGB.
   STOP is a failure, never a successful completion.
 - Filename hardware restrictions take precedence over the cartridge header.
   Supported profiles use DMG C and CGB E, with CGB 0 selected where requested.
-  MGB, SGB, SGB2, and AGB requirements are explicitly ignored; running one of
-  these cases with `--ignored` reports the unsupported model.
+  MGB, SGB, SGB2, and AGB restrictions select their respective models.
+  Acceptance tests also run both SGB versions and both AGB boot revisions.
 - Boot-state ROMs execute the real boot ROM from power-on. This matters for
   CGB compatibility-mode registers and palettes at handoff.
 - `manual-only/sprite_priority.gb` does not require user interaction. Its two
@@ -97,3 +96,32 @@ including their shared completion macros, boot/I/O assertions, sprite-priority
 programs, and GPU timing probes. These source revisions are investigation
 references; the executed binaries and expected images remain those supplied
 by the pinned v7.0 archive.
+
+## Added hardware model coverage
+
+The model tests fetch matching boot images from the
+[GBDev boot ROM archive](https://gbdev.gg8.se/files/roms/bootroms/), keeping them
+in the existing local cache. MGB/SGB/SGB2 register and I/O tests, both SGB DIV
+variants, AGB registers/DIV, and MGB serial alignment run normally. The new
+models also run the hardware-independent acceptance ROMs (including sprite
+interrupt timing), and startup checks exercise both real and skipped boot.
+
+`model_boot.rs` varies SGB headers across several packets and compares divider,
+LCD phase, and packet RAM against actual boot execution. The skipped-boot
+calculation follows the packet-building, bit transmission, and four-frame
+wait loops in [the boot disassembly](https://codeberg.org/ISSOtm/gb-bootroms).
+It does not choose a divider based on a ROM name or global checksum alone.
+
+Both `madness/mgb_oam_dma_halt_sprites.gb` cases now run and compare the supplied
+screenshot after HALT. They use the reference's grayscale palette. MGB models
+the stalled DMA word's measured OAM bus corruption; the source describes
+unit-dependent behavior, so this is the tested MGB profile rather than a claim
+that every Pocket exhibits the same corruption. The ROM remains halted;
+success is determined by pixels, not by treating HALT as a pass.
+
+AGB uses late CGB timing with separate compatibility sprite timing and active
+wave RAM access restrictions. Its approximate initial divider phase is
+calibrated against `misc/boot_div-A` using both AGB boot images. The AGB wave
+RAM rule and initial registers follow
+[Pan Docs](https://gbdev.io/pandocs/Audio_Registers.html) and its
+[power-up documentation](https://gbdev.io/pandocs/Power_Up_Sequence.html).

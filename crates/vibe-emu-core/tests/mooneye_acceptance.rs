@@ -18,7 +18,7 @@ fn capture_first_div_reads_cgb_seed(seed_div: u16) -> Vec<u8> {
     assert!(cart.cgb, "expected CGB ROM");
 
     let mut gb = GameBoy::new(Model::Cgb(CgbRevision::default()));
-    gb.mmu.load_cart(cart);
+    gb.load_cart(cart);
 
     gb.mmu.timer.div = seed_div;
     gb.mmu.dot_div = seed_div;
@@ -60,7 +60,7 @@ fn run_mooneye_quit_protocol_with_dmg_revision<P: AsRef<std::path::Path>>(
         Model::Dmg(dmg_revision)
     };
     let mut gb = GameBoy::new(model);
-    gb.mmu.load_cart(cart);
+    gb.load_cart(cart);
 
     while gb.cpu.cycles < max_cycles {
         let pc = gb.cpu.pc;
@@ -112,7 +112,7 @@ fn run_mooneye_acceptance_with_bootrom<P: AsRef<std::path::Path>>(
 
     let mut gb = GameBoy::new_power_on(Model::Dmg(dmg_revision));
     gb.mmu.load_boot_rom(boot);
-    gb.mmu.load_cart(cart);
+    gb.load_cart(cart);
 
     while gb.cpu.cycles < max_cycles {
         let pc = gb.cpu.pc;
@@ -165,7 +165,7 @@ fn run_mooneye_acceptance_with_dmg_revision<P: AsRef<std::path::Path>>(
         Model::Dmg(dmg_revision)
     };
     let mut gb = GameBoy::new(model);
-    gb.mmu.load_cart(cart);
+    gb.load_cart(cart);
 
     // Optional targeted trace: capture the first few reads of DIV (FF04) so
     // boot DIV/phase issues are easier to diagnose.
@@ -236,7 +236,7 @@ fn run_mooneye_acceptance_force_cgb_revision<P: AsRef<std::path::Path>>(
     let rom = std::fs::read(&rom_path).expect("rom not found");
     let cart = Cartridge::from_bytes(rom);
     let mut gb = GameBoy::new(Model::Cgb(cgb_revision));
-    gb.mmu.load_cart(cart);
+    gb.load_cart(cart);
 
     while gb.cpu.cycles < max_cycles {
         let pc = gb.cpu.pc;
@@ -381,13 +381,10 @@ fn emulator_only__mbc5__rom_1Mb_gb() {
 }
 
 #[test]
-#[ignore]
 fn boot_div_S_gb() {
-    let passed = run_mooneye_acceptance(
-        common::rom_path("mooneye-test-suite/acceptance/boot_div-S.gb"),
-        20_000_000,
-    );
-    assert!(passed, "test failed");
+    for model in [Model::Sgb, Model::Sgb2] {
+        run_model_rom("mooneye-test-suite/acceptance/boot_div-S.gb", model, true);
+    }
 }
 
 #[test]
@@ -411,23 +408,17 @@ fn boot_div_dmgABCmgb_gb() {
 }
 
 #[test]
-#[ignore]
 fn boot_div2_S_gb() {
-    let passed = run_mooneye_acceptance(
-        common::rom_path("mooneye-test-suite/acceptance/boot_div2-S.gb"),
-        20_000_000,
-    );
-    assert!(passed, "test failed");
+    for model in [Model::Sgb, Model::Sgb2] {
+        run_model_rom("mooneye-test-suite/acceptance/boot_div2-S.gb", model, true);
+    }
 }
 
 #[test]
-#[ignore]
 fn boot_hwio_S_gb() {
-    let passed = run_mooneye_acceptance(
-        common::rom_path("mooneye-test-suite/acceptance/boot_hwio-S.gb"),
-        20_000_000,
-    );
-    assert!(passed, "test failed");
+    for model in [Model::Sgb, Model::Sgb2] {
+        run_model_rom("mooneye-test-suite/acceptance/boot_hwio-S.gb", model, true);
+    }
 }
 
 #[test]
@@ -490,33 +481,39 @@ fn boot_regs_dmgABC_gb() {
 }
 
 #[test]
-#[ignore]
 fn boot_regs_mgb_gb() {
-    let passed = run_mooneye_acceptance(
-        common::rom_path("mooneye-test-suite/acceptance/boot_regs-mgb.gb"),
-        20_000_000,
-    );
-    assert!(passed, "test failed");
+    {
+        let model = Model::Mgb;
+        run_model_rom(
+            "mooneye-test-suite/acceptance/boot_regs-mgb.gb",
+            model,
+            true,
+        );
+    }
 }
 
 #[test]
-#[ignore]
 fn boot_regs_sgb_gb() {
-    let passed = run_mooneye_acceptance(
-        common::rom_path("mooneye-test-suite/acceptance/boot_regs-sgb.gb"),
-        20_000_000,
-    );
-    assert!(passed, "test failed");
+    {
+        let model = Model::Sgb;
+        run_model_rom(
+            "mooneye-test-suite/acceptance/boot_regs-sgb.gb",
+            model,
+            true,
+        );
+    }
 }
 
 #[test]
-#[ignore]
 fn boot_regs_sgb2_gb() {
-    let passed = run_mooneye_acceptance(
-        common::rom_path("mooneye-test-suite/acceptance/boot_regs-sgb2.gb"),
-        20_000_000,
-    );
-    assert!(passed, "test failed");
+    {
+        let model = Model::Sgb2;
+        run_model_rom(
+            "mooneye-test-suite/acceptance/boot_regs-sgb2.gb",
+            model,
+            true,
+        );
+    }
 }
 
 #[test]
@@ -1048,4 +1045,103 @@ fn timer__tma_write_reloading_gb() {
         20_000_000,
     );
     assert!(passed, "test failed");
+}
+
+fn run_model_rom(path: &str, model: Model, boot: bool) {
+    let cart = Cartridge::from_bytes(std::fs::read(common::rom_path(path)).unwrap());
+    let mut gb = if boot {
+        GameBoy::new_power_on(model)
+    } else {
+        GameBoy::new(model)
+    };
+    if boot {
+        gb.mmu
+            .load_boot_rom(std::fs::read(common::model_boot_rom_path(model)).unwrap());
+    }
+    gb.load_cart(cart);
+    while gb.cpu.cycles < 40_000_000 {
+        if gb.mmu.read_byte(gb.cpu.pc) == 0x40 {
+            let regs = [gb.cpu.b, gb.cpu.c, gb.cpu.d, gb.cpu.e, gb.cpu.h, gb.cpu.l];
+            if regs == FIB_SEQ {
+                return;
+            }
+            assert_ne!(
+                regs,
+                FAIL_SEQ,
+                "{path} {model:?} boot={boot}: HRAM={:02X?}",
+                &gb.mmu.hram[..48]
+            );
+        }
+        gb.cpu.step(&mut gb.mmu);
+        assert!(
+            !gb.cpu.faulted,
+            "{path} {model:?} fault at {:04X}",
+            gb.cpu.pc
+        );
+    }
+    panic!("{path} {model:?} timed out at {:04X}", gb.cpu.pc);
+}
+
+#[test]
+fn additional_models_boot_and_timing() {
+    for model in [Model::Mgb, Model::Sgb, Model::Sgb2, Model::Agb0, Model::Agb] {
+        for path in [
+            "acceptance/instr/daa.gb",
+            "acceptance/timer/div_write.gb",
+            "acceptance/oam_dma/basic.gb",
+            "acceptance/interrupts/ie_push.gb",
+        ] {
+            run_model_rom(&format!("mooneye-test-suite/{path}"), model, false);
+        }
+        let paths: &[&str] = match model {
+            Model::Mgb => &[
+                "acceptance/boot_regs-mgb.gb",
+                "acceptance/boot_div-dmgABCmgb.gb",
+                "acceptance/boot_hwio-dmgABCmgb.gb",
+                "acceptance/serial/boot_sclk_align-dmgABCmgb.gb",
+            ],
+            Model::Sgb | Model::Sgb2 => &[
+                "acceptance/boot_div-S.gb",
+                "acceptance/boot_div2-S.gb",
+                "acceptance/boot_hwio-S.gb",
+            ],
+            _ => &["misc/boot_regs-A.gb", "misc/boot_div-A.gb"],
+        };
+        for path in paths {
+            run_model_rom(&format!("mooneye-test-suite/{path}"), model, true);
+            run_model_rom(&format!("mooneye-test-suite/{path}"), model, false);
+        }
+    }
+}
+
+#[test]
+fn additional_models_common_acceptance() {
+    fn collect(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect(&path, files);
+            } else if path.extension().is_some_and(|e| e == "gb") {
+                let name = path.file_name().unwrap().to_str().unwrap();
+                if !name.contains('-') && !name.starts_with("boot_") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    let root = common::rom_path("mooneye-test-suite");
+    let mut files = Vec::new();
+    collect(&root.join("acceptance"), &mut files);
+    files.sort();
+    for model in [Model::Mgb, Model::Sgb, Model::Sgb2, Model::Agb0, Model::Agb] {
+        for path in &files {
+            let name = path
+                .strip_prefix(&root)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace('\\', "/");
+            run_model_rom(&format!("mooneye-test-suite/{name}"), model, false);
+        }
+    }
 }

@@ -33,6 +33,24 @@ fn collect(root: &Path, directory: &Path, files: &mut Vec<String>) {
     }
 }
 
+pub fn model_for_name(name: &str, cgb: bool) -> Model {
+    if name.contains("mgb_") || name.ends_with("-mgb.gb") {
+        Model::Mgb
+    } else if name.ends_with("-sgb2.gb") {
+        Model::Sgb2
+    } else if name.ends_with("-sgb.gb") || name.ends_with("-S.gb") {
+        Model::Sgb
+    } else if name.ends_with("-A.gb") {
+        Model::Agb
+    } else if name.contains("-cgb0") {
+        Model::Cgb(CgbRevision::Rev0)
+    } else if name.contains("-cgb") || name.ends_with("-C.gb") || cgb {
+        Model::Cgb(CgbRevision::RevE)
+    } else {
+        Model::Dmg(DmgRevision::RevC)
+    }
+}
+
 fn run(
     path: &Path,
     name: &str,
@@ -44,27 +62,9 @@ fn run(
     if name.starts_with("utils/") || name.starts_with("logic-analysis/") {
         return Err("diagnostic workload: no pass/fail assertion or supplied reference".into());
     }
-    if name.contains("mgb_")
-        || name.ends_with("-mgb.gb")
-        || name.ends_with("-A.gb")
-        || name.ends_with("-S.gb")
-        || name.ends_with("-sgb.gb")
-        || name.ends_with("-sgb2.gb")
-    {
-        return Err("requires an unimplemented MGB, SGB, SGB2 or AGB hardware model".into());
-    }
     let cart = Cartridge::from_bytes(fs::read(path).map_err(|e| e.to_string())?);
-    let cgb = screenshot_model
-        .unwrap_or_else(|| name.contains("-cgb") || name.ends_with("-C.gb") || cart.cgb);
-    let model = if cgb {
-        Model::Cgb(if name.contains("-cgb0") {
-            CgbRevision::Rev0
-        } else {
-            CgbRevision::RevE
-        })
-    } else {
-        Model::Dmg(DmgRevision::RevC)
-    };
+    let model = model_for_name(name, screenshot_model.unwrap_or(cart.cgb));
+    let cgb = model.is_cgb();
     let boot = name.contains("/boot_");
     let mut gb = if boot {
         GameBoy::new_power_on(model)
@@ -72,18 +72,52 @@ fn run(
         GameBoy::new(model)
     };
     if boot {
-        let boot_path = if cgb {
-            crate::common::cgb_boot_rom_path()
-        } else {
-            crate::common::dmg_boot_rom_path()
-        };
+        let boot_path = crate::common::model_boot_rom_path(model);
         gb.mmu
             .load_boot_rom(fs::read(boot_path).map_err(|e| e.to_string())?);
     }
-    gb.mmu.load_cart(cart);
+    gb.load_cart(cart);
     gb.mmu
         .ppu
         .set_dmg_palette([0xffffff, 0xaaaaaa, 0x555555, 0]);
+    if name == "madness/mgb_oam_dma_halt_sprites.gb" {
+        // This ROM deliberately HALTs forever with interrupts disabled. Its
+        // supplied screenshot, not the register quit protocol, is the verdict.
+        while !gb.cpu.halted && gb.cpu.cycles < MAX_CYCLES {
+            gb.cpu.step(&mut gb.mmu);
+        }
+        if !gb.cpu.halted {
+            return Err("MGB DMA test did not reach HALT".into());
+        }
+        gb.mmu
+            .ppu
+            .set_dmg_palette([0xffffff, 0xb0b0b0, 0x686868, 0]);
+        let end = gb.cpu.cycles + 3 * 70224;
+        while gb.cpu.cycles < end {
+            gb.cpu.step(&mut gb.mmu);
+        }
+        let reference = path.with_file_name("mgb_oam_dma_halt_sprites_expected.png");
+        let (w, h, expected) = crate::common::load_png_rgb(reference);
+        assert_eq!((w, h), (160, 144));
+        let mismatches = gb
+            .mmu
+            .ppu
+            .framebuffer()
+            .iter()
+            .zip(expected.iter())
+            .filter(|(actual, rgb)| {
+                **actual
+                    != ((u32::from(rgb[0]) << 16) | (u32::from(rgb[1]) << 8) | u32::from(rgb[2]))
+            })
+            .count();
+        return if mismatches == 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "MGB halted DMA screenshot: {mismatches} differing pixels"
+            ))
+        };
+    }
     let completion = if wilbertpol { 0xed } else { 0x40 };
     while gb.cpu.cycles < MAX_CYCLES {
         let pc = gb.cpu.pc;

@@ -171,7 +171,14 @@ Common arguments:
 - `--dmg`: force DMG mode.
 - `--dmg-neutral`: use neutral DMG palette settings.
 - `--cgb`: force CGB mode.
-- `--bootrom <path>`: load a boot ROM file.
+- `--model <dmg|mgb|sgb|sgb2|cgb|agb0|agb>`: select the hardware model.
+  The same models are available in the desktop emulation mode menu.
+  AGB0/AGB run GB/GBC cartridges using the original/revised Advance boot ROM.
+  SGB/SGB2 currently emulate the Game Boy subsystem; SNES borders, sound, and
+  multiplayer commands are not implemented. SGB uses the faster NTSC clock.
+- `--bootrom <path>`: load a boot ROM file matching the selected model.
+  Saved DMG/CGB boot ROM paths apply only to those models; use this override
+  for MGB, SGB, SGB2, AGB0, or AGB. Boot ROMs are optional.
 - `--headless`: run without a window or audio output.
 - `--frames <n>`: in headless mode, stop after `n` frames.
 - `--seconds <n>`: in headless mode, stop after about `n` seconds.

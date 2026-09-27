@@ -73,6 +73,11 @@ fn power_on_wram_seed(model: Model) -> u32 {
     match model {
         Model::Dmg(rev) => seed ^= (rev as u32).wrapping_mul(0x9E37_79B9),
         Model::Cgb(rev) => seed ^= (rev as u32).wrapping_mul(0x85EB_CA6B),
+        Model::Mgb => seed ^= 0x4d4742,
+        Model::Sgb => seed ^= 0x534742,
+        Model::Sgb2 => seed ^= 0x53474232,
+        Model::Agb0 => seed ^= 0x41474230,
+        Model::Agb => seed ^= 0x414742,
     }
     if seed == 0 { 0xA5A5_5A5A } else { seed }
 }
@@ -292,6 +297,9 @@ impl Mmu {
                 | CgbRevision::RevE => 0x2678,
                 CgbRevision::Rev0 => 0x2884,
             },
+            Model::Mgb => 0xABCC,
+            Model::Sgb | Model::Sgb2 => 0, // Header-dependent phase is set when loading a cartridge.
+            Model::Agb0 | Model::Agb => 0x267C,
             Model::Dmg(dmg_revision) => match dmg_revision {
                 DmgRevision::Rev0 => 0x1830,
                 DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => 0xABCC,
@@ -305,7 +313,9 @@ impl Mmu {
             // Approximate power-on phase, calibrated with LCD startup timing
             // to reproduce the boot-ROM DIV value checked by BullyGB.
             Model::Cgb(CgbRevision::RevE) => 8,
-            Model::Dmg(_) => 8,
+            Model::Dmg(_) | Model::Mgb | Model::Sgb | Model::Sgb2 => 8,
+            // Power-on phase calibrated against Mooneye boot_div-A on both AGB boots.
+            Model::Agb0 | Model::Agb => 0xfffc,
             _ => 0,
         }
     }
@@ -478,7 +488,13 @@ impl Mmu {
             apu,
             timer,
             dot_div,
-            input: Input::new(),
+            input: {
+                let mut input = Input::new();
+                if model.is_sgb() {
+                    input.write(0x30);
+                }
+                input
+            },
             hdma,
             key1: if cgb { 0x7E } else { 0 },
             rp: 0,
@@ -608,6 +624,9 @@ impl Mmu {
     pub fn load_cart(&mut self, cart: Cartridge) {
         let is_dmg = !cart.cgb;
         if self.post_boot_state {
+            if self.model.is_sgb() {
+                self.apply_sgb_header_boot(&cart.rom);
+            }
             let logo = cart.rom.get(0x0104..0x0134).unwrap_or(&[]);
             self.ppu.apply_dmg_post_boot_vram(logo);
 
@@ -622,6 +641,45 @@ impl Mmu {
             self.ppu.apply_dmg_compatibility_palettes();
             self.serial.set_dmg_compat_mode(true);
         }
+    }
+
+    // Reproduce the SGB boot ROM's six header packets and their timing without
+    // embedding a boot ROM. See ISSOtm/gb-bootroms src/sgb.asm (SendData and
+    // Wait4Frames). A zero bit costs four extra dots; each LY poll costs 32.
+    // Both checksums and all header bytes matter, not just the global checksum.
+    fn apply_sgb_header_boot(&mut self, rom: &[u8]) {
+        let mut packets = [0u8; 96];
+        for (n, packet) in packets.chunks_exact_mut(16).enumerate() {
+            packet[0] = 0xf1 + 2 * n as u8;
+            for i in 0..14 {
+                let addr = 0x104 + n * 14 + i;
+                if addr < 0x150 {
+                    packet[i + 2] = rom.get(addr).copied().unwrap_or(0);
+                    packet[1] = packet[1].wrapping_add(packet[i + 2]);
+                }
+            }
+        }
+        self.wram[0][..96].copy_from_slice(&packets);
+        // Fixed setup takes 270848 dots through LCD enable. Time below is
+        // relative to that instruction's completion (LCD is already six dots in).
+        let mut dots = 20u32;
+        for (n, packet) in packets.chunks_exact(16).enumerate() {
+            let zero_bits: u32 = packet.iter().map(|b| b.count_zeros()).sum();
+            dots += 10340 + 4 * zero_bits;
+            for frame in 0..4 {
+                // LDH reads eight dots into the instruction; readable LY leads
+                // the physical VBlank line by four dots.
+                while ((dots + 18) / 456) % 154 != 144 {
+                    dots += 32;
+                }
+                dots += 28 + 8 + 4092 + 4 + if frame < 3 { 12 } else { 8 };
+            }
+            dots += 16 + 4 + 8 + if n < 5 { 12 } else { 8 };
+        }
+        dots += 76;
+        self.timer.div = (270848u32 + dots + 8) as u16;
+        self.dot_div = self.timer.div;
+        self.ppu.apply_sgb_boot_phase((dots + 6) % 70224);
     }
 
     /// Flush battery-backed cartridge RAM to disk.
@@ -1391,6 +1449,36 @@ impl Mmu {
     /// Take and return all bytes output by the serial link since the last call.
     pub fn take_serial(&mut self) -> Vec<u8> {
         self.serial.take_output()
+    }
+
+    pub(crate) fn set_dma_halted(&mut self, halted: bool) {
+        if self.model != Model::Mgb || !halted || self.dma_cycles == 0 {
+            self.ppu.mgb_halted_dma_bus = None;
+            return;
+        }
+        if self.ppu.mgb_halted_dma_bus.is_some() {
+            return;
+        }
+        // On MGB, HALT gates DMA while the in-flight word still drives OAM.
+        // The measured corruption is described in Mooneye's
+        // madness/mgb_oam_dma_halt_sprites.s. No bytes are committed to OAM.
+        let next = ((640 - self.dma_cycles).div_ceil(4) as usize).min(159);
+        let incoming = self.dma_read_byte(self.dma_source.wrapping_add(next as u16));
+        let word = next & !1;
+        let enabled = self.ppu.oam.chunks_exact(4).any(|row| {
+            (0x98..=0x9f).contains(&row[0])
+                && row[1] <= 0xa7
+                && (9..=0x9f).contains(&row[2])
+                && row[3] <= 0xa7
+        });
+        self.ppu.mgb_halted_dma_bus = Some(if enabled {
+            [
+                (self.ppu.oam[word] | incoming) & 0xfc,
+                self.ppu.oam[word + 1] | incoming,
+            ]
+        } else {
+            [0xff; 2]
+        });
     }
 
     /// Advance the ongoing OAM DMA transfer if active.

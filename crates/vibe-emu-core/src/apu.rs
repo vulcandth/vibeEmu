@@ -51,6 +51,7 @@ macro_rules! apu_trace {
     ($($arg:tt)*) => {};
 }
 
+#[cfg(test)]
 const CPU_CLOCK_HZ: u32 = 4_194_304;
 // 512 Hz frame sequencer tick (not doubled in CGB mode)
 const FRAME_SEQUENCER_PERIOD: u32 = 8192;
@@ -1098,8 +1099,8 @@ impl Apu {
         self.regs[0x04] = 0x87;
         self.regs[0x16] = 0xF0;
 
-        self.ch1.enabled = true;
-        self.ch1.active = true;
+        self.ch1.enabled = !self.model.is_sgb();
+        self.ch1.active = !self.model.is_sgb();
         self.ch1.dac_enabled = true;
         self.ch1.length = 64;
         self.ch1.length_enable = false;
@@ -1346,6 +1347,10 @@ impl Apu {
     }
 
     fn wave_cpu_read_locked(&mut self, _: usize) -> u8 {
+        // AGB disconnects CPU access entirely while channel 3 is playing.
+        if self.model.is_agb() {
+            return 0xff;
+        }
         let just_read = self.ch3.wave_form_just_read.get();
         let byte_idx = self.wave_current_byte_index();
         self.ch3.wave_form_just_read.set(false);
@@ -1390,6 +1395,9 @@ impl Apu {
         let locked = self.ch3.enabled && self.ch3.dac_enabled;
         self.ch3.wave_ram_locked.set(locked);
         if locked {
+            if self.model.is_agb() {
+                return;
+            }
             if !self.cgb_mode() && !self.ch3.wave_form_just_read.get() {
                 return;
             }
@@ -3996,7 +4004,7 @@ impl Apu {
 
     #[inline]
     fn dots_before_sample(&self) -> u32 {
-        let numerator = CPU_CLOCK_HZ - 1 - self.sample_timer_accum as u32;
+        let numerator = self.model.clock_hz() - 1 - self.sample_timer_accum as u32;
         if self.sample_rate <= 1 {
             return if self.sample_rate == 0 {
                 u32::MAX
@@ -4174,7 +4182,7 @@ impl Apu {
     #[inline(always)]
     fn advance_sample_clock(&mut self, cycles: u16) {
         let rate = self.sample_rate as u64;
-        let sample_period = CPU_CLOCK_HZ as u64;
+        let sample_period = u64::from(self.model.clock_hz());
         self.sample_timer_accum += rate * cycles as u64;
         if self.audio_out.is_none() {
             self.sample_timer_accum %= sample_period;
@@ -4189,7 +4197,7 @@ impl Apu {
     // Keep mixing/filtering/queue work outside the inlined clock update.
     #[inline(never)]
     fn emit_audio_samples(&mut self) {
-        let sample_period = u64::from(CPU_CLOCK_HZ);
+        let sample_period = u64::from(self.model.clock_hz());
         while self.sample_timer_accum >= sample_period {
             self.sample_timer_accum -= sample_period;
             let (left, right) = self.mix_output();

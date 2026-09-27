@@ -22,12 +22,7 @@ use std::sync::{Arc, Mutex, RwLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use vibe_emu_core::serial::{LinkPort, NullLinkPort};
-use vibe_emu_core::{
-    cartridge::Cartridge,
-    gameboy::GameBoy,
-    hardware::{CgbRevision, DmgRevision, Model},
-    mmu::Mmu,
-};
+use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model, mmu::Mmu};
 use vibe_emu_mobile::{
     MobileAdapter, MobileAdapterDevice, MobileAddr, MobileConfig, MobileHost, MobileLinkPort,
     MobileNumber, MobileSockType, StdMobileHost,
@@ -250,6 +245,10 @@ struct Args {
     #[arg(long, conflicts_with = "dmg")]
     cgb: bool,
 
+    /// Select hardware, overriding automatic cartridge detection.
+    #[arg(long, value_parser = ["dmg", "mgb", "sgb", "sgb2", "cgb", "agb0", "agb"], conflicts_with_all = ["dmg", "cgb"])]
+    model: Option<String>,
+
     #[arg(long)]
     bootrom: Option<std::path::PathBuf>,
 
@@ -413,11 +412,16 @@ struct LoadConfig {
     cgb_bootrom_path: Option<std::path::PathBuf>,
 }
 
-fn configured_bootrom_data(load_config: &LoadConfig, cgb_mode: bool) -> Option<Vec<u8>> {
+fn configured_bootrom_data(load_config: &LoadConfig, model: Model) -> Option<Vec<u8>> {
     if let Some(data) = &load_config.bootrom_override {
         return Some(data.clone());
     }
 
+    // Saved paths belong specifically to DMG/CGB. Other hardware uses --bootrom.
+    if !matches!(model, Model::Dmg(_) | Model::Cgb(_)) {
+        return None;
+    }
+    let cgb_mode = model.is_cgb();
     let configured_path = if cgb_mode {
         load_config.cgb_bootrom_path.as_ref()
     } else {
@@ -767,7 +771,9 @@ fn run_emulator_thread(
             continue;
         }
 
-        let frame_duration = Duration::from_secs_f64(1.0 / (GB_FPS * speed.factor as f64));
+        let clock_hz = gb.lock().map(|gb| gb.model.clock_hz()).unwrap_or(4_194_304);
+        let frame_duration =
+            Duration::from_secs_f64(70_224.0 / (f64::from(clock_hz) * speed.factor as f64));
         let input_frame = input_timing::InputFrame {
             start: next_frame - frame_duration,
             duration: frame_duration,
@@ -1414,11 +1420,16 @@ impl VibeEmuApp {
         self.save_ui_config();
     }
 
-    fn configured_bootrom_data(&self, cgb_mode: bool) -> Option<Vec<u8>> {
+    fn configured_bootrom_data(&self, model: Model) -> Option<Vec<u8>> {
         if let Some(data) = &self.bootrom_override {
             return Some(data.clone());
         }
 
+        // Saved paths belong specifically to DMG/CGB. Other hardware uses --bootrom.
+        if !matches!(model, Model::Dmg(_) | Model::Cgb(_)) {
+            return None;
+        }
+        let cgb_mode = model.is_cgb();
         let configured_path = if cgb_mode {
             Self::optional_path_from_input(&self.cgb_bootrom_path)
         } else {
@@ -1517,6 +1528,18 @@ impl VibeEmuApp {
             .clicked()
         {
             close_requested = true;
+        }
+
+        for (mode, label) in [
+            (EmulationMode::ForceMgb, "Force MGB"),
+            (EmulationMode::ForceSgb, "Force SGB"),
+            (EmulationMode::ForceSgb2, "Force SGB2"),
+            (EmulationMode::ForceAgb0, "Force AGB0"),
+            (EmulationMode::ForceAgb, "Force AGB"),
+        ] {
+            close_requested |= ui
+                .radio_value(&mut self.emulation_mode, mode, label)
+                .clicked();
         }
 
         if self.emulation_mode != prev_mode {
@@ -2116,12 +2139,9 @@ impl VibeEmuApp {
     fn load_rom(&mut self, path: std::path::PathBuf) {
         match Cartridge::from_file(&path) {
             Ok(cart) => {
-                let cgb_mode = match self.emulation_mode {
-                    EmulationMode::ForceDmg => false,
-                    EmulationMode::ForceCgb => true,
-                    EmulationMode::Auto => cart.cgb,
-                };
-                let bootrom_data = self.configured_bootrom_data(cgb_mode);
+                let model = self.emulation_mode.model(cart.cgb);
+                let cgb_mode = model.is_cgb();
+                let bootrom_data = self.configured_bootrom_data(model);
                 info!(
                     "Loading ROM: {} (CGB header: {}, mode: {:?} → cgb_mode: {}, bootrom: {})",
                     cart.title,
@@ -2136,7 +2156,6 @@ impl VibeEmuApp {
                 );
                 if let Ok(mut gb) = self.gb.lock() {
                     gb.mmu.save_cart_ram();
-                    let model = Model::from_cgb_flag(cgb_mode);
                     if bootrom_data.is_some() {
                         *gb = GameBoy::new_power_on(model);
                     } else {
@@ -2145,7 +2164,7 @@ impl VibeEmuApp {
                     if let Some(data) = bootrom_data {
                         gb.mmu.load_boot_rom(data);
                     }
-                    gb.mmu.load_cart(cart);
+                    gb.load_cart(cart);
                     self._audio_stream =
                         audio::start_stream(&mut gb.mmu.apu, true, self.sound_enabled.clone());
                 }
@@ -6037,7 +6056,18 @@ fn main() {
     let ui_config_path = ui_config::default_ui_config_path();
     let ui_config = ui_config::load_from_file(&ui_config_path);
 
-    let emulation_mode = if args.dmg {
+    let emulation_mode = if let Some(model) = args.model.as_deref() {
+        match model {
+            "dmg" => EmulationMode::ForceDmg,
+            "mgb" => EmulationMode::ForceMgb,
+            "sgb" => EmulationMode::ForceSgb,
+            "sgb2" => EmulationMode::ForceSgb2,
+            "cgb" => EmulationMode::ForceCgb,
+            "agb0" => EmulationMode::ForceAgb0,
+            "agb" => EmulationMode::ForceAgb,
+            _ => unreachable!("clap validates model"),
+        }
+    } else if args.dmg {
         EmulationMode::ForceDmg
     } else if args.cgb {
         EmulationMode::ForceCgb
@@ -6079,19 +6109,10 @@ fn main() {
         std::process::exit(1);
     }
 
-    let cgb_mode = match load_config.emulation_mode {
-        EmulationMode::ForceDmg => false,
-        EmulationMode::ForceCgb => true,
-        EmulationMode::Auto => cart.as_ref().is_some_and(|c| c.cgb),
-    };
-
-    let bootrom_data = configured_bootrom_data(&load_config, cgb_mode);
-
-    let model = if cgb_mode {
-        Model::Cgb(CgbRevision::default())
-    } else {
-        Model::Dmg(DmgRevision::default())
-    };
+    let model = load_config
+        .emulation_mode
+        .model(cart.as_ref().is_some_and(|c| c.cgb));
+    let bootrom_data = configured_bootrom_data(&load_config, model);
 
     let mut gb = if bootrom_data.is_some() {
         GameBoy::new_power_on(model)
@@ -6102,7 +6123,7 @@ fn main() {
         gb.mmu.load_boot_rom(data);
     }
     if let Some(c) = cart {
-        gb.mmu.load_cart(c);
+        gb.load_cart(c);
     }
 
     if headless {
@@ -6128,7 +6149,8 @@ fn main() {
                 }
             }
             Limit::Seconds(s) => {
-                let target_frames = (s as f64 * GB_FPS).ceil() as usize;
+                let target_frames =
+                    (s as f64 * f64::from(gb.model.clock_hz()) / 70_224.0).ceil() as usize;
                 info!("Running headless for {s} seconds (~{target_frames} frames)");
                 for _ in 0..target_frames {
                     gb.mmu.ppu.clear_frame_flag();
@@ -6452,6 +6474,18 @@ fn main() {
 mod tests {
     use super::{TileUsageSource, TileUsageSummary, VibeEmuApp};
     use crate::ui::snapshot::PpuSnapshot;
+
+    #[test]
+    fn hardware_model_cli_selection() {
+        use clap::Parser;
+        for model in ["dmg", "mgb", "sgb", "sgb2", "cgb", "agb0", "agb"] {
+            let args = super::Args::try_parse_from(["vibeemu", "--model", model]).unwrap();
+            assert_eq!(args.model.as_deref(), Some(model));
+            assert!(super::Args::try_parse_from(["vibeemu", "--model", model, "--cgb"]).is_err());
+            assert!(super::Args::try_parse_from(["vibeemu", "--model", model, "--dmg"]).is_err());
+        }
+        assert!(super::Args::try_parse_from(["vibeemu", "--model", "invalid"]).is_err());
+    }
 
     #[test]
     fn frame_polling_keeps_controls_before_later_input_edges() {

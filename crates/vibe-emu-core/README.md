@@ -79,7 +79,7 @@ let rom = std::fs::read("game.gb").unwrap();
 let cart = Cartridge::from_bytes(rom);
 
 let mut gb = GameBoy::new(Model::default());
-gb.mmu.load_cart(cart);
+gb.load_cart(cart);
 
 // Run one frame
 gb.mmu.ppu.clear_frame_flag();
@@ -110,3 +110,20 @@ all third-party code included in this crate.
 ## License
 
 This crate is licensed under the [MIT License](LICENSE).
+
+## Additional hardware models
+
+`Model::Mgb`, `Model::Sgb`, `Model::Sgb2`, `Model::Agb0`, and `Model::Agb`
+select Pocket/Light, Super Game Boy, Super Game Boy 2, and the two Advance
+GB-mode boot revisions. Use `GameBoy::load_cart` to apply header-dependent
+startup registers as well as memory state. `Model::is_cgb()` includes AGB;
+`Model::is_dmg()` includes the monochrome MGB/SGB families. Frontends can use
+`Model::clock_hz()` for pacing (SGB1 uses the NTSC SNES-derived clock).
+
+SGB support covers the Game Boy subsystem, including header-dependent boot
+timing. SNES-side borders, audio, and multiplayer commands are not implemented.
+AGB models run GB/GBC software, not native GBA software. AGB0 and AGB differ in
+boot ROM behavior; supply the matching image to `Mmu::load_boot_rom` when
+starting with `GameBoy::new_power_on`. Skipping boot initializes their shared
+register state. Power-on phases remain approximations calibrated against ROM
+measurements; boot tests cover both real and skipped boot paths.

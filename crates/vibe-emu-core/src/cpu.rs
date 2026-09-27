@@ -105,10 +105,10 @@ impl Cpu {
     /// hardware model.
     pub fn new(model: Model) -> Self {
         match model {
-            Model::Cgb(_) => Self {
+            Model::Cgb(_) | Model::Agb0 | Model::Agb => Self {
                 a: CGB_BOOT_A,
-                f: CGB_BOOT_F,
-                b: CGB_BOOT_B,
+                f: if model.is_agb() { 0 } else { CGB_BOOT_F },
+                b: if model.is_agb() { 1 } else { CGB_BOOT_B },
                 c: CGB_BOOT_C,
                 d: CGB_BOOT_D,
                 e: CGB_BOOT_E,
@@ -130,6 +130,22 @@ impl Cpu {
                 halt_pending: 0,
                 dma_conflict_active: false,
             },
+            Model::Mgb | Model::Sgb | Model::Sgb2 => {
+                let mut cpu = Self::new(Model::default());
+                cpu.a = if matches!(model, Model::Mgb | Model::Sgb2) {
+                    0xff
+                } else {
+                    1
+                };
+                if model.is_sgb() {
+                    cpu.f = 0;
+                    cpu.c = 0x14;
+                    cpu.e = 0;
+                    cpu.h = 0xc0;
+                    cpu.l = 0x60;
+                }
+                cpu
+            }
             Model::Dmg(dmg_revision) => {
                 let (a, f, b, c, d, e, h, l) = match dmg_revision {
                     DmgRevision::Rev0 => (
@@ -302,10 +318,13 @@ impl Cpu {
         mmu.serial
             .step_steps(prev_dot_div, dot_cycles, self.double_speed, &mut mmu.if_reg);
 
+        mmu.set_dma_halted(self.halted);
         if mmu.dma_active() {
             mmu.synchronize_ppu();
             for _ in 0..dot_cycles {
-                mmu.dma_step(1);
+                if mmu.ppu.mgb_halted_dma_bus.is_none() {
+                    mmu.dma_step(1);
+                }
                 if mmu.ppu.step(1, &mut mmu.if_reg) {
                     mmu.hdma_hblank_transfer();
                 }

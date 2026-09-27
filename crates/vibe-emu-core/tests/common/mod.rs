@@ -374,6 +374,27 @@ pub fn cgb_boot_rom_path() -> PathBuf {
     )
 }
 
+/// Fetch the boot ROM matching the actual silicon/boot revision.
+#[allow(dead_code)]
+pub fn model_boot_rom_path(model: vibe_emu_core::hardware::Model) -> PathBuf {
+    use vibe_emu_core::hardware::{CgbRevision, DmgRevision, Model};
+    let filename = match model {
+        Model::Dmg(DmgRevision::Rev0) => "dmg0_boot.bin",
+        Model::Dmg(_) => "dmg_boot.bin",
+        Model::Cgb(CgbRevision::Rev0) => "cgb0_boot.bin",
+        Model::Cgb(_) => "cgb_boot.bin",
+        Model::Mgb => "mgb_boot.bin",
+        Model::Sgb => "sgb_boot.bin",
+        Model::Sgb2 => "sgb2_boot.bin",
+        Model::Agb0 => "cgb_agb0_boot.bin",
+        Model::Agb => "cgb_agb_boot.bin",
+    };
+    ensure_bootrom(
+        &format!("https://gbdev.gg8.se/files/roms/bootroms/{filename}"),
+        filename,
+    )
+}
+
 #[allow(dead_code)]
 pub fn load_png_rgb<P: AsRef<Path>>(path: P) -> (u32, u32, Arc<[[u8; 3]]>) {
     let path = path.as_ref();

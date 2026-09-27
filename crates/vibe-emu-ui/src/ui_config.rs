@@ -42,6 +42,27 @@ pub enum EmulationMode {
     Auto,
     ForceDmg,
     ForceCgb,
+    ForceMgb,
+    ForceSgb,
+    ForceSgb2,
+    ForceAgb0,
+    ForceAgb,
+}
+
+impl EmulationMode {
+    pub fn model(self, cart_cgb: bool) -> vibe_emu_core::hardware::Model {
+        use vibe_emu_core::hardware::Model;
+        match self {
+            Self::Auto => Model::from_cgb_flag(cart_cgb),
+            Self::ForceDmg => Model::from_cgb_flag(false),
+            Self::ForceCgb => Model::from_cgb_flag(true),
+            Self::ForceMgb => Model::Mgb,
+            Self::ForceSgb => Model::Sgb,
+            Self::ForceSgb2 => Model::Sgb2,
+            Self::ForceAgb0 => Model::Agb0,
+            Self::ForceAgb => Model::Agb,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
