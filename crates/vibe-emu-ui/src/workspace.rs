@@ -30,6 +30,7 @@ impl VibeEmuApp {
             }
             Action::ReloadRom => self.pending_rom_load = self.current_rom_path.clone(),
             Action::CloseRom => {
+                crash_report::set_rom(None);
                 if let Ok(mut gb) = self.gb.lock() {
                     gb.mmu.save_cart_ram();
                 }
@@ -142,7 +143,7 @@ impl VibeEmuApp {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 self.action_button(ui, "Open ROM…", Action::OpenRom);
-                ui.menu_button("Recent ROMs", |ui| {
+                submenu(ui, "Recent ROMs", |ui| {
                     for path in self
                         .ui_config
                         .pinned_roms
@@ -202,7 +203,7 @@ impl VibeEmuApp {
                     Action::TogglePause,
                 );
                 self.action_button(ui, "Reset", Action::Reset);
-                ui.menu_button("Speed", |ui| {
+                submenu(ui, "Speed", |ui| {
                     for percent in [25, 50, 100, 150, 200, 400] {
                         if ui
                             .selectable_value(
@@ -217,7 +218,7 @@ impl VibeEmuApp {
                         }
                     }
                 });
-                ui.menu_button("Hardware mode", |ui| {
+                submenu(ui, "Hardware mode", |ui| {
                     self.draw_emulation_mode_submenu(ui);
                 });
             });
@@ -225,7 +226,7 @@ impl VibeEmuApp {
                 self.action_button(ui, "Play workspace", Action::Play);
                 self.action_button(ui, "Develop workspace", Action::Develop);
                 self.action_button(ui, "Fullscreen", Action::ToggleFullscreen);
-                ui.menu_button("Window scale", |ui| {
+                submenu(ui, "Window scale", |ui| {
                     for n in 1..=6 {
                         if ui.button(format!("{n}×")).clicked() {
                             self.selected_window_scale = n - 1;
@@ -255,7 +256,7 @@ impl VibeEmuApp {
                 {
                     self.save_ui_config();
                 }
-                ui.menu_button("Develop panels", |ui| {
+                submenu(ui, "Develop panels", |ui| {
                     for panel in develop_layout::Panel::ALL {
                         let mut visible = self.develop_layout.visible(panel);
                         if ui.checkbox(&mut visible, panel.title()).changed() {
@@ -273,7 +274,7 @@ impl VibeEmuApp {
             ui.menu_button("Tools", |ui| {
                 self.action_button(ui, "Capture screenshot", Action::Screenshot);
                 self.action_button(ui, "Mute / unmute", Action::ToggleMute);
-                ui.menu_button("Peripherals", |ui| {
+                submenu(ui, "Peripherals", |ui| {
                     self.draw_serial_peripheral_submenu(ui);
                 });
                 ui.separator();
@@ -327,11 +328,132 @@ impl VibeEmuApp {
         self.action_button(ui, "Screenshot", Action::Screenshot);
         self.action_button(ui, "Mute / unmute", Action::ToggleMute);
         self.action_button(ui, "Fullscreen", Action::ToggleFullscreen);
-        ui.menu_button("Peripherals", |ui| {
+        submenu(ui, "Peripherals", |ui| {
             self.draw_serial_peripheral_submenu(ui);
         });
         self.action_button(ui, "Settings…", Action::Settings);
         self.action_button(ui, "Play workspace", Action::Play);
         self.action_button(ui, "Develop workspace", Action::Develop);
+    }
+}
+
+/// Retain native cascading menus and their hover/keyboard ownership. Bound the
+/// child to the space beside its parent so egui's automatic placement can pick
+/// left/right instead of falling back below and obscuring sibling actions.
+pub(super) fn submenu(
+    ui: &mut egui::Ui,
+    title: &str,
+    content: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    use egui::containers::menu;
+    if !menu::is_in_menu(ui) {
+        return ui.menu_button(title, content).response;
+    }
+    let screen = ui.ctx().content_rect();
+    let parent = ui
+        .ctx()
+        .read_response(menu::find_menu_root(ui).id)
+        .map_or(ui.max_rect(), |response| response.rect);
+    let margin = egui::Frame::menu(ui.style()).total_margin().sum();
+    // Native submenu anchors are inset by half the menu frame; their gap is
+    // that inset plus two points. Include the child's frame in the budget.
+    let side_room = (parent.left() - screen.left()).max(screen.right() - parent.right());
+    // Leave a few points for pixel rounding and the scroll area's inner spacing.
+    let width = (side_room - margin.x - 8.0).max(24.0);
+    let y = ui.available_rect_before_wrap().top();
+    let height = (screen.bottom() - y).max(y - screen.top()) - margin.y - 20.0;
+    ui.menu_button(title, |ui| {
+        ui.set_max_width(width);
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+        egui::ScrollArea::vertical()
+            .id_salt(title)
+            .max_height(height.max(40.0))
+            .show(ui, content);
+    })
+    .response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cascading_submenus_stay_beside_parent_at_both_window_edges() {
+        for (width, menu_x) in [
+            (320.0, 154.0),
+            (360.0, 154.0),
+            (514.0, 154.0),
+            (1100.0, 900.0),
+            (1100.0, 154.0),
+        ] {
+            let ctx = egui::Context::default();
+            ctx.global_style_mut(|style| style.animation_time = 0.0);
+            let draw = |events| {
+                let mut rects = [egui::Rect::NOTHING; 4];
+                let _ = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 400.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::MenuBar::new().ui(ui, |ui| {
+                            ui.add_space(menu_x);
+                            rects[0] = ui
+                                .menu_button("Tools", |ui| {
+                                    let _ = ui.button("Capture screenshot");
+                                    let _ = ui.button("Mute / unmute");
+                                    rects[1] = submenu(ui, "Peripherals", |ui| {
+                                        let _ = ui.radio(false, "None");
+                                        let _ = ui.radio(false, "Mobile Adapter");
+                                        let _ = ui.radio(false, "Link Cable (Network)");
+                                        rects[2] = ui.min_rect();
+                                    })
+                                    .rect;
+                                    rects[3] = ui.button("Detached debugger").rect;
+                                })
+                                .response
+                                .rect;
+                        });
+                    },
+                );
+                rects
+            };
+            let click = |position| {
+                for pressed in [true, false] {
+                    draw(vec![
+                        egui::Event::PointerMoved(position),
+                        egui::Event::PointerButton {
+                            pos: position,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ]);
+                }
+            };
+            draw(vec![]);
+            let rects = draw(vec![]);
+            click(rects[0].center());
+            let rects = draw(vec![]);
+            assert!(rects[1].is_positive(), "parent must open");
+            click(rects[1].center());
+            draw(vec![]);
+            let rects = draw(vec![]);
+            assert!(rects[2].is_positive(), "submenu must open");
+            assert!(rects[3].is_positive(), "parent must stay open");
+            assert!(
+                !rects[2].intersects(rects[3]),
+                "{width}: child overlaps sibling: {rects:?}"
+            );
+            assert!(
+                rects[2].left() >= rects[1].right() || rects[2].right() <= rects[1].left(),
+                "{width}: child must cascade beside parent: {rects:?}"
+            );
+            assert!(rects[2].left() >= 0.0 && rects[2].right() <= width);
+        }
     }
 }

@@ -170,6 +170,7 @@ impl WindowSize {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
+    pub debugger_colors: crate::ui::highlight::Colors,
     pub dmg_revision: u8,
     pub cgb_revision: u8,
     pub dmg_palette: Option<[u32; 4]>,
@@ -195,6 +196,7 @@ pub struct UiConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
+            debugger_colors: crate::ui::highlight::Colors::default(),
             dmg_revision: 2,
             cgb_revision: 5,
             dmg_palette: None,

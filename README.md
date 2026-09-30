@@ -242,6 +242,16 @@ Run `cargo run -- --help` for the full command-line reference.
 
 ## Logging
 
+Desktop panics also write a timestamped report with a backtrace in `crashes/`
+beside `ui.toml` (on Windows: `%APPDATA%\vibeemu\crashes`). If that location
+cannot be written, reports fall back to `vibeemu-crashes` in the system temporary
+directory. This works in release builds without a console; reports stay local.
+Reports include the ROM path and eight recent frame/step checkpoints: model,
+ROM bank, CPU registers, cycle count, bytes near PC/SP, and key hardware registers.
+These bounded diagnostic checkpoints are not restorable save states. The panic
+handler never locks the emulator; a mid-frame panic includes the last checkpoint.
+
+
 Debug builds default to `info` logging. Release builds default to `off`.
 Override the default with `--log-level`:
 
@@ -264,6 +274,19 @@ variables before starting the emulator; creating another PPU reuses the same
 immutable settings. Trace controls are separate.
 
 ## Controls
+
+Cascading submenus size their contents to the space beside the parent menu,
+opening left near the right edge. Long choices wrap and tall menus scroll
+without hiding the parent menu's other actions.
+
+Develop uses RGBDS-style disassembly, such as `ld [hld], a`, with a colored raw
+byte column and colored assembly. Opcode bytes, 8-bit operands and 16-bit
+operands have distinct colors; both bytes of a CB instruction are opcode bytes.
+The memory viewer colors code inferred from execution/flow analysis and leaves
+unknown data neutral. This is an interpretation, not proof that bytes are code.
+Settings > Developer provides a highlighting toggle and per-role color overrides;
+default colors adapt to light/dark themes. Stepping follows the resulting PC
+immediately, including long jumps, calls and instructions at `$ffff`.
 
 Desktop keyboard rebinding supports **Left Shift** and **Right Shift** separately,
 including assigning Left Shift to Select. In `keybinds.toml` their names are

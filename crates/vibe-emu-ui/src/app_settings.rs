@@ -180,6 +180,49 @@ impl VibeEmuApp {
                 ui.label("Recent ROMs can be pinned or cleared from File → Recent ROMs.");
             }
             OptionsTab::Developer => {
+                let previous = self.ui_config.debugger_colors.clone();
+                ui.checkbox(
+                    &mut self.ui_config.debugger_colors.enabled,
+                    "Color instruction bytes and assembly",
+                );
+                ui.label(
+                    "Applies immediately. Colors follow the interface theme unless customized.",
+                );
+                for (index, (label, role)) in [
+                    ("Opcode / mnemonic", ui::highlight::Role::Opcode),
+                    ("8-bit operand", ui::highlight::Role::Operand8),
+                    ("16-bit operand", ui::highlight::Role::Operand16),
+                    ("Register / condition", ui::highlight::Role::Register),
+                    ("Symbol", ui::highlight::Role::Symbol),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    ui.horizontal(|ui| {
+                        let color = self.ui_config.debugger_colors.color(ui, role);
+                        let mut rgb = [color.r(), color.g(), color.b()];
+                        if ui.color_edit_button_srgb(&mut rgb).changed() {
+                            self.ui_config
+                                .debugger_colors
+                                .custom
+                                .insert(index.to_string(), rgb);
+                        }
+                        ui.label(label);
+                        if ui.small_button("Use theme").clicked() {
+                            self.ui_config
+                                .debugger_colors
+                                .custom
+                                .remove(&index.to_string());
+                        }
+                    });
+                }
+                if ui.button("Restore default highlighting").clicked() {
+                    self.ui_config.debugger_colors = Default::default();
+                }
+                if previous != self.ui_config.debugger_colors {
+                    self.save_ui_config();
+                }
+                ui.separator();
                 self.action_button(ui, "Open Develop workspace", Action::Develop);
                 ui.checkbox(&mut self.show_debugger, "Detached debugger");
                 ui.checkbox(&mut self.show_watchpoints, "Watchpoints");
@@ -441,7 +484,7 @@ impl VibeEmuApp {
                 self.persist_runtime_settings();
             }
         }
-        ui.menu_button("Emulation mode", |ui| {
+        workspace::submenu(ui, "Emulation mode", |ui| {
             self.draw_emulation_mode_submenu(ui);
         });
         ui.label("Boot ROMs (blank = skip boot). Changes apply on the next ROM load.");

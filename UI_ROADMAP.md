@@ -14,6 +14,9 @@ unimplemented states, rewind, cheats and peripherals are not advertised in menus
   Recent files can be pinned and unpinned; clearing recent files keeps pins.
 - File, Emulation, View, Tools, Settings and Help menus; a persistent Play/Develop
   switch; a context menu over the game image; an Escape gameplay menu.
+- Cascading submenus retain native hover/keyboard behavior. Their content is
+  bounded to the space beside the parent, with wrapping/scrolling as needed;
+  placement tests cover 320, 360, 514 and 1100 logical-pixel windows.
 - Workspace selection survives restart. Switching workspaces retains the machine
   and pause state. Develop exposes the existing CPU/memory debugger, VRAM tools
   and watchpoints in **release builds** as well as development builds.
@@ -22,6 +25,18 @@ unimplemented states, rewind, cheats and peripherals are not advertised in menus
   pixels of panel height. Validated layouts persist separately in `workspace.json`;
   panels can float inside the root window. Existing detached native tools remain.
   No full execution history is collected during ordinary Play.
+- Disassembly uses RGBDS-style lowercase mnemonics/registers, bracketed memory
+  operands and `hli`/`hld`. Opcode/8-bit/16-bit operand colors appear in both
+  disassembly bytes and analyzed memory; readable assembly also has syntax colors.
+  Developer settings include an accessibility toggle and custom colors (#422).
+  PC following uses the post-step snapshot, measured row sizes and explicit
+  instruction boundaries at jump targets, including `$ffff`.
+- Desktop panics record a local backtrace and eight bounded frame/step checkpoints
+  containing ROM/model, registers, bank/cycles, PC/SP bytes and hardware registers.
+  An intentional subprocess panic verifies capture while the emulator is locked.
+  The reported SGB2 crash has not been reproduced: a 36,000-frame title-screen run
+  and a separate controller-input probe over roughly 33,000 frames exited normally.
+  These diagnostic checkpoints are not save states.
 - Video inspectors scroll in both directions; wide memory/disassembly rows scroll
   horizontally. Debugger controls wrap, and narrow Settings windows use a category
   picker. Passive inspection reads preserve watchpoints, bus latches, OAM, palette
@@ -156,7 +171,7 @@ Daid's DMG scanline test requested `ppu_scanline_bgp_1.dmg.png` while test setup
 still downloaded `_0`. Setup and the test now share the selected reference path;
 PNG-open errors include the path. The expected hardware image is unchanged.
 This fix has been verified locally with that reference absent from the cache;
-GitHub CI still needs a run containing the fix.
+The fix is included in draft PR #435.
 
 Local build/test logs are under `target/validation/`. The Android debug APK is
 `android/app/build/outputs/apk/debug/app-debug.apk`.

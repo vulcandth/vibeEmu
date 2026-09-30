@@ -71,6 +71,11 @@ impl VibeEmuApp {
         if let Some(snapshot) = &snapshot {
             self.draw_debugger_toolbar(ui, snapshot);
         }
+        // Toolbar actions may have stepped or edited the machine during this frame.
+        let snapshot = self
+            .current_rom_path
+            .as_ref()
+            .and(self.debugger_snapshot.clone());
         ui.separator();
         if ui.available_width() < 780.0 || ui.available_height() < 420.0 {
             // Compact navigation does not modify the saved desktop docking arrangement.

@@ -4,8 +4,10 @@
 
 mod app_settings;
 mod audio;
+mod crash_report;
 mod develop;
 mod develop_layout;
+mod disassembly;
 mod workspace;
 use vibe_emu_frontend::{Action, SettingsCategory as OptionsTab, Workspace};
 mod input_timing;
@@ -949,6 +951,7 @@ fn run_emulator_thread(
         let mut bp_hit: Option<(u8, u16)> = None;
 
         if let Ok(mut gb) = gb.lock() {
+            crash_report::record(&mut gb, "frame begin");
             let GameBoy { cpu, mmu, .. } = &mut **gb;
             mmu.ppu.clear_frame_flag();
             let frame_start_dots = cpu.cycles;
@@ -2481,6 +2484,8 @@ impl VibeEmuApp {
         self.loading = None;
         match result {
             Ok((mut next, path)) => {
+                crash_report::set_rom(Some(&path));
+                crash_report::record(&mut next, "ROM loaded");
                 if let Some(config) = self.pending_load_config.take() {
                     self.active_load_config = config;
                 }
@@ -2951,6 +2956,7 @@ impl VibeEmuApp {
         };
 
         self.draw_debugger_toolbar(ui, &snapshot);
+        let snapshot = self.debugger_snapshot.clone().unwrap_or(snapshot);
         ui.separator();
 
         // Calculate space for top (disassembly/state) and bottom (memory viewer)
@@ -3124,8 +3130,10 @@ impl VibeEmuApp {
 
     fn do_single_step(&mut self) {
         if let Ok(mut gb) = self.gb.lock() {
+            crash_report::record(&mut gb, "before single step");
             let GameBoy { cpu, mmu, .. } = &mut **gb;
             cpu.step(mmu);
+            crash_report::record(&mut gb, "after single step");
             // Update snapshot immediately after step so disassembly shows correct memory
             self.debugger_snapshot = Some(UiSnapshot::from_gb(&mut gb, true));
         }
@@ -3274,294 +3282,6 @@ impl VibeEmuApp {
         self.debugger_state
             .set_pause_reason(DebuggerPauseReason::Step);
         self.debugger_state.request_scroll_to_pc();
-    }
-
-    fn draw_disassembly_pane(&mut self, ui: &mut egui::Ui, snapshot: &UiSnapshot) {
-        // Fast instruction length lookup (avoids full disassembly for indexing)
-        fn instruction_length(opcode: u8, _get_next: impl FnOnce() -> u8) -> u16 {
-            match opcode {
-                0xCB => 2,                             // CB prefix always 2 bytes
-                0x01 | 0x08 | 0x11 | 0x21 | 0x31 => 3, // LD r16,nn / LD (nn),SP
-                0xC2 | 0xC3 | 0xC4 | 0xCA | 0xCC | 0xCD | 0xD2 | 0xD4 | 0xDA | 0xDC => 3, // JP/CALL
-                0xEA | 0xFA => 3,                      // LD (nn),A / LD A,(nn)
-                0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x36 | 0x3E => 2, // LD r,n
-                0xC6 | 0xCE | 0xD6 | 0xDE | 0xE6 | 0xEE | 0xF6 | 0xFE => 2, // ALU A,n
-                0x18 | 0x20 | 0x28 | 0x30 | 0x38 => 2, // JR
-                0xE0 | 0xF0 => 2,                      // LDH
-                0xE8 | 0xF8 => 2,                      // ADD SP,e / LD HL,SP+e
-                _ => 1,
-            }
-        }
-
-        let pc = snapshot.cpu.pc;
-        let dbg = &snapshot.debugger;
-        let active_bank = dbg.active_rom_bank.min(0xFF) as u8;
-
-        let Some(mem_image) = &dbg.mem_image else {
-            ui.label("Memory not available (emulator running)");
-            return;
-        };
-
-        let mut bp_toggle: Option<BreakpointSpec> = None;
-        let mut cursor_click: Option<BreakpointSpec> = None;
-
-        // Build instruction address index with display row tracking
-        // Each entry is (addr, display_row) where display_row accounts for labels
-        let mut instr_addrs: Vec<u16> = Vec::with_capacity(32768);
-        let mut instr_display_rows: Vec<usize> = Vec::with_capacity(32768);
-        let mut addr: u16 = 0;
-        let mut pc_display_row: Option<usize> = None;
-        let mut current_display_row: usize = 0;
-
-        loop {
-            let bp_bank = if (0x4000..=0x7FFF).contains(&addr) {
-                active_bank
-            } else if addr < 0x4000 {
-                0
-            } else {
-                0xFF
-            };
-
-            // Check if this address has a label (adds a row)
-            if self.debugger_state.first_label_for(bp_bank, addr).is_some() {
-                current_display_row += 1;
-            }
-
-            if addr == pc {
-                pc_display_row = Some(current_display_row);
-            }
-
-            instr_addrs.push(addr);
-            instr_display_rows.push(current_display_row);
-            current_display_row += 1;
-
-            let opcode = mem_image[addr as usize];
-            let len = instruction_length(opcode, || {
-                mem_image
-                    .get(addr.wrapping_add(1) as usize)
-                    .copied()
-                    .unwrap_or(0)
-            });
-
-            let next_addr = addr.wrapping_add(len);
-            if next_addr <= addr && addr != 0 {
-                break;
-            }
-            addr = next_addr;
-            if addr == 0 {
-                break;
-            }
-        }
-
-        let total_rows = current_display_row;
-        let row_height = 16.0;
-
-        // Check if we need to scroll to a specific address
-        let scroll_target = self.debugger_state.take_pending_scroll();
-        let scroll_to_display_row = scroll_target.and_then(|target| {
-            if target == u16::MAX {
-                // Scroll to PC
-                pc_display_row
-            } else {
-                // Find display row for target address
-                instr_addrs
-                    .iter()
-                    .position(|&a| a == target)
-                    .map(|idx| instr_display_rows[idx])
-            }
-        });
-
-        // Get available height to center the target row
-        let available_height = ui.available_height();
-
-        let mut scroll_area = egui::ScrollArea::both()
-            .auto_shrink([false, false])
-            .id_salt("disasm_scroll");
-
-        if let Some(display_row) = scroll_to_display_row {
-            // Center the target row in the view
-            let target_offset = (display_row as f32 * row_height - available_height / 2.0).max(0.0);
-            scroll_area = scroll_area.vertical_scroll_offset(target_offset);
-        }
-
-        scroll_area.show(ui, |ui| {
-            // Get current scroll position
-            let scroll_offset = ui.clip_rect().top() - ui.min_rect().top();
-            let visible_start_row = (scroll_offset / row_height).floor() as usize;
-            let visible_rows = (available_height / row_height).ceil() as usize + 2;
-            let visible_end_row = (visible_start_row + visible_rows).min(total_rows);
-
-            // Add spacing for rows before visible area
-            if visible_start_row > 0 {
-                ui.add_space(visible_start_row as f32 * row_height);
-            }
-
-            // Find which instructions to render based on display rows
-            let start_instr = instr_display_rows
-                .iter()
-                .position(|&r| r >= visible_start_row)
-                .unwrap_or(0);
-            let end_instr = instr_display_rows
-                .iter()
-                .position(|&r| r >= visible_end_row)
-                .unwrap_or(instr_addrs.len());
-
-            for instr_idx in start_instr..end_instr {
-                let Some(&addr) = instr_addrs.get(instr_idx) else {
-                    continue;
-                };
-
-                let bp_bank = if (0x4000..=0x7FFF).contains(&addr) {
-                    active_bank
-                } else if addr < 0x4000 {
-                    0
-                } else {
-                    0xFF
-                };
-
-                // Show label on its own line if present
-                if let Some(lbl) = self.debugger_state.first_label_for(bp_bank, addr) {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(format!("{}:", lbl))
-                                .color(egui::Color32::from_rgb(180, 180, 255))
-                                .monospace(),
-                        )
-                        .wrap_mode(egui::TextWrapMode::Extend),
-                    );
-                }
-
-                // Decode instruction
-                let mem_slice: Vec<u8> = (0..4)
-                    .map(|i| {
-                        mem_image
-                            .get(addr.wrapping_add(i) as usize)
-                            .copied()
-                            .unwrap_or(0)
-                    })
-                    .collect();
-
-                let (mut mnemonic, _len, target_addr) = ui::disasm::decode_sm83(&mem_slice, addr);
-
-                // Resolve target address to symbol name
-                if let Some(target) = target_addr {
-                    let target_bank = if target < 0x4000 {
-                        0
-                    } else if (0x4000..=0x7FFF).contains(&target) {
-                        active_bank
-                    } else {
-                        0xFF
-                    };
-
-                    let sym_name = self
-                        .debugger_state
-                        .first_label_for(target_bank, target)
-                        .or_else(|| self.debugger_state.first_label_for(0, target));
-
-                    if let Some(sym_name) = sym_name {
-                        let hex_target = format!("${target:04X}");
-                        mnemonic = mnemonic.replace(&hex_target, sym_name);
-                    }
-                }
-
-                let bp_spec = BreakpointSpec {
-                    bank: bp_bank,
-                    addr,
-                };
-                let bp_enabled = self.debugger_state.has_breakpoint(&bp_spec);
-                let is_cursor = self.debugger_state.cursor() == Some(bp_spec);
-                let is_pc = addr == pc;
-
-                let bg_color = if is_pc {
-                    Some(egui::Color32::from_rgb(60, 60, 100))
-                } else if is_cursor {
-                    Some(egui::Color32::from_rgb(40, 60, 80))
-                } else {
-                    None
-                };
-
-                let text_color = if is_pc {
-                    egui::Color32::YELLOW
-                } else if is_cursor {
-                    egui::Color32::LIGHT_BLUE
-                } else {
-                    ui.style().visuals.text_color()
-                };
-
-                let display_bank = if addr < 0x4000 {
-                    0
-                } else if (0x4000..=0x7FFF).contains(&addr) {
-                    active_bank
-                } else {
-                    0xFF
-                };
-
-                let addr_text = if display_bank == 0xFF {
-                    format!("  {:04X}", addr)
-                } else {
-                    format!("{:02X}:{:04X}", display_bank, addr)
-                };
-
-                let pc_marker = if is_pc { "►" } else { " " };
-                let line = format!("{} {}  {:<20}", pc_marker, addr_text, mnemonic);
-
-                ui.horizontal(|ui| {
-                    let bp_symbol = match bp_enabled {
-                        Some(true) => "●",
-                        Some(false) => "○",
-                        None => " ",
-                    };
-                    let bp_color = match bp_enabled {
-                        Some(true) => egui::Color32::RED,
-                        Some(false) => egui::Color32::DARK_RED,
-                        None => egui::Color32::TRANSPARENT,
-                    };
-
-                    if ui
-                        .add(
-                            egui::Button::new(egui::RichText::new(bp_symbol).color(bp_color))
-                                .frame(false)
-                                .min_size(egui::vec2(12.0, 0.0)),
-                        )
-                        .clicked()
-                    {
-                        bp_toggle = Some(bp_spec);
-                    }
-
-                    let label =
-                        egui::Label::new(egui::RichText::new(&line).color(text_color).monospace())
-                            .sense(egui::Sense::click());
-
-                    let resp = if let Some(bg) = bg_color {
-                        ui.scope(|ui| {
-                            let rect = ui.available_rect_before_wrap();
-                            ui.painter().rect_filled(rect, 0.0, bg);
-                            ui.add(label)
-                        })
-                        .inner
-                    } else {
-                        ui.add(label)
-                    };
-
-                    if resp.clicked() {
-                        cursor_click = Some(bp_spec);
-                    }
-                });
-            }
-
-            // Add spacing for rows after visible area
-            let remaining_rows = total_rows.saturating_sub(visible_end_row);
-            if remaining_rows > 0 {
-                ui.add_space(remaining_rows as f32 * row_height);
-            }
-        });
-
-        if let Some(bp) = bp_toggle {
-            self.debugger_state.toggle_breakpoint(bp);
-        }
-        if let Some(bp) = cursor_click {
-            self.debugger_state.set_cursor(bp);
-        }
     }
 
     fn draw_state_panes(&mut self, ui: &mut egui::Ui, snapshot: &UiSnapshot) {
@@ -4052,6 +3772,7 @@ impl VibeEmuApp {
             ui.label("Memory not available (run paused to capture)");
             return;
         };
+        self.debugger_state.prepare_code_colors(snapshot);
 
         // Top bar with go-to address
         ui.horizontal(|ui| {
@@ -4121,6 +3842,8 @@ impl VibeEmuApp {
                         } else {
                             egui::RichText::new(text).monospace()
                         };
+                        let role = self.debugger_state.memory_byte_role(snapshot, addr);
+                        let label = label.color(self.ui_config.debugger_colors.color(ui, role));
 
                         if ui
                             .add(egui::Label::new(label).sense(egui::Sense::click()))
@@ -6001,7 +5724,9 @@ impl VibeEmuApp {
 }
 
 fn main() {
+    crash_report::install(&ui_config::default_ui_config_path());
     let args = Args::parse();
+    crash_report::set_rom(args.rom.as_deref());
     init_logging(&args);
 
     let headless = args.headless;
@@ -6086,6 +5811,7 @@ fn main() {
         }
     };
 
+    crash_report::record(&mut gb, "startup");
     if headless {
         let gb = gb.as_mut();
         enum Limit {
@@ -6103,6 +5829,7 @@ fn main() {
             Limit::Frames(n) => {
                 info!("Running headless for {n} frames");
                 for _ in 0..n {
+                    crash_report::record(gb, "headless frame");
                     gb.mmu.ppu.clear_frame_flag();
                     while !gb.mmu.ppu.frame_ready() {
                         gb.cpu.step(&mut gb.mmu);
@@ -6114,6 +5841,7 @@ fn main() {
                     (s as f64 * f64::from(gb.model.clock_hz()) / 70_224.0).ceil() as usize;
                 info!("Running headless for {s} seconds (~{target_frames} frames)");
                 for _ in 0..target_frames {
+                    crash_report::record(gb, "headless frame");
                     gb.mmu.ppu.clear_frame_flag();
                     while !gb.mmu.ppu.frame_ready() {
                         gb.cpu.step(&mut gb.mmu);
