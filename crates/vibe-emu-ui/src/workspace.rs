@@ -363,7 +363,12 @@ pub(super) fn submenu(
     let y = ui.available_rect_before_wrap().top();
     let height = (screen.bottom() - y).max(y - screen.top()) - margin.y - 20.0;
     ui.menu_button(title, |ui| {
-        ui.set_max_width(width);
+        // Cap the native menu width without expanding its justified contents
+        // to fill all remaining window space.
+        ui.set_max_width(width.min(ui.max_rect().width()));
+        // Allow wrapped rows to grow after a live resize; otherwise the area
+        // can keep the previous frame's shorter height as its scroll viewport.
+        ui.set_max_height(height.max(40.0));
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
         egui::ScrollArea::vertical()
             .id_salt(title)
@@ -388,13 +393,14 @@ mod tests {
         ] {
             let ctx = egui::Context::default();
             ctx.global_style_mut(|style| style.animation_time = 0.0);
+            let viewport_width = std::cell::Cell::new(width);
             let draw = |events| {
-                let mut rects = [egui::Rect::NOTHING; 4];
+                let mut rects = [egui::Rect::NOTHING; 6];
                 let _ = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(
                             egui::Pos2::ZERO,
-                            egui::vec2(width, 400.0),
+                            egui::vec2(viewport_width.get(), 400.0),
                         )),
                         events,
                         ..Default::default()
@@ -409,7 +415,8 @@ mod tests {
                                     rects[1] = submenu(ui, "Peripherals", |ui| {
                                         let _ = ui.radio(false, "None");
                                         let _ = ui.radio(false, "Mobile Adapter");
-                                        let _ = ui.radio(false, "Link Cable (Network)");
+                                        rects[5] = ui.radio(false, "Link Cable (Network)").rect;
+                                        rects[4] = ui.clip_rect();
                                         rects[2] = ui.min_rect();
                                     })
                                     .rect;
@@ -454,6 +461,22 @@ mod tests {
                 "{width}: child must cascade beside parent: {rects:?}"
             );
             assert!(rects[2].left() >= 0.0 && rects[2].right() <= width);
+            assert!(
+                rects[2].width() < 250.0,
+                "{width}: short submenu must remain compact: {rects:?}"
+            );
+            assert!(rects[4].contains_rect(rects[5]), "last row must be visible");
+            if width == 1100.0 && menu_x == 154.0 {
+                viewport_width.set(360.0);
+                for _ in 0..3 {
+                    draw(vec![]);
+                }
+                let resized = draw(vec![]);
+                assert!(
+                    resized[4].contains_rect(resized[5]),
+                    "resizing must not clip wrapped rows: {resized:?}"
+                );
+            }
         }
     }
 }

@@ -16,7 +16,8 @@ unimplemented states, rewind, cheats and peripherals are not advertised in menus
   switch; a context menu over the game image; an Escape gameplay menu.
 - Cascading submenus retain native hover/keyboard behavior. Their content is
   bounded to the space beside the parent, with wrapping/scrolling as needed;
-  placement tests cover 320, 360, 514 and 1100 logical-pixel windows.
+  placement tests cover 320, 360, 514 and 1100 logical-pixel windows, compact
+  widths and wrapped-label visibility when an open menu is resized.
 - Workspace selection survives restart. Switching workspaces retains the machine
   and pause state. Develop exposes the existing CPU/memory debugger, VRAM tools
   and watchpoints in **release builds** as well as development builds.
