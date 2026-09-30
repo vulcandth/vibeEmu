@@ -942,6 +942,15 @@ impl Cartridge {
         self.read_with_open_bus(addr, open_bus)
     }
 
+    /// Inspect the current mapping without changing the cartridge bus latch.
+    /// Only the derived ROM mapping cache may be refreshed.
+    pub(crate) fn peek_with_open_bus(&mut self, addr: u16, open_bus: u8) -> u8 {
+        let previous = self.cart_bus.get();
+        let value = self.read_with_open_bus(addr, open_bus);
+        self.cart_bus.set(previous);
+        value
+    }
+
     /// Read a byte from the cartridge bus using a caller-supplied open-bus value.
     pub fn read_with_open_bus(&mut self, addr: u16, open_bus: u8) -> u8 {
         if addr < 0x8000 {

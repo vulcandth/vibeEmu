@@ -43,12 +43,13 @@
 vibeEmu is a Game Boy and Game Boy Color emulator written in Rust. It pairs a
 platform-agnostic emulation core with a desktop frontend built on
 `egui`/`eframe`. The repository also now includes an Android app under
-`android/`. The desktop app is focused on playing games, while the
+`android/`. Desktop offers Play and Develop workspaces for the same running game, while the
 `vibe-emu-core` crate can also be reused as a library in other projects. The
 repository is organized as a Cargo workspace with multiple crates:
 
 - `vibe-emu-core` contains the platform-agnostic emulation library.
 - `vibe-emu-ui` provides the desktop frontend built on the core crate.
+- `vibe-emu-frontend` defines portable preferences, settings categories, and application actions.
 - `vibe-emu-mobile` provides Mobile Adapter GB integration (libmobile wrapper).
 - `vibe-emu-mobile-sys` builds/links libmobile and exposes minimal FFI.
 - `vibe-emu-android` provides the JNI bridge used by the Android app.
@@ -61,6 +62,14 @@ repository is organized as a Cargo workspace with multiple crates:
 - Selectable serial peripherals, including link cable support and Mobile
   Adapter GB.
 - A VRAM viewer for inspecting tiles, maps, sprites, and palettes.
+- Play/Develop navigation and debugger access in both debug and release builds.
+- Develop panels can be docked, resized, tabbed or floated inside the main window.
+  Layouts are saved separately from game settings; small windows use compact tabs.
+- Searchable settings, pending machine changes, pinned recent ROMs, and a game context menu.
+- Output volume/mono, speed presets, hardware revisions, and a monochrome palette editor.
+
+See [UI roadmap implementation status](UI_ROADMAP.md) for delivered behavior and
+the remaining work. Complete save states, rewind, and cheats are not implemented yet.
 
 ## Building
 
@@ -100,8 +109,18 @@ same workspace sources via `cargo-ndk`.
 
 Android supports all seven hardware models, both SGB/GBC hybrid modes,
 independent boot ROM imports, optional SGB borders and four-controller SGB
-input. Model and boot changes apply on load; Options also offers an explicit
+input. Model and boot changes apply on load; System & Boot also offers an explicit
 reload action. See [SGB.md](SGB.md) for mode behavior and frontend coverage.
+
+Instances support search, sorting, favorites, and last-played information. Settings
+use matching desktop category names, with two-pane navigation in wide windows.
+Search also matches option names such as volume, palette and boot ROM. Model and
+boot-ROM changes remain pending until the next successful load; **Apply and reload**
+and **Discard pending changes** are available while a game is loaded. Discard also
+recovers replaced or cleared boot ROMs. A failed reload keeps the current machine.
+The gameplay menu uses a phone pause sheet or a controller-friendly dialog in
+wider windows and on TV. Back/Menu opens gameplay navigation. Backgrounding
+pauses the machine and saves battery RAM; periodic battery saves run every 30 seconds.
 
 On Windows, a wrapper-based debug build looks like this:
 
@@ -246,6 +265,19 @@ immutable settings. Trace controls are separate.
 
 ## Controls
 
+Desktop keyboard rebinding supports **Left Shift** and **Right Shift** separately,
+including assigning Left Shift to Select. In `keybinds.toml` their names are
+`ShiftLeft` and `ShiftRight` (`LShift`/`RShift` are also accepted). Existing bindings
+and the default Tab binding for Select are preserved.
+
+Develop panels support horizontal scrolling for wide memory/disassembly rows and
+both-axis scrolling for video inspectors. Settings use a category picker in narrow
+windows or at large UI scales. Debugger inspection is passive: it does not trigger
+watchpoints, change bus latches, corrupt OAM, or consume register-read effects.
+The memory view shows mapped VRAM/OAM/wave RAM even when CPU access is blocked;
+cartridge RAM still follows the selected mapper bank and enable state. Audio
+register inspection shows stored state, including the last cached PCM output.
+
 The default keyboard controls are:
 
 - **Arrow Keys**: D-pad
@@ -256,20 +288,25 @@ The default keyboard controls are:
 - **Space**: Hold to fast-forward
 - **F12**: Capture screenshot
 - **P**: Pause/unpause emulation
-- **Escape**: Quit the emulator
+- **Escape**: Open/close the gameplay menu (existing explicit Quit bindings are preserved)
+- **Ctrl/Cmd+O**: Open ROM
+- **F11**: Toggle fullscreen
 
 Use the **top menu bar** to load ROMs, change settings, capture screenshots, or
 open the VRAM Viewer and serial peripheral settings. Screenshot hotkeys are configurable in
-**Options → Settings... → Keybinds**. Captures are saved to a `screenshots/`
-folder next to the loaded ROM. Display filtering is configurable in
-**Options → Settings... → Emulation**, including separate horizontal/vertical
+**Settings → Settings... → Controls**. Resetting that category restores the new
+Escape behavior. Captures default to a `screenshots/` folder next to the ROM;
+**Capture** lets you choose another destination. Display filtering is configurable in
+**Settings → Settings... → Video & Colors**, including separate horizontal/vertical
 sampling and optional scanline/LCD grid effects.
-The same settings page includes all model boot ROM paths and **Show SGB border**.
+**System & Boot** includes model/revision selection and all model boot ROM paths;
+**Video & Colors** includes palettes and **Show SGB border**.
 Hiding a border crops the composed image (including SGB colors and masks) to
 160x144; screenshots follow the selected view. Use **Apply and reload current ROM**
 after changing the model or boot ROM paths. Reset retains the current machine's
-settings and any captured initial border. Window Scale also offers integer-scaled
-and fit-to-screen fullscreen modes.
+settings and any captured initial border. Window Scale offers integer-scaled and
+fit-to-screen fullscreen. Speed defaults to 100%, with a 2× fast-forward cap. Altered-speed audio
+is muted at the output; the emulated APU continues running.
 
 See [SGB modes and UI review](SGB.md) for the BGB/SameBoy research, behavior,
 settings coverage, and test strategy.

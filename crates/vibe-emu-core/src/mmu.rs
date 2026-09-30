@@ -1040,6 +1040,42 @@ impl Mmu {
         }
     }
 
+    /// Inspect the current mapped memory without performing a CPU bus access.
+    ///
+    /// This does not advance devices, change bus latches, trigger watchpoints or
+    /// OAM corruption, or consume register-read effects. VRAM, OAM and wave RAM
+    /// remain inspectable during DMA/rendering. Cartridge RAM still follows its
+    /// mapper's enable/bank selection. Deferred device state is not synchronized;
+    /// in particular PCM registers show the last cached output.
+    pub fn peek_byte(&mut self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x7FFF
+                if self.boot_mapped
+                    && (addr <= 0x00FF
+                        || (self.model.is_cgb() && (0x0200..=0x08FF).contains(&addr))) =>
+            {
+                self.boot_rom
+                    .as_ref()
+                    .and_then(|rom| rom.get(addr as usize).copied())
+                    .unwrap_or(0xFF)
+            }
+            0x0000..=0x7FFF | 0xA000..=0xBFFF => self
+                .cart
+                .as_mut()
+                .map(|cart| cart.peek_with_open_bus(addr, self.main_bus))
+                .unwrap_or(0xFF),
+            0x8000..=0x9FFF => self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize],
+            0xFE00..=0xFE9F => self.ppu.oam[(addr - 0xFE00) as usize],
+            0xFEA0..=0xFEFF if self.model.is_cgb() => self.read_cgb_unusable_oam(addr),
+            0xFEA0..=0xFEFF => 0xFF,
+            0xFF10..=0xFF3F | 0xFF76..=0xFF77 => self.apu.peek_reg(addr),
+            0xFF69 | 0xFF6B => self.ppu.peek_palette_data(addr),
+            // The remaining RAM and I/O reads have no read-side effects. Bypass
+            // DMA ownership checks, which can themselves access the cartridge.
+            _ => self.read_byte_inner(addr, true),
+        }
+    }
+
     /// Read a byte from the memory map, subject to DMA blocking and bus-open rules.
     pub fn read_byte(&mut self, addr: u16) -> u8 {
         self.synchronize_ppu_access(addr);
@@ -1739,5 +1775,118 @@ impl Mmu {
 impl Default for Mmu {
     fn default() -> Self {
         Self::new(Model::default())
+    }
+}
+
+#[cfg(test)]
+mod inspection_tests {
+    use super::*;
+    use crate::watchpoints::Watchpoint;
+
+    #[test]
+    fn inspection_preserves_bus_oam_palette_dma_and_watchpoint_state() {
+        for model in [
+            Model::default(),
+            Model::Cgb(CgbRevision::RevE),
+            Model::Mgb,
+            Model::Sgb,
+            Model::Sgb2,
+            Model::Agb0,
+            Model::Agb,
+        ] {
+            let mut mmu = Mmu::new(model);
+            let mut rom = vec![0; 0x8000];
+            rom[0x143] = 0x80;
+            rom[0x147] = 0x10; // MBC3 + RTC + SRAM.
+            rom[0x149] = 3;
+            mmu.load_cart(Cartridge::from_bytes(rom));
+            mmu.write_byte(0x0000, 0x0A);
+            mmu.write_byte(0xA000, 0x42);
+            mmu.write_byte(0xFF40, 0);
+            mmu.write_byte(0xFF68, 0x80);
+            mmu.write_byte(0xFF69, 0x25);
+            mmu.write_byte(0xFF68, 0x80);
+            mmu.write_byte(0xFF6A, 0x80);
+            mmu.write_byte(0xFF6B, 0x37);
+            mmu.write_byte(0xFF6A, 0x80);
+            for (index, byte) in mmu.ppu.oam.iter_mut().enumerate() {
+                *byte = index as u8;
+            }
+            mmu.ppu.vram[0][0] = 0x67;
+            mmu.write_byte(0xFF40, 0x91);
+            mmu.ppu.step(24, &mut mmu.if_reg);
+            mmu.oam_bug_next_access = Some(OamBugAccess::Read);
+            mmu.pending_ppu_dots = 4;
+            mmu.dma_cycles = 640;
+            mmu.dma_source = 0;
+            mmu.watchpoints.set_watchpoints(vec![Watchpoint {
+                id: 1,
+                enabled: true,
+                range: 0..=0xFFFF,
+                on_read: true,
+                on_write: false,
+                on_execute: false,
+                on_jump: false,
+                value_match: None,
+                message: None,
+            }]);
+            let buses = (mmu.data_bus, mmu.main_bus);
+            let oam = mmu.ppu.oam;
+            // Inspection may populate the derived ROM mapping cache.
+            mmu.peek_byte(0);
+            let cart = format!("{:?}", mmu.cart);
+            let palette_indices = (mmu.peek_byte(0xFF68), mmu.peek_byte(0xFF6A));
+            let audio = mmu.apu.debug_state();
+            for addr in 0..=u16::MAX {
+                mmu.peek_byte(addr);
+            }
+            assert_eq!(mmu.peek_byte(0x8000), 0x67);
+            assert_eq!(mmu.peek_byte(0xFE01), 1);
+            assert_eq!(mmu.peek_byte(0xA000), 0x42);
+            assert_eq!((mmu.data_bus, mmu.main_bus), buses);
+            assert_eq!(mmu.ppu.oam, oam);
+            assert!(format!("{:?}", mmu.cart) == cart, "cartridge state changed");
+            assert_eq!(mmu.pending_ppu_dots, 4);
+            assert_eq!(mmu.dma_cycles, 640);
+            assert!(matches!(mmu.oam_bug_next_access, Some(OamBugAccess::Read)));
+            assert_eq!(
+                (mmu.peek_byte(0xFF68), mmu.peek_byte(0xFF6A)),
+                palette_indices
+            );
+            assert_eq!(mmu.apu.debug_state(), audio);
+            assert!(mmu.watchpoints.take_hit().is_none());
+
+            mmu.read_byte(0xC000);
+            assert_eq!(mmu.watchpoints.take_hit().unwrap().addr, 0xC000);
+            mmu.peek_byte(0xC001);
+            mmu.read_byte(0xC002);
+            mmu.peek_byte(0xC003);
+            assert_eq!(mmu.watchpoints.take_hit().unwrap().addr, 0xC002);
+        }
+    }
+
+    #[test]
+    fn inspection_keeps_boot_overlay_and_selected_ram_banks() {
+        let mut mmu = Mmu::new_power_on(Model::Cgb(CgbRevision::RevE));
+        let mut rom = vec![0x55; 0x10000];
+        rom[0x147] = 0x03; // MBC1 + SRAM.
+        rom[0x149] = 3;
+        mmu.load_cart(Cartridge::from_bytes(rom));
+        mmu.load_boot_rom(vec![0xAA; 0x900]);
+        assert_eq!(mmu.peek_byte(0), 0xAA);
+        assert_eq!(mmu.peek_byte(0x100), 0x55);
+        assert_eq!(mmu.peek_byte(0x200), 0xAA);
+        assert_eq!(mmu.peek_byte(0x900), 0x55);
+        mmu.write_byte(0x0000, 0x0A);
+        mmu.write_byte(0x6000, 1);
+        mmu.write_byte(0x4000, 2);
+        mmu.write_byte(0xA000, 0x72);
+        mmu.write_byte(0x4000, 1);
+        mmu.write_byte(0xA000, 0x31);
+        assert_eq!(mmu.peek_byte(0xA000), 0x31);
+        mmu.write_byte(0x4000, 2);
+        assert_eq!(mmu.peek_byte(0xA000), 0x72);
+        mmu.write_byte(0x0000, 0);
+        assert_eq!(mmu.peek_byte(0xA000), 0xFF);
     }
 }

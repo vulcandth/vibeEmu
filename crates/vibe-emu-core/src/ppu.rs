@@ -5659,6 +5659,18 @@ impl Ppu {
         (self.stat & 0x78) | 0x80 | mode | if self.lyc_eq_ly { 0x04 } else { 0 }
     }
 
+    /// Inspect palette data without advancing the auto-increment index.
+    pub(crate) fn peek_palette_data(&self, addr: u16) -> u8 {
+        if !self.cgb() || self.dmg_compat {
+            return 0xFF;
+        }
+        match addr {
+            0xFF69 => self.bgpd[Self::palette_ram_index(self.bgpi)],
+            0xFF6B => self.obpd[Self::palette_ram_index(self.obpi)],
+            _ => 0xFF,
+        }
+    }
+
     /// Read a PPU register at `addr`.
     pub fn read_reg(&mut self, addr: u16) -> u8 {
         if self.dmg_compat && matches!(addr, 0xFF69 | 0xFF6B) {

@@ -27,6 +27,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberTopAppBarState
@@ -45,6 +46,7 @@ import java.text.DateFormat
 @Composable
 fun InstancesScreen(
     onPlayInstance: (GameInstance) -> Unit,
+    onSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val repo = remember(context) { GameInstancesRepository(context) }
@@ -126,11 +128,13 @@ fun InstancesScreen(
 
     InstancesScaffold(
         status = status,
+        onSettings = onSettings,
         onImportRom = { pickRom.launch("application/octet-stream") },
         instances = instances,
         savLastWriteMillis = { id -> repo.savLastWriteMillis(id) },
         lastSavExportMillis = { it.lastSavExportMillis },
         onPlay = { onPlayInstance(it) },
+        onFavorite = { repo.toggleFavorite(it.id); instances = refresh() },
         onRename = {
             renameTarget = it
             renameDraft = it.nickname
@@ -215,17 +219,28 @@ fun InstancesScreen(
 @Composable
 private fun InstancesScaffold(
     status: String?,
+    onSettings: () -> Unit,
     onImportRom: () -> Unit,
     instances: List<GameInstance>,
     savLastWriteMillis: (String) -> Long?,
     lastSavExportMillis: (GameInstance) -> Long?,
     onPlay: (GameInstance) -> Unit,
+    onFavorite: (GameInstance) -> Unit,
     onRename: (GameInstance) -> Unit,
     onImportSav: (GameInstance) -> Unit,
     onExportSav: (GameInstance) -> Unit,
     onReplaceRom: (GameInstance) -> Unit,
     onDelete: (GameInstance) -> Unit,
 ) {
+    var query by remember { mutableStateOf("") }
+    var sort by remember { mutableStateOf("Recent") }
+    val visible = instances.filter { it.nickname.contains(query, true) || it.romDisplayName.contains(query, true) }.let { matches ->
+        when (sort) {
+            "Name" -> matches.sortedBy { it.nickname.lowercase() }
+            "Favorites" -> matches.sortedWith(compareByDescending<GameInstance> { it.favorite }.thenBy { it.nickname.lowercase() })
+            else -> matches.sortedByDescending { it.lastPlayedMillis ?: it.createdAtMillis }
+        }
+    }
     val df = remember { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT) }
 
     Scaffold(
@@ -233,6 +248,7 @@ private fun InstancesScaffold(
             TopAppBar(
                 title = { Text("Instances") },
                 actions = {
+                    TextButton(onClick = onSettings) { Text("Settings") }
                     Button(onClick = onImportRom) { Text("Import ROM") }
                 },
                 scrollBehavior = androidx.compose.material3.TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
@@ -256,8 +272,15 @@ private fun InstancesScaffold(
                 return@Column
             }
 
+            OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("Search instances") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (choice in listOf("Recent", "Name", "Favorites")) {
+                    TextButton(onClick = { sort = choice }) { Text(if (sort == choice) "[$choice]" else choice) }
+                }
+            }
+            if (visible.isEmpty()) Text("No matching instances.")
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(instances, key = { it.id }) { inst ->
+                items(visible, key = { it.id }) { inst ->
                     var menuExpanded by remember(inst.id) { mutableStateOf(false) }
 
                     val lastSavWrite = savLastWriteMillis(inst.id)
@@ -267,10 +290,11 @@ private fun InstancesScaffold(
                     val lastExportLabel = if (lastExport != null) df.format(java.util.Date(lastExport)) else "Never"
 
                     ListItem(
-                        headlineContent = { Text(inst.nickname, fontWeight = FontWeight.SemiBold) },
+                        headlineContent = { Text((if (inst.favorite) "Favorite: " else "") + inst.nickname, fontWeight = FontWeight.SemiBold) },
                         supportingContent = {
                             Column {
                                 Text("ROM: ${inst.romDisplayName}")
+                                Text("Last played: ${inst.lastPlayedMillis?.let { df.format(java.util.Date(it)) } ?: "Never"}")
                                 Text("Last .sav write: $lastSavWriteLabel")
                                 Text("Last export: $lastExportLabel")
                             }
@@ -283,6 +307,7 @@ private fun InstancesScaffold(
                                     Icon(Icons.Filled.MoreVert, contentDescription = "More")
                                 }
                                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                    DropdownMenuItem(text = { Text(if (inst.favorite) "Remove favorite" else "Add favorite") }, onClick = { menuExpanded = false; onFavorite(inst) })
                                     DropdownMenuItem(text = { Text("Rename") }, onClick = { menuExpanded = false; onRename(inst) })
                                     DropdownMenuItem(text = { Text("Import .sav") }, onClick = { menuExpanded = false; onImportSav(inst) })
                                     DropdownMenuItem(text = { Text("Export .sav") }, onClick = { menuExpanded = false; onExportSav(inst) })

@@ -19,6 +19,10 @@ static HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
 static INIT: OnceCell<()> = OnceCell::new();
 
+// Share the selected hardware capture with the assertion. Otherwise a warm
+// local cache can hide a missing fixture that fails on a clean CI runner.
+pub const DAID_SCANLINE_BGP_DMG_PNG: &str = "daid/ppu_scanline_bgp_1.dmg.png";
+
 // Keep retries bounded to avoid overly long test startup while still handling transient outages.
 const DOWNLOAD_ATTEMPTS: usize = 5;
 const INITIAL_BACKOFF_MS: u64 = 500;
@@ -307,7 +311,7 @@ fn ensure_daid_test_roms(dir: &Path) {
 
     let scanline_bgp_rom_path = base.join("ppu_scanline_bgp.gb");
     let scanline_bgp_gbc_png_path = base.join("ppu_scanline_bgp.gbc.png");
-    let scanline_bgp_dmg_png_path = base.join("ppu_scanline_bgp_0.dmg.png");
+    let scanline_bgp_dmg_png_path = dir.join(DAID_SCANLINE_BGP_DMG_PNG);
     if !scanline_bgp_rom_path.exists() {
         download_file(
             "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/ppu_scanline_bgp.gb",
@@ -322,7 +326,9 @@ fn ensure_daid_test_roms(dir: &Path) {
     }
     if !scanline_bgp_dmg_png_path.exists() {
         download_file(
-            "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/daid/ppu_scanline_bgp_0.dmg.png",
+            &format!(
+                "https://raw.githubusercontent.com/gbdev/GBEmulatorShootout/38b926bdbc26993d1b4c43e97979ecc66287bf02/testroms/{DAID_SCANLINE_BGP_DMG_PNG}"
+            ),
             &scanline_bgp_dmg_png_path,
         );
     }
@@ -409,7 +415,8 @@ pub fn load_png_rgb<P: AsRef<Path>>(path: P) -> (u32, u32, Arc<[[u8; 3]]>) {
         return (cached.width, cached.height, Arc::clone(&cached.pixels));
     }
 
-    let file = File::open(path).expect("failed to open png");
+    let file = File::open(path)
+        .unwrap_or_else(|error| panic!("failed to open reference PNG {}: {error}", path.display()));
     let reader = BufReader::new(file);
     let mut decoder = png::Decoder::new(reader);
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);

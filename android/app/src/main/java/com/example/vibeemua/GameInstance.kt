@@ -8,4 +8,6 @@ data class GameInstance(
     val romDisplayName: String,
     val createdAtMillis: Long = System.currentTimeMillis(),
     val lastSavExportMillis: Long? = null,
+    val favorite: Boolean = false,
+    val lastPlayedMillis: Long? = null,
 )

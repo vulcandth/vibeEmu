@@ -170,6 +170,12 @@ impl WindowSize {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
+    pub dmg_revision: u8,
+    pub cgb_revision: u8,
+    pub dmg_palette: Option<[u32; 4]>,
+    pub preferences: vibe_emu_frontend::Preferences,
+    pub pinned_roms: Vec<PathBuf>,
+    pub screenshot_directory: Option<PathBuf>,
     pub dmg_bootrom_path: Option<PathBuf>,
     pub cgb_bootrom_path: Option<PathBuf>,
     pub mgb_bootrom_path: Option<PathBuf>,
@@ -189,6 +195,12 @@ pub struct UiConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
+            dmg_revision: 2,
+            cgb_revision: 5,
+            dmg_palette: None,
+            preferences: vibe_emu_frontend::Preferences::default(),
+            pinned_roms: Vec::new(),
+            screenshot_directory: None,
             dmg_bootrom_path: None,
             cgb_bootrom_path: None,
             mgb_bootrom_path: None,
@@ -262,7 +274,10 @@ pub fn load_from_file(path: &PathBuf) -> UiConfig {
     };
 
     match toml::from_str::<UiConfig>(&text) {
-        Ok(cfg) => cfg,
+        Ok(mut cfg) => {
+            cfg.preferences.normalize();
+            cfg
+        }
         Err(e) => {
             warn!(
                 "Failed to parse UI config {}: {e}; using defaults",
@@ -278,7 +293,7 @@ pub fn save_to_file(path: &PathBuf, cfg: &UiConfig) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let text = toml::to_string_pretty(cfg).unwrap_or_else(|_| String::new());
+    let text = toml::to_string_pretty(cfg).map_err(std::io::Error::other)?;
     std::fs::write(path, text)
 }
 
@@ -291,6 +306,13 @@ mod tests {
     fn old_settings_and_all_model_bootroms_round_trip() {
         let mut cfg: UiConfig = toml::from_str("dmg_bootrom_path = 'old-dmg.bin'\ncgb_bootrom_path = 'old-cgb.bin'\nemulation_mode = 'force-cgb-sgb'\n").unwrap();
         assert_eq!(cfg.emulation_mode, EmulationMode::ForceCgbSgb);
+        assert_eq!(
+            cfg.preferences.workspace,
+            vibe_emu_frontend::Workspace::Play
+        );
+        assert_eq!((cfg.dmg_revision, cfg.cgb_revision), (2, 5));
+        assert_eq!(cfg.preferences.volume, 100);
+        assert!(cfg.dmg_palette.is_none());
         assert!(cfg.show_sgb_border);
         assert_eq!(cfg.bootrom_paths()[4], Some(PathBuf::from("old-cgb.bin")));
         assert!(cfg.sgb_bootrom_path.is_none());

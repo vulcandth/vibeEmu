@@ -181,17 +181,15 @@ private fun queryDisplayName(context: android.content.Context, uri: Uri): String
     }
 }
 
-private enum class OptionsPage {
-    Root,
-    Emulation,
-    BootRom,
-    Input,
-}
 
 class MainActivity : ComponentActivity(), InputManager.InputDeviceListener {
     private val vm: EmulatorViewModel by viewModels()
     private lateinit var audioPlayer: AudioPlayer
     private var gameplayInputEnabled = false
+    private var activityResumed = false
+    private var windowFocused = false
+    private val foregroundState = mutableStateOf(false)
+    private val menuRequests = mutableIntStateOf(0)
 
     private val controllerSlots = ControllerSlots()
     private val controllerPressedMasksState = mutableStateOf(List(4) { 0 })
@@ -236,6 +234,8 @@ class MainActivity : ComponentActivity(), InputManager.InputDeviceListener {
                     controllerPressedMasks = controllerPressedMasksState.value,
                     keyboardPressedMask = keyboardPressedMaskState.intValue,
                     controllerNames = controllerNamesState.value,
+                    menuRequest = menuRequests.intValue,
+                    foreground = foregroundState.value,
                     onGameplayInputChanged = { enabled ->
                         gameplayInputEnabled = enabled
                         if (!enabled) {
@@ -269,6 +269,10 @@ class MainActivity : ComponentActivity(), InputManager.InputDeviceListener {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (KeyCapture.isCapturing()) {
             if (KeyCapture.maybeConsumeKeyDown(event)) return true
+        }
+        if (event.keyCode == KeyEvent.KEYCODE_MENU || event.keyCode == KeyEvent.KEYCODE_BUTTON_MODE) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) menuRequests.intValue++
+            return true
         }
         if (!gameplayInputEnabled) return super.dispatchKeyEvent(event)
 
@@ -326,28 +330,32 @@ class MainActivity : ComponentActivity(), InputManager.InputDeviceListener {
 
     override fun onResume() {
         super.onResume()
-        vm.emulator.setForeground(true)
-        if (vm.emulator.isReady()) {
-            audioPlayer.start()
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
+        activityResumed = true
+        updateForeground()
     }
 
     override fun onPause() {
         super.onPause()
-        controllerSlots.releaseButtons()
-        keyboardPressedMaskState.intValue = 0
-        publishControllers()
-        vm.emulator.setForeground(false)
-        audioPlayer.stop()
+        activityResumed = false
+        updateForeground()
         vm.emulator.saveRam()
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        vm.emulator.setForeground(hasFocus)
-        if (!hasFocus) {
+        windowFocused = hasFocus
+        updateForeground()
+    }
+
+    private fun updateForeground() {
+        val foreground = activityResumed && windowFocused
+        foregroundState.value = foreground
+        vm.emulator.setForeground(foreground)
+        if (!foreground) {
+            controllerSlots.releaseButtons()
+            keyboardPressedMaskState.intValue = 0
+            publishControllers()
+            for (player in 0..3) vm.emulator.updateInput(0xff, player)
             audioPlayer.stop()
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else if (vm.emulator.isReady()) {
@@ -376,6 +384,8 @@ fun EmulatorScreen(
     controllerPressedMasks: List<Int> = List(4) { 0 },
     keyboardPressedMask: Int = 0,
     controllerNames: List<String> = List(4) { "No controller" },
+    menuRequest: Int = 0,
+    foreground: Boolean = true,
     onGameplayInputChanged: (Boolean) -> Unit = {},
     onRomLoaded: () -> Unit = {},
     onOpenInstances: () -> Unit = {},
@@ -384,23 +394,18 @@ fun EmulatorScreen(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val isTv = (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
-    val showTouchControls = !isTv
 
     val optionsRepository = remember(context) { OptionsRepository(context) }
-    var options by remember { mutableStateOf(optionsRepository.load()) }
+    val machineSettings = remember(context) { MachineSettingsStore(context.filesDir) }
+    var options by remember { mutableStateOf(machineSettings.load(optionsRepository.load())) }
+    var machineRevision by remember { mutableStateOf(0) }
+    val showTouchControls = !isTv && !(options.hideTouchWithController && controllerNames.any { it != "No controller" })
     var screen by rememberSaveable { mutableStateOf(UiScreen.Instances) }
 
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var currentInstanceId by rememberSaveable { mutableStateOf<String?>(null) }
-
-    fun readBootRoms(selected: AppOptions): Map<BootRomMode, ByteArray> =
-        selected.enabledBootRoms.associateWith { mode ->
-            val bytes = File(context.filesDir, mode.fileName).readBytes()
-            require(mode.acceptsSize(bytes.size)) { "Invalid ${mode.label} boot ROM size: ${bytes.size} bytes" }
-            bytes
-        }
 
     var appliedSerial by remember { mutableStateOf<SerialPeripheral?>(null) }
 
@@ -423,6 +428,9 @@ fun EmulatorScreen(
     }
 
     fun applyRuntimeOptions(newOptions: AppOptions) {
+        emulator.speedPercent = newOptions.speedPercent
+        emulator.outputVolume = if (newOptions.soundEnabled) newOptions.volume else 0
+        emulator.monoOutput = newOptions.mono
         emulator.setDmgNeutralPalette(newOptions.dmgNeutralPalette)
         applySerialPeripheral(newOptions.serialPeripheral)
 
@@ -435,14 +443,26 @@ fun EmulatorScreen(
     var inputState by remember { mutableStateOf(0xFF) }
     var menuExpanded by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = screen == UiScreen.Emulator && !loading) {
-        menuExpanded = true
+    LaunchedEffect(menuRequest) {
+        if (menuRequest > 0 && screen == UiScreen.Emulator && !loading) menuExpanded = !menuExpanded
+    }
+    LaunchedEffect(Unit) {
+        // Saved navigation may outlive the process; a machine cannot be restored
+        // until complete save states exist. Rotation retains the ViewModel machine.
+        if (!emulator.isReady()) {
+            currentInstanceId = null
+            if (screen == UiScreen.Emulator) screen = UiScreen.Instances
+        }
     }
 
-    LaunchedEffect(screen, menuExpanded, loading) {
+    BackHandler(enabled = screen == UiScreen.Emulator && !loading) {
+        menuExpanded = !menuExpanded
+    }
+
+    LaunchedEffect(screen, menuExpanded, loading, foreground) {
         // Pause emulation whenever we're not actively on the gameplay screen.
         // This prevents the core from running (and mutating SRAM) while the user is managing instances.
-        val gameplay = screen == UiScreen.Emulator && !menuExpanded && !loading
+        val gameplay = screen == UiScreen.Emulator && !menuExpanded && !loading && foreground
         emulator.setPaused(!gameplay)
         onGameplayInputChanged(gameplay)
 
@@ -480,10 +500,14 @@ fun EmulatorScreen(
             try {
                 val loaded = withContext(emuDispatcher) {
                     val romFile = GameInstancesRepository(context).romFile(instance.id)
-                    val boots = readBootRoms(selected)
-                    romFile.exists() && emulator.loadRomFromFile(romFile.absolutePath, selected.emulationMode, boots)
+                    val boots = machineSettings.readBootRoms(selected)
+                    romFile.exists() && emulator.loadRomFromFile(romFile.absolutePath, selected.emulationMode, boots) {
+                        machineSettings.commit()
+                    }
                 }
                 check(loaded) { "Failed to load instance or boot ROM" }
+                machineRevision++
+                GameInstancesRepository(context).markPlayed(instance.id)
                 currentInstanceId = instance.id
                 romLabel = instance.nickname
                 status = "Running ${instance.nickname} (${selected.emulationMode.label})"
@@ -523,7 +547,7 @@ fun EmulatorScreen(
             while (isActive) {
                 // Pacing sleeps alone do not yield a single-thread dispatcher.
                 kotlinx.coroutines.yield()
-                val targetFrameNs = emulator.frameDurationNs
+                val targetFrameNs = emulator.frameDurationNs * 100L / emulator.speedPercent.coerceIn(25, 400)
                 if (emulator.isReady() && !emulator.isPaused()) {
                     // Pace the loop to ~59fps to avoid running too fast.
                     val now = System.nanoTime()
@@ -587,16 +611,38 @@ fun EmulatorScreen(
         }
     }
 
-    LaunchedEffect(dpadPressedMask, actionPressedMask, metaPressedMask, controllerPressedMasks, keyboardPressedMask, emulator.isSgbHost, loading) {
-        if (!loading) {
+    LaunchedEffect(dpadPressedMask, actionPressedMask, metaPressedMask, controllerPressedMasks, keyboardPressedMask, emulator.isSgbHost, loading, screen, menuExpanded, foreground) {
+        if (!loading && screen == UiScreen.Emulator && !menuExpanded && foreground) {
             val touchAndKeyboard = dpadPressedMask or actionPressedMask or metaPressedMask or keyboardPressedMask
             val firstPad = if (emulator.isSgbHost) controllerPressedMasks[0] else controllerPressedMasks.fold(0) { a, b -> a or b }
-            inputState = 0xFF and (touchAndKeyboard or firstPad).inv()
+            inputState = 0xFF and neutralizeDirections(touchAndKeyboard or firstPad).inv()
             emulator.updateInput(inputState)
             for (player in 1..3) {
-                emulator.updateInput(if (emulator.isSgbHost) 0xFF and controllerPressedMasks[player].inv() else 0xFF, player)
+                emulator.updateInput(if (emulator.isSgbHost) 0xFF and neutralizeDirections(controllerPressedMasks[player]).inv() else 0xFF, player)
             }
+        } else {
+            dpadPressedMask = 0; actionPressedMask = 0; metaPressedMask = 0
+            for (player in 0..3) emulator.updateInput(0xFF, player)
         }
+    }
+
+
+    LaunchedEffect(emulator) {
+        while (isActive) {
+            kotlinx.coroutines.delay(30_000)
+            withContext(emuDispatcher) { if (emulator.isReady()) emulator.saveRam() }
+        }
+    }
+
+    if (menuExpanded && screen == UiScreen.Emulator) {
+        GameplayMenu(
+            gameName = romLabel,
+            onResume = { menuExpanded = false },
+            onSettings = { menuExpanded = false; screen = UiScreen.Options },
+            onReset = { emulator.reset(); menuExpanded = false },
+            onInstances = { menuExpanded = false; emulator.saveRam(); screen = UiScreen.Instances; onOpenInstances() },
+            onAbout = { menuExpanded = false; screen = UiScreen.About },
+        )
     }
 
     val showTopBar = (!isLandscape && !isTv) && screen == UiScreen.Emulator
@@ -624,46 +670,7 @@ fun EmulatorScreen(
                         IconButton(onClick = { menuExpanded = true }) {
                             Icon(imageVector = Icons.Filled.Menu, contentDescription = "Menu")
                         }
-                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                            DropdownMenuItem(
-                                text = { Text(text = "Instances") },
-                                onClick = {
-                                    menuExpanded = false
-                                    emulator.saveRam()
-                                    screen = UiScreen.Instances
-                                    onOpenInstances()
-                                }
-                            )
 
-                            DropdownMenuItem(
-                                text = { Text(text = "Options") },
-                                onClick = {
-                                    menuExpanded = false
-                                    emulator.saveRam()
-                                    screen = UiScreen.Options
-                                }
-                            )
-
-                            DropdownMenuItem(
-                                text = { Text(text = "About") },
-                                onClick = {
-                                    menuExpanded = false
-                                    emulator.saveRam()
-                                    screen = UiScreen.About
-                                }
-                            )
-
-                            DropdownMenuItem(
-                                text = { Text(text = "Reset") },
-                                onClick = {
-                                    menuExpanded = false
-                                    if (emulator.isReady()) {
-                                        emulator.reset()
-                                        status = "Reset $romLabel"
-                                    }
-                                }
-                            )
-                        }
                     }
                 )
             }
@@ -676,6 +683,7 @@ fun EmulatorScreen(
                     .padding(padding)
             ) {
                 InstancesScreen(
+                    onSettings = { screen = UiScreen.Options },
                     onPlayInstance = { inst ->
                         loadInstance(inst)
                     }
@@ -688,14 +696,34 @@ fun EmulatorScreen(
             OptionsScreen(
                 options = options,
                 onOptionsChange = { updated ->
-                    options = updated
-                    optionsRepository.save(updated)
-                    applyRuntimeOptions(updated)
+                    try {
+                        machineSettings.stage(options, updated)
+                        options = updated
+                        machineRevision++
+                        optionsRepository.save(updated)
+                        applyRuntimeOptions(updated)
+                    } catch (error: Exception) { loadError = error.message ?: "Unable to save settings" }
                 },
-                onBack = { screen = UiScreen.Emulator },
+                onBack = { screen = if (currentInstanceId == null) UiScreen.Instances else UiScreen.Emulator },
                 controllerNames = controllerNames,
                 canReload = currentInstanceId != null && !loading,
                 onReload = { currentInstanceId?.let { GameInstancesRepository(context).get(it)?.let(::loadInstance) } },
+                pendingMachineChanges = remember(machineRevision) { machineSettings.hasPendingChanges() },
+                onDiscardMachineChanges = {
+                    try {
+                        options = machineSettings.discard(options)
+                        machineRevision++
+                        optionsRepository.save(options)
+                    } catch (error: Exception) { loadError = error.message ?: "Unable to discard settings" }
+                },
+                bootRomFiles = remember(machineRevision) {
+                    BootRomMode.entries.mapNotNull { mode -> machineSettings.bootFile(options, mode)?.let { mode to it } }.toMap()
+                },
+                onImportBootRom = { mode, bytes ->
+                    options = machineSettings.stageBoot(options, mode, bytes)
+                    machineRevision++
+                    optionsRepository.save(options)
+                },
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
@@ -813,47 +841,7 @@ fun EmulatorScreen(
                                 IconButton(onClick = { menuExpanded = true }) {
                                     Icon(imageVector = Icons.Filled.Menu, contentDescription = "Menu")
                                 }
-                                DropdownMenu(
-                                    expanded = menuExpanded,
-                                    onDismissRequest = { menuExpanded = false },
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text(text = "Instances") },
-                                        onClick = {
-                                            menuExpanded = false
-                                            emulator.saveRam()
-                                            screen = UiScreen.Instances
-                                            onOpenInstances()
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(text = "Options") },
-                                        onClick = {
-                                            menuExpanded = false
-                                            emulator.saveRam()
-                                            screen = UiScreen.Options
-                                        }
-                                    )
 
-                                    DropdownMenuItem(
-                                        text = { Text(text = "About") },
-                                        onClick = {
-                                            menuExpanded = false
-                                            emulator.saveRam()
-                                            screen = UiScreen.About
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(text = "Reset") },
-                                        onClick = {
-                                            menuExpanded = false
-                                            if (emulator.isReady()) {
-                                                emulator.reset()
-                                                status = "Reset $romLabel"
-                                            }
-                                        }
-                                    )
-                                }
                             }
                         }
                     }
@@ -1091,296 +1079,6 @@ private fun GameView(
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-@OptIn(ExperimentalMaterial3Api::class)
-private fun OptionsScreen(
-    options: AppOptions,
-    onOptionsChange: (AppOptions) -> Unit,
-    onBack: () -> Unit,
-    controllerNames: List<String>,
-    canReload: Boolean,
-    onReload: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-
-    var page by remember { mutableStateOf(OptionsPage.Root) }
-
-    var pendingBootMode by rememberSaveable { mutableStateOf(BootRomMode.Dmg) }
-    var bootError by remember { mutableStateOf<String?>(null) }
-
-    var mappings by remember { mutableStateOf(InputMappingsRepository(context).load()) }
-
-    fun saveMappings(next: InputMappings) {
-        mappings = next
-        InputMappingStore.set(context, next)
-    }
-
-    val pickBootRom = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                val mode = pendingBootMode
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    ?: error("Cannot read the selected file")
-                require(mode.acceptsSize(bytes.size)) {
-                    "${mode.label} boot ROM must be ${if (mode.color) "2048 or 2304" else "256"} bytes"
-                }
-                File(context.filesDir, mode.fileName).writeBytes(bytes)
-                onOptionsChange(options.copy(enabledBootRoms = options.enabledBootRoms + mode))
-                bootError = null
-            } catch (e: Exception) { bootError = e.message ?: "Unable to import boot ROM" }
-        }
-    }
-
-    val title = when (page) {
-        OptionsPage.Root -> "Options"
-        OptionsPage.Emulation -> "Emulation"
-        OptionsPage.BootRom -> "Boot ROM"
-        OptionsPage.Input -> "Input"
-    }
-
-    Scaffold(
-        modifier = modifier,
-        topBar = {
-            TopAppBar(
-                title = { Text(text = title) },
-                navigationIcon = {
-                    IconButton(
-                        onClick = {
-                            if (page == OptionsPage.Root) onBack() else page = OptionsPage.Root
-                        }
-                    ) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                }
-            )
-        }
-    ) { innerPadding ->
-        when (page) {
-            OptionsPage.Root -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding),
-                ) {
-                    ListItem(
-                        headlineContent = { Text("Emulation") },
-                        supportingContent = { Text("Hardware mode, palette") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { page = OptionsPage.Emulation }
-                            .padding(horizontal = 8.dp),
-                    )
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                    ListItem(
-                        headlineContent = { Text("Boot ROM") },
-                        supportingContent = { Text("Separate boot ROM files for all seven models") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { page = OptionsPage.BootRom }
-                            .padding(horizontal = 8.dp),
-                    )
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                    ListItem(
-                        headlineContent = { Text("Input") },
-                        supportingContent = { Text("Remap keyboard/controller keys") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { page = OptionsPage.Input }
-                            .padding(horizontal = 8.dp),
-                    )
-                }
-            }
-
-            OptionsPage.Emulation -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(text = "Hardware mode", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                    EmulationMode.entries.forEach { mode ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(
-                                selected = options.emulationMode == mode,
-                                onClick = { onOptionsChange(options.copy(emulationMode = mode)) },
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = mode.label)
-                        }
-                    }
-                    Text(
-                        text = "Model and boot ROM changes take effect on the next load. Reset retains the current machine and initial border.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-
-                    OutlinedButton(enabled = canReload, onClick = onReload) { Text("Apply and reload current game") }
-                    Text("SGB + GBC accepts live SGB commands. Initial border starts normal CGB gameplay after capture; it has no SGB multiplayer or later border changes.", style = MaterialTheme.typography.bodySmall)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Show SGB border", modifier = Modifier.weight(1f))
-                        Switch(checked = options.showSgbBorder, onCheckedChange = { onOptionsChange(options.copy(showSgbBorder = it)) })
-                    }
-                    Text("Game Boy audio is supported. SNES audio commands and uploaded SNES programs are not emulated.", style = MaterialTheme.typography.bodySmall)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "DMG neutral palette", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                            Text(text = "Matches the upstream neutral DMG palette.", style = MaterialTheme.typography.bodySmall)
-                        }
-                        Switch(
-                            checked = options.dmgNeutralPalette,
-                            onCheckedChange = { onOptionsChange(options.copy(dmgNeutralPalette = it)) },
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(text = "Serial", style = MaterialTheme.typography.titleMedium)
-                    Text(text = "Peripheral", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                    SerialPeripheral.entries.forEach { p ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(
-                                selected = options.serialPeripheral == p,
-                                onClick = { onOptionsChange(options.copy(serialPeripheral = p)) },
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = p.label)
-                        }
-                    }
-                }
-            }
-
-            OptionsPage.BootRom -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text("Initial-border mode uses the SGB boot ROM for capture and the CGB boot ROM for gameplay.")
-                    Text("Boot ROMs are optional. Changes take effect on the next game load.", style = MaterialTheme.typography.bodySmall)
-                    bootError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    BootRomMode.entries.forEach { mode ->
-                        val file = File(context.filesDir, mode.fileName)
-                        Text("${mode.label} boot ROM", style = MaterialTheme.typography.titleMedium)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(if (file.exists()) "Imported" else "Not set", modifier = Modifier.weight(1f))
-                            Switch(enabled = file.exists(), checked = mode in options.enabledBootRoms,
-                                onCheckedChange = { enabled -> onOptionsChange(options.copy(enabledBootRoms =
-                                    if (enabled) options.enabledBootRoms + mode else options.enabledBootRoms - mode)) })
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { pendingBootMode = mode; pickBootRom.launch("*/*") }) { Text("Choose") }
-                            OutlinedButton(onClick = {
-                                if (!file.exists() || file.delete()) {
-                                    onOptionsChange(options.copy(enabledBootRoms = options.enabledBootRoms - mode))
-                                } else { bootError = "Could not clear ${mode.label} boot ROM" }
-                            }) { Text("Clear") }
-                        }
-                        HorizontalDivider()
-                    }
-                    OutlinedButton(enabled = canReload, onClick = onReload) { Text("Apply and reload current game") }
-                }
-            }
-
-            OptionsPage.Input -> {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    item {
-                        Text("Keyboard and touch control player 1. SGB games can use up to four controllers. Other modes combine controllers into player 1.")
-                        controllerNames.forEachIndexed { player, name -> Text("Player ${player + 1}: $name") }
-                    }
-
-                    item {
-                        Text(text = "Key mapping", style = MaterialTheme.typography.titleMedium)
-                    }
-                    item {
-                        Text(text = "Tap a binding, then press a key/button.", style = MaterialTheme.typography.bodySmall)
-                    }
-
-                    items(InputAction.entries) { a ->
-                        val kb = mappings.keyboard[a] ?: KeyEvent.KEYCODE_UNKNOWN
-                        val pad = mappings.controller[a] ?: KeyEvent.KEYCODE_UNKNOWN
-
-                        Text(text = a.label, fontWeight = FontWeight.SemiBold)
-
-                        OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                KeyCapture.request(a, forController = false) { code ->
-                                    val next = mappings.copy(
-                                        keyboard = mappings.keyboard.toMutableMap().apply { put(a, code) }
-                                    )
-                                    saveMappings(next)
-                                }
-                            }
-                        ) {
-                            Text(text = "Keyboard: ${KeyEvent.keyCodeToString(kb)}")
-                        }
-
-                        OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                KeyCapture.request(a, forController = true) { code ->
-                                    val next = mappings.copy(
-                                        controller = mappings.controller.toMutableMap().apply { put(a, code) }
-                                    )
-                                    saveMappings(next)
-                                }
-                            }
-                        ) {
-                            Text(text = "Controller: ${KeyEvent.keyCodeToString(pad)}")
-                        }
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    }
-                }
-            }
-        }
-
-        val p = KeyCapture.pending
-        if (p != null) {
-            AlertDialog(
-                onDismissRequest = {
-                    KeyCapture.cancel()
-                },
-                title = { Text("Press a ${if (p.forController) "controller button" else "keyboard key"}") },
-                text = { Text("Binding for ${p.action.label}") },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            KeyCapture.cancel()
-                        }
-                    ) { Text("Cancel") }
-                },
-            )
         }
     }
 }

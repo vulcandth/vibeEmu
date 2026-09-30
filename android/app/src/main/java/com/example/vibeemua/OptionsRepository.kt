@@ -3,6 +3,11 @@ package com.example.vibeemua
 import android.content.Context
 
 data class AppOptions(
+    val soundEnabled: Boolean = true,
+    val volume: Int = 100,
+    val mono: Boolean = false,
+    val speedPercent: Int = 100,
+    val hideTouchWithController: Boolean = true,
     val emulationMode: EmulationMode = EmulationMode.Auto,
     val dmgNeutralPalette: Boolean = false,
     val serialPeripheral: SerialPeripheral = SerialPeripheral.None,
@@ -17,6 +22,11 @@ class OptionsRepository(context: Context) {
         val modeId = prefs.getInt("emulation_mode", EmulationMode.Auto.nativeId)
         val serialOrdinal = prefs.getInt("serial_peripheral", SerialPeripheral.None.ordinal)
         return AppOptions(
+            soundEnabled = prefs.getBoolean("sound_enabled", true),
+            volume = prefs.getInt("volume", 100).coerceIn(0, 100),
+            mono = prefs.getBoolean("mono", false),
+            speedPercent = prefs.getInt("speed_percent", 100).coerceIn(25, 400),
+            hideTouchWithController = prefs.getBoolean("hide_touch_with_controller", true),
             emulationMode = EmulationMode.entries.firstOrNull { it.nativeId == modeId } ?: EmulationMode.Auto,
             dmgNeutralPalette = prefs.getBoolean("dmg_neutral_palette", false),
             serialPeripheral = SerialPeripheral.entries.getOrNull(serialOrdinal) ?: SerialPeripheral.None,
@@ -30,6 +40,11 @@ class OptionsRepository(context: Context) {
 
     fun save(options: AppOptions) {
         val editor = prefs.edit()
+            .putBoolean("sound_enabled", options.soundEnabled)
+            .putInt("volume", options.volume.coerceIn(0, 100))
+            .putBoolean("mono", options.mono)
+            .putInt("speed_percent", options.speedPercent.coerceIn(25, 400))
+            .putBoolean("hide_touch_with_controller", options.hideTouchWithController)
             .putInt("emulation_mode", options.emulationMode.nativeId)
             .putBoolean("dmg_neutral_palette", options.dmgNeutralPalette)
             .putInt("serial_peripheral", options.serialPeripheral.ordinal)

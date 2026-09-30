@@ -16,6 +16,74 @@ pub struct CpuSnapshot {
     pub cycles: u64,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vibe_emu_core::{cartridge::Cartridge, hardware::Model, watchpoints::Watchpoint};
+
+    #[test]
+    fn repeated_inspection_does_not_change_execution_or_fire_watchpoints() {
+        for model in [Model::default(), Model::Cgb(Default::default())] {
+            let make_machine = || {
+                let mut gb = GameBoy::new(model);
+                let mut rom = vec![0; 0x8000];
+                rom[0x143] = 0x80;
+                // Repeatedly increment WRAM while video/audio hardware runs.
+                rom[0x100..0x109]
+                    .copy_from_slice(&[0xFA, 0x00, 0xC0, 0x3C, 0xEA, 0x00, 0xC0, 0x18, 0xF7]);
+                gb.mmu.load_cart(Cartridge::from_bytes(rom));
+                gb.mmu.watchpoints.set_watchpoints(vec![Watchpoint {
+                    id: 1,
+                    enabled: true,
+                    range: 0xFE00..=0xFFFF,
+                    on_read: true,
+                    on_write: false,
+                    on_execute: false,
+                    on_jump: false,
+                    value_match: None,
+                    message: None,
+                }]);
+                gb
+            };
+            let mut inspected = make_machine();
+            let mut reference = make_machine();
+            for step in 0..5000 {
+                inspected.cpu.step(&mut inspected.mmu);
+                reference.cpu.step(&mut reference.mmu);
+                if step % 97 == 0 {
+                    UiSnapshot::from_gb(&mut inspected, step % 2 == 0);
+                    assert!(inspected.mmu.watchpoints.take_hit().is_none());
+                }
+            }
+            assert_eq!(
+                format!("{:?}", inspected.cpu),
+                format!("{:?}", reference.cpu)
+            );
+            assert_eq!(inspected.mmu.wram, reference.mmu.wram);
+            assert_eq!(inspected.mmu.ppu.oam, reference.mmu.ppu.oam);
+            assert_eq!(
+                inspected.mmu.ppu.framebuffer(),
+                reference.mmu.ppu.framebuffer()
+            );
+            assert_eq!(
+                inspected.mmu.apu.debug_state(),
+                reference.mmu.apu.debug_state()
+            );
+            assert_eq!(
+                inspected.mmu.apu.debug_boot_snapshot(),
+                reference.mmu.apu.debug_boot_snapshot()
+            );
+            for addr in 0xFF00..=0xFFFF {
+                assert_eq!(
+                    inspected.mmu.peek_byte(addr),
+                    reference.mmu.peek_byte(addr),
+                    "register {addr:04X}"
+                );
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct PpuSnapshot {
     pub frame_counter: u64,
@@ -107,6 +175,7 @@ impl Default for DebuggerSnapshot {
 }
 
 impl UiSnapshot {
+    /// Capture passive inspection data; this must never perform CPU bus reads.
     pub fn from_gb(gb: &mut GameBoy, paused: bool) -> Self {
         let cpu = CpuSnapshot {
             a: gb.cpu.a,
@@ -182,7 +251,7 @@ impl UiSnapshot {
         let mem_image = if paused {
             let mut mem = Box::new([0u8; 0x10000]);
             for (addr, b) in mem.iter_mut().enumerate() {
-                *b = gb.mmu.read_byte(addr as u16);
+                *b = gb.mmu.peek_byte(addr as u16);
             }
             Some(mem)
         } else {
@@ -192,13 +261,13 @@ impl UiSnapshot {
         let disassembly_base = cpu.pc.saturating_sub(0x40);
         let mut disassembly_bytes = vec![0u8; 0x200];
         for (i, b) in disassembly_bytes.iter_mut().enumerate() {
-            *b = gb.mmu.read_byte(disassembly_base.wrapping_add(i as u16));
+            *b = gb.mmu.peek_byte(disassembly_base.wrapping_add(i as u16));
         }
 
         let stack_base = cpu.sp;
         let mut stack_bytes = vec![0u8; 0x40];
         for (i, b) in stack_bytes.iter_mut().enumerate() {
-            *b = gb.mmu.read_byte(stack_base.wrapping_add(i as u16));
+            *b = gb.mmu.peek_byte(stack_base.wrapping_add(i as u16));
         }
 
         let dbg = DebuggerSnapshot {

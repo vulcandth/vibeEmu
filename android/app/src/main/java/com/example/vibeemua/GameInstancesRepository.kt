@@ -18,6 +18,14 @@ class GameInstancesRepository(private val context: Context) {
 
     fun get(id: String): GameInstance? = readIndex().firstOrNull { it.id == id }
 
+    fun toggleFavorite(id: String) {
+        writeIndex(readIndex().map { if (it.id == id) it.copy(favorite = !it.favorite) else it })
+    }
+
+    fun markPlayed(id: String) {
+        writeIndex(readIndex().map { if (it.id == id) it.copy(lastPlayedMillis = System.currentTimeMillis()) else it })
+    }
+
     fun instanceDir(id: String): File = File(rootDir, id)
 
     fun romFile(id: String): File = File(instanceDir(id), ROM_FILENAME)
@@ -175,6 +183,8 @@ class GameInstancesRepository(private val context: Context) {
                     romDisplayName = romDisplayName,
                     createdAtMillis = createdAtMillis,
                     lastSavExportMillis = lastSavExportMillis,
+                    favorite = obj.optBoolean("favorite", false),
+                    lastPlayedMillis = if (obj.has("lastPlayedMillis")) obj.optLong("lastPlayedMillis") else null,
                 )
             )
         }
@@ -190,6 +200,8 @@ class GameInstancesRepository(private val context: Context) {
             obj.put("nickname", inst.nickname)
             obj.put("romDisplayName", inst.romDisplayName)
             obj.put("createdAtMillis", inst.createdAtMillis)
+            obj.put("favorite", inst.favorite)
+            inst.lastPlayedMillis?.let { obj.put("lastPlayedMillis", it) }
             if (inst.lastSavExportMillis != null) {
                 obj.put("lastSavExportMillis", inst.lastSavExportMillis)
             } else {

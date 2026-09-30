@@ -2,9 +2,15 @@
 #![allow(unused_imports)]
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod app_settings;
 mod audio;
+mod develop;
+mod develop_layout;
+mod workspace;
+use vibe_emu_frontend::{Action, SettingsCategory as OptionsTab, Workspace};
 mod input_timing;
 mod keybinds;
+mod keyboard;
 mod network_link;
 mod ui;
 mod ui_config;
@@ -48,7 +54,7 @@ mod about_assets {
 const DEFAULT_WINDOW_SCALE: u32 = 2;
 const MAX_WINDOW_SCALE: usize = 6;
 const MAX_RECENT_ROMS: usize = 10;
-const MENU_BAR_HEIGHT: f32 = 24.0;
+const MENU_BAR_HEIGHT: f32 = 48.0;
 const STATUS_BAR_HEIGHT: f32 = 24.0;
 const GB_FPS: f64 = 59.7275;
 const FRAME_TIME: Duration = Duration::from_nanos((1e9_f64 / GB_FPS) as u64);
@@ -427,8 +433,10 @@ enum LinkCableState {
     Connected,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct LoadConfig {
+    dmg_revision: u8,
+    cgb_revision: u8,
     emulation_mode: EmulationMode,
     dmg_neutral: bool,
     bootrom_override: Option<Vec<u8>>,
@@ -507,6 +515,28 @@ fn create_machine(cart: Option<Cartridge>, config: &LoadConfig) -> Result<Box<Ga
         || config.emulation_mode.model(false),
         |cart| config.emulation_mode.model_for_cart(cart),
     );
+    use vibe_emu_core::hardware::{CgbRevision, DmgRevision};
+    let model = match model {
+        Model::Dmg(_) => Model::Dmg(
+            [
+                DmgRevision::Rev0,
+                DmgRevision::RevA,
+                DmgRevision::RevB,
+                DmgRevision::RevC,
+            ][usize::from(config.dmg_revision.min(3))],
+        ),
+        Model::Cgb(_) => Model::Cgb(
+            [
+                CgbRevision::Rev0,
+                CgbRevision::RevA,
+                CgbRevision::RevB,
+                CgbRevision::RevC,
+                CgbRevision::RevD,
+                CgbRevision::RevE,
+            ][usize::from(config.cgb_revision.min(5))],
+        ),
+        model => model,
+    };
     let boot = configured_bootrom_data(config, model, false)?;
     // Keep machine ownership on the heap across startup, loader messages and
     // UI replacement. Returning GameBoy by value creates several large stack
@@ -587,13 +617,6 @@ enum RebindTarget {
     FastForward,
     Screenshot,
     Quit,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum OptionsTab {
-    #[default]
-    Keybinds,
-    Emulation,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1090,6 +1113,15 @@ struct VibeEmuApp {
     show_about: bool,
     legal_document: Option<LegalDocument>,
 
+    show_game_menu: bool,
+    focus_paused: bool,
+    develop_layout: develop_layout::DevelopLayout,
+    settings_search: String,
+    audio_controls: Arc<audio::OutputControls>,
+
+    active_load_config: LoadConfig,
+    pending_load_config: Option<LoadConfig>,
+
     // Options window state
     emulation_mode: EmulationMode,
     bootrom_override: Option<Vec<u8>>,
@@ -1101,6 +1133,9 @@ struct VibeEmuApp {
     selected_window_scale: usize,
     current_display_scale: f32,
     rebinding: Option<RebindTarget>,
+    shift: keyboard::SharedShift,
+    shift_presses: [u64; 2],
+    rebind_shift_presses: [u64; 2],
     options_tab: OptionsTab,
 
     // Debugger state
@@ -1407,7 +1442,10 @@ impl VibeEmuApp {
         let display_vertical_filter = ui_config.video_filter.vertical;
         let display_effect = ui_config.video_filter.effect;
 
+        let active_load_config = load_config.clone();
         let LoadConfig {
+            dmg_revision: _,
+            cgb_revision: _,
             emulation_mode,
             dmg_neutral,
             bootrom_override,
@@ -1415,12 +1453,24 @@ impl VibeEmuApp {
             sgb_bootrom_override,
         } = load_config;
 
+        let audio_controls = Arc::new(audio::OutputControls::default());
+        audio_controls.set(ui_config.preferences.volume, ui_config.preferences.mono);
         let audio_stream = if let Ok(mut gb_lock) = gb.lock() {
-            audio::start_stream(&mut gb_lock.mmu.apu, true, sound_enabled.clone())
+            audio::start_stream(
+                &mut gb_lock.mmu.apu,
+                true,
+                sound_enabled.clone(),
+                audio_controls.clone(),
+            )
         } else {
             None
         };
 
+        if let Some(palette) = ui_config.dmg_palette
+            && let Ok(mut gb) = gb.lock()
+        {
+            gb.mmu.ppu.set_dmg_palette(palette);
+        }
         let framebuffer = gb
             .lock()
             .map(|gb| gb.mmu.ppu.display_framebuffer().to_vec())
@@ -1434,6 +1484,9 @@ impl VibeEmuApp {
 
             sound_enabled,
 
+            develop_layout: develop_layout::DevelopLayout::load(
+                ui_config_path.with_file_name("workspace.json"),
+            ),
             ui_config_path,
             ui_config,
             framebuffer,
@@ -1452,6 +1505,12 @@ impl VibeEmuApp {
 
             #[cfg(not(target_os = "android"))]
             gamepad: GamepadInput::try_new(),
+            active_load_config,
+            pending_load_config: None,
+            show_game_menu: false,
+            focus_paused: false,
+            settings_search: String::new(),
+            audio_controls,
             show_debugger: false,
             show_vram_viewer: false,
             show_options: false,
@@ -1470,6 +1529,9 @@ impl VibeEmuApp {
             selected_window_scale,
             current_display_scale: 1.0,
             rebinding: None,
+            shift: Default::default(),
+            shift_presses: [0; 2],
+            rebind_shift_presses: [0; 2],
             options_tab: OptionsTab::default(),
             debugger_snapshot: None,
             debugger_state: DebuggerState::default(),
@@ -1519,6 +1581,7 @@ impl VibeEmuApp {
         };
 
         app.apply_persisted_serial_settings();
+        app.apply_speed();
 
         // Load symbols for ROM if one was provided at startup
         if let Some(ref path) = app.current_rom_path {
@@ -1557,6 +1620,8 @@ impl VibeEmuApp {
 
     fn load_config(&self) -> LoadConfig {
         LoadConfig {
+            dmg_revision: self.ui_config.dmg_revision,
+            cgb_revision: self.ui_config.cgb_revision,
             emulation_mode: self.emulation_mode,
             dmg_neutral: self.dmg_neutral,
             bootrom_override: self.bootrom_override.clone(),
@@ -1627,9 +1692,14 @@ impl VibeEmuApp {
         let (width, height) = self.frame_dimensions();
         let scale = (self.selected_window_scale + 1) as f32;
         let new_size = egui::vec2(
-            width as f32 * scale,
+            (width as f32 * scale).max(360.0),
             height as f32 * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
         );
+        let new_size = if self.ui_config.preferences.workspace == Workspace::Develop {
+            new_size.max(egui::vec2(1100.0, 760.0))
+        } else {
+            new_size
+        };
         ctx.send_viewport_cmd_to(
             egui::ViewportId::ROOT,
             egui::ViewportCommand::InnerSize(new_size),
@@ -1866,7 +1936,58 @@ impl VibeEmuApp {
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() {
+        let shift = self.shift.lock().map(|state| *state).unwrap_or_default();
+        let shift_pressed = shift.newly_pressed(self.shift_presses);
+        self.shift_presses = shift.presses;
+        let focused = ctx.input(|i| i.focused);
+        if !focused && self.ui_config.preferences.pause_on_focus_loss && !self.paused {
+            self.paused = true;
+            self.focus_paused = true;
+            let _ = self.emu_tx.send(EmuCommand::SetPaused(true));
+        } else if focused && self.focus_paused {
+            self.focus_paused = false;
+            self.paused = false;
+            let _ = self.emu_tx.send(EmuCommand::SetPaused(false));
+        }
+        if focused && self.rebinding.is_none() {
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                let action = if self.keybinds.quit_is_bound()
+                    && self.keybinds.quit_key() == egui::Key::Escape.into()
+                {
+                    Action::Quit
+                } else {
+                    Action::ToggleMenu
+                };
+                self.dispatch_action(ctx, action);
+            }
+            // Application shortcuts remain usable when a navigation button or
+            // text field owns focus; remapping above still captures them first.
+            if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::O)) {
+                self.dispatch_action(ctx, Action::OpenRom);
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::F11)) {
+                self.dispatch_action(ctx, Action::ToggleFullscreen);
+            }
+            if !ctx.egui_wants_keyboard_input() {
+                if ctx.input(|i| self.keybinds.pause_key().pressed(i, shift_pressed)) {
+                    self.dispatch_action(ctx, Action::TogglePause);
+                }
+                if self.keybinds.quit_is_bound()
+                    && ctx.input(|i| self.keybinds.quit_key().pressed(i, shift_pressed))
+                    && self.keybinds.quit_key() != egui::Key::Escape.into()
+                {
+                    self.dispatch_action(ctx, Action::Quit);
+                }
+            }
+        }
+        if ctx.egui_wants_keyboard_input()
+            || ctx.input(|i| i.modifiers.command || i.modifiers.alt || i.modifiers.ctrl)
+            || self.show_options
+            || self.show_game_menu
+            || self.rebinding.is_some()
+            || (!focused && !self.ui_config.preferences.background_controllers)
+        {
+            self.release_gameplay_input();
             return;
         }
 
@@ -1875,8 +1996,11 @@ impl VibeEmuApp {
         let mut capture_screenshot = false;
 
         ctx.input(|i| {
+            if !focused {
+                return;
+            }
             for (action, key) in self.keybinds.iter() {
-                if i.key_down(*key) {
+                if key.down(i, shift.down) {
                     match action.as_str() {
                         "right" => new_state &= !0x01,
                         "left" => new_state &= !0x02,
@@ -1891,8 +2015,8 @@ impl VibeEmuApp {
                 }
             }
 
-            new_fast_forward = i.key_down(self.keybinds.fast_forward_key());
-            capture_screenshot = i.key_pressed(self.keybinds.screenshot_key());
+            new_fast_forward = self.keybinds.fast_forward_key().down(i, shift.down);
+            capture_screenshot = self.keybinds.screenshot_key().pressed(i, shift_pressed);
         });
 
         #[cfg(not(target_os = "android"))]
@@ -1906,7 +2030,8 @@ impl VibeEmuApp {
             });
             let (pad_states, pad_ff) = gamepad.sample(multiplayer);
             new_state &= pad_states[0];
-            let extra = [pad_states[1], pad_states[2], pad_states[3]];
+            let extra = [pad_states[1], pad_states[2], pad_states[3]]
+                .map(|state| !vibe_emu_frontend::neutralize_opposites(!state));
             if extra != self.sgb_joypad_states {
                 self.sgb_joypad_states = extra;
                 let _ = self.emu_tx.send(EmuCommand::UpdateSgbInput(extra));
@@ -1914,6 +2039,7 @@ impl VibeEmuApp {
             new_fast_forward |= pad_ff;
         }
 
+        new_state = !vibe_emu_frontend::neutralize_opposites(!new_state);
         if new_state != self.joypad_state {
             self.joypad_state = new_state;
             let _ = self.emu_tx.send(EmuCommand::UpdateInput {
@@ -1924,18 +2050,19 @@ impl VibeEmuApp {
 
         if new_fast_forward != self.fast_forward {
             self.fast_forward = new_fast_forward;
-            let _ = self.emu_tx.send(EmuCommand::SetSpeed(Speed {
-                factor: 1.0,
-                fast: self.fast_forward,
-            }));
+            self.apply_speed();
         }
 
         if capture_screenshot {
-            self.capture_screenshot();
+            self.dispatch_action(ctx, Action::Screenshot);
         }
     }
 
     fn poll_frames(&mut self) {
+        if self.current_rom_path.is_none() {
+            while self.frame_rx.try_recv().is_ok() {}
+            return;
+        }
         while let Ok(evt) = self.frame_rx.try_recv() {
             match evt {
                 EmuEvent::Frame {
@@ -2158,6 +2285,10 @@ impl VibeEmuApp {
     }
 
     fn update_texture(&mut self, ctx: &egui::Context) {
+        if self.current_rom_path.is_none() {
+            self.texture = None;
+            return;
+        }
         let (src_width, src_height) = self.frame_dimensions();
 
         let scale = self
@@ -2223,6 +2354,9 @@ impl VibeEmuApp {
     }
 
     fn screenshot_output_dir(&self) -> std::path::PathBuf {
+        if let Some(path) = &self.ui_config.screenshot_directory {
+            return path.clone();
+        }
         if let Some(rom_path) = &self.current_rom_path
             && let Some(parent) = rom_path.parent()
         {
@@ -2302,7 +2436,10 @@ impl VibeEmuApp {
     fn capture_screenshot(&mut self) {
         match self.save_current_frame_screenshot() {
             Ok(path) => info!("Saved screenshot to {}", path.display()),
-            Err(e) => warn!("Failed to save screenshot: {e}"),
+            Err(e) => {
+                warn!("Failed to save screenshot: {e}");
+                self.load_error = Some(format!("Could not save the screenshot: {e}"));
+            }
         }
     }
 
@@ -2318,6 +2455,7 @@ impl VibeEmuApp {
         let _ = self.emu_tx.send(EmuCommand::SetPaused(true));
         self.load_error = None;
         let config = self.load_config();
+        self.pending_load_config = Some(config.clone());
         let (tx, rx) = mpsc::channel();
         self.loading = Some(rx);
         thread::Builder::new()
@@ -2343,12 +2481,22 @@ impl VibeEmuApp {
         self.loading = None;
         match result {
             Ok((mut next, path)) => {
+                if let Some(config) = self.pending_load_config.take() {
+                    self.active_load_config = config;
+                }
+                if let Some(palette) = self.ui_config.dmg_palette {
+                    next.mmu.ppu.set_dmg_palette(palette);
+                }
                 if let Ok(mut gb) = self.gb.lock() {
                     // Keep an attached link/mobile peripheral across a model reload.
                     next.mmu.serial.connect(gb.mmu.serial.take_port());
                     *gb = next;
-                    self._audio_stream =
-                        audio::start_stream(&mut gb.mmu.apu, true, self.sound_enabled.clone());
+                    self._audio_stream = audio::start_stream(
+                        &mut gb.mmu.apu,
+                        true,
+                        self.sound_enabled.clone(),
+                        self.audio_controls.clone(),
+                    );
                     gb.mmu.input.set_state(self.joypad_state);
                     for (i, state) in self.sgb_joypad_states.iter().enumerate() {
                         gb.mmu.input.set_player_state(i + 1, *state);
@@ -2360,6 +2508,7 @@ impl VibeEmuApp {
                 self.add_recent_rom(&path);
                 self.debugger_state.load_symbols_for_rom_path(Some(&path));
                 self.paused = false;
+                self.apply_speed();
                 let _ = self.emu_tx.send(EmuCommand::SetPaused(false));
             }
             Err(e) => {
@@ -2392,6 +2541,7 @@ impl VibeEmuApp {
 
 impl eframe::App for VibeEmuApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.apply_appearance(ctx);
         self.handle_input(ctx);
         self.handle_file_drop(ctx);
         let previous_dimensions = self.frame_dimensions();
@@ -2400,6 +2550,12 @@ impl eframe::App for VibeEmuApp {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
         self.poll_frames();
+        self.audio_controls.suppress(
+            self.paused
+                || self.current_rom_path.is_none()
+                || self.fast_forward
+                || self.ui_config.preferences.speed_percent != 100,
+        );
         if previous_dimensions != self.frame_dimensions() {
             self.apply_window_scale(ctx);
         }
@@ -2418,247 +2574,83 @@ impl eframe::App for VibeEmuApp {
         let ctx = ui.ctx().clone();
 
         egui::Panel::top("menu_bar").show_inside(ui, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("Open ROM...").clicked() {
-                        if let Some(path) = FileDialog::new()
-                            .add_filter("Game Boy ROMs", &["gb", "gbc"])
-                            .pick_file()
-                        {
-                            self.pending_rom_load = Some(path);
-                        }
-                        ui.close();
-                    }
-
-                    egui::containers::menu::SubMenuButton::new("Recent ROMs").ui(ui, |ui| {
-                        if self.ui_config.recent_roms.is_empty() {
-                            ui.add_enabled(false, egui::Button::new("(No recent ROMs)"));
-                            return;
-                        }
-
-                        let recent_roms = self.ui_config.recent_roms.clone();
-                        for path in recent_roms {
-                            let label = path
-                                .file_name()
-                                .and_then(|name| name.to_str())
-                                .filter(|name| !name.is_empty())
-                                .map(|name| name.to_string())
-                                .unwrap_or_else(|| path.display().to_string());
-
-                            let response =
-                                ui.button(label).on_hover_text(path.display().to_string());
-                            if response.clicked() {
-                                self.pending_rom_load = Some(path);
-                                ui.close();
-                            }
-                        }
-                    });
-
-                    if ui
-                        .add_enabled(
-                            self.current_rom_path.is_some(),
-                            egui::Button::new(format!(
-                                "Capture Screenshot ({:?})",
-                                self.keybinds.screenshot_key()
-                            )),
-                        )
-                        .clicked()
-                    {
-                        self.capture_screenshot();
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Exit").clicked() {
-                        let _ = self.emu_tx.send(EmuCommand::Shutdown);
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-
-                ui.menu_button("Emulation", |ui| {
-                    let has_rom_loaded = self.current_rom_path.is_some() && self.loading.is_none();
-                    if ui
-                        .add_enabled(
-                            has_rom_loaded,
-                            egui::Button::new(if self.paused { "Resume" } else { "Pause" }),
-                        )
-                        .clicked()
-                    {
-                        self.paused = !self.paused;
-                        let _ = self.emu_tx.send(EmuCommand::SetPaused(self.paused));
-                        if let Some(ref tx) = self.link_cmd_tx {
-                            let cmd = if self.paused {
-                                LinkCommand::NotifyPause
-                            } else {
-                                LinkCommand::NotifyResume
-                            };
-                            let _ = tx.send(cmd);
-                        }
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(has_rom_loaded, egui::Button::new("Reset"))
-                        .clicked()
-                    {
-                        info!("[reset] requested");
-                        let _ = self.emu_tx.send(EmuCommand::Reset);
-                        ui.close();
-                    }
-                    ui.separator();
-
-                    egui::containers::menu::SubMenuButton::new("Mode").ui(ui, |ui| {
-                        if self.draw_emulation_mode_submenu(ui) {
-                            ui.close();
-                        }
-                    });
-                    egui::containers::menu::SubMenuButton::new("Serial Peripheral").ui(ui, |ui| {
-                        if self.draw_serial_peripheral_submenu(ui) {
-                            ui.close();
-                        }
-                    });
-                });
-
-                ui.menu_button("Debug", |ui| {
-                    #[cfg(debug_assertions)]
-                    {
-                        if ui.button("Debugger").clicked() {
-                            self.show_debugger = !self.show_debugger;
-                            if self.show_debugger {
-                                self.debugger_state.request_scroll_to_pc();
-                            }
-                            ui.close();
-                        }
-
-                        if ui.button("Watchpoints").clicked() {
-                            self.show_watchpoints = !self.show_watchpoints;
-                            ui.close();
-                        }
-                    }
-                    if ui.button("VRAM Viewer").clicked() {
-                        self.show_vram_viewer = !self.show_vram_viewer;
-                        ui.close();
-                    }
-                });
-
-                ui.menu_button("Options", |ui| {
-                    egui::containers::menu::SubMenuButton::new("Window Scale").ui(ui, |ui| {
-                        let prev_scale = self.selected_window_scale;
-                        for idx in 0..MAX_WINDOW_SCALE {
-                            let label = format!("{}x", idx + 1);
-                            if ui
-                                .radio_value(&mut self.selected_window_scale, idx, label)
-                                .clicked()
-                            {
-                                ui.close();
-                            }
-                        }
-                        for (index, label) in [
-                            (6, "Fullscreen (integer scaling)"),
-                            (7, "Fullscreen (fit to screen)"),
-                        ] {
-                            if ui
-                                .radio_value(&mut self.selected_window_scale, index, label)
-                                .clicked()
-                            {
-                                ui.close();
-                            }
-                        }
-                        if self.selected_window_scale != prev_scale {
-                            self.apply_window_scale(&ctx);
-                            self.persist_runtime_settings();
-                        }
-                    });
-
-                    let mut enabled = self.sound_enabled.load(Ordering::Relaxed);
-                    let response = ui.checkbox(&mut enabled, "Enable sound");
-                    if response.changed() {
-                        self.sound_enabled.store(enabled, Ordering::Relaxed);
-                        self.persist_runtime_settings();
-                        ui.close();
-                    }
-
-                    if ui.button("Settings...").clicked() {
-                        self.show_options = !self.show_options;
-                        ui.close();
-                    }
-                });
-
-                ui.menu_button("Help", |ui| {
-                    if ui.button("About").clicked() {
-                        self.show_about = true;
-                        ui.close();
-                    }
-                });
-            });
+            self.draw_menu_bar(ui);
         });
 
-        egui::Panel::bottom("status_bar")
-            .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(4.0))
-            .show_inside(ui, |ui| {
-                let total_width = ui.available_width();
+        if self.ui_config.preferences.show_status {
+            egui::Panel::bottom("status_bar")
+                .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(4.0))
+                .show_inside(ui, |ui| {
+                    let total_width = ui.available_width();
 
-                ui.horizontal(|ui| {
-                    let status_text = if self.loading.is_some() {
-                        ("Loading / capturing SGB border...", egui::Color32::YELLOW)
-                    } else if self.paused {
-                        ("⏸ Paused", egui::Color32::YELLOW)
-                    } else if self.fast_forward {
-                        ("⏩ Fast", egui::Color32::GREEN)
-                    } else {
-                        ("▶ Running", egui::Color32::GREEN)
-                    };
-                    ui.colored_label(status_text.1, status_text.0);
-                    match self.serial_peripheral {
-                        SerialPeripheral::None => {}
-                        SerialPeripheral::MobileAdapter => {
-                            ui.separator();
-                            ui.colored_label(egui::Color32::LIGHT_BLUE, "📱 Mobile");
+                    ui.horizontal(|ui| {
+                        let status_text = if self.loading.is_some() {
+                            ("Loading / capturing SGB border...", egui::Color32::YELLOW)
+                        } else if self.paused {
+                            ("⏸ Paused", egui::Color32::YELLOW)
+                        } else if self.fast_forward {
+                            ("⏩ Fast", egui::Color32::GREEN)
+                        } else {
+                            ("▶ Running", egui::Color32::GREEN)
+                        };
+                        ui.colored_label(status_text.1, status_text.0);
+                        match self.serial_peripheral {
+                            SerialPeripheral::None => {}
+                            SerialPeripheral::MobileAdapter => {
+                                ui.separator();
+                                ui.colored_label(egui::Color32::LIGHT_BLUE, "📱 Mobile");
+                            }
+                            SerialPeripheral::LinkCable => {
+                                ui.separator();
+                                let (text, color) = match self.link_cable_state {
+                                    LinkCableState::Disconnected => {
+                                        ("🔗 Link", egui::Color32::GRAY)
+                                    }
+                                    LinkCableState::Listening => {
+                                        ("🔗 Listening", egui::Color32::YELLOW)
+                                    }
+                                    LinkCableState::Connecting => {
+                                        ("🔗 Connecting", egui::Color32::YELLOW)
+                                    }
+                                    LinkCableState::Connected => {
+                                        ("🔗 Connected", egui::Color32::GREEN)
+                                    }
+                                };
+                                ui.colored_label(color, text);
+                            }
                         }
-                        SerialPeripheral::LinkCable => {
+
+                        let fps_text = format!("{:.1} FPS", self.current_fps);
+                        let fps_reserve = 80.0;
+                        let remaining = total_width - ui.min_rect().width() - fps_reserve - 30.0;
+
+                        if remaining > 60.0
+                            && let Some(path) = &self.current_rom_path
+                            && let Some(name) = path.file_name().and_then(|n| n.to_str())
+                        {
                             ui.separator();
-                            let (text, color) = match self.link_cable_state {
-                                LinkCableState::Disconnected => ("🔗 Link", egui::Color32::GRAY),
-                                LinkCableState::Listening => {
-                                    ("🔗 Listening", egui::Color32::YELLOW)
-                                }
-                                LinkCableState::Connecting => {
-                                    ("🔗 Connecting", egui::Color32::YELLOW)
-                                }
-                                LinkCableState::Connected => ("🔗 Connected", egui::Color32::GREEN),
-                            };
-                            ui.colored_label(color, text);
+                            ui.add_sized(
+                                [remaining.min(200.0), ui.available_height()],
+                                egui::Label::new(name)
+                                    .truncate()
+                                    .wrap_mode(egui::TextWrapMode::Truncate),
+                            );
                         }
-                    }
 
-                    let fps_text = format!("{:.1} FPS", self.current_fps);
-                    let fps_reserve = 80.0;
-                    let remaining = total_width - ui.min_rect().width() - fps_reserve - 30.0;
-
-                    if remaining > 60.0
-                        && let Some(path) = &self.current_rom_path
-                        && let Some(name) = path.file_name().and_then(|n| n.to_str())
-                    {
-                        ui.separator();
-                        ui.add_sized(
-                            [remaining.min(200.0), ui.available_height()],
-                            egui::Label::new(name)
-                                .truncate()
-                                .wrap_mode(egui::TextWrapMode::Truncate),
-                        );
-                    }
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(fps_text);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(fps_text);
+                        });
                     });
                 });
-            });
-
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show_inside(ui, |ui| {
+                if self.ui_config.preferences.workspace == Workspace::Develop { self.draw_develop_workspace(ui); return; }
                 let available = ui.available_size();
                 let (width, height) = self.frame_dimensions();
                 let fit = (available.x / width as f32).min(available.y / height as f32);
-                let scale = if self.selected_window_size().use_integer_scaling() { fit.floor().max(1.0) } else { fit.max(0.01) };
+                let scale = if self.selected_window_size().use_integer_scaling() { if fit >= 1.0 { fit.floor() } else { fit.max(0.01) } } else { fit.max(0.01) };
                 self.current_display_scale = scale;
                 let menu_scale = (scale as usize).clamp(1, MAX_WINDOW_SCALE) - 1;
                 if !self.selected_window_size().is_fullscreen() && self.selected_window_scale != menu_scale {
@@ -2673,7 +2665,9 @@ impl eframe::App for VibeEmuApp {
                         ui.min_rect().min + egui::vec2(offset.x, offset.y),
                         size,
                     );
-                    ui.put(rect, egui::Image::new(tex).fit_to_exact_size(size));
+                    let response = ui.put(rect, egui::Image::new(tex).fit_to_exact_size(size).sense(egui::Sense::click()));
+                    if response.double_clicked() && self.ui_config.preferences.double_click_fullscreen { self.dispatch_action(&ctx, Action::ToggleFullscreen); }
+                    response.context_menu(|ui| self.draw_game_actions(ui));
                 } else {
                     ui.centered_and_justified(|ui| {
                         ui.label("No ROM loaded. Use File → Open ROM... or drag and drop a ROM file here.");
@@ -2681,45 +2675,37 @@ impl eframe::App for VibeEmuApp {
                 }
             });
 
-        #[cfg(debug_assertions)]
         if self.show_debugger {
             self.draw_debugger_window(&ctx);
-        }
-
-        #[cfg(not(debug_assertions))]
-        {
-            self.show_debugger = false;
         }
 
         if self.show_vram_viewer {
             self.draw_vram_viewer_window(&ctx);
         }
 
-        #[cfg(debug_assertions)]
         if self.show_watchpoints {
             self.draw_watchpoints_window(&ctx);
         }
 
-        #[cfg(not(debug_assertions))]
-        {
-            self.show_watchpoints = false;
-        }
-
         if let Some(error) = self.load_error.clone() {
             let mut open = true;
-            egui::Window::new("ROM load failed")
+            egui::Window::new("Operation failed")
                 .open(&mut open)
                 .show(&ctx, |ui| {
                     ui.label(error);
-                    ui.label("Check the boot ROM settings, then reload the ROM.");
                     if ui.button("Open settings").clicked() {
                         self.show_options = true;
-                        self.options_tab = OptionsTab::Emulation;
+                        self.options_tab = OptionsTab::System;
                     }
                 });
             if !open {
                 self.load_error = None;
             }
+        }
+        if self.show_game_menu {
+            egui::Window::new("Game menu")
+                .collapsible(false)
+                .show(&ctx, |ui| self.draw_game_actions(ui));
         }
         if self.show_options {
             self.draw_options_window(&ctx);
@@ -2735,6 +2721,9 @@ impl eframe::App for VibeEmuApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Err(error) = self.develop_layout.save(true) {
+            log::error!("Could not save workspace layout: {error}");
+        }
         self.persist_runtime_settings();
         if let Ok(mut gb) = self.gb.lock() {
             gb.mmu.save_cart_ram();
@@ -2895,8 +2884,8 @@ impl VibeEmuApp {
         ctx.show_viewport_immediate(
             *VIEWPORT_OPTIONS,
             egui::ViewportBuilder::default()
-                .with_title("Options")
-                .with_inner_size([560.0, 640.0]),
+                .with_title("Settings")
+                .with_inner_size([800.0, 640.0]),
             |ui, class| {
                 if ui.ctx().input(|i| i.viewport().close_requested()) {
                     self.show_options = false;
@@ -2918,268 +2907,6 @@ impl VibeEmuApp {
                 }
             },
         );
-    }
-
-    fn draw_options_content(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.horizontal(|ui| {
-            if ui
-                .selectable_label(self.options_tab == OptionsTab::Keybinds, "Keybinds")
-                .clicked()
-            {
-                self.options_tab = OptionsTab::Keybinds;
-            }
-            if ui
-                .selectable_label(self.options_tab == OptionsTab::Emulation, "Emulation")
-                .clicked()
-            {
-                self.options_tab = OptionsTab::Emulation;
-            }
-        });
-
-        ui.separator();
-        ui.add_space(8.0);
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-        match self.options_tab {
-            OptionsTab::Keybinds => {
-                ui.label("Keyboard controls player 1. In SGB multiplayer, gamepads occupy players 1–4 in connection order.");
-                #[cfg(not(target_os = "android"))]
-                if let Some(gamepad) = &self.gamepad {
-                    for (player, id) in gamepad.players.iter().enumerate() {
-                        ui.label(format!("Player {}: {}", player + 1, id.map(|id| gamepad.gilrs.gamepad(id).name().to_owned()).unwrap_or_else(|| "no gamepad".into())));
-                    }
-                }
-                if self.rebinding.is_some() {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(egui::Color32::YELLOW, "Waiting for key...");
-                        if ui.button("Cancel").clicked() {
-                            self.rebinding = None;
-                        }
-                    });
-                    ui.separator();
-
-                    ctx.input(|i| {
-                        for key in i.keys_down.iter() {
-                            if let Some(target) = self.rebinding {
-                                self.keybinds.rebind(target, *key);
-                                if let Err(e) = self.keybinds.save_to_file(&self.keybinds_path) {
-                                    log::warn!("Failed to save keybinds: {e}");
-                                }
-                                self.rebinding = None;
-                                break;
-                            }
-                        }
-                    });
-                }
-
-                ui.label("Click Rebind, then press a key.");
-                ui.add_space(4.0);
-
-                egui::Grid::new("keybinds_grid")
-                    .num_columns(3)
-                    .spacing([20.0, 4.0])
-                    .show(ui, |ui| {
-                        let fmt_joy = |keybinds: &KeyBindings, mask: u8| -> String {
-                            keybinds
-                                .key_for_joypad_mask(mask)
-                                .map(|k| format!("{k:?}"))
-                                .unwrap_or_else(|| "<unbound>".to_string())
-                        };
-
-                        for (label, mask) in [
-                            ("Up", 0x04u8),
-                            ("Down", 0x08),
-                            ("Left", 0x02),
-                            ("Right", 0x01),
-                        ] {
-                            ui.label(label);
-                            ui.label(fmt_joy(&self.keybinds, mask));
-                            if ui.button("Rebind").clicked() {
-                                self.rebinding = Some(RebindTarget::Joypad(mask));
-                            }
-                            ui.end_row();
-                        }
-
-                        ui.separator();
-                        ui.end_row();
-
-                        for (label, mask) in [
-                            ("A", 0x10u8),
-                            ("B", 0x20),
-                            ("Select", 0x40),
-                            ("Start", 0x80),
-                        ] {
-                            ui.label(label);
-                            ui.label(fmt_joy(&self.keybinds, mask));
-                            if ui.button("Rebind").clicked() {
-                                self.rebinding = Some(RebindTarget::Joypad(mask));
-                            }
-                            ui.end_row();
-                        }
-
-                        ui.separator();
-                        ui.end_row();
-
-                        ui.label("Fast Forward");
-                        ui.label(format!("{:?}", self.keybinds.fast_forward_key()));
-                        if ui.button("Rebind").clicked() {
-                            self.rebinding = Some(RebindTarget::FastForward);
-                        }
-                        ui.end_row();
-
-                        ui.label("Screenshot");
-                        ui.label(format!("{:?}", self.keybinds.screenshot_key()));
-                        if ui.button("Rebind").clicked() {
-                            self.rebinding = Some(RebindTarget::Screenshot);
-                        }
-                        ui.end_row();
-                    });
-            }
-            OptionsTab::Emulation => {
-                ui.menu_button("Emulation mode", |ui| { self.draw_emulation_mode_submenu(ui); });
-                ui.label("Boot ROMs (blank = skip boot). Changes apply on the next ROM load.");
-                ui.label("Initial-border mode uses SGB for capture and CGB for gameplay.");
-                if self.bootrom_override.is_some() || self.sgb_bootrom_override.is_some() {
-                    ui.label("Command-line boot ROM overrides are active.");
-                    if ui.button("Use saved boot ROM settings instead").clicked() {
-                        self.bootrom_override = None;
-                        self.sgb_bootrom_override = None;
-                    }
-                }
-                for (index, (label, model)) in ui_config::BOOT_MODELS.into_iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("{label}:"));
-                        let mut changed = ui.add(egui::TextEdit::singleline(&mut self.bootrom_paths[index]).desired_width(230.0)).changed();
-                        if ui.button("Browse...").clicked() && let Some(path) = FileDialog::new().pick_file() {
-                            self.bootrom_paths[index] = path.to_string_lossy().into_owned();
-                            changed = true;
-                        }
-                        if ui.button("Clear").clicked() { self.bootrom_paths[index].clear(); changed = true; }
-                        if changed { self.persist_bootrom_paths(); }
-                    });
-                    if let Some(path) = Self::optional_path_from_input(&self.bootrom_paths[index]) {
-                        let validation = std::fs::metadata(&path).map_err(|e| e.to_string()).and_then(|meta| {
-                            let size = meta.len();
-                            if (model.is_cgb() && matches!(size, 0x800 | 0x900)) || (!model.is_cgb() && size == 0x100) { Ok(()) }
-                            else { Err(format!("Unexpected boot ROM size: {size} bytes")) }
-                        });
-                        if let Err(e) = validation { ui.colored_label(egui::Color32::RED, e); }
-                    }
-                }
-                if ui.add_enabled(self.current_rom_path.is_some() && self.loading.is_none(), egui::Button::new("Apply and reload current ROM")).clicked() {
-                    self.pending_rom_load = self.current_rom_path.clone();
-                }
-                if ui.checkbox(&mut self.ui_config.show_sgb_border, "Show SGB border").changed() {
-                    self.save_ui_config();
-                    self.apply_window_scale(ctx);
-                }
-                ui.label("SGB + GBC keeps both command sets active. Initial border runs normal CGB after capture (no SGB multiplayer or later border changes).");
-                ui.label("SGB audio commands and uploaded SNES programs are not emulated.");
-                if let Some(error) = &self.load_error { ui.colored_label(egui::Color32::RED, error); }
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(6.0);
-                ui.label("Display filter");
-
-                let prev_filter_config = self.current_video_filter_config();
-                let mut selected_preset = Self::video_filter_preset_for_config(prev_filter_config);
-
-                egui::ComboBox::from_label("Preset")
-                    .selected_text(
-                        selected_preset
-                            .map(Self::video_filter_preset_label)
-                            .unwrap_or("Custom"),
-                    )
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut selected_preset,
-                            Some(VideoFilterPreset::CurrentMethod),
-                            Self::video_filter_preset_label(VideoFilterPreset::CurrentMethod),
-                        );
-                        ui.selectable_value(
-                            &mut selected_preset,
-                            Some(VideoFilterPreset::HorizontalBlur),
-                            Self::video_filter_preset_label(VideoFilterPreset::HorizontalBlur),
-                        );
-                        ui.selectable_value(
-                            &mut selected_preset,
-                            Some(VideoFilterPreset::Bilinear),
-                            Self::video_filter_preset_label(VideoFilterPreset::Bilinear),
-                        );
-                        ui.selectable_value(
-                            &mut selected_preset,
-                            Some(VideoFilterPreset::Scanlines),
-                            Self::video_filter_preset_label(VideoFilterPreset::Scanlines),
-                        );
-                        ui.selectable_value(
-                            &mut selected_preset,
-                            Some(VideoFilterPreset::LcdGrid),
-                            Self::video_filter_preset_label(VideoFilterPreset::LcdGrid),
-                        );
-                    });
-
-                ui.small("\"30fps.net\" is the article source name, not the emulation frame rate.");
-
-                if let Some(preset) = selected_preset {
-                    self.apply_video_filter_config(Self::video_filter_preset_config(preset));
-                }
-
-                egui::ComboBox::from_label("Horizontal sampling")
-                    .selected_text(Self::axis_filter_label(self.display_horizontal_filter))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut self.display_horizontal_filter,
-                            AxisFilter::Nearest,
-                            Self::axis_filter_label(AxisFilter::Nearest),
-                        );
-                        ui.selectable_value(
-                            &mut self.display_horizontal_filter,
-                            AxisFilter::Linear,
-                            Self::axis_filter_label(AxisFilter::Linear),
-                        );
-                    });
-
-                egui::ComboBox::from_label("Vertical sampling")
-                    .selected_text(Self::axis_filter_label(self.display_vertical_filter))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut self.display_vertical_filter,
-                            AxisFilter::Nearest,
-                            Self::axis_filter_label(AxisFilter::Nearest),
-                        );
-                        ui.selectable_value(
-                            &mut self.display_vertical_filter,
-                            AxisFilter::Linear,
-                            Self::axis_filter_label(AxisFilter::Linear),
-                        );
-                    });
-
-                egui::ComboBox::from_label("Screen effect")
-                    .selected_text(Self::display_effect_label(self.display_effect))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut self.display_effect,
-                            DisplayEffect::None,
-                            Self::display_effect_label(DisplayEffect::None),
-                        );
-                        ui.selectable_value(
-                            &mut self.display_effect,
-                            DisplayEffect::Scanlines,
-                            Self::display_effect_label(DisplayEffect::Scanlines),
-                        );
-                        ui.selectable_value(
-                            &mut self.display_effect,
-                            DisplayEffect::LcdGrid,
-                            Self::display_effect_label(DisplayEffect::LcdGrid),
-                        );
-                    });
-
-                if self.current_video_filter_config() != prev_filter_config {
-                    self.persist_runtime_settings();
-                }
-            }
-        }
-        });
     }
 
     fn draw_debugger_window(&mut self, ctx: &egui::Context) {
@@ -3264,7 +2991,7 @@ impl VibeEmuApp {
     fn draw_debugger_toolbar(&mut self, ui: &mut egui::Ui, snapshot: &UiSnapshot) {
         let paused = self.paused;
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let run_label = if paused { "▶ Run" } else { "⏸ Pause" };
             if ui.button(run_label).clicked() {
                 if paused {
@@ -3352,7 +3079,7 @@ impl VibeEmuApp {
             }
         });
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("BP:");
             let bp_resp = ui.add(
                 egui::TextEdit::singleline(&mut self.add_breakpoint_input)
@@ -3383,7 +3110,7 @@ impl VibeEmuApp {
             );
             let goto_submitted =
                 goto_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if ui.button("Go##goto_btn").clicked() || goto_submitted {
+            if ui.button("Go").clicked() || goto_submitted {
                 self.debugger_state
                     .goto_address(&self.goto_disasm_input, snapshot);
                 self.goto_disasm_input.clear();
@@ -3418,7 +3145,7 @@ impl VibeEmuApp {
             self.debugger_state.handle_step_over_request(
                 self.paused,
                 pc,
-                |addr| gb.mmu.read_byte(addr),
+                |addr| gb.mmu.peek_byte(addr),
                 &snapshot,
             );
         }
@@ -3432,7 +3159,7 @@ impl VibeEmuApp {
             self.debugger_state.handle_step_out_request(
                 self.paused,
                 snapshot.cpu.sp,
-                |addr| gb.mmu.read_byte(addr),
+                |addr| gb.mmu.peek_byte(addr),
                 &snapshot,
             );
         }
@@ -3480,8 +3207,8 @@ impl VibeEmuApp {
             && let Ok(mut gb) = self.gb.lock()
         {
             let sp = gb.cpu.sp;
-            let lo = gb.mmu.read_byte(sp);
-            let hi = gb.mmu.read_byte(sp.wrapping_add(1));
+            let lo = gb.mmu.peek_byte(sp);
+            let hi = gb.mmu.peek_byte(sp.wrapping_add(1));
             let addr = (hi as u16) << 8 | lo as u16;
             gb.cpu.sp = sp.wrapping_add(2);
             gb.cpu.pc = addr;
@@ -3647,7 +3374,7 @@ impl VibeEmuApp {
         // Get available height to center the target row
         let available_height = ui.available_height();
 
-        let mut scroll_area = egui::ScrollArea::vertical()
+        let mut scroll_area = egui::ScrollArea::both()
             .auto_shrink([false, false])
             .id_salt("disasm_scroll");
 
@@ -4360,8 +4087,9 @@ impl VibeEmuApp {
 
         let scroll_to_row = self.mem_viewer_scroll_to.take();
 
-        let mut scroll_area = egui::ScrollArea::vertical()
+        let mut scroll_area = egui::ScrollArea::both()
             .id_salt("mem_viewer_scroll")
+            .max_height((ui.available_height() - 36.0).max(0.0))
             .auto_shrink([false, false]);
 
         // Set scroll offset using the same row height that show_rows uses internally
@@ -6315,6 +6043,8 @@ fn main() {
         })
     };
     let load_config = LoadConfig {
+        dmg_revision: ui_config.dmg_revision,
+        cgb_revision: ui_config.cgb_revision,
         emulation_mode,
         dmg_neutral: args.dmg_neutral,
         bootrom_override: read_override(&args.bootrom),
@@ -6549,10 +6279,14 @@ fn main() {
             }
         })
         .unwrap_or((160, 144));
-    let initial_size = [
-        width as f32 * scale,
-        height as f32 * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
-    ];
+    let initial_size = if ui_config.preferences.workspace == Workspace::Develop {
+        [1100.0, 760.0]
+    } else {
+        [
+            (width as f32 * scale).max(360.0),
+            height as f32 * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
+        ]
+    };
     let mut wgpu_setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
 
     // Lavapipe (software Vulkan on Linux VMs) doesn't fully implement
@@ -6674,6 +6408,7 @@ fn main() {
             .with_title("vibeEmu")
             .with_fullscreen(ui_config.window_size.is_fullscreen())
             .with_inner_size(initial_size)
+            .with_min_inner_size([360.0, 230.0])
             .with_icon(load_window_icon().unwrap_or_default()),
         wgpu_options: egui_wgpu::WgpuConfiguration {
             wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(wgpu_setup),
@@ -6684,7 +6419,9 @@ fn main() {
 
     let rom_path_clone = rom_path.clone();
 
-    if let Err(e) = eframe::run_native(
+    let shift = keyboard::SharedShift::default();
+    let app_shift = shift.clone();
+    if let Err(e) = keyboard::run_native(
         "vibeEmu",
         native_options,
         Box::new(move |cc| {
@@ -6710,8 +6447,10 @@ fn main() {
                 app.paused = true;
             }
             app.load_error = initial_error;
+            app.shift = app_shift;
             Ok(Box::new(app))
         }),
+        shift,
     ) {
         error!("eframe error: {e}");
     }
@@ -6760,6 +6499,8 @@ mod tests {
             Some(path)
         });
         let mut config = LoadConfig {
+            dmg_revision: 2,
+            cgb_revision: 5,
             emulation_mode: EmulationMode::ForceDmg,
             dmg_neutral: false,
             bootrom_override: None,

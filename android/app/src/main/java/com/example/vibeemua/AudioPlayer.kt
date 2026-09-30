@@ -44,6 +44,14 @@ class AudioPlayer(
                 val frames = emulator.drainAudio(frameBuf)
                 if (frames > 0) {
                     val samples = frames * 2
+                    val volume = if (emulator.isPaused() || emulator.speedPercent != 100) 0 else emulator.outputVolume.coerceIn(0, 100)
+                    for (i in 0 until samples step 2) {
+                        var left = frameBuf[i].toInt()
+                        var right = frameBuf[i + 1].toInt()
+                        if (emulator.monoOutput) { left = (left + right) / 2; right = left }
+                        frameBuf[i] = (left * volume / 100).toShort()
+                        frameBuf[i + 1] = (right * volume / 100).toShort()
+                    }
                     t.write(frameBuf, 0, samples, AudioTrack.WRITE_BLOCKING)
                 } else {
                     // Keep the loop light if no samples available
