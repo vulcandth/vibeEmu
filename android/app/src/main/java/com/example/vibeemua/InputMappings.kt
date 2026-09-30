@@ -130,8 +130,14 @@ object KeyCapture {
 }
 
 fun isGameControllerDevice(device: InputDevice?): Boolean {
-    val sources = device?.sources ?: return false
+    device ?: return false
+    return isGameControllerSources(device.sources, device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC)
+}
+
+/** Keyboards often advertise SOURCE_DPAD for their arrow keys. They must not
+ * occupy SGB controller slots or hide the phone's touch controls. */
+internal fun isGameControllerSources(sources: Int, alphabeticKeyboard: Boolean): Boolean {
     return (sources and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
         (sources and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK ||
-        (sources and InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD
+        (!alphabeticKeyboard && (sources and InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD)
 }

@@ -26,6 +26,15 @@ unimplemented states, rewind, cheats and peripherals are not advertised in menus
   pixels of panel height. Validated layouts persist separately in `workspace.json`;
   panels can float inside the root window. Existing detached native tools remain.
   No full execution history is collected during ordinary Play.
+- Every panel has Undock/Dock back buttons. Menus and toolbar share application
+  and debugger commands, with platform-aware shortcut hints and a Controls
+  reference. Global labels align with addresses; local labels use indented short
+  names. Symbol substitution includes 16-bit loads and absolute load/store operands.
+- Paused memory editing supports hex bytes, including in-memory ROM and boot-ROM
+  patches. Source ROM files are never rewritten. Regression tests cover both MBC1
+  windows, boot overlays, memory regions and unchanged source bytes.
+- Custom speed spans 1–400%. The empty Play screen displays the project logo,
+  and a 320-point minimum permits a snug 2× game window.
 - Disassembly uses RGBDS-style lowercase mnemonics/registers, bracketed memory
   operands and `hli`/`hld`. Opcode/8-bit/16-bit operand colors appear in both
   disassembly bytes and analyzed memory; readable assembly also has syntax colors.
@@ -78,6 +87,10 @@ unimplemented states, rewind, cheats and peripherals are not advertised in menus
   Existing import, replacement, rename, export and deletion remain accessible.
 - Sound, volume, mono and speed controls; altered-speed audio is muted.
 - Touch controls can hide when controllers connect; TV has no touch overlay.
+- Alphabetic keyboards that advertise a D-pad no longer occupy controller slots
+  or hide touch controls. Landscape centers GB/SGB images between the controls;
+  touch inputs release when the layout or controller visibility changes. Input,
+  placement and wrapped SGB sizing are tested on phone and tablet dimensions.
   The manifest supports the TV launcher without requiring a touchscreen.
 - Native libraries cover ARM64, ARMv7, x86-64 and x86, including 32-bit TV
   emulators. The Gradle native task tracks the ABI list as an input.

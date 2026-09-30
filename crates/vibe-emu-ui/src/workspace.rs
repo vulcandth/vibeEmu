@@ -2,12 +2,54 @@ use super::*;
 use vibe_emu_frontend::{Action, Workspace};
 
 impl VibeEmuApp {
+    pub(super) fn draw_empty_game(&mut self, ui: &mut egui::Ui) {
+        if self.logo_texture.is_none()
+            && let Some(icon) = load_window_icon()
+        {
+            self.logo_texture = Some(ui.ctx().load_texture(
+                "vibeEmu logo",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [icon.width as usize, icon.height as usize],
+                    &icon.rgba,
+                ),
+                egui::TextureOptions::LINEAR,
+            ));
+        }
+        let available = ui.available_rect_before_wrap();
+        let side = available
+            .width()
+            .min((available.height() - 48.0).max(24.0))
+            .min(280.0);
+        let rect = egui::Rect::from_center_size(
+            available.center() - egui::vec2(0.0, 18.0),
+            egui::Vec2::splat(side),
+        );
+        if let Some(logo) = &self.logo_texture {
+            ui.put(rect, egui::Image::new(logo).fit_to_exact_size(rect.size()));
+        }
+        let text_rect = egui::Rect::from_min_max(
+            egui::pos2(available.left(), rect.bottom() + 8.0),
+            available.max,
+        );
+        ui.put(
+            text_rect,
+            egui::Label::new(format!(
+                "Open a ROM ({}) or drop it here",
+                self.shortcut_text(ui.ctx(), Action::OpenRom)
+            ))
+            .wrap(),
+        );
+    }
+
     pub(super) fn action_button(&mut self, ui: &mut egui::Ui, label: &str, action: Action) {
+        let shortcut = self.shortcut_text(ui.ctx(), action);
+        let mut button = egui::Button::new(label);
+        if egui::containers::menu::is_in_menu(ui) {
+            button = button.shortcut_text(&shortcut);
+        }
         if ui
-            .add_enabled(
-                action.available(self.current_rom_path.is_some(), self.loading.is_some()),
-                egui::Button::new(label),
-            )
+            .add_enabled(self.action_enabled(action), button)
+            .on_hover_text(shortcut)
             .clicked()
         {
             self.dispatch_action(ui.ctx(), action);
@@ -16,7 +58,7 @@ impl VibeEmuApp {
     }
 
     pub(super) fn dispatch_action(&mut self, ctx: &egui::Context, action: Action) {
-        if !action.available(self.current_rom_path.is_some(), self.loading.is_some()) {
+        if !self.action_enabled(action) {
             return;
         }
         match action {
@@ -30,6 +72,7 @@ impl VibeEmuApp {
             }
             Action::ReloadRom => self.pending_rom_load = self.current_rom_path.clone(),
             Action::CloseRom => {
+                self.mem_edit = None;
                 crash_report::set_rom(None);
                 if let Ok(mut gb) = self.gb.lock() {
                     gb.mmu.save_cart_ram();
@@ -45,7 +88,13 @@ impl VibeEmuApp {
                 self.show_game_menu = false;
             }
             Action::TogglePause => {
+                self.mem_edit = None;
                 self.paused = !self.paused;
+                if self.paused {
+                    self.debugger_state.request_pause();
+                } else {
+                    self.debugger_state.request_continue_and_focus_main();
+                }
                 self.focus_paused = false;
                 let _ = self.emu_tx.send(EmuCommand::SetPaused(self.paused));
                 if let Some(tx) = &self.link_cmd_tx {
@@ -93,9 +142,10 @@ impl VibeEmuApp {
                 };
                 self.save_ui_config();
                 if action == Action::Develop {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                        1100.0, 760.0,
-                    )));
+                    ctx.send_viewport_cmd_to(
+                        egui::ViewportId::ROOT,
+                        egui::ViewportCommand::InnerSize(egui::vec2(1100.0, 760.0)),
+                    );
                     self.debugger_state.request_scroll_to_pc();
                 } else {
                     self.apply_window_scale(ctx);
@@ -103,8 +153,28 @@ impl VibeEmuApp {
             }
             Action::Quit => {
                 let _ = self.emu_tx.send(EmuCommand::Shutdown);
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
             }
+            Action::RunNoBreak => {
+                self.debugger_state
+                    .request_continue_no_break_and_focus_main();
+                self.paused = false;
+                let _ = self.emu_tx.send(EmuCommand::SetPaused(false));
+            }
+            Action::StepInto => self.do_single_step(),
+            Action::StepOver => self.debugger_state.request_step_over(),
+            Action::StepOut => self.debugger_state.request_step_out(),
+            Action::RunToCursor => self.debugger_state.request_run_to_cursor(),
+            Action::RunToCursorNoBreak => self.debugger_state.request_run_to_cursor_no_break(),
+            Action::JumpToCursor => self.debugger_state.request_jump_to_cursor(),
+            Action::CallCursor => self.debugger_state.request_call_cursor(),
+            Action::JumpStack => self.debugger_state.request_jump_sp(),
+            Action::ToggleBreakpoint => {
+                if let Some(cursor) = self.debugger_state.cursor() {
+                    self.debugger_state.toggle_breakpoint(cursor);
+                }
+            }
+            Action::ReloadSymbols => self.debugger_state.reload_symbols(),
         }
     }
 
@@ -217,6 +287,17 @@ impl VibeEmuApp {
                             self.save_ui_config();
                         }
                     }
+                    if ui
+                        .button(format!(
+                            "Custom speed… ({}%)",
+                            self.ui_config.preferences.speed_percent
+                        ))
+                        .clicked()
+                    {
+                        self.options_tab = OptionsTab::General;
+                        self.show_options = true;
+                        ui.close();
+                    }
                 });
                 submenu(ui, "Hardware mode", |ui| {
                     self.draw_emulation_mode_submenu(ui);
@@ -282,6 +363,13 @@ impl VibeEmuApp {
                 ui.checkbox(&mut self.show_watchpoints, "Watchpoints");
                 ui.checkbox(&mut self.show_vram_viewer, "VRAM viewer");
             });
+            if self.ui_config.preferences.workspace == Workspace::Develop || self.show_debugger {
+                ui.menu_button("Debug", |ui| {
+                    for &(action, label) in shortcuts::DEBUG_COMMANDS {
+                        self.action_button(ui, label, action);
+                    }
+                });
+            }
             ui.menu_button("Settings", |ui| {
                 self.action_button(ui, "Settings…", Action::Settings);
             });

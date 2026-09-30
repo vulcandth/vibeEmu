@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class HardwareOptionsTest {
+    @Test fun keyboardArrowKeysDoNotHideTouchControls() {
+        val keyboardDpad = android.view.InputDevice.SOURCE_KEYBOARD or android.view.InputDevice.SOURCE_DPAD
+        assertFalse(isGameControllerSources(keyboardDpad, true))
+        assertTrue(isGameControllerSources(android.view.InputDevice.SOURCE_DPAD, false))
+        assertTrue(isGameControllerSources(keyboardDpad or android.view.InputDevice.SOURCE_GAMEPAD, true))
+        assertTrue(isGameControllerSources(android.view.InputDevice.SOURCE_JOYSTICK, false))
+    }
     @Test fun oppositeDirectionsAreNeutralButOtherButtonsRemainPressed() {
         for (buttons in 0..255) {
             val result = neutralizeDirections(buttons)

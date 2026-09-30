@@ -936,6 +936,21 @@ impl Cartridge {
         self.rom_mapping_len = self.rom.len();
     }
 
+    /// Patch the currently mapped ROM byte in memory, without mapper writes or
+    /// filesystem access. Returns the previous byte, or `None` for unmapped ROM.
+    /// Both MBC1 windows and wrapped bank numbers use the same mapping as fetches.
+    pub fn debug_patch_rom(&mut self, addr: u16, value: u8) -> Option<u8> {
+        if addr >= 0x8000 {
+            return None;
+        }
+        if self.rom_mapping_len != self.rom.len() {
+            self.refresh_rom_mapping();
+        }
+        let offset = self.rom_windows?[(addr >> 14) as usize] + (addr as usize & 0x3fff);
+        let byte = self.rom.get_mut(offset)?;
+        Some(std::mem::replace(byte, value))
+    }
+
     /// Read a byte from the cartridge bus, updating the open-bus latch.
     pub fn read(&mut self, addr: u16) -> u8 {
         let open_bus = Self::open_bus(&self.cart_bus);

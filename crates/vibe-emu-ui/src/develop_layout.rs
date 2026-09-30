@@ -1,4 +1,5 @@
 //! Workspace layout only: no game settings or emulated machine state.
+use eframe::egui;
 use egui_dock::{DockState, Node, NodeIndex, Surface, Tree};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, io, path::PathBuf, time::Instant};
@@ -204,6 +205,7 @@ impl Document {
 pub struct DevelopLayout {
     pub dock: DockState<Panel>,
     pub compact_panel: Panel,
+    pub pending_float: Option<Panel>,
     path: PathBuf,
     saved: Option<Document>,
     last_attempt: Instant,
@@ -223,6 +225,7 @@ impl DevelopLayout {
         Self {
             dock: restored.unwrap_or_else(Self::default_dock),
             compact_panel: Panel::Disassembly,
+            pending_float: None,
             path,
             saved,
             last_attempt: Instant::now(),
@@ -268,6 +271,27 @@ impl DevelopLayout {
         }
     }
 
+    pub fn floating_panels(&self) -> Vec<Panel> {
+        self.dock
+            .iter_all_tabs()
+            .filter(|(path, _)| !path.surface.is_main())
+            .map(|(_, panel)| *panel)
+            .collect()
+    }
+
+    /// Move an existing panel; never duplicate its debugger state or contents.
+    pub fn toggle_floating(&mut self, panel: Panel, rect: egui::Rect) {
+        if let Some(path) = self.dock.find_tab(&panel) {
+            if path.surface.is_main() {
+                self.dock.detach_tab(path, rect);
+            } else {
+                self.dock.remove_tab(path);
+                self.dock.push_to_first_leaf(panel);
+                self.focus(panel);
+            }
+        }
+    }
+
     /// Rate-limit disk access and persist only structural changes, not frame geometry.
     pub fn save(&mut self, force: bool) -> io::Result<()> {
         if !force && self.last_attempt.elapsed().as_secs_f32() < 2.0 {
@@ -295,6 +319,25 @@ impl DevelopLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_panel_can_undock_and_dock_back_without_duplicates() {
+        let mut layout =
+            DevelopLayout::load(std::env::temp_dir().join("vibeemu-undock-test-unused.json"));
+        layout.reset();
+        for panel in Panel::ALL {
+            layout.toggle_floating(
+                panel,
+                egui::Rect::from_min_size(egui::pos2(20.0, 80.0), egui::vec2(500.0, 300.0)),
+            );
+            assert_eq!(layout.floating_panels(), vec![panel]);
+            assert_eq!(layout.dock.iter_all_tabs().count(), Panel::ALL.len());
+            assert!(Document::capture(&layout.dock).restore().is_some());
+            layout.toggle_floating(panel, egui::Rect::NOTHING);
+            assert!(layout.floating_panels().is_empty());
+            assert_eq!(layout.dock.iter_all_tabs().count(), Panel::ALL.len());
+        }
+    }
 
     #[test]
     fn persisted_layout_can_be_replaced_and_all_closed_panels_reopened() {

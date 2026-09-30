@@ -704,6 +704,43 @@ impl Mmu {
         self.boot_mapped = true;
     }
 
+    /// Edit the currently visible memory for a paused debugger. ROM and boot ROM
+    /// edits affect only their in-memory copies. VRAM/OAM edits bypass CPU access
+    /// restrictions; I/O and cartridge RAM retain their normal register semantics.
+    /// No emulated cycles elapse and no CPU access is recorded.
+    pub fn debug_write_byte(&mut self, addr: u16, value: u8) -> Result<(), &'static str> {
+        match addr {
+            0x0000..=0x7fff
+                if self.boot_mapped
+                    && (addr <= 0xff
+                        || (self.model.is_cgb() && (0x200..=0x8ff).contains(&addr))) =>
+            {
+                let byte = self
+                    .boot_rom
+                    .as_mut()
+                    .and_then(|rom| rom.get_mut(addr as usize))
+                    .ok_or("No boot ROM byte at this address")?;
+                *byte = value;
+            }
+            0x0000..=0x7fff => {
+                self.cart
+                    .as_mut()
+                    .and_then(|cart| cart.debug_patch_rom(addr, value))
+                    .ok_or("No cartridge ROM byte at this address")?;
+            }
+            0x8000..=0x9fff => self.ppu.vram[self.ppu.vram_bank][(addr - 0x8000) as usize] = value,
+            0xc000..=0xcfff => self.wram[0][(addr - 0xc000) as usize] = value,
+            0xd000..=0xdfff => self.wram[self.wram_bank][(addr - 0xd000) as usize] = value,
+            0xe000..=0xefff => self.wram[0][(addr - 0xe000) as usize] = value,
+            0xf000..=0xfdff => self.wram[self.wram_bank][(addr - 0xf000) as usize] = value,
+            0xfe00..=0xfe9f => self.ppu.oam[(addr - 0xfe00) as usize] = value,
+            0xfea0..=0xfeff => return Err("This address has no writable memory"),
+            0xff80..=0xfffe => self.hram[(addr - 0xff80) as usize] = value,
+            _ => self.write_byte(addr, value),
+        }
+        Ok(())
+    }
+
     fn read_byte_inner(&mut self, addr: u16, allow_dma: bool) -> u8 {
         if !allow_dma
             && self.dma_cycles > 0

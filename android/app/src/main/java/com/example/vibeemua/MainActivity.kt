@@ -31,6 +31,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -476,6 +477,12 @@ fun EmulatorScreen(
     var actionPressedMask by remember { mutableStateOf(0) }
     var metaPressedMask by remember { mutableStateOf(0) }
 
+    LaunchedEffect(isLandscape, showTouchControls) {
+        dpadPressedMask = 0
+        actionPressedMask = 0
+        metaPressedMask = 0
+    }
+
     val frameBuffer = remember { IntArray(FrameSize.MAX_PIXELS) }
     var frameSize by remember { mutableStateOf(FrameSize(FB_WIDTH, FB_HEIGHT)) }
     val paint = remember {
@@ -547,7 +554,7 @@ fun EmulatorScreen(
             while (isActive) {
                 // Pacing sleeps alone do not yield a single-thread dispatcher.
                 kotlinx.coroutines.yield()
-                val targetFrameNs = emulator.frameDurationNs * 100L / emulator.speedPercent.coerceIn(25, 400)
+                val targetFrameNs = emulator.frameDurationNs * 100L / emulator.speedPercent.coerceIn(1, 400)
                 if (emulator.isReady() && !emulator.isPaused()) {
                     // Pace the loop to ~59fps to avoid running too fast.
                     val now = System.nanoTime()
@@ -934,7 +941,7 @@ private fun PortraitPlayLayout(
 }
 
 @Composable
-private fun LandscapePlayLayout(
+internal fun LandscapePlayLayout(
     modifier: Modifier,
     compactHeight: Boolean,
     showTouchControls: Boolean,
@@ -951,7 +958,7 @@ private fun LandscapePlayLayout(
 ) {
     val hGap = if (compactHeight) 10.dp else 16.dp
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize().testTag("landscape-layout")) {
         val aspect = frameSize.aspect
         val desiredGameWidth = maxHeight * aspect
 
@@ -985,12 +992,12 @@ private fun LandscapePlayLayout(
 
         Row(
             modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.spacedBy(hGap),
+            horizontalArrangement = Arrangement.spacedBy(hGap, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (showTouchControls) {
                 Column(
-                    modifier = Modifier.width(controlColumnWidth).fillMaxSize(),
+                    modifier = Modifier.width(controlColumnWidth).fillMaxHeight(),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -1005,6 +1012,7 @@ private fun LandscapePlayLayout(
 
             GameView(
                 modifier = Modifier
+                    .testTag("landscape-game")
                     .width(gameColumnWidth)
                     .fillMaxHeight(),
                 frameSize = frameSize,
@@ -1015,7 +1023,7 @@ private fun LandscapePlayLayout(
 
             if (showTouchControls) {
                 Column(
-                    modifier = Modifier.width(controlColumnWidth).fillMaxSize(),
+                    modifier = Modifier.width(controlColumnWidth).fillMaxHeight(),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -1049,7 +1057,7 @@ private fun GameView(
         modifier = modifier,
         contentAlignment = Alignment.Center,
     ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             val aspect = frameSize.aspect
             val gameWidth = minOf(maxWidth, (maxHeight.value * aspect).dp)
             val gameHeight = (gameWidth.value / aspect).dp
@@ -1094,6 +1102,7 @@ private fun DpadPad(
     val pointers = remember { mutableMapOf<Int, Offset>() }
     Box(
         modifier = Modifier
+            .testTag("touch-dpad")
             .size(padSize)
             .onSizeChanged { sizePx = it }
             .pointerInteropFilter { event ->
@@ -1215,6 +1224,7 @@ private fun ActionPad(
     val pointers = remember { mutableMapOf<Int, Offset>() }
     Box(
         modifier = Modifier
+            .testTag("touch-actions")
             .size(padSize)
             .onSizeChanged { sizePx = it }
             .pointerInteropFilter { event ->
@@ -1296,6 +1306,7 @@ private fun StartSelectPad(
     val pointers = remember { mutableMapOf<Int, Offset>() }
     BoxWithConstraints(
         modifier = Modifier
+            .testTag("touch-start-select")
             .fillMaxWidth()
             .height(height)
             .onSizeChanged { sizePx = it }

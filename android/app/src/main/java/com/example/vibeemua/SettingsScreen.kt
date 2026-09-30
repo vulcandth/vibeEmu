@@ -197,6 +197,18 @@ fun OptionsScreen(
                         OptionsPage.General -> {
                             Column(Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()).padding(16.dp)) {
                                 Text("Gameplay speed")
+                                var customSpeed by remember(options.speedPercent) { mutableStateOf(options.speedPercent.toString()) }
+                                OutlinedTextField(
+                                    value = customSpeed,
+                                    onValueChange = { text ->
+                                        customSpeed = text.filter(Char::isDigit).take(3)
+                                        customSpeed.toIntOrNull()?.takeIf { it in 1..400 }?.let {
+                                            onOptionsChange(options.copy(speedPercent = it))
+                                        }
+                                    },
+                                    label = { Text("Custom speed % (1–400)") },
+                                    singleLine = true,
+                                )
                                 for (speed in listOf(50, 100, 150, 200, 400)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         RadioButton(selected = options.speedPercent == speed, onClick = { onOptionsChange(options.copy(speedPercent = speed)) })

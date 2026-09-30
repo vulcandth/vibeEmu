@@ -25,7 +25,7 @@ class OptionsRepository(context: Context) {
             soundEnabled = prefs.getBoolean("sound_enabled", true),
             volume = prefs.getInt("volume", 100).coerceIn(0, 100),
             mono = prefs.getBoolean("mono", false),
-            speedPercent = prefs.getInt("speed_percent", 100).coerceIn(25, 400),
+            speedPercent = prefs.getInt("speed_percent", 100).coerceIn(1, 400),
             hideTouchWithController = prefs.getBoolean("hide_touch_with_controller", true),
             emulationMode = EmulationMode.entries.firstOrNull { it.nativeId == modeId } ?: EmulationMode.Auto,
             dmgNeutralPalette = prefs.getBoolean("dmg_neutral_palette", false),
@@ -43,7 +43,7 @@ class OptionsRepository(context: Context) {
             .putBoolean("sound_enabled", options.soundEnabled)
             .putInt("volume", options.volume.coerceIn(0, 100))
             .putBoolean("mono", options.mono)
-            .putInt("speed_percent", options.speedPercent.coerceIn(25, 400))
+            .putInt("speed_percent", options.speedPercent.coerceIn(1, 400))
             .putBoolean("hide_touch_with_controller", options.hideTouchWithController)
             .putInt("emulation_mode", options.emulationMode.nativeId)
             .putBoolean("dmg_neutral_palette", options.dmgNeutralPalette)

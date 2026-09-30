@@ -791,7 +791,11 @@ impl RgbdsSymbols {
     pub fn first_label_for(&self, bank: u8, addr: u16) -> Option<&str> {
         self.by_bank_addr
             .get(&(bank, addr))
-            .and_then(|v| v.first())
+            .and_then(|v| {
+                v.iter()
+                    .find(|name| !name.contains('.'))
+                    .or_else(|| v.first())
+            })
             .map(|s| s.as_str())
     }
 

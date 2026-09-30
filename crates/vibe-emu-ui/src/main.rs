@@ -8,6 +8,8 @@ mod crash_report;
 mod develop;
 mod develop_layout;
 mod disassembly;
+mod memory;
+mod shortcuts;
 mod workspace;
 use vibe_emu_frontend::{Action, SettingsCategory as OptionsTab, Workspace};
 mod input_timing;
@@ -1095,6 +1097,7 @@ struct VibeEmuApp {
 
     framebuffer: Vec<u32>,
     texture: Option<egui::TextureHandle>,
+    logo_texture: Option<egui::TextureHandle>,
     display_horizontal_filter: AxisFilter,
     display_vertical_filter: AxisFilter,
     display_effect: DisplayEffect,
@@ -1174,7 +1177,7 @@ struct VibeEmuApp {
     mem_viewer_cursor: u16,
     mem_viewer_goto: String,
     mem_viewer_scroll_to: Option<usize>,
-    mem_viewer_display_bank: Option<u8>,
+    mem_edit: Option<(u16, String)>,
 
     // Mobile Adapter state
     mobile_dns1: String,
@@ -1494,6 +1497,7 @@ impl VibeEmuApp {
             ui_config,
             framebuffer,
             texture: None,
+            logo_texture: None,
             display_horizontal_filter,
             display_vertical_filter,
             display_effect,
@@ -1560,7 +1564,7 @@ impl VibeEmuApp {
             mem_viewer_cursor: 0,
             mem_viewer_goto: String::new(),
             mem_viewer_scroll_to: None,
-            mem_viewer_display_bank: None,
+            mem_edit: None,
             mobile_dns1: String::new(),
             mobile_dns2: String::new(),
             mobile_relay: String::new(),
@@ -1695,7 +1699,7 @@ impl VibeEmuApp {
         let (width, height) = self.frame_dimensions();
         let scale = (self.selected_window_scale + 1) as f32;
         let new_size = egui::vec2(
-            (width as f32 * scale).max(360.0),
+            (width as f32 * scale).max(320.0),
             height as f32 * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
         );
         let new_size = if self.ui_config.preferences.workspace == Workspace::Develop {
@@ -1963,14 +1967,7 @@ impl VibeEmuApp {
                 };
                 self.dispatch_action(ctx, action);
             }
-            // Application shortcuts remain usable when a navigation button or
-            // text field owns focus; remapping above still captures them first.
-            if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::O)) {
-                self.dispatch_action(ctx, Action::OpenRom);
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::F11)) {
-                self.dispatch_action(ctx, Action::ToggleFullscreen);
-            }
+            self.handle_shortcuts(ctx);
             if !ctx.egui_wants_keyboard_input() {
                 if ctx.input(|i| self.keybinds.pause_key().pressed(i, shift_pressed)) {
                     self.dispatch_action(ctx, Action::TogglePause);
@@ -2447,6 +2444,7 @@ impl VibeEmuApp {
     }
 
     fn load_rom(&mut self, path: std::path::PathBuf) {
+        self.mem_edit = None;
         if self.loading.is_some() {
             return;
         }
@@ -2651,14 +2649,27 @@ impl eframe::App for VibeEmuApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show_inside(ui, |ui| {
-                if self.ui_config.preferences.workspace == Workspace::Develop { self.draw_develop_workspace(ui); return; }
+                if self.ui_config.preferences.workspace == Workspace::Develop {
+                    self.draw_develop_workspace(ui);
+                    return;
+                }
                 let available = ui.available_size();
                 let (width, height) = self.frame_dimensions();
                 let fit = (available.x / width as f32).min(available.y / height as f32);
-                let scale = if self.selected_window_size().use_integer_scaling() { if fit >= 1.0 { fit.floor() } else { fit.max(0.01) } } else { fit.max(0.01) };
+                let scale = if self.selected_window_size().use_integer_scaling() {
+                    if fit >= 1.0 {
+                        fit.floor()
+                    } else {
+                        fit.max(0.01)
+                    }
+                } else {
+                    fit.max(0.01)
+                };
                 self.current_display_scale = scale;
                 let menu_scale = (scale as usize).clamp(1, MAX_WINDOW_SCALE) - 1;
-                if !self.selected_window_size().is_fullscreen() && self.selected_window_scale != menu_scale {
+                if !self.selected_window_size().is_fullscreen()
+                    && self.selected_window_scale != menu_scale
+                {
                     self.selected_window_scale = menu_scale;
                     self.ui_config.window_size = self.selected_window_size();
                 }
@@ -2670,13 +2681,20 @@ impl eframe::App for VibeEmuApp {
                         ui.min_rect().min + egui::vec2(offset.x, offset.y),
                         size,
                     );
-                    let response = ui.put(rect, egui::Image::new(tex).fit_to_exact_size(size).sense(egui::Sense::click()));
-                    if response.double_clicked() && self.ui_config.preferences.double_click_fullscreen { self.dispatch_action(&ctx, Action::ToggleFullscreen); }
+                    let response = ui.put(
+                        rect,
+                        egui::Image::new(tex)
+                            .fit_to_exact_size(size)
+                            .sense(egui::Sense::click()),
+                    );
+                    if response.double_clicked()
+                        && self.ui_config.preferences.double_click_fullscreen
+                    {
+                        self.dispatch_action(&ctx, Action::ToggleFullscreen);
+                    }
                     response.context_menu(|ui| self.draw_game_actions(ui));
                 } else {
-                    ui.centered_and_justified(|ui| {
-                        ui.label("No ROM loaded. Use File → Open ROM... or drag and drop a ROM file here.");
-                    });
+                    self.draw_empty_game(ui);
                 }
             });
 
@@ -2947,6 +2965,9 @@ impl VibeEmuApp {
     }
 
     fn draw_debugger_content(&mut self, ui: &mut egui::Ui) {
+        if ui.ctx().input(|i| i.focused) && self.rebinding.is_none() {
+            self.handle_shortcuts(&ui.ctx().clone());
+        }
         // Process pending debugger actions first
         self.process_debugger_actions();
 
@@ -2995,63 +3016,28 @@ impl VibeEmuApp {
     }
 
     fn draw_debugger_toolbar(&mut self, ui: &mut egui::Ui, snapshot: &UiSnapshot) {
-        let paused = self.paused;
-
         ui.horizontal_wrapped(|ui| {
-            let run_label = if paused { "▶ Run" } else { "⏸ Pause" };
-            if ui.button(run_label).clicked() {
-                if paused {
-                    self.debugger_state.request_continue_and_focus_main();
-                    self.paused = false;
-                    let _ = self.emu_tx.send(EmuCommand::SetPaused(false));
-                } else {
-                    self.debugger_state.request_pause();
-                    self.paused = true;
-                    let _ = self.emu_tx.send(EmuCommand::SetPaused(true));
-                }
-            }
-
-            if paused && ui.button("Run*").on_hover_text("Run (no break)").clicked() {
-                self.debugger_state
-                    .request_continue_no_break_and_focus_main();
-                self.paused = false;
-                let _ = self.emu_tx.send(EmuCommand::SetPaused(false));
-            }
-
-            if ui.button("⏭ Step").clicked() && paused {
-                self.do_single_step();
-            }
-
-            if paused {
-                if ui.button("Step Over").clicked() {
-                    self.debugger_state.request_step_over();
-                }
-                if ui.button("Step Out").clicked() {
-                    self.debugger_state.request_step_out();
-                }
-                if ui.button("Run To").on_hover_text("Run to cursor").clicked() {
-                    self.debugger_state.request_run_to_cursor();
-                }
+            for (action, label) in [
+                (
+                    Action::TogglePause,
+                    if self.paused { "Run" } else { "Pause" },
+                ),
+                (Action::RunNoBreak, "Run*"),
+                (Action::StepInto, "Step"),
+                (Action::StepOver, "Step Over"),
+                (Action::StepOut, "Step Out"),
+                (Action::RunToCursor, "Run To"),
+                (Action::RunToCursorNoBreak, "Run To*"),
+                (Action::JumpToCursor, "Jump"),
+                (Action::CallCursor, "Call"),
+                (Action::JumpStack, "Jump(SP)"),
+            ] {
                 if ui
-                    .button("Run To*")
-                    .on_hover_text("Run to cursor (no break)")
+                    .add_enabled(self.action_enabled(action), egui::Button::new(label))
+                    .on_hover_text(self.shortcut_text(ui.ctx(), action))
                     .clicked()
                 {
-                    self.debugger_state.request_run_to_cursor_no_break();
-                }
-                ui.separator();
-                if ui.button("Jump").on_hover_text("Jump to cursor").clicked() {
-                    self.debugger_state.request_jump_to_cursor();
-                }
-                if ui.button("Call").on_hover_text("Call cursor").clicked() {
-                    self.debugger_state.request_call_cursor();
-                }
-                if ui
-                    .button("Jump(SP)")
-                    .on_hover_text("Jump to address on stack")
-                    .clicked()
-                {
-                    self.debugger_state.request_jump_sp();
+                    self.dispatch_action(ui.ctx(), action);
                 }
             }
 
@@ -3764,223 +3750,6 @@ impl VibeEmuApp {
         } else {
             let addr = u16::from_str_radix(trimmed, 16).ok()?;
             Some((addr, addr))
-        }
-    }
-
-    fn draw_memory_viewer(&mut self, ui: &mut egui::Ui, snapshot: &UiSnapshot) {
-        let Some(mem) = snapshot.debugger.mem_image.as_ref() else {
-            ui.label("Memory not available (run paused to capture)");
-            return;
-        };
-        self.debugger_state.prepare_code_colors(snapshot);
-
-        // Top bar with go-to address
-        ui.horizontal(|ui| {
-            ui.label("Go:");
-            let goto_resp = ui.add(
-                egui::TextEdit::singleline(&mut self.mem_viewer_goto)
-                    .desired_width(80.0)
-                    .font(egui::TextStyle::Monospace),
-            );
-            let submitted = goto_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if ui.button("Go").clicked() || submitted {
-                if let Some(addr) =
-                    self.parse_mem_viewer_address(&self.mem_viewer_goto.clone(), snapshot)
-                {
-                    self.mem_viewer_addr = addr & 0xFFF0; // Align to 16-byte row
-                    self.mem_viewer_cursor = addr;
-                    self.mem_viewer_scroll_to = Some((addr as usize) / 16);
-                }
-                self.mem_viewer_goto.clear();
-            }
-        });
-
-        ui.separator();
-
-        // Render all rows - egui's ScrollArea handles virtualization
-        // show_rows expects row_height_sans_spacing - it adds item_spacing.y internally
-        let text_height = ui.text_style_height(&egui::TextStyle::Monospace);
-        let spacing = ui.spacing();
-        let row_height_sans_spacing = text_height.max(spacing.interact_size.y);
-        let row_height_with_spacing = row_height_sans_spacing + spacing.item_spacing.y;
-        let bytes_per_row = 16usize;
-        let total_rows = 0x10000usize.div_ceil(bytes_per_row);
-
-        let scroll_to_row = self.mem_viewer_scroll_to.take();
-
-        let mut scroll_area = egui::ScrollArea::both()
-            .id_salt("mem_viewer_scroll")
-            .max_height((ui.available_height() - 36.0).max(0.0))
-            .auto_shrink([false, false]);
-
-        // Set scroll offset using the same row height that show_rows uses internally
-        if let Some(target_row) = scroll_to_row {
-            let target_offset = target_row as f32 * row_height_with_spacing;
-            scroll_area = scroll_area.vertical_scroll_offset(target_offset);
-        }
-
-        scroll_area.show_rows(ui, row_height_sans_spacing, total_rows, |ui, row_range| {
-            for row_idx in row_range {
-                let row_addr = (row_idx * bytes_per_row) as u16;
-                let region = self.mem_region_prefix(row_addr, snapshot);
-
-                ui.horizontal(|ui| {
-                    ui.monospace(format!("{}:{:04X}", region, row_addr));
-                    ui.add_space(8.0);
-
-                    for col in 0..bytes_per_row {
-                        let addr = row_addr.wrapping_add(col as u16);
-                        let byte = mem[addr as usize];
-
-                        let is_cursor = addr == self.mem_viewer_cursor;
-                        let text = format!("{:02X}", byte);
-
-                        let label = if is_cursor {
-                            egui::RichText::new(text)
-                                .monospace()
-                                .background_color(egui::Color32::from_rgb(0, 80, 160))
-                        } else {
-                            egui::RichText::new(text).monospace()
-                        };
-                        let role = self.debugger_state.memory_byte_role(snapshot, addr);
-                        let label = label.color(self.ui_config.debugger_colors.color(ui, role));
-
-                        if ui
-                            .add(egui::Label::new(label).sense(egui::Sense::click()))
-                            .clicked()
-                        {
-                            self.mem_viewer_cursor = addr;
-                        }
-
-                        if col == 7 {
-                            ui.add_space(4.0);
-                        }
-                    }
-
-                    ui.add_space(8.0);
-
-                    let mut ascii = String::with_capacity(bytes_per_row);
-                    for col in 0..bytes_per_row {
-                        let addr = row_addr.wrapping_add(col as u16);
-                        let byte = mem[addr as usize];
-                        let c = if (0x20..=0x7E).contains(&byte) {
-                            byte as char
-                        } else {
-                            '.'
-                        };
-                        ascii.push(c);
-                    }
-                    ui.monospace(ascii);
-                });
-            }
-        });
-
-        ui.separator();
-
-        // Status bar showing label at cursor
-        let cursor_addr = self.mem_viewer_cursor;
-        let cursor_bank = self.bank_for_address(cursor_addr, snapshot);
-
-        let label_info = if let Some(sym) = self.debugger_state.symbols() {
-            if let Some((label, offset)) = sym.nearest_label_for(cursor_bank, cursor_addr) {
-                if offset == 0 {
-                    label.to_string()
-                } else {
-                    format!("{}+${:X}", label, offset)
-                }
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        };
-
-        ui.horizontal(|ui| {
-            ui.monospace(format!(
-                "{:04X}  {:02X}:{:04X}",
-                cursor_addr, cursor_bank, cursor_addr
-            ));
-            if !label_info.is_empty() {
-                ui.monospace(format!("  {}", label_info));
-            }
-        });
-    }
-
-    fn parse_mem_viewer_address(&mut self, input: &str, _snapshot: &UiSnapshot) -> Option<u16> {
-        let trimmed = input.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        // Try parsing as bank:address format (e.g., 00:c000 or 05:4200)
-        if let Some((bank_str, addr_str)) = trimmed.split_once(':')
-            && let (Ok(bank), Ok(addr)) = (
-                u8::from_str_radix(bank_str.trim_start_matches('$'), 16),
-                u16::from_str_radix(addr_str.trim_start_matches('$'), 16),
-            )
-        {
-            // Store the display bank for switchable regions
-            match addr {
-                0x4000..=0x7FFF => self.mem_viewer_display_bank = Some(bank),
-                _ => self.mem_viewer_display_bank = None,
-            }
-            return Some(addr);
-        }
-
-        // Clear display bank override for non-bank:address input
-        self.mem_viewer_display_bank = None;
-
-        // Try parsing as hex number
-        if let Some(hex) = trimmed.strip_prefix("$").or(Some(trimmed))
-            && let Ok(addr) = u16::from_str_radix(hex, 16)
-        {
-            return Some(addr);
-        }
-
-        // Try symbol lookup
-        if let Some(sym) = self.debugger_state.symbols()
-            && let Some((_, addr)) = sym.lookup_name(trimmed)
-        {
-            return Some(addr);
-        }
-
-        None
-    }
-
-    fn mem_region_prefix(&self, addr: u16, snapshot: &UiSnapshot) -> String {
-        match addr {
-            0x0000..=0x3FFF => "RO00".to_string(),
-            0x4000..=0x7FFF => {
-                let bank = self
-                    .mem_viewer_display_bank
-                    .unwrap_or(snapshot.debugger.active_rom_bank.min(0xFF) as u8);
-                format!("RO{:02X}", bank)
-            }
-            0x8000..=0x9FFF => format!("VR{:02X}", snapshot.debugger.vram_bank),
-            0xA000..=0xBFFF => format!("SR{:02X}", snapshot.debugger.sram_bank),
-            0xC000..=0xCFFF => "WR00".to_string(),
-            0xD000..=0xDFFF => {
-                let bank = snapshot.debugger.wram_bank.max(1);
-                format!("WR{:02X}", bank)
-            }
-            0xE000..=0xFDFF => "ECHO".to_string(),
-            0xFE00..=0xFE9F => "OAM ".to_string(),
-            0xFEA0..=0xFEFF => "----".to_string(),
-            0xFF00..=0xFF7F => "I/O ".to_string(),
-            0xFF80..=0xFFFE => "HRAM".to_string(),
-            0xFFFF => "IE  ".to_string(),
-        }
-    }
-
-    fn bank_for_address(&self, addr: u16, snapshot: &UiSnapshot) -> u8 {
-        match addr {
-            0x0000..=0x3FFF => 0,
-            0x4000..=0x7FFF => snapshot.debugger.active_rom_bank.min(0xFF) as u8,
-            0x8000..=0x9FFF => snapshot.debugger.vram_bank,
-            0xA000..=0xBFFF => snapshot.debugger.sram_bank,
-            0xC000..=0xCFFF => 0,
-            0xD000..=0xDFFF => snapshot.debugger.wram_bank,
-            _ => 0,
         }
     }
 
@@ -6011,7 +5780,7 @@ fn main() {
         [1100.0, 760.0]
     } else {
         [
-            (width as f32 * scale).max(360.0),
+            (width as f32 * scale).max(320.0),
             height as f32 * scale + MENU_BAR_HEIGHT + STATUS_BAR_HEIGHT,
         ]
     };
@@ -6136,7 +5905,7 @@ fn main() {
             .with_title("vibeEmu")
             .with_fullscreen(ui_config.window_size.is_fullscreen())
             .with_inner_size(initial_size)
-            .with_min_inner_size([360.0, 230.0])
+            .with_min_inner_size([320.0, 216.0])
             .with_icon(load_window_icon().unwrap_or_default()),
         wgpu_options: egui_wgpu::WgpuConfiguration {
             wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(wgpu_setup),

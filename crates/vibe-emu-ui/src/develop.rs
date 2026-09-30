@@ -5,6 +5,7 @@ use egui_dock::{DockArea, DockState, TabViewer};
 struct Viewer<'a> {
     app: &'a mut VibeEmuApp,
     snapshot: Option<&'a UiSnapshot>,
+    floating: Vec<Panel>,
 }
 
 impl TabViewer for Viewer<'_> {
@@ -26,8 +27,28 @@ impl TabViewer for Viewer<'_> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Panel) {
+        ui.horizontal(|ui| {
+            let label = if self.floating.contains(tab) {
+                "Dock back"
+            } else {
+                "Undock"
+            };
+            if ui
+                .small_button(label)
+                .on_hover_text(
+                    "Float this panel inside the workspace, or return it to the main dock",
+                )
+                .clicked()
+            {
+                self.app.develop_layout.pending_float = Some(*tab);
+            }
+        });
         let Some(snapshot) = self.snapshot else {
-            ui.label("Open a ROM to inspect the machine.");
+            if *tab == Panel::Game {
+                self.app.draw_empty_game(ui);
+            } else {
+                ui.label("Open a ROM to inspect the machine.");
+            }
             return;
         };
         match tab {
@@ -77,11 +98,12 @@ impl VibeEmuApp {
             .as_ref()
             .and(self.debugger_snapshot.clone());
         ui.separator();
+        let floating = self.develop_layout.floating_panels();
         if ui.available_width() < 780.0 || ui.available_height() < 420.0 {
             // Compact navigation does not modify the saved desktop docking arrangement.
             let visible: Vec<_> = Panel::ALL
                 .into_iter()
-                .filter(|p| self.develop_layout.visible(*p))
+                .filter(|p| self.develop_layout.visible(*p) && !floating.contains(p))
                 .collect();
             if !visible.contains(&self.develop_layout.compact_panel)
                 && let Some(panel) = visible.first()
@@ -106,9 +128,26 @@ impl VibeEmuApp {
                 let mut viewer = Viewer {
                     app: self,
                     snapshot: snapshot.as_ref(),
+                    floating: floating.clone(),
                 };
                 egui::ScrollArea::new(viewer.scroll_bars(&panel))
                     .show(ui, |ui| viewer.ui(ui, &mut panel));
+            }
+            // Keep undocked panels accessible even while the main area uses tabs.
+            if !floating.is_empty() {
+                let mut dock =
+                    std::mem::replace(&mut self.develop_layout.dock, DockState::new(vec![]));
+                let main = std::mem::replace(dock.main_surface_mut(), egui_dock::Tree::new(vec![]));
+                DockArea::new(&mut dock).show_inside(
+                    ui,
+                    &mut Viewer {
+                        app: self,
+                        snapshot: snapshot.as_ref(),
+                        floating: floating.clone(),
+                    },
+                );
+                *dock.main_surface_mut() = main;
+                self.develop_layout.dock = dock;
             }
         } else {
             let mut dock = std::mem::replace(&mut self.develop_layout.dock, DockState::new(vec![]));
@@ -119,9 +158,20 @@ impl VibeEmuApp {
                     &mut Viewer {
                         app: self,
                         snapshot: snapshot.as_ref(),
+                        floating,
                     },
                 );
             self.develop_layout.dock = dock;
+        }
+        if let Some(panel) = self.develop_layout.pending_float.take() {
+            let bounds = ui.ctx().content_rect();
+            self.develop_layout.toggle_floating(
+                panel,
+                egui::Rect::from_min_size(
+                    bounds.min + egui::vec2(24.0, 80.0),
+                    bounds.size().min(egui::vec2(640.0, 480.0)),
+                ),
+            );
         }
         if let Err(error) = self.develop_layout.save(false) {
             self.load_error = Some(format!("Could not save workspace layout: {error}"));

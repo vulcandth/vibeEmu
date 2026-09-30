@@ -27,15 +27,48 @@ pub enum Action {
     Play,
     Develop,
     Quit,
+    RunNoBreak,
+    StepInto,
+    StepOver,
+    StepOut,
+    RunToCursor,
+    RunToCursorNoBreak,
+    JumpToCursor,
+    CallCursor,
+    JumpStack,
+    ToggleBreakpoint,
+    ReloadSymbols,
 }
 
 impl Action {
-    /// Whether the action requires a loaded, idle (not loading) session.
-    pub const fn requires_game(self) -> bool {
+    /// Commands belonging to the desktop debugger.
+    pub const fn is_debugger(self) -> bool {
         matches!(
             self,
-            Self::ReloadRom | Self::CloseRom | Self::TogglePause | Self::Reset | Self::Screenshot
+            Self::RunNoBreak
+                | Self::StepInto
+                | Self::StepOver
+                | Self::StepOut
+                | Self::RunToCursor
+                | Self::RunToCursorNoBreak
+                | Self::JumpToCursor
+                | Self::CallCursor
+                | Self::JumpStack
+                | Self::ToggleBreakpoint
+                | Self::ReloadSymbols
         )
+    }
+    /// Whether the action requires a loaded, idle (not loading) session.
+    pub const fn requires_game(self) -> bool {
+        self.is_debugger()
+            || matches!(
+                self,
+                Self::ReloadRom
+                    | Self::CloseRom
+                    | Self::TogglePause
+                    | Self::Reset
+                    | Self::Screenshot
+            )
     }
 
     /// One availability rule shared by all command surfaces.
@@ -164,7 +197,7 @@ impl Preferences {
             1.0
         };
         self.volume = self.volume.min(100);
-        self.speed_percent = self.speed_percent.clamp(25, 400);
+        self.speed_percent = self.speed_percent.clamp(1, 400);
         self.fast_forward_percent = self.fast_forward_percent.clamp(100, 1000);
     }
 }
@@ -189,7 +222,7 @@ mod tests {
             toml::from_str("volume = 250\nspeed_percent = 0\nui_scale = nan").unwrap();
         p.normalize();
         assert_eq!(p.workspace, Workspace::Play);
-        assert_eq!((p.volume, p.speed_percent, p.ui_scale), (100, 25, 1.0));
+        assert_eq!((p.volume, p.speed_percent, p.ui_scale), (100, 1, 1.0));
         assert_eq!(
             toml::from_str::<Preferences>(&toml::to_string(&p).unwrap()).unwrap(),
             p

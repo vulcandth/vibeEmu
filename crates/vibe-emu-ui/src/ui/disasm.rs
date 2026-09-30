@@ -91,7 +91,7 @@ where
         0 => match z {
             0 => match y {
                 0 => ("nop".to_string(), 1, None),
-                1 => (format!("ld [${:04X}], sp", imm16()), 3, None),
+                1 => (format!("ld [${:04X}], sp", imm16()), 3, Some(imm16())),
                 2 => ("stop".to_string(), 2, None),
                 3 => rel("jr"),
                 4 => rel("jr nz,"),
@@ -103,7 +103,7 @@ where
             1 => {
                 let rp_name = rp(p);
                 if q == 0 {
-                    (format!("ld {rp_name}, ${:04X}", imm16()), 3, None)
+                    (format!("ld {rp_name}, ${:04X}", imm16()), 3, Some(imm16()))
                 } else {
                     (format!("add hl, {rp_name}"), 1, None)
                 }
@@ -218,9 +218,9 @@ where
                     (format!("jp c, ${target:04X}"), 3, Some(target))
                 }
                 4 => ("ldh [c], a".to_string(), 1, None),
-                5 => (format!("ld [${:04X}], a", imm16()), 3, None),
+                5 => (format!("ld [${:04X}], a", imm16()), 3, Some(imm16())),
                 6 => ("ldh a, [c]".to_string(), 1, None),
-                7 => (format!("ld a, [${:04X}]", imm16()), 3, None),
+                7 => (format!("ld a, [${:04X}]", imm16()), 3, Some(imm16())),
                 _ => (format!("db ${op:02X}"), 1, None),
             },
             3 => match y {
@@ -348,6 +348,17 @@ pub fn instruction_addresses(mem: &[u8], anchors: &[u16]) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_address_operands_are_symbol_candidates() {
+        for opcode in [0x01, 0x11, 0x21, 0x31, 0x08, 0xea, 0xfa] {
+            let (text, _, target) = decode_sm83(&[opcode, 0, 1], 0);
+            assert_eq!(target, Some(0x100));
+            assert!(text.replace("$0100", "Start").contains("Start"));
+        }
+        // An arbitrary byte immediate must not become an address label.
+        assert_eq!(decode_sm83(&[0x3e, 0x80], 0).2, None);
+    }
 
     #[test]
     fn polishedcrystal_dialect() {

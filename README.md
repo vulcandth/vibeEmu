@@ -288,6 +288,41 @@ Settings > Developer provides a highlighting toggle and per-role color overrides
 default colors adapt to light/dark themes. Stepping follows the resulting PC
 immediately, including long jumps, calls and instructions at `$ffff`.
 
+Global disassembly labels align with the address column and use emphasized text.
+RGBDS local labels such as `DelayFrame.wait` display as an indented `wait:`;
+hover shows the full name. Symbol substitution also covers 16-bit `ld` operands
+(including `ld hl, Start`) and absolute loads/stores. Immediate values can be
+addresses or numbers, so these substitutions are a display heuristic.
+
+While paused, select a memory byte and choose **Edit byte…**, or double-click it.
+Enter a hexadecimal byte and Apply (or Enter); Cancel leaves memory unchanged.
+ROM/boot-ROM patches affect the current in-memory copy only. Reload restores the
+file's original contents. RAM edits affect the running game (and battery RAM can
+later be saved); I/O and cartridge RAM writes follow hardware register rules.
+Each Develop panel has **Undock** and **Dock back** buttons for floating it inside
+the workspace without dragging a tab.
+
+Menus display application shortcuts, and Settings > Controls lists them. `Cmd`
+replaces `Ctrl` on macOS. Existing single-key gameplay bindings are preserved.
+
+| Action | Shortcut |
+| --- | --- |
+| Open / reload / close ROM | Ctrl+O / Ctrl+Shift+R / Ctrl+W |
+| Mute / reset / settings | Ctrl+M / Ctrl+R / Ctrl+, |
+| Play / Develop | Ctrl+1 / Ctrl+2 |
+| Run or pause / run without breakpoints | F9 / Shift+F9 |
+| Step into / over / out | F7 / F3 / F8 |
+| Run to cursor / ignore breakpoints | F4 / Shift+F4 |
+| Jump / call cursor | F6 / Shift+F6 |
+| Jump to stack return address | Ctrl+F8 |
+| Toggle cursor breakpoint / reload symbols | F2 / Ctrl+Shift+L |
+| Fullscreen | F11 (Windows/Linux), Ctrl+Cmd+F (macOS) |
+| Quit | Ctrl+Q |
+
+Settings > General accepts custom speed percentages from 1–400% on desktop and
+Android. Play windows fit the game width at 2× and above; 1× retains room for the
+menus. The empty Play screen displays the vibeEmu logo.
+
 Desktop keyboard rebinding supports **Left Shift** and **Right Shift** separately,
 including assigning Left Shift to Select. In `keybinds.toml` their names are
 `ShiftLeft` and `ShiftRight` (`LShift`/`RShift` are also accepted). Existing bindings
@@ -313,7 +348,7 @@ The default keyboard controls are:
 - **P**: Pause/unpause emulation
 - **Escape**: Open/close the gameplay menu (existing explicit Quit bindings are preserved)
 - **Ctrl/Cmd+O**: Open ROM
-- **F11**: Toggle fullscreen
+- **F11** (Windows/Linux), **Ctrl+Cmd+F** (macOS): Toggle fullscreen
 
 Use the **top menu bar** to load ROMs, change settings, capture screenshots, or
 open the VRAM Viewer and serial peripheral settings. Screenshot hotkeys are configurable in

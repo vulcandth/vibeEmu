@@ -98,7 +98,11 @@ impl VibeEmuApp {
 
     fn draw_settings_category(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         match self.options_tab {
-            OptionsTab::Controls => self.draw_control_settings(ui, ctx),
+            OptionsTab::Controls => {
+                self.draw_control_settings(ui, ctx);
+                ui.separator();
+                self.draw_shortcuts_reference(ui);
+            }
             OptionsTab::System => self.draw_system_settings(ui),
             OptionsTab::Video => self.draw_video_settings(ui, ctx),
             OptionsTab::General => {
@@ -134,6 +138,29 @@ impl VibeEmuApp {
                     &mut self.ui_config.preferences.double_click_fullscreen,
                     "Double-click game to toggle fullscreen",
                 );
+                ui.separator();
+                ui.label("Emulation speed (applies immediately)");
+                if ui
+                    .add(
+                        egui::Slider::new(&mut self.ui_config.preferences.speed_percent, 1..=400)
+                            .text("Speed %"),
+                    )
+                    .changed()
+                {
+                    self.apply_speed();
+                }
+                if ui
+                    .add(
+                        egui::Slider::new(
+                            &mut self.ui_config.preferences.fast_forward_percent,
+                            100..=1000,
+                        )
+                        .text("Fast-forward %"),
+                    )
+                    .changed()
+                {
+                    self.apply_speed();
+                }
                 ui.label("Changes apply immediately. Workspace selection is remembered.");
             }
             OptionsTab::Audio => {
@@ -246,6 +273,9 @@ impl VibeEmuApp {
                 p.background_controllers = defaults.background_controllers;
                 p.show_status = defaults.show_status;
                 p.double_click_fullscreen = defaults.double_click_fullscreen;
+                p.speed_percent = defaults.speed_percent;
+                p.fast_forward_percent = defaults.fast_forward_percent;
+                self.apply_speed();
             }
             OptionsTab::Audio => {
                 self.ui_config.preferences.volume = 100;

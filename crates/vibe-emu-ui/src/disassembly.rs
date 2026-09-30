@@ -77,16 +77,36 @@ impl VibeEmuApp {
                         .debugger_state
                         .first_label_for(bp.bank, addr)
                         .unwrap_or_default();
-                    ui.add_sized(
-                        [ui.available_width(), height],
-                        egui::Label::new(
-                            egui::RichText::new(format!("{name}:"))
-                                .monospace()
-                                .color(colors.color(ui, Role::Symbol)),
+                    let (short_name, local) = label_name(name);
+                    ui.horizontal(|ui| {
+                        ui.set_min_height(height);
+                        // Match the breakpoint gutter and the two-character PC
+                        // marker before the bank:address column below.
+                        let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
+                        let space = ui.fonts_mut(|fonts| {
+                            fonts.glyph_width(&egui::FontId::monospace(font_size), ' ')
+                        });
+                        ui.add_space(
+                            16.0 + ui.spacing().item_spacing.x
+                                + space * if local { 4.0 } else { 2.0 },
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(format!("{short_name}:"))
+                                    .monospace()
+                                    .strong()
+                                    .size(font_size + if local { 0.0 } else { 1.0 })
+                                    .background_color(if local {
+                                        egui::Color32::TRANSPARENT
+                                    } else {
+                                        ui.visuals().faint_bg_color
+                                    })
+                                    .color(colors.color(ui, Role::Symbol)),
+                            )
+                            .wrap_mode(egui::TextWrapMode::Extend),
                         )
-                        .wrap_mode(egui::TextWrapMode::Extend)
-                        .halign(egui::Align::Min),
-                    );
+                        .on_hover_text(name);
+                    });
                     continue;
                 }
                 let bytes = [
@@ -171,5 +191,19 @@ impl VibeEmuApp {
                 });
             }
         });
+    }
+}
+
+fn label_name(name: &str) -> (&str, bool) {
+    name.split_once('.')
+        .map_or((name, false), |(_, local)| (local, true))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rgbds_local_labels_keep_their_short_name() {
+        assert_eq!(super::label_name("DelayFrame"), ("DelayFrame", false));
+        assert_eq!(super::label_name("DelayFrame.wait"), ("wait", true));
     }
 }
