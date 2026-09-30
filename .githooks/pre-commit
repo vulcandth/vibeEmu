@@ -1,20 +1,11 @@
 #!/usr/bin/env bash
-# Run cargo fmt on all workspace crates before committing. If formatting
-# changed files, stage them so the commit contains formatted code.
-
-# Exit on error
+# Format Rust, then restage only Rust files already included in this commit.
+# Unrelated tracked files (such as local IDE settings) must remain untouched.
 set -e
-
-# Run cargo fmt
+staged_rust=$(mktemp)
+trap 'rm -f "$staged_rust"' EXIT
+git diff --cached --name-only --diff-filter=ACM -z -- '*.rs' > "$staged_rust"
 cargo fmt --all
-
-# Add any changed files back to the index
-# Use git diff --name-only --diff-filter=ACM to list added/modified files
-changed_files=$(git diff --name-only --diff-filter=ACM)
-if [ -n "$changed_files" ]; then
-  echo "Staging formatted files..."
-  git add $changed_files
+if [ -s "$staged_rust" ]; then
+  git --literal-pathspecs add --pathspec-from-file="$staged_rust" --pathspec-file-nul
 fi
-
-# Allow commit to proceed
-exit 0
