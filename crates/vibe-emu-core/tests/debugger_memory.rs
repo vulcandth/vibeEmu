@@ -47,3 +47,46 @@ fn debugger_edits_boot_rom_ram_and_video_without_advancing_time() {
     assert!(gb.mmu.debug_write_byte(0xfea0, 0).is_err());
     assert_eq!(gb.cpu.cycles, cycles);
 }
+
+#[test]
+fn debugger_writes_preserve_io_rules_and_selected_cartridge_ram() {
+    let mut gb = GameBoy::new(Model::Cgb(Default::default()));
+    let mut rom = vec![0; 0x8000];
+    rom[0x143] = 0x80;
+    rom[0x147] = 3; // MBC1 + RAM + battery.
+    rom[0x149] = 3; // Four RAM banks.
+    gb.load_cart(Cartridge::from_bytes(rom));
+    let cycles = gb.cpu.cycles;
+
+    gb.mmu.write_byte(0, 0x0a);
+    let original = gb.mmu.peek_byte(0xa123);
+    gb.mmu.write_byte(0, 0);
+    // Disabled RAM ignores edits, just like a CPU write.
+    gb.mmu.debug_write_byte(0xa123, 0x99).unwrap();
+    gb.mmu.write_byte(0, 0x0a);
+    assert_eq!(gb.mmu.peek_byte(0xa123), original);
+    gb.mmu.write_byte(0x6000, 1);
+    for (bank, value) in [(1, 0x31), (2, 0x72)] {
+        gb.mmu.write_byte(0x4000, bank);
+        gb.mmu.debug_write_byte(0xa123, value).unwrap();
+        assert_eq!(gb.mmu.peek_byte(0xa123), value);
+    }
+    gb.mmu.write_byte(0x4000, 1);
+    assert_eq!(gb.mmu.peek_byte(0xa123), 0x31);
+
+    // CGB bank registers mask writes; echo RAM follows the selected WRAM bank.
+    gb.mmu.debug_write_byte(0xff70, 0xfa).unwrap();
+    assert_eq!(gb.mmu.peek_byte(0xff70), 2);
+    gb.mmu.debug_write_byte(0xf123, 0x42).unwrap();
+    assert_eq!(gb.mmu.peek_byte(0xd123), 0x42);
+    gb.mmu.debug_write_byte(0xff70, 3).unwrap();
+    gb.mmu.debug_write_byte(0xd123, 0x63).unwrap();
+    gb.mmu.debug_write_byte(0xff70, 2).unwrap();
+    assert_eq!(gb.mmu.peek_byte(0xd123), 0x42);
+    gb.mmu.debug_write_byte(0xe123, 0x21).unwrap();
+    assert_eq!(gb.mmu.peek_byte(0xc123), 0x21);
+    // DIV is reset by any value, rather than storing the supplied byte.
+    gb.mmu.debug_write_byte(0xff04, 0xab).unwrap();
+    assert_eq!(gb.mmu.peek_byte(0xff04), 0);
+    assert_eq!(gb.cpu.cycles, cycles);
+}

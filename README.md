@@ -62,14 +62,15 @@ repository is organized as a Cargo workspace with multiple crates:
 - Selectable serial peripherals, including link cable support and Mobile
   Adapter GB.
 - A VRAM viewer for inspecting tiles, maps, sprites, and palettes.
-- Play/Develop navigation and debugger access in both debug and release builds.
-- Develop panels can be docked, resized, tabbed or undocked into native desktop windows.
-  Layouts are saved separately from game settings; small windows use compact tabs.
-- Searchable settings, pending machine changes, pinned recent ROMs, and a game context menu.
-- Output volume/mono, speed presets, hardware revisions, and a monochrome palette editor.
+- Play and Develop workspaces with a debugger, memory editor, and dockable panels.
+- Configurable hardware models, boot ROMs, palettes, audio, and emulation speed.
 
-See [UI roadmap implementation status](UI_ROADMAP.md) for delivered behavior and
-the remaining work. Complete save states, rewind, and cheats are not implemented yet.
+<p>
+  <a href="docs/screenshots/play.png"><img src="docs/screenshots/play.png" alt="Play workspace with the ROM opening prompt" width="240" /></a>
+  <a href="docs/screenshots/develop.png"><img src="docs/screenshots/develop.png" alt="Develop workspace showing colored disassembly, registers, and editable memory" width="520" /></a>
+</p>
+
+Play (left) and Develop with a synthetic test ROM (right). Click to enlarge.
 
 ## Building
 
@@ -106,21 +107,6 @@ For detailed platform-specific instructions, troubleshooting, and build configur
 
 The Android project lives in `android/` and builds its native library from the
 same workspace sources via `cargo-ndk`.
-
-Android supports all seven hardware models, both SGB/GBC hybrid modes,
-independent boot ROM imports, optional SGB borders and four-controller SGB
-input. Model and boot changes apply on load; System & Boot also offers an explicit
-reload action. See [SGB.md](SGB.md) for mode behavior and frontend coverage.
-
-Instances support search, sorting, favorites, and last-played information. Settings
-use matching desktop category names, with two-pane navigation in wide windows.
-Search also matches option names such as volume, palette and boot ROM. Model and
-boot-ROM changes remain pending until the next successful load; **Apply and reload**
-and **Discard pending changes** are available while a game is loaded. Discard also
-recovers replaced or cleared boot ROMs. A failed reload keeps the current machine.
-The gameplay menu uses a phone pause sheet or a controller-friendly dialog in
-wider windows and on TV. Back/Menu opens gameplay navigation. Backgrounding
-pauses the machine and saves battery RAM; periodic battery saves run every 30 seconds.
 
 On Windows, a wrapper-based debug build looks like this:
 
@@ -242,15 +228,10 @@ Run `cargo run -- --help` for the full command-line reference.
 
 ## Logging
 
-Desktop panics also write a timestamped report with a backtrace in `crashes/`
-beside `ui.toml` (on Windows: `%APPDATA%\vibeemu\crashes`). If that location
-cannot be written, reports fall back to `vibeemu-crashes` in the system temporary
-directory. This works in release builds without a console; reports stay local.
-Reports include the ROM path and eight recent frame/step checkpoints: model,
-ROM bank, CPU registers, cycle count, bytes near PC/SP, and key hardware registers.
-These bounded diagnostic checkpoints are not restorable save states. The panic
-handler never locks the emulator; a mid-frame panic includes the last checkpoint.
-
+Desktop crashes write timestamped text reports in `crashes/` beside `ui.toml`
+(Windows: `%APPDATA%\vibeemu\crashes`). If unavailable, check `vibeemu-crashes`
+in your system temporary directory. Open a report in any text editor to read
+the error and backtrace.
 
 Debug builds default to `info` logging. Release builds default to `off`.
 Override the default with `--log-level`:
@@ -274,68 +255,6 @@ variables before starting the emulator; creating another PPU reuses the same
 immutable settings. Trace controls are separate.
 
 ## Controls
-
-Cascading submenus size their contents to the space beside the parent menu,
-opening left near the right edge. Long choices wrap and tall menus scroll
-without hiding the parent menu's other actions.
-
-Develop uses RGBDS-style disassembly, such as `ld [hld], a`, with a colored raw
-byte column and colored assembly. Opcode bytes, 8-bit operands and 16-bit
-operands have distinct colors; both bytes of a CB instruction are opcode bytes.
-The memory viewer colors code inferred from execution/flow analysis and leaves
-unknown data neutral. This is an interpretation, not proof that bytes are code.
-Settings > Developer provides a highlighting toggle and per-role color overrides;
-default colors adapt to light/dark themes. Stepping follows the resulting PC
-immediately, including long jumps, calls and instructions at `$ffff`.
-
-Global disassembly labels align with the address column and use emphasized text.
-RGBDS local labels such as `DelayFrame.wait` display as an indented `.wait:`;
-hover shows the full name. Symbol substitution also covers 16-bit `ld` operands
-(including `ld hl, Start`) and absolute loads/stores. Immediate values can be
-addresses or numbers, so these substitutions are a display heuristic.
-
-While paused, select a memory byte and choose **Edit byte…**, or double-click it.
-Enter a hexadecimal byte and Apply (or Enter); Cancel leaves memory unchanged.
-ROM/boot-ROM patches affect the current in-memory copy only. Reload restores the
-file's original contents. RAM edits affect the running game (and battery RAM can
-later be saved); I/O and cartridge RAM writes follow hardware register rules.
-Each Develop panel has **Undock** and **Dock back** buttons for opening it in a
-native desktop window or returning it to the workspace. Closing the detached
-window also docks it back. Existing in-window floating layouts migrate automatically.
-
-Menus display application shortcuts, and Settings > Controls lists them. `Cmd`
-replaces `Ctrl` on macOS. Existing single-key gameplay bindings are preserved.
-
-| Action | Shortcut |
-| --- | --- |
-| Open / reload / close ROM | Ctrl+O / Ctrl+Shift+R / Ctrl+W |
-| Mute / reset / settings | Ctrl+M / Ctrl+R / Ctrl+, |
-| Play / Develop | Ctrl+1 / Ctrl+2 |
-| Run or pause / run without breakpoints | F9 / Shift+F9 |
-| Step into / over / out | F7 / F3 / F8 |
-| Run to cursor / ignore breakpoints | F4 / Shift+F4 |
-| Jump / call cursor | F6 / Shift+F6 |
-| Jump to stack return address | Ctrl+F8 |
-| Toggle cursor breakpoint / reload symbols | F2 / Ctrl+Shift+L |
-| Fullscreen | F11 (Windows/Linux), Ctrl+Cmd+F (macOS) |
-| Quit | Ctrl+Q |
-
-Settings > General accepts custom speed percentages from 1–400% on desktop and
-Android. Play windows fit the game width at 2× and above; 1× retains room for the
-menus. The empty Play screen displays the vibeEmu logo.
-
-Desktop keyboard rebinding supports **Left Shift** and **Right Shift** separately,
-including assigning Left Shift to Select. In `keybinds.toml` their names are
-`ShiftLeft` and `ShiftRight` (`LShift`/`RShift` are also accepted). Existing bindings
-and the default Tab binding for Select are preserved.
-
-Develop panels support horizontal scrolling for wide memory/disassembly rows and
-both-axis scrolling for video inspectors. Settings use a category picker in narrow
-windows or at large UI scales. Debugger inspection is passive: it does not trigger
-watchpoints, change bus latches, corrupt OAM, or consume register-read effects.
-The memory view shows mapped VRAM/OAM/wave RAM even when CPU access is blocked;
-cartridge RAM still follows the selected mapper bank and enable state. Audio
-register inspection shows stored state, including the last cached PCM output.
 
 The default keyboard controls are:
 
@@ -367,13 +286,13 @@ settings and any captured initial border. Window Scale offers integer-scaled and
 fit-to-screen fullscreen. Speed defaults to 100%, with a 2× fast-forward cap. Altered-speed audio
 is muted at the output; the emulated APU continues running.
 
-See [SGB modes and UI review](SGB.md) for the BGB/SameBoy research, behavior,
+See [SGB modes and UI review](docs/SGB.md) for the BGB/SameBoy research, behavior,
 settings coverage, and test strategy.
 
 ## Testing
 
 For core profiling, repeatable performance comparisons, and the 3DS optimization
-roadmap, see [PERFORMANCE.md](PERFORMANCE.md).
+roadmap, see [PERFORMANCE.md](docs/PERFORMANCE.md).
 
 Unit tests for the emulation core can be executed with:
 

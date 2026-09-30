@@ -21,7 +21,3 @@ opt-level = 2
 [profile.release]
 lto = "thin"
 codegen-units = 1
-
-[patch.crates-io]
-# egui_dock 0.19.1 without the unmaintained paste macro; see vendor/egui_dock/PATCH.md.
-egui_dock = { path = "vendor/egui_dock" }

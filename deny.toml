@@ -72,6 +72,8 @@ feature-depth = 1
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 ignore = [
+    # Accepted for egui_dock: an unmaintained build-time macro, not a known vulnerability.
+    { id = "RUSTSEC-2024-0436", reason = "Accept paste via egui_dock rather than maintain a vendored fork; revisit when upstream removes it" },
     #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
     #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
     #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
