@@ -195,8 +195,8 @@ impl VibeEmuApp {
 }
 
 fn label_name(name: &str) -> (&str, bool) {
-    name.split_once('.')
-        .map_or((name, false), |(_, local)| (local, true))
+    name.find('.')
+        .map_or((name, false), |dot| (&name[dot..], true))
 }
 
 #[cfg(test)]
@@ -204,6 +204,6 @@ mod tests {
     #[test]
     fn rgbds_local_labels_keep_their_short_name() {
         assert_eq!(super::label_name("DelayFrame"), ("DelayFrame", false));
-        assert_eq!(super::label_name("DelayFrame.wait"), ("wait", true));
+        assert_eq!(super::label_name("DelayFrame.wait"), (".wait", true));
     }
 }

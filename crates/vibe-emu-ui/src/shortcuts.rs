@@ -125,7 +125,10 @@ impl VibeEmuApp {
         if !action.is_debugger() {
             return true;
         }
-        if self.ui_config.preferences.workspace != Workspace::Develop && !self.show_debugger {
+        if self.ui_config.preferences.workspace != Workspace::Develop
+            && !self.show_debugger
+            && self.develop_layout.floating_panels().is_empty()
+        {
             return false;
         }
         if !self.paused && action != Action::ReloadSymbols {

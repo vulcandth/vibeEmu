@@ -1,5 +1,4 @@
 //! Workspace layout only: no game settings or emulated machine state.
-use eframe::egui;
 use egui_dock::{DockState, Node, NodeIndex, Surface, Tree};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, io, path::PathBuf, time::Instant};
@@ -131,10 +130,12 @@ struct Document {
     version: u32,
     main: Option<LayoutNode>,
     floating: Vec<Floating>,
+    #[serde(default)]
+    detached: Vec<Panel>,
 }
 
 impl Document {
-    fn capture(dock: &DockState<Panel>) -> Self {
+    fn capture(dock: &DockState<Panel>, detached: &[Panel]) -> Self {
         let floating = dock
             .iter_surfaces()
             .filter_map(|surface| {
@@ -161,6 +162,7 @@ impl Document {
             version: 1,
             main: LayoutNode::capture(dock.main_surface(), NodeIndex::root()),
             floating,
+            detached: detached.to_vec(),
         }
     }
 
@@ -183,6 +185,7 @@ impl Document {
                         .iter()
                         .all(|v| v.is_finite() && (1.0..=100_000.0).contains(v))
             })
+            || !self.detached.iter().all(|panel| seen.insert(*panel))
         {
             return None;
         }
@@ -206,6 +209,7 @@ pub struct DevelopLayout {
     pub dock: DockState<Panel>,
     pub compact_panel: Panel,
     pub pending_float: Option<Panel>,
+    detached: Vec<Panel>,
     path: PathBuf,
     saved: Option<Document>,
     last_attempt: Instant,
@@ -222,8 +226,25 @@ impl DevelopLayout {
         if path.exists() && restored.is_none() {
             log::warn!("Ignoring invalid workspace layout: {}", path.display());
         }
+        let mut detached = if restored.is_some() {
+            saved.as_ref().unwrap().detached.clone()
+        } else {
+            Vec::new()
+        };
+        let mut dock = restored.unwrap_or_else(Self::default_dock);
+        // Migrate old in-window floating panels to native windows.
+        let old_floating: Vec<_> = dock
+            .iter_all_tabs()
+            .filter(|(path, _)| !path.surface.is_main())
+            .map(|(_, panel)| *panel)
+            .collect();
+        for panel in old_floating {
+            dock.remove_tab(dock.find_tab(&panel).unwrap());
+            detached.push(panel);
+        }
         Self {
-            dock: restored.unwrap_or_else(Self::default_dock),
+            dock,
+            detached,
             compact_panel: Panel::Disassembly,
             pending_float: None,
             path,
@@ -243,14 +264,22 @@ impl DevelopLayout {
 
     pub fn reset(&mut self) {
         self.dock = Self::default_dock();
+        self.detached.clear();
+        self.pending_float = None;
         self.compact_panel = Panel::Disassembly;
     }
 
     pub fn visible(&self, panel: Panel) -> bool {
-        self.dock.find_tab(&panel).is_some()
+        self.dock.find_tab(&panel).is_some() || self.detached.contains(&panel)
     }
 
     pub fn set_visible(&mut self, panel: Panel, visible: bool) {
+        if self.detached.contains(&panel) {
+            if !visible {
+                self.detached.retain(|p| *p != panel);
+            }
+            return;
+        }
         match (self.dock.find_tab(&panel), visible) {
             (Some(path), false) => {
                 self.dock.remove_tab(path);
@@ -272,23 +301,18 @@ impl DevelopLayout {
     }
 
     pub fn floating_panels(&self) -> Vec<Panel> {
-        self.dock
-            .iter_all_tabs()
-            .filter(|(path, _)| !path.surface.is_main())
-            .map(|(_, panel)| *panel)
-            .collect()
+        self.detached.clone()
     }
 
     /// Move an existing panel; never duplicate its debugger state or contents.
-    pub fn toggle_floating(&mut self, panel: Panel, rect: egui::Rect) {
-        if let Some(path) = self.dock.find_tab(&panel) {
-            if path.surface.is_main() {
-                self.dock.detach_tab(path, rect);
-            } else {
-                self.dock.remove_tab(path);
-                self.dock.push_to_first_leaf(panel);
-                self.focus(panel);
-            }
+    pub fn toggle_floating(&mut self, panel: Panel) {
+        if self.detached.contains(&panel) {
+            self.detached.retain(|p| *p != panel);
+            self.dock.push_to_first_leaf(panel);
+            self.focus(panel);
+        } else if let Some(path) = self.dock.find_tab(&panel) {
+            self.dock.remove_tab(path);
+            self.detached.push(panel);
         }
     }
 
@@ -298,7 +322,7 @@ impl DevelopLayout {
             return Ok(());
         }
         self.last_attempt = Instant::now();
-        let document = Document::capture(&self.dock);
+        let document = Document::capture(&self.dock, &self.detached);
         if self.saved.as_ref() == Some(&document) {
             return Ok(());
         }
@@ -321,19 +345,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_windows_persist_and_old_floats_migrate_without_duplicates() {
+        let path =
+            std::env::temp_dir().join(format!("vibeemu-native-layout-{}.json", std::process::id()));
+        let mut dock = DevelopLayout::default_dock();
+        dock.remove_tab(dock.find_tab(&Panel::Memory).unwrap());
+        dock.add_window(vec![Panel::Memory]);
+        // This is the prior schema: a window confined to the main viewport.
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&Document::capture(&dock, &[])).unwrap(),
+        )
+        .unwrap();
+        let mut layout = DevelopLayout::load(path.clone());
+        assert_eq!(layout.floating_panels(), vec![Panel::Memory]);
+        assert!(layout.dock.find_tab(&Panel::Memory).is_none());
+        layout.save(true).unwrap();
+        let mut restored = DevelopLayout::load(path.clone());
+        assert_eq!(restored.floating_panels(), vec![Panel::Memory]);
+        assert!(restored.visible(Panel::Memory));
+        restored.set_visible(Panel::Memory, false);
+        assert!(!restored.visible(Panel::Memory));
+        restored.set_visible(Panel::Memory, true);
+        assert!(restored.floating_panels().is_empty());
+        assert_eq!(restored.dock.iter_all_tabs().count(), Panel::ALL.len());
+        layout.reset();
+        assert!(layout.floating_panels().is_empty());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn every_panel_can_undock_and_dock_back_without_duplicates() {
         let mut layout =
             DevelopLayout::load(std::env::temp_dir().join("vibeemu-undock-test-unused.json"));
         layout.reset();
         for panel in Panel::ALL {
-            layout.toggle_floating(
-                panel,
-                egui::Rect::from_min_size(egui::pos2(20.0, 80.0), egui::vec2(500.0, 300.0)),
-            );
+            layout.toggle_floating(panel);
             assert_eq!(layout.floating_panels(), vec![panel]);
-            assert_eq!(layout.dock.iter_all_tabs().count(), Panel::ALL.len());
-            assert!(Document::capture(&layout.dock).restore().is_some());
-            layout.toggle_floating(panel, egui::Rect::NOTHING);
+            assert_eq!(layout.dock.iter_all_tabs().count(), Panel::ALL.len() - 1);
+            assert!(
+                Document::capture(&layout.dock, &layout.detached)
+                    .restore()
+                    .is_some()
+            );
+            layout.toggle_floating(panel);
             assert!(layout.floating_panels().is_empty());
             assert_eq!(layout.dock.iter_all_tabs().count(), Panel::ALL.len());
         }
@@ -372,18 +427,18 @@ mod tests {
         let path = dock.find_tab(&Panel::Watchpoints).unwrap();
         dock.remove_tab(path);
         dock.add_window(vec![Panel::Watchpoints]);
-        let document = Document::capture(&dock);
+        let document = Document::capture(&dock, &[]);
         let json = serde_json::to_vec(&document).unwrap();
         let parsed: Document = serde_json::from_slice(&json).unwrap();
         let restored = parsed.restore().unwrap();
         assert!(restored.find_tab(&Panel::Video).is_none());
         assert_eq!(restored.iter_all_tabs().count(), 5);
-        assert_eq!(Document::capture(&restored), document);
+        assert_eq!(Document::capture(&restored, &[]), document);
     }
 
     #[test]
     fn malformed_layouts_never_reach_the_docking_library() {
-        let mut document = Document::capture(&DevelopLayout::default_dock());
+        let mut document = Document::capture(&DevelopLayout::default_dock(), &[]);
         document.version = 99;
         assert!(document.restore().is_none());
         document.version = 1;

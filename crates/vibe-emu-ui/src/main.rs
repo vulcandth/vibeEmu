@@ -2698,6 +2698,8 @@ impl eframe::App for VibeEmuApp {
                 }
             });
 
+        self.draw_detached_panels(&ctx);
+
         if self.show_debugger {
             self.draw_debugger_window(&ctx);
         }

@@ -45,7 +45,7 @@ impl VibeEmuApp {
         let shortcut = self.shortcut_text(ui.ctx(), action);
         let mut button = egui::Button::new(label);
         if egui::containers::menu::is_in_menu(ui) {
-            button = button.shortcut_text(&shortcut);
+            button = menu_command_button(ui, label, &shortcut);
         }
         if ui
             .add_enabled(self.action_enabled(action), button)
@@ -363,7 +363,10 @@ impl VibeEmuApp {
                 ui.checkbox(&mut self.show_watchpoints, "Watchpoints");
                 ui.checkbox(&mut self.show_vram_viewer, "VRAM viewer");
             });
-            if self.ui_config.preferences.workspace == Workspace::Develop || self.show_debugger {
+            if self.ui_config.preferences.workspace == Workspace::Develop
+                || self.show_debugger
+                || !self.develop_layout.floating_panels().is_empty()
+            {
                 ui.menu_button("Debug", |ui| {
                     for &(action, label) in shortcuts::DEBUG_COMMANDS {
                         self.action_button(ui, label, action);
@@ -425,6 +428,30 @@ impl VibeEmuApp {
     }
 }
 
+fn menu_command_button<'a>(ui: &egui::Ui, label: &'a str, shortcut: &'a str) -> egui::Button<'a> {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let text_width = ui.fonts_mut(|fonts| {
+        [label, shortcut]
+            .into_iter()
+            .map(|text| {
+                fonts
+                    .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
+                    .size()
+                    .x
+            })
+            .sum::<f32>()
+    });
+    // Reserve an explicit gap as well as both text columns. A one-item menu
+    // otherwise sizes itself too narrowly for a long shortcut such as Ctrl+Comma.
+    let width = text_width + 24.0 + 2.0 * ui.spacing().button_padding.x;
+    egui::Button::new(label)
+        .shortcut_text(shortcut)
+        .min_size(egui::vec2(
+            width.min(ui.ctx().content_rect().width() - 16.0),
+            0.0,
+        ))
+}
+
 /// Retain native cascading menus and their hover/keyboard ownership. Bound the
 /// child to the space beside its parent so egui's automatic placement can pick
 /// left/right instead of falling back below and obscuring sibling actions.
@@ -469,6 +496,75 @@ pub(super) fn submenu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_menu_keeps_label_and_shortcut_visible_and_separated() {
+        for width in [320.0, 1100.0] {
+            let ctx = egui::Context::default();
+            ctx.global_style_mut(|style| style.animation_time = 0.0);
+            let draw = |events| {
+                let mut trigger = egui::Rect::NOTHING;
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 400.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::MenuBar::new().ui(ui, |ui| {
+                            ui.add_space(200.0);
+                            trigger = ui
+                                .menu_button("Settings", |ui| {
+                                    ui.add(menu_command_button(ui, "Settings…", "Ctrl+Comma"));
+                                })
+                                .response
+                                .rect;
+                        });
+                    },
+                );
+                (trigger, output)
+            };
+            draw(vec![]);
+            let (trigger, _) = draw(vec![]);
+            for pressed in [true, false] {
+                draw(vec![
+                    egui::Event::PointerMoved(trigger.center()),
+                    egui::Event::PointerButton {
+                        pos: trigger.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ]);
+            }
+            draw(vec![]);
+            let (_, output) = draw(vec![]);
+            let mut label = None;
+            let mut shortcut = None;
+            for clipped in output.shapes {
+                if let egui::epaint::Shape::Text(text) = clipped.shape {
+                    let bounds = text.visual_bounding_rect();
+                    match text.galley.text() {
+                        "Settings…" => label = Some((bounds, clipped.clip_rect)),
+                        "Ctrl+Comma" => shortcut = Some((bounds, clipped.clip_rect)),
+                        _ => {}
+                    }
+                }
+            }
+            let (label, label_clip) = label.expect("menu label rendered");
+            let (shortcut, shortcut_clip) = shortcut.expect("shortcut rendered");
+            assert!(
+                label.right() + 10.0 <= shortcut.left(),
+                "columns need a readable gap"
+            );
+            assert!(label_clip.contains_rect(label));
+            assert!(shortcut_clip.contains_rect(shortcut));
+            assert!(shortcut.right() <= width && label.left() >= 0.0);
+        }
+    }
 
     #[test]
     fn cascading_submenus_stay_beside_parent_at_both_window_edges() {

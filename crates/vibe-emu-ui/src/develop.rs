@@ -26,6 +26,12 @@ impl TabViewer for Viewer<'_> {
         }
     }
 
+    fn allowed_in_windows(&self, _tab: &mut Panel) -> bool {
+        // egui_dock windows are confined to the root viewport. Use the native
+        // Undock action instead; tab dragging still rearranges the main dock.
+        false
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Panel) {
         ui.horizontal(|ui| {
             let label = if self.floating.contains(tab) {
@@ -36,7 +42,7 @@ impl TabViewer for Viewer<'_> {
             if ui
                 .small_button(label)
                 .on_hover_text(
-                    "Float this panel inside the workspace, or return it to the main dock",
+                    "Open this panel in a separate desktop window, or return it to the main dock",
                 )
                 .clicked()
             {
@@ -133,22 +139,6 @@ impl VibeEmuApp {
                 egui::ScrollArea::new(viewer.scroll_bars(&panel))
                     .show(ui, |ui| viewer.ui(ui, &mut panel));
             }
-            // Keep undocked panels accessible even while the main area uses tabs.
-            if !floating.is_empty() {
-                let mut dock =
-                    std::mem::replace(&mut self.develop_layout.dock, DockState::new(vec![]));
-                let main = std::mem::replace(dock.main_surface_mut(), egui_dock::Tree::new(vec![]));
-                DockArea::new(&mut dock).show_inside(
-                    ui,
-                    &mut Viewer {
-                        app: self,
-                        snapshot: snapshot.as_ref(),
-                        floating: floating.clone(),
-                    },
-                );
-                *dock.main_surface_mut() = main;
-                self.develop_layout.dock = dock;
-            }
         } else {
             let mut dock = std::mem::replace(&mut self.develop_layout.dock, DockState::new(vec![]));
             DockArea::new(&mut dock)
@@ -163,18 +153,67 @@ impl VibeEmuApp {
                 );
             self.develop_layout.dock = dock;
         }
+        self.apply_panel_window_changes();
+    }
+
+    fn apply_panel_window_changes(&mut self) {
         if let Some(panel) = self.develop_layout.pending_float.take() {
-            let bounds = ui.ctx().content_rect();
-            self.develop_layout.toggle_floating(
-                panel,
-                egui::Rect::from_min_size(
-                    bounds.min + egui::vec2(24.0, 80.0),
-                    bounds.size().min(egui::vec2(640.0, 480.0)),
-                ),
-            );
+            self.develop_layout.toggle_floating(panel);
         }
         if let Err(error) = self.develop_layout.save(false) {
             self.load_error = Some(format!("Could not save workspace layout: {error}"));
+        }
+    }
+
+    pub(super) fn draw_detached_panels(&mut self, ctx: &egui::Context) {
+        let panels = self.develop_layout.floating_panels();
+        if panels.is_empty() {
+            return;
+        }
+        for mut panel in panels {
+            ctx.show_viewport_immediate(
+                egui::ViewportId::from_hash_of(("develop-native-panel", panel)),
+                egui::ViewportBuilder::default()
+                    .with_title(format!("{} - vibeEmu", panel.title()))
+                    .with_inner_size([720.0, 520.0])
+                    .with_min_inner_size([280.0, 200.0]),
+                |ui, _| {
+                    let ctx = ui.ctx().clone();
+                    if ctx.input(|i| i.viewport().close_requested()) {
+                        // Closing a tool returns it to the workspace rather than
+                        // losing it. The root window and emulation stay alive.
+                        self.develop_layout.pending_float = Some(panel);
+                        return;
+                    }
+                    if ctx.input(|i| i.focused) && self.rebinding.is_none() {
+                        self.handle_shortcuts(&ctx);
+                    }
+                    if self.current_rom_path.is_some() {
+                        self.process_debugger_actions();
+                        if let Ok(mut gb) = self.gb.try_lock() {
+                            self.debugger_snapshot =
+                                Some(UiSnapshot::from_gb(&mut gb, self.paused));
+                        }
+                    }
+                    let snapshot = self
+                        .current_rom_path
+                        .as_ref()
+                        .and(self.debugger_snapshot.clone());
+                    egui::CentralPanel::default().show_inside(ui, |ui| {
+                        let mut viewer = Viewer {
+                            app: self,
+                            snapshot: snapshot.as_ref(),
+                            floating: vec![panel],
+                        };
+                        egui::ScrollArea::new(viewer.scroll_bars(&panel))
+                            .show(ui, |ui| viewer.ui(ui, &mut panel));
+                    });
+                    if !self.paused {
+                        ctx.request_repaint_after(Duration::from_millis(16));
+                    }
+                },
+            );
+            self.apply_panel_window_changes();
         }
     }
 }

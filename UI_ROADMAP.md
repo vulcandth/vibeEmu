@@ -24,12 +24,13 @@ unimplemented states, rewind, cheats and peripherals are not advertised in menus
 - Develop has resizable docking for disassembly, registers/stack, memory, video,
   watchpoints and game preview. Compact tabs appear below 780 pixels wide or 420
   pixels of panel height. Validated layouts persist separately in `workspace.json`;
-  panels can float inside the root window. Existing detached native tools remain.
+  panels undock into native desktop windows. Closing a panel docks it back.
+  Existing floating layouts migrate automatically; detached native tools remain.
   No full execution history is collected during ordinary Play.
 - Every panel has Undock/Dock back buttons. Menus and toolbar share application
   and debugger commands, with platform-aware shortcut hints and a Controls
   reference. Global labels align with addresses; local labels use indented short
-  names. Symbol substitution includes 16-bit loads and absolute load/store operands.
+  names with their leading dot. Symbol substitution includes 16-bit loads and absolute load/store operands.
 - Paused memory editing supports hex bytes, including in-memory ROM and boot-ROM
   patches. Source ROM files are never rewritten. Regression tests cover both MBC1
   windows, boot overlays, memory regions and unchanged source bytes.

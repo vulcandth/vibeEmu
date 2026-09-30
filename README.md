@@ -63,7 +63,7 @@ repository is organized as a Cargo workspace with multiple crates:
   Adapter GB.
 - A VRAM viewer for inspecting tiles, maps, sprites, and palettes.
 - Play/Develop navigation and debugger access in both debug and release builds.
-- Develop panels can be docked, resized, tabbed or floated inside the main window.
+- Develop panels can be docked, resized, tabbed or undocked into native desktop windows.
   Layouts are saved separately from game settings; small windows use compact tabs.
 - Searchable settings, pending machine changes, pinned recent ROMs, and a game context menu.
 - Output volume/mono, speed presets, hardware revisions, and a monochrome palette editor.
@@ -289,7 +289,7 @@ default colors adapt to light/dark themes. Stepping follows the resulting PC
 immediately, including long jumps, calls and instructions at `$ffff`.
 
 Global disassembly labels align with the address column and use emphasized text.
-RGBDS local labels such as `DelayFrame.wait` display as an indented `wait:`;
+RGBDS local labels such as `DelayFrame.wait` display as an indented `.wait:`;
 hover shows the full name. Symbol substitution also covers 16-bit `ld` operands
 (including `ld hl, Start`) and absolute loads/stores. Immediate values can be
 addresses or numbers, so these substitutions are a display heuristic.
@@ -299,8 +299,9 @@ Enter a hexadecimal byte and Apply (or Enter); Cancel leaves memory unchanged.
 ROM/boot-ROM patches affect the current in-memory copy only. Reload restores the
 file's original contents. RAM edits affect the running game (and battery RAM can
 later be saved); I/O and cartridge RAM writes follow hardware register rules.
-Each Develop panel has **Undock** and **Dock back** buttons for floating it inside
-the workspace without dragging a tab.
+Each Develop panel has **Undock** and **Dock back** buttons for opening it in a
+native desktop window or returning it to the workspace. Closing the detached
+window also docks it back. Existing in-window floating layouts migrate automatically.
 
 Menus display application shortcuts, and Settings > Controls lists them. `Cmd`
 replaces `Ctrl` on macOS. Existing single-key gameplay bindings are preserved.
