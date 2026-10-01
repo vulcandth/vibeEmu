@@ -443,12 +443,20 @@ fn boot_hwio_dmgABCmgb_gb() {
 
 #[test]
 fn misc__boot_div_cgbABCDE_gb() {
-    let passed = run_mooneye_acceptance_force_cgb_revision(
-        common::rom_path("mooneye-test-suite/misc/boot_div-cgbABCDE.gb"),
-        20_000_000,
+    for revision in [
+        CgbRevision::RevA,
+        CgbRevision::RevB,
+        CgbRevision::RevC,
+        CgbRevision::RevD,
         CgbRevision::RevE,
-    );
-    assert!(passed, "test failed");
+    ] {
+        let passed = run_mooneye_acceptance_force_cgb_revision(
+            common::rom_path("mooneye-test-suite/misc/boot_div-cgbABCDE.gb"),
+            20_000_000,
+            revision,
+        );
+        assert!(passed, "test failed on {revision:?}");
+    }
 }
 
 #[test]

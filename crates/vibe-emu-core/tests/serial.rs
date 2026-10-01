@@ -336,3 +336,100 @@ fn serial_no_data_byte_handling() {
     serial.step(0, 4096, false, &mut if_reg);
     assert_eq!(serial.read(0xFF01), 0x42);
 }
+
+#[test]
+fn serial_start_restarts_the_second_divider_stage() {
+    use vibe_emu_core::hardware::CgbRevision;
+    for (model, fast, double_speed, half_period) in [
+        (Model::default(), false, false, 256u16),
+        (Model::default(), true, false, 256),
+        (Model::Cgb(CgbRevision::RevC), false, false, 256),
+        (Model::Cgb(CgbRevision::RevC), false, true, 128),
+        (Model::Cgb(CgbRevision::RevC), true, false, 8),
+        (Model::Cgb(CgbRevision::RevC), true, true, 4),
+        (Model::Cgb(CgbRevision::RevE), true, true, 4),
+    ] {
+        let mut serial = Serial::new(model);
+        serial.write(0xff01, 0);
+        serial.write(0xff02, if fast { 0x83 } else { 0x81 });
+        let start = half_period;
+        let end = start + 16 * half_period;
+        let mut irq = 0;
+        serial.step(start, start + half_period, double_speed, &mut irq);
+        assert_eq!(serial.read(0xff01), 0, "{model:?}: first edge rises");
+        serial.step(
+            start + half_period,
+            start + 2 * half_period,
+            double_speed,
+            &mut irq,
+        );
+        assert_eq!(serial.read(0xff01), 1, "{model:?}: second edge shifts");
+        serial.step(start + 2 * half_period, end - 1, double_speed, &mut irq);
+        assert_eq!(irq & 8, 0);
+        serial.step(end - 1, end, double_speed, &mut irq);
+        assert_eq!(serial.read(0xff01), 0xff);
+        assert_ne!(irq & 8, 0);
+    }
+}
+
+#[test]
+fn div_reset_clocks_serial_without_resetting_its_second_stage() {
+    use vibe_emu_core::mmu::Mmu;
+    let mut mmu = Mmu::new(Model::default());
+    mmu.serial.write(0xff01, 0);
+    mmu.serial.write(0xff02, 0x81);
+    mmu.serial.step(0, 256, false, &mut mmu.if_reg);
+    assert_eq!(mmu.serial.read(0xff01), 0);
+    mmu.timer.div = 0x80;
+    mmu.reset_div();
+    assert_eq!(mmu.timer.div, 0);
+    assert_eq!(mmu.serial.read(0xff01), 1);
+    mmu.reset_div();
+    assert_eq!(
+        mmu.serial.read(0xff01),
+        1,
+        "no high input means no falling edge"
+    );
+    mmu.serial.step(0, 512, false, &mut mmu.if_reg);
+    assert_eq!(mmu.serial.read(0xff01), 3);
+}
+
+#[test]
+fn cpu_serial_uses_resettable_cpu_div_in_both_speed_modes() {
+    use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::CgbRevision};
+    for (model, fast, double_speed) in [
+        (Model::default(), false, false),
+        (Model::Cgb(CgbRevision::RevC), false, false),
+        (Model::Cgb(CgbRevision::RevC), false, true),
+        (Model::Cgb(CgbRevision::RevC), true, true),
+    ] {
+        let mut gb = GameBoy::new(model);
+        let mut rom = vec![0; 0x8000];
+        rom[0x143] = 0x80;
+        gb.mmu.load_cart(Cartridge::from_bytes(rom));
+        gb.cpu.double_speed = double_speed;
+        if double_speed {
+            gb.mmu.key1 |= 0x80;
+        }
+        gb.mmu.reset_div();
+        gb.mmu.if_reg = 0;
+        gb.mmu.ie_reg = 0;
+        gb.mmu.write_byte(0xff01, 0);
+        gb.mmu.write_byte(0xff02, if fast { 0x83 } else { 0x81 });
+        let instructions = if fast { 32 } else { 1024 };
+        for _ in 0..instructions - 1 {
+            gb.cpu.step(&mut gb.mmu);
+        }
+        assert_eq!(
+            gb.mmu.if_reg & 8,
+            0,
+            "{model:?}, double speed {double_speed}"
+        );
+        gb.cpu.step(&mut gb.mmu);
+        assert_ne!(
+            gb.mmu.if_reg & 8,
+            0,
+            "{model:?}, double speed {double_speed}"
+        );
+    }
+}

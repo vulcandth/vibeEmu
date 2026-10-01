@@ -492,3 +492,96 @@ fn vram_oam_access_blocking() {
     mmu.write_byte(0xFE00, 0x56);
     assert_eq!(mmu.read_byte(0xFE00), 0x56);
 }
+
+#[test]
+fn vram_dma_address_ports_are_write_only_without_losing_transfer_addresses() {
+    for revision in [CgbRevision::RevC, CgbRevision::RevE] {
+        for hblank in [false, true] {
+            let mut mmu = Mmu::new(Model::Cgb(revision));
+            mmu.write_byte(0xFF40, 0);
+            for i in 0..32u16 {
+                mmu.write_byte(0xC120 + i, (i ^ 0x5a) as u8);
+            }
+            mmu.write_byte(0xFF51, 0xc1);
+            mmu.write_byte(0xFF52, 0x2f);
+            mmu.write_byte(0xFF53, 0xa3);
+            mmu.write_byte(0xFF54, 0x4f);
+            for addr in 0xFF51..=0xFF54 {
+                assert_eq!(mmu.read_byte(addr), 0xff);
+            }
+            if hblank {
+                mmu.write_byte(0xFF40, 0x80);
+            }
+            mmu.write_byte(0xFF55, if hblank { 0x81 } else { 1 });
+            if hblank {
+                mmu.hdma_hblank_transfer();
+                mmu.hdma_hblank_transfer();
+            }
+            mmu.write_byte(0xFF40, 0);
+            for i in 0..32u16 {
+                assert_eq!(mmu.read_byte(0x8340 + i), (i ^ 0x5a) as u8);
+            }
+            assert_eq!(mmu.read_byte(0xFF55), 0xff);
+        }
+    }
+}
+
+#[test]
+fn vram_dma_uses_its_source_bus_for_both_transfer_modes() {
+    for hblank in [false, true] {
+        for source in [0x9000, 0xe000, 0xfe00, 0xff80] {
+            let mut mmu = Mmu::new(Model::Cgb(CgbRevision::RevC));
+            mmu.write_byte(0xFF40, 0);
+            for i in 0..16u16 {
+                mmu.write_byte(source + i, i as u8);
+            }
+            mmu.write_byte(0xFF51, (source >> 8) as u8);
+            mmu.write_byte(0xFF52, source as u8);
+            mmu.write_byte(0xFF53, 0x80);
+            mmu.write_byte(0xFF54, 0);
+            if hblank {
+                mmu.write_byte(0xFF40, 0x80);
+            }
+            mmu.write_byte(0xFF55, if hblank { 0x80 } else { 0 });
+            if hblank {
+                mmu.hdma_hblank_transfer();
+            }
+            mmu.write_byte(0xFF40, 0);
+            for i in 0..16u16 {
+                assert_eq!(mmu.read_byte(0x8000 + i), 0xff, "{source:04x}");
+            }
+        }
+    }
+}
+
+#[test]
+fn vram_dma_stops_at_counter_overflow_not_at_vram_address_wrap() {
+    for hblank in [false, true] {
+        for high in [0xdf, 0xff] {
+            let mut mmu = Mmu::new(Model::Cgb(CgbRevision::RevC));
+            mmu.write_byte(0xFF40, 0);
+            for i in 0..32u16 {
+                mmu.write_byte(0xc000 + i, (i + 1) as u8);
+            }
+            mmu.write_byte(0x8000, 0);
+            mmu.write_byte(0xFF51, 0xc0);
+            mmu.write_byte(0xFF52, 0);
+            mmu.write_byte(0xFF53, high);
+            mmu.write_byte(0xFF54, 0xf0);
+            if hblank {
+                mmu.write_byte(0xFF40, 0x80);
+            }
+            mmu.write_byte(0xFF55, if hblank { 0x81 } else { 1 });
+            if hblank {
+                mmu.hdma_hblank_transfer();
+                mmu.hdma_hblank_transfer();
+            }
+            mmu.write_byte(0xFF40, 0);
+            assert_eq!(mmu.read_byte(0x9fff), 16);
+            assert_eq!(mmu.read_byte(0x8000), if high == 0xdf { 17 } else { 0 });
+            // Overflow terminates the transfer; do not prescribe the low
+            // status bits, whose hardware value is not established here.
+            assert_ne!(mmu.read_byte(0xFF55) & 0x80, 0);
+        }
+    }
+}
