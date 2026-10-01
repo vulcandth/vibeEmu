@@ -1,5 +1,8 @@
 #![allow(non_snake_case)]
 mod common;
+#[path = "common/gambatte_expectations.rs"]
+mod expectations;
+use expectations::{Mode, cgb_png_color, detect_out_string, is_silent};
 
 use std::collections::HashSet;
 use std::fs;
@@ -7,7 +10,11 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use libtest_mimic::{Arguments, Failed, Trial};
-use vibe_emu_core::{cartridge::Cartridge, gameboy::GameBoy, hardware::Model};
+use vibe_emu_core::{
+    cartridge::Cartridge,
+    gameboy::GameBoy,
+    hardware::{CgbRevision, Model},
+};
 
 const GB_WIDTH: usize = 160;
 const GB_HEIGHT: usize = 144;
@@ -16,12 +23,6 @@ const MAX_FRAMES: u32 = 20;
 const MAX_CYCLES: u64 = 2_000_000;
 
 const IGNORED_LIST: &str = include_str!("gambatte_ignored.txt");
-
-#[derive(Clone, Copy)]
-enum Mode {
-    Dmg,
-    Cgb,
-}
 
 struct ModeCase {
     out: Option<&'static str>,
@@ -46,7 +47,7 @@ struct ModeRequirements {
 
 struct GambatteRun {
     frame: Option<Vec<u32>>,
-    audio: Option<Vec<i16>>,
+    audio: Option<Vec<(i16, i16)>>,
 }
 
 impl ModeCase {
@@ -259,10 +260,18 @@ fn execute_mode(
     let cart = Cartridge::from_bytes(rom_data);
     let mut gb = match mode {
         Mode::Dmg => GameBoy::new(Model::default()),
-        Mode::Cgb => GameBoy::new(Model::from_cgb_flag(true)),
+        // cgb04c expectations were recorded on CGB-C; the frontend default
+        // CGB-E has different pulse retrigger and LCD access behavior.
+        Mode::Cgb => GameBoy::new(Model::Cgb(CgbRevision::RevC)),
     };
     gb.mmu.load_cart(cart);
 
+    // Attach before execution, then drain once per frame to avoid overruns.
+    // Upstream checks the final frame's stereo audio, not startup transients.
+    let consumer = requirements
+        .needs_audio
+        .then(|| gb.mmu.apu.enable_output(44_100));
+    let mut audio = requirements.needs_audio.then(Vec::new);
     let mut frames = 0u32;
     let mut frame = if requirements.needs_frame {
         Some(vec![0u32; GB_WIDTH * GB_HEIGHT])
@@ -275,6 +284,12 @@ fn execute_mode(
         if gb.mmu.ppu.frame_ready() {
             if let Some(buffer) = frame.as_mut() {
                 buffer.copy_from_slice(gb.mmu.ppu.framebuffer());
+            }
+            if let (Some(consumer), Some(samples)) = (&consumer, &mut audio) {
+                samples.clear();
+                while let Some((left, right)) = consumer.pop_stereo() {
+                    samples.push((left, right));
+                }
             }
             gb.mmu.ppu.clear_frame_flag();
             frames += 1;
@@ -292,42 +307,7 @@ fn execute_mode(
         ));
     }
 
-    let audio = if requirements.needs_audio {
-        let mut samples = Vec::new();
-        let consumer = gb.mmu.apu.enable_output(44_100);
-        while let Some((left, _right)) = consumer.pop_stereo() {
-            samples.push(left);
-        }
-        Some(samples)
-    } else {
-        None
-    };
-
     Ok(Some(GambatteRun { frame, audio }))
-}
-
-fn detect_out_string(stem: &str, mode: Mode) -> Option<&'static str> {
-    if stem.contains("dmg08_cgb04c_out") {
-        return Some("dmg08_cgb04c_out");
-    }
-    match mode {
-        Mode::Dmg => {
-            if stem.contains("dmg08_out") {
-                Some("dmg08_out")
-            } else {
-                None
-            }
-        }
-        Mode::Cgb => {
-            if stem.contains("cgb04c_out") {
-                Some("cgb04c_out")
-            } else if stem.contains("_out") {
-                Some("_out")
-            } else {
-                None
-            }
-        }
-    }
 }
 
 fn expectation_tail<'a>(stem: &'a str, out_str: &str) -> Result<&'a str, String> {
@@ -344,7 +324,7 @@ fn verify_result(run: &GambatteRun, stem: &str, out_str: &str, mode: Mode) -> Re
             .audio
             .as_ref()
             .ok_or_else(|| format!("{stem}: {:?} mode did not collect audio data", mode))?;
-        if !is_silent(audio) {
+        if !is_silent(audio)? {
             return Err(format!("{stem}: expected silence in {:?} mode", mode));
         }
     } else if tail.starts_with("audio1") {
@@ -352,7 +332,7 @@ fn verify_result(run: &GambatteRun, stem: &str, out_str: &str, mode: Mode) -> Re
             .audio
             .as_ref()
             .ok_or_else(|| format!("{stem}: {:?} mode did not collect audio data", mode))?;
-        if is_silent(audio) {
+        if is_silent(audio)? {
             return Err(format!("{stem}: expected audio output in {:?} mode", mode));
         }
     } else {
@@ -361,7 +341,11 @@ fn verify_result(run: &GambatteRun, stem: &str, out_str: &str, mode: Mode) -> Re
             .as_ref()
             .ok_or_else(|| format!("{stem}: {:?} mode did not collect framebuffer data", mode))?;
         if !frame_buffer_matches(frame, tail, mode) {
-            return Err(format!("{stem}: framebuffer mismatch for {:?} mode", mode));
+            return Err(format!(
+                "{stem}: framebuffer mismatch for {:?} mode (expected {tail}, got {})",
+                mode,
+                read_hex_tiles(frame, tail, mode)
+            ));
         }
     }
 
@@ -394,13 +378,6 @@ fn verify_png(run: &GambatteRun, stem: &str, png_path: &Path, mode: Mode) -> Res
     Ok(())
 }
 
-fn is_silent(samples: &[i16]) -> bool {
-    samples
-        .first()
-        .map(|first| samples.iter().all(|&s| s == *first))
-        .unwrap_or(true)
-}
-
 fn frame_buffer_matches(frame: &[u32], pattern: &str, mode: Mode) -> bool {
     let mut tile_index = 0usize;
     for ch in pattern.chars() {
@@ -423,6 +400,35 @@ fn frame_buffer_matches(frame: &[u32], pattern: &str, mode: Mode) -> bool {
         tile_index += 1;
     }
     tile_index > 0
+}
+
+fn read_hex_tiles(frame: &[u32], pattern: &str, mode: Mode) -> String {
+    pattern
+        .chars()
+        .take_while(char::is_ascii_hexdigit)
+        .enumerate()
+        .map(|(index, _)| {
+            (0..16)
+                .find_map(|digit| {
+                    let tile = &TILE_PATTERNS[digit];
+                    (0..8)
+                        .all(|y| {
+                            (0..8).all(|x| {
+                                let offset = y * GB_WIDTH + index * 8 + x;
+                                frame.get(offset).is_some_and(|&pixel| {
+                                    sanitize_color(pixel, mode) == tile[y * 8 + x]
+                                })
+                            })
+                        })
+                        .then(|| {
+                            char::from_digit(digit as u32, 16)
+                                .unwrap()
+                                .to_ascii_uppercase()
+                        })
+                })
+                .unwrap_or('?')
+        })
+        .collect()
 }
 
 fn tile_from_char(c: char) -> Option<&'static [u32; 64]> {
@@ -466,11 +472,7 @@ fn normalize_pixel(pixel: &[u8; 3], mode: Mode) -> [u8; 3] {
 
 fn normalize_color(color: u32, mode: Mode) -> [u8; 3] {
     match mode {
-        Mode::Cgb => [
-            ((color >> 16) as u8) & 0xF8,
-            ((color >> 8) as u8) & 0xF8,
-            (color as u8) & 0xF8,
-        ],
+        Mode::Cgb => cgb_png_color(color),
         Mode::Dmg => {
             let shade = grayscale_shade(color);
             [shade, shade, shade]
@@ -498,15 +500,6 @@ fn grayscale_from_rgb(r: u8, g: u8, b: u8) -> u8 {
         }
     }
     best
-}
-
-impl core::fmt::Debug for Mode {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Mode::Dmg => write!(f, "DMG"),
-            Mode::Cgb => write!(f, "CGB"),
-        }
-    }
 }
 
 #[rustfmt::skip]

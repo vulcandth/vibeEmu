@@ -1080,3 +1080,72 @@ fn nr52_power_cycle_preserves_frontend_audio_settings() {
         "frontend output stays disabled"
     );
 }
+
+#[test]
+fn pulse_retrigger_preserves_suppression_until_the_first_waveform_edge() {
+    for model in [
+        Model::default(),
+        Model::Cgb(CgbRevision::RevC),
+        Model::Cgb(CgbRevision::RevE),
+    ] {
+        for channel in 0..2 {
+            let base = 0xff11 + channel as u16 * 5;
+            let mut apu = Apu::new(model);
+            apu.write_reg(0xff26, 0);
+            apu.write_reg(0xff26, 0x80);
+            apu.write_reg(base, 0x40); // Duty 1 is high at phase zero.
+            apu.write_reg(base + 1, 0xf0);
+            apu.write_reg(base + 2, 0xc0);
+            apu.write_reg(base + 3, 0x87);
+            let mut div = 0;
+            for _ in 0..32 {
+                tick_machine(&mut apu, &mut div, 16);
+                apu.write_reg(base + 3, 0x87);
+                assert_eq!(
+                    apu.pcm_samples()[channel],
+                    0,
+                    "{model:?}, channel {channel}"
+                );
+            }
+            // Let seven real edges occur; duty 1 is high at phase seven.
+            for _ in 0..(7 * 256 + 8) {
+                tick_machine(&mut apu, &mut div, 1);
+            }
+            assert_eq!(
+                apu.pcm_samples()[channel],
+                15,
+                "{model:?}, channel {channel}"
+            );
+            apu.write_reg(base + 3, 0x87);
+            assert_eq!(apu.pcm_samples()[channel], 15);
+        }
+    }
+}
+
+#[test]
+fn pulse_retrigger_does_not_clock_a_pending_duty_write() {
+    for model in [Model::default(), Model::Cgb(CgbRevision::RevC)] {
+        for channel in 0..2 {
+            let base = 0xff11 + channel as u16 * 5;
+            let mut apu = Apu::new(model);
+            apu.write_reg(0xff26, 0);
+            apu.write_reg(0xff26, 0x80);
+            apu.write_reg(base, 0);
+            apu.write_reg(base + 1, 0xf0);
+            apu.write_reg(base + 2, 0xc0);
+            apu.write_reg(base + 3, 0x87);
+            let mut div = 0;
+            for _ in 0..(3 * 256 + 16) {
+                tick_machine(&mut apu, &mut div, 1);
+            }
+            assert_eq!(apu.pcm_samples()[channel], 0);
+            apu.write_reg(base, 0xc0);
+            apu.write_reg(base + 3, 0x87);
+            assert_eq!(apu.pcm_samples()[channel], 0);
+            for _ in 0..272 {
+                tick_machine(&mut apu, &mut div, 1);
+            }
+            assert_eq!(apu.pcm_samples()[channel], 15);
+        }
+    }
+}

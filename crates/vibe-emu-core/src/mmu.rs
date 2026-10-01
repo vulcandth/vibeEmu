@@ -964,34 +964,8 @@ impl Mmu {
                 self.ppu.read_reg(addr)
             }
             0xFF46 => self.ppu.dma,
-            0xFF51 => {
-                if self.ppu.is_cgb_native_mode() {
-                    (self.hdma.src >> 8) as u8
-                } else {
-                    0xFF
-                }
-            }
-            0xFF52 => {
-                if self.ppu.is_cgb_native_mode() {
-                    (self.hdma.src & 0x00F0) as u8
-                } else {
-                    0xFF
-                }
-            }
-            0xFF53 => {
-                if self.ppu.is_cgb_native_mode() {
-                    ((self.hdma.dst & 0x1F00) >> 8) as u8
-                } else {
-                    0xFF
-                }
-            }
-            0xFF54 => {
-                if self.ppu.is_cgb_native_mode() {
-                    (self.hdma.dst & 0x00F0) as u8
-                } else {
-                    0xFF
-                }
-            }
+            // HDMA1-4 are write-only, on every model/revision.
+            0xFF51..=0xFF54 => 0xFF,
             0xFF55 => {
                 if !self.ppu.is_cgb_native_mode() {
                     0xFF
@@ -1412,22 +1386,21 @@ impl Mmu {
             }
             0xFF53 => {
                 if self.ppu.is_cgb_native_mode() && !self.hdma.active {
-                    let vram_hi = (val & 0x1F) as u16;
+                    let vram_hi = val as u16;
                     let raw = (vram_hi << 8) | (self.hdma.dst & 0x00F0);
-                    self.hdma.dst = Self::sanitize_vram_dma_dest(raw);
+                    self.hdma.dst = raw;
                 }
             }
             0xFF54 => {
                 if self.ppu.is_cgb_native_mode() && !self.hdma.active {
-                    let raw = (self.hdma.dst & 0x1F00) | (val as u16 & 0x00F0);
-                    self.hdma.dst = Self::sanitize_vram_dma_dest(raw);
+                    let raw = (self.hdma.dst & 0xFF00) | (val as u16 & 0x00F0);
+                    self.hdma.dst = raw;
                 }
             }
             0xFF55 => {
                 if !self.ppu.is_cgb_native_mode() {
                     return;
                 }
-                self.hdma.dst = Self::sanitize_vram_dma_dest(self.hdma.dst);
                 let requested_blocks = (val & 0x7F) + 1;
                 if self.hdma.active && (val & 0x80) == 0 {
                     // Abort ongoing HDMA. Hardware reports remaining blocks in FF55 when
@@ -1681,31 +1654,40 @@ impl Mmu {
 
     /// Perform a General DMA transfer immediately, consuming CPU cycles.
     fn start_gdma(&mut self, blocks: u8) {
-        let total_bytes = blocks as usize * 0x10;
-        let mut src = self.hdma.src;
-        let mut dst = Self::sanitize_vram_dma_dest(self.hdma.dst);
+        let mut transferred = 0;
+        for _ in 0..blocks {
+            self.copy_vram_dma_block();
+            transferred += 1;
+            if self.hdma.dst == 0 {
+                break;
+            }
+        }
+        self.hdma.active = false;
+        self.hdma.blocks = 0;
+        self.hdma.cancelled = false;
+        self.gdma_cycles = transferred * self.hdma_block_cycle_cost();
+    }
 
-        // Clear last_cpu_pc so these DMA-driven reads/writes are not
-        // misattributed to the last executing CPU instruction in logs.
+    // GDMA and HDMA use the same source bus and address counters.
+    // Gambatte dma_*_read exercises disconnected sources; ff5*_bits confirms
+    // the address ports are write-only. The destination counter retains its
+    // upper bits: dma_dst_wrap_1/2 distinguish DF:F0 from FF:F0 even though
+    // both address VRAM 9FF0. Only the full counter overflow stops transfer.
+    // OAM DMA has different bus access rules and must keep its own reader.
+    fn copy_vram_dma_block(&mut self) {
         #[cfg(feature = "ppu-trace")]
         {
             self.last_cpu_pc = None;
         }
-        for _ in 0..total_bytes {
-            // Read source using the DMA-aware reader so this GDMA operation
-            // can proceed even if an OAM DMA (`dma_cycles`) is active.
-            let byte = self.dma_read_byte(src);
-            self.vram_dma_write(dst, byte);
-            src = src.wrapping_add(1);
-            dst = 0x8000 | ((dst.wrapping_add(1)) & 0x1FFF);
+        for _ in 0..0x10 {
+            let byte = match self.hdma.src {
+                0x0000..=0x7fff | 0xa000..=0xdfff => self.read_byte_inner(self.hdma.src, true),
+                _ => 0xff,
+            };
+            self.vram_dma_write(0x8000 | (self.hdma.dst & 0x1fff), byte);
+            self.hdma.src = self.hdma.src.wrapping_add(1);
+            self.hdma.dst = self.hdma.dst.wrapping_add(1);
         }
-
-        self.hdma.src = src;
-        self.hdma.dst = Self::sanitize_vram_dma_dest(dst);
-        self.hdma.active = false;
-        self.hdma.blocks = 0;
-        self.hdma.cancelled = false;
-        self.gdma_cycles = blocks as u32 * self.hdma_block_cycle_cost();
     }
 
     /// Execute a single 0x10-byte HDMA burst during H-Blank.
@@ -1717,30 +1699,14 @@ impl Mmu {
     }
 
     fn perform_hdma_block(&mut self) {
-        self.hdma.dst = Self::sanitize_vram_dma_dest(self.hdma.dst);
-        // Clear last_cpu_pc so HDMA transfers don't get logged with the
-        // previously executing CPU PC.
-        #[cfg(feature = "ppu-trace")]
-        {
-            self.last_cpu_pc = None;
-        }
-        for _ in 0..0x10 {
-            // HDMA source reads should also bypass the DMA blocking checks
-            // so HDMA can transfer data even if an OAM DMA is currently
-            // active.
-            let byte = self.dma_read_byte(self.hdma.src);
-            self.vram_dma_write(self.hdma.dst, byte);
-            self.hdma.src = self.hdma.src.wrapping_add(1);
-            self.hdma.dst = 0x8000 | ((self.hdma.dst.wrapping_add(1)) & 0x1FFF);
-        }
+        self.copy_vram_dma_block();
 
         self.hdma.blocks = self.hdma.blocks.saturating_sub(1);
-        if self.hdma.blocks == 0 {
+        if self.hdma.blocks == 0 || self.hdma.dst == 0 {
             self.hdma.active = false;
             self.hdma.cancelled = false;
         }
 
-        self.hdma.dst = Self::sanitize_vram_dma_dest(self.hdma.dst);
         self.gdma_cycles += self.hdma_block_cycle_cost();
     }
 
