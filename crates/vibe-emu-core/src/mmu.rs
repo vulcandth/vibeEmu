@@ -287,14 +287,20 @@ impl Mmu {
     }
 
     #[inline]
-    fn post_boot_div(model: Model) -> u16 {
+    fn post_boot_div(model: Model, native_cgb: bool) -> u16 {
         match model {
             Model::Cgb(cgb_revision) => match cgb_revision {
                 CgbRevision::RevA
                 | CgbRevision::RevB
                 | CgbRevision::RevC
                 | CgbRevision::RevD
-                | CgbRevision::RevE => 0x2678,
+                | CgbRevision::RevE => {
+                    // The boot ROM installs compatibility palettes only for
+                    // monochrome cartridges. Gambatte's native-CGB DIV pair
+                    // and Mooneye's boot_div-cgbABCDE (a DMG cartridge) measure
+                    // these different handoff phases on the same hardware.
+                    if native_cgb { 0x1EA0 } else { 0x2678 }
+                }
                 CgbRevision::Rev0 => 0x2884,
             },
             Model::Mgb => 0xABCC,
@@ -409,7 +415,7 @@ impl Mmu {
         let dmg_revision = model.dmg_revision().unwrap_or_default();
 
         let mut timer = Timer::new();
-        timer.div = Self::post_boot_div(model);
+        timer.div = Self::post_boot_div(model, false);
 
         let dot_div = timer.div;
 
@@ -631,6 +637,10 @@ impl Mmu {
         }
         let is_dmg = !cart.cgb;
         if self.post_boot_state {
+            if matches!(self.model, Model::Cgb(_)) {
+                self.timer.div = Self::post_boot_div(self.model, cart.cgb);
+                self.dot_div = self.timer.div;
+            }
             if self.model.is_sgb() {
                 self.apply_sgb_header_boot(&cart.rom);
             }
@@ -1745,6 +1755,8 @@ impl Mmu {
         }
 
         let double_speed = self.key1 & 0x80 != 0;
+        self.serial
+            .on_div_reset(prev_div, double_speed, &mut self.if_reg);
         if speed_switch {
             self.apu.on_speed_switch_div_reset(prev_div, double_speed);
         } else {

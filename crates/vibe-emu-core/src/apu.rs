@@ -905,7 +905,10 @@ impl NoiseChannel {
         if self.length_enable && self.length > 0 {
             self.length -= 1;
             if self.length == 0 {
-                self.pending_disable = true;
+                // Length expiration is visible in NR52 on this DIV edge,
+                // just as for pulse and wave; it does not wait for the LFSR.
+                self.enabled = false;
+                self.pending_disable = false;
                 self.sample_suppressed = true;
                 self.set_pipeline_sample(0);
             }
@@ -1358,17 +1361,14 @@ impl Apu {
         self.ch3.bugged_read_countdown = 2;
         self.ch3.sample_suppressed.set(true);
 
-        if self.cgb_mode() {
-            // CGB: always redirect to the byte at the current playback position
+        // CPU access selects the same full byte CH3 is reading. DMG adds
+        // a narrow access window; it does not duplicate the output nibble.
+        // Gambatte ch3_reset_nr4init_freq7fd/7ff_read_ff30 distinguishes
+        // bytes 10/32/54 from the old synthesized values 00/22/44.
+        if self.cgb_mode() || just_read {
             self.wave_ram[byte_idx]
         } else {
-            // DMG: only accessible during the exact cycle the APU read wave RAM
-            if just_read {
-                let nibble = self.ch3.wave_sample_buffer & 0x0F;
-                (nibble << 4) | nibble
-            } else {
-                0xFF
-            }
+            0xFF
         }
     }
 

@@ -10,11 +10,11 @@ The v7.0 c-sp ROM bundle contains 3,429 runnable Gambatte cases. Runs below incl
 | --- | ---: | ---: | ---: |
 | Original runner and original core | 2,192 | 1,237 | 0 |
 | Corrected runner, original core | 2,256 | 1,173 | 0 |
-| Corrected runner, changed core | 2,271 | 1,158 | 0 |
+| Corrected runner, changed core | 2,303 | 1,126 | 0 |
 
-The core changes fix 15 cases with no regression against the corrected-runner baseline. Relative to the original measurement, 81 failures pass and two previously passing cases fail because the runner now selects CGB-C rather than CGB-E. These two are listed below; they are not hidden or added to an ignore list. Six false audio passes exposed by the runner correction were investigated and fixed in the core. Forty-nine newly passing cases are removed from the existing ignore list; no ignores are added.
+The core changes fix 47 cases with no regression against the corrected-runner baseline. Relative to the original measurement, 113 failures pass and two previously passing cases fail because the runner now selects CGB-C rather than CGB-E. These two are listed below; they are not hidden or added to an ignore list. Six false audio passes exposed by the runner correction were investigated and fixed in the core. Seventy-one newly passing cases are removed from the existing ignore list; no ignores are added.
 
-Every original failure has matching assembly in [the upstream test tree](https://github.com/pokemon-speedrunning/gambatte-core/tree/d819bad196/test/hwtests). The tree is unchanged at source checkout `5a41a68c25402421fb1983ddadc9faf2418ddb0f`. The accompanying CSV records each case's expectations, source link, normalized source hash, explicit I/O accesses, fixed-address timing sections, and before/after outcome. This is a complete static source inventory, **not an exhaustive causal diagnosis** of the remaining failures. Detailed source analysis and implementation in this pass focus on the runner, pulse retriggering, and VRAM DMA.
+Every original failure has matching assembly in [the upstream test tree](https://github.com/pokemon-speedrunning/gambatte-core/tree/d819bad196/test/hwtests). The tree is unchanged at source checkout `5a41a68c25402421fb1983ddadc9faf2418ddb0f`. The accompanying CSV records each case's expectations, source link, normalized source hash, explicit I/O accesses, fixed-address timing sections, and before/after outcome. This is a complete static source inventory, **not an exhaustive causal diagnosis** of the remaining failures. Detailed analysis covers the runner, pulse retriggering, VRAM DMA, all serial cases, the wave-RAM timing family, noise length, and the cartridge-mode boot-phase conflict. Remaining PPU families have representative source reviews and a static per-case inventory; exhaustive causal diagnosis is unfinished.
 
 ## Runner corrections
 
@@ -53,6 +53,137 @@ GDMA and HDMA previously duplicated their copy loops and used the OAM DMA reader
 
 New tests verify write-only readback without losing programmed addresses, disconnected-source handling in both transfer modes, and both overflow outcomes. No new production path duplicates DMG/CGB behavior.
 
+## Separating measurement corrections from core fixes
+
+
+
+The runner corrections were replayed sequentially against the **unchanged base core**. Both endpoint case maps reproduce the original and corrected baselines exactly. Intermediate effects depend on the order because working audio exposes revision-specific behavior.
+
+
+
+| Unchanged core, cumulative runner changes | Passed | Failed | Gains / losses from preceding row |
+
+| --- | ---: | ---: | ---: |
+
+| Original runner | 2,192 | 1,237 | — |
+
+| Correct model-specific expectation selection | 2,212 | 1,217 | 20 / 0 |
+
+| Correct PNG color conversion | 2,213 | 1,216 | 1 / 0 |
+
+| Capture actual stereo audio, still CGB-E | 2,226 | 1,203 | 46 / 33 |
+
+| Select the specified CGB-C hardware | 2,256 | 1,173 | 46 / 16 |
+
+
+
+At the endpoints, the runner makes 72 original failures pass and exposes eight original false passes: net **64**. The 72 persistent gains partition in this order into 20 expectation-selection, one PNG, 32 audio, and 19 model-selection cases; five of those last 19 are audio cases. These are not independent additive effects of isolated switches. The six exposed pulse-audio failures are fixed by the pulse changes above. The two model-exposed PPU failures remain listed below.
+
+
+
+The initial draft's 79 net additional passes were therefore **64 measurement corrections + 15 core fixes**, not 79 core fixes. Continued source-driven investigation adds 13 serial, four wave-RAM, three noise-length and 12 cartridge-mode boot-phase fixes. Final improvement is **64 + 47 = 111 net passes**: 113 original failures now pass, and the same two model-exposed cases fail. No additional Gambatte case regresses relative to the corrected-runner baseline.
+
+
+
+## Serial clock: one DIV-driven mechanism
+
+
+
+All 46 serial assembly sources were read, including the passing neighbors, fixed-address variations and normal/fast/double-speed pairs. The old implementation used the independent dot divider, ignored FF04 resets, and implicitly treated the second divider stage as free-running. Hardware uses CPU DIV bit 7 (normal serial) or bit 2 (CGB fast serial) to toggle a second stage. SC writes restart that stage low; a falling edge of that stage shifts a bit. Consequently the period remains 512 or 16 CPU clocks regardless of speed mode.
+
+
+
+`step_cpu_steps` and `on_div_reset` now call the same edge/shift implementation. The CPU supplies its actual resettable DIV and elapsed CPU clocks. Public dot-domain stepping retains its API by converting once at the boundary. DMG's missing fast-clock capability and CGB compatibility mode remain explicit; the redundant all-zero revision phase adjustment and separate speed-dependent bit-selection paths are removed. Link-port polling, external clocks and transfer completion retain their existing interfaces.
+
+
+
+The assembly probes start transfers on opposite halves of DIV, restart them after one/two NOPs, and write DIV immediately before or after its relevant edge. For example, the `div_write_start_wait_read_if` pair samples IF at `054C/054D`, while the late-DIV pairs write at `04EC/04ED` and `052C/052D`; the CGB fast pair uses `0161/0162`. A uniform completion-time offset cannot satisfy these pairs. The two-stage clock fixes 13 cases and leaves **45/46 serial ROMs passing**. Three new Rust tests cover restart phase, reset-generated edges without resetting the second stage, and the actual CPU path across normal/fast/double-speed modes.
+
+
+
+The mechanism is independently reflected in SameBoy's [`GB_serial_master_edge` and divider setter](https://github.com/LIJI32/SameBoy/blob/213a12ce93d66b105a113debd9396306066a7cfc/Core/timing.c) and its [SC write handling](https://github.com/LIJI32/SameBoy/blob/213a12ce93d66b105a113debd9396306066a7cfc/Core/memory.c). No ROM identity participates in emulation.
+
+
+
+## Wave RAM: correct the byte contract, preserve the access window
+
+
+
+All 18 `ch3_reset_nr4init` read/write sources were examined. Four reads of FF30 expect `10`, `32`, `32`, and `54` at their respective playback positions. DMG returned `00`, `22`, `22`, and `44`: its read path duplicated the sample buffer's low nibble. CGB already returned the full current RAM byte.
+
+
+
+The shared read path now returns the current full byte when access is permitted. DMG still requires the channel's RAM-read window; CGB redirects to the current byte, and AGB's blocked-read behavior remains intact. This is the byte-oriented contract documented by [Pan Docs](https://gbdev.io/pandocs/Audio_Registers.html#ff30ff3f--wave-pattern-ram) and used by SameBoy's [wave RAM read implementation](https://github.com/LIJI32/SameBoy/blob/213a12ce93d66b105a113debd9396306066a7cfc/Core/apu.c).
+
+
+
+**Existing-test correction:** `wave_ram_locked_read_returns_latched_nibble_on_dmg` encoded the incorrect repeated-nibble behavior. Before editing that test, the candidate passed four additional Gambatte cases and failed only this assertion among the 71 APU tests. Its source was inspected, along with the hardware ROMs and references. It is replaced by `wave_ram_locked_read_returns_full_byte_on_dmg`, checking exact full-byte equality for six asymmetric patterns (`9C`, `10`, `32`, `54`, `A5`, `0F`). This is a deliberate contract correction, not an unchanged-regression-suite claim or a relaxed assertion. No external ROM expectation or image was changed.
+
+
+
+## Noise length expiry
+
+
+
+The six normal/late-DIV noise-length probes initialize length to three (`NR41=3D`), trigger with length enabled and read NR52 one instruction apart. The failing members expected `F0` but observed `F8`. Unlike pulse and wave, noise left its enabled flag set until later waveform processing after length reached zero.
+
+
+
+Noise now clears that flag on the length-clock edge itself, preserving the existing waveform suppression. This matches the other channels and SameBoy's length-clock behavior without adding timing constants or another model-specific path. All three failures pass and their earlier-read neighbors remain passing. A new Rust test checks each of the five frame-sequencer edges up to the third length clock, on DMG and CGB-C/E, before another waveform tick can conceal the stale enabled flag.
+
+
+
+## Investigated boundaries that remain unresolved
+
+
+
+### Interrupt assertion versus acknowledgment
+
+
+
+The remaining serial failure, `start_wait_trigger_int8_read_if_2`, and TIMA's `tc00_irq_late_retrigger_2` require DMG to retain a newly asserted interrupt while CGB clears it. All five serial and all five TIMA timing counterparts were read. Serial writes IF at `13E7`, `13E8`, or `13E9`; TIMA uses `11E9`, `11EA`, or `11EB`. Double-speed counterparts further constrain the boundary.
+
+
+
+An isolated experiment acknowledged IF two CPU clocks earlier during the final interrupt-entry cycle, following the approximate position in SameBoy's CPU implementation. It fixed three STAT cases but regressed previously passing `serial/start_wait_trigger_int8_read_if_ds_2_cgb04c_outE0` and `tima/tc00_irq_late_retrigger_ds_2_cgb04c_outE0`. The middle normal-speed cases then passed on DMG but failed on CGB with `E8`/`E4` instead of `E0`, so the global shift did not resolve them.
+
+
+
+The regressed sources were inspected rather than simply discarding the failures: they demonstrate that source assertion duration and IF set/clear arbitration must be represented coherently. The current plain IF byte does not retain those signal windows, and one-T-clock splits in double speed also need a carried half-dot phase. Gambatte's own `ackIrq` contains source-specific update offsets and a TODO to represent assertion duration instead. Those offsets are not transplanted here. The experimental global shift is not part of the PR; no supported implementation satisfying both boundaries was established.
+
+
+
+## Cartridge-mode boot phase: resolving a cross-suite conflict
+
+
+
+The two CGB `div/start_inc` sources differ by one NOP and require `1E` then `1F`; the old core read `26` for both. `tima/tc00_start_2` similarly expects `F1` but read `F0`. Gambatte's [reference post-BIOS initialization](https://github.com/pokemon-speedrunning/gambatte-core/blob/d819bad196/libgambatte/src/initstate.cpp) implies DIV `1EA0`. Mooneye's [hardware-verified boot-DIV test](https://github.com/Gekkio/mooneye-test-suite/blob/31510e12eea6286d36eea060a6adde755e1067aa/misc/boot_div-cgbABCDE.s) instead requires the `2678` phase and explicitly covers CGB-C as well as E.
+
+
+
+An isolated revision-only `1EA0` change gained 12 Gambatte cases but failed that Mooneye ROM when its wrapper was run on CGB-C. Its six DIV reads and cartridge header were then inspected. The decisive distinction is **cartridge mode**: Mooneye's header has CGB flag `00`, while these Gambatte ROMs have `80`/`C0`. The [CGB boot ROM's `SetupCompatibility`](https://codeberg.org/ISSOtm/gb-bootroms/src/commit/e10154ee7962873d9fa7ec02be6a6d4299bad208/src/cgb.asm) takes an additional palette-installation path for monochrome cartridges. A local actual-boot-ROM trace corroborated separate handoff phases (`267C` versus `1E8C` on the current CGB-C power-on emulation), while also showing that full power-on emulation still has a small phase error. Those trace values are not used as new offsets.
+
+
+
+Post-boot initialization now selects the independently tested `2678` compatibility phase or `1EA0` native-CGB phase from the cartridge mode for CGB A–E. The selection lives in the shared initialization path, not in either ROM runner. CGB0 and AGB retain their independently existing seeds because these tests do not establish their native-mode values. Actual boot-ROM execution remains responsible for its own evolving DIV. Both CPU DIV and the dot-divider phase are initialized consistently.
+
+
+
+This explains and resolves the regression instead of giving up at a revert. The native-mode change fixes two DIV, one TIMA and nine sound ROMs without a Gambatte loss; Mooneye's compatibility-mode requirement remains satisfied. The remaining initial-position/envelope/length sources were also read, but their unresolved waveform/frame-sequencer state is not claimed fixed by this divider correction. In particular, `apply_post_boot_state` writes NR13/NR14 mirror values `C1`/`87`, while the constructor initializes the internal pulse frequency separately and the bootstrap sets the same duty position on both models. A complete waveform phase/suppression initialization is still needed; no guessed duty index or countdown is introduced here.
+
+
+
+## PPU and bus timing work still open
+
+
+
+Representative source bodies were followed for the remaining OAM DMA, sprite, window, scroll, tile-map/data, palette, HALT and VRAM-access groups. They exercise different mechanisms: OAM DMA modifies bytes during sprite selection; sprite fetch stalls delay HBlank; window reenable/WX/WY writes alter fetcher state; SCX/SCY and LCDC map/data writes straddle tile-fetch latches; palette and VRAM probes sample separate bus-access boundaries. HALT cases additionally distinguish interrupt wakeup from handler-entry time. PNG cases preserve pixel expectations, not merely total mode-3 duration.
+
+
+
+These mechanisms are coupled to the current fetcher and bus scheduling. No candidate shared implementation has been established that satisfies all their passing neighbors and the existing AGE/Mealybug coverage. A global mode-3 offset or CGB-C/E behavior flattening would not constitute a source-supported fix. The CSV is a complete source inventory, **not evidence that every remaining case has received a complete causal diagnosis**. Exhaustive diagnosis of these families remains unfinished; this draft records that limitation explicitly.
+
+
 ## Remaining evidence and limits
 
 The largest remaining families concern OAM scan/DMA interactions, sprite-fetch stalls, window activation/restart, scroll/register fetch latches, STAT/LYC transitions, and speed-switch phases. The CSV retains exact case names and source locations. No global timing offset, ROM-name condition, fixture edit, or added ignore entry is used to force them to pass.
@@ -72,19 +203,19 @@ The status generator now identifies a test by `(suite, name)` rather than name a
 
 | Local validation | Original base | Final code |
 | --- | --- | --- |
-| Full workspace debug | 1,531 passed, 0 failed, 41 ignored | 1,539 passed, 0 failed, 41 ignored |
-| Full workspace release | 1,531 passed, 0 failed, 41 ignored | 1,539 passed, 0 failed, 41 ignored |
-| Complete Gambatte release | 2,192 passed, 1,237 failed | 2,271 passed, 1,158 failed |
-| Complete Gambatte debug | Not separately run | 2,271 passed, 1,158 failed |
+| Full workspace debug | 1,531 passed, 0 failed, 41 ignored | 1,544 passed, 0 failed, 41 ignored |
+| Full workspace release | 1,531 passed, 0 failed, 41 ignored | 1,544 passed, 0 failed, 41 ignored |
+| Complete Gambatte release | 2,192 passed, 1,237 failed | 2,303 passed, 1,126 failed |
+| Complete Gambatte debug | Not separately run | 2,303 passed, 1,126 failed |
 | Formatting / workspace Clippy | Not separately measured | Pass / pass with warnings denied |
 | Dependency policy (`cargo deny --locked check`) | Dependency graph unchanged | Pass |
 | Python status-generator regressions | Tests did not exist | 2 passed |
 
-Final debug/release Gambatte outcomes agree for all 3,429 cases. Full workspace runs have no removed cases and add eight Rust regression tests. Manual gameplay, hardware captures, and analog audio listening were not performed.
+Final debug/release Gambatte outcomes agree for all 3,429 cases. Full workspace runs add 13 Rust regression tests. One pre-existing APU test is renamed and corrected to assert exact full-byte wave-RAM reads; the explicit contract correction and evidence are described above. No external ROM expectations are modified. Manual gameplay, hardware captures, and analog audio listening were not performed.
 
 ### Reproduction
 
-Use the repository's c-sp v7.0 ROM bundle at `crates/vibe-emu-core/test_roms` and the same Rust toolchain (local runs used Rust/Cargo 1.98.1 on Windows). The original baseline is commit `e50ee9707bd5e216d0580957f63af3e3981506c8`. To reproduce the corrected-runner baseline independently, use the final test runner and expectation helper with `src/apu.rs` and `src/mmu.rs` from that base in a separate checkout.
+Use the repository's c-sp v7.0 ROM bundle at `crates/vibe-emu-core/test_roms` and the same Rust toolchain (local runs used Rust/Cargo 1.98.1 on Windows). The original baseline is commit `e50ee9707bd5e216d0580957f63af3e3981506c8`. To reproduce the corrected-runner baseline independently, use the final test runner and expectation helper with the entire core `src` tree from that base in a separate checkout.
 
 ```text
 cargo test --locked --workspace --no-fail-fast
@@ -109,7 +240,7 @@ The complete Gambatte commands deliberately return exit 101 for the documented r
 | `bgtilemap` | 24 | 24 |
 | `cgbpal_m3` | 28 | 28 |
 | `display_startstate` | 2 | 0 |
-| `div` | 4 | 2 |
+| `div` | 4 | 0 |
 | `dma` | 105 | 96 |
 | `dmgpalette_during_m3` | 17 | 17 |
 | `enable_display` | 14 | 13 |
@@ -136,26 +267,26 @@ The complete Gambatte commands deliberately return exit 101 for the documented r
 | `oamdma` | 314 | 314 |
 | `scx_during_m3` | 45 | 45 |
 | `scy` | 43 | 43 |
-| `serial` | 14 | 14 |
-| `sound` | 66 | 36 |
+| `serial` | 14 | 1 |
+| `sound` | 66 | 20 |
 | `speedchange` | 33 | 18 |
 | `sprites` | 175 | 171 |
-| `tima` | 3 | 2 |
+| `tima` | 3 | 1 |
 | `vram_m3` | 3 | 3 |
 | `vramw_m3end` | 3 | 3 |
 | `window` | 135 | 135 |
 
-The per-case source inventory is [GAMBATTE_FAILURES.csv](GAMBATTE_FAILURES.csv). I/O columns record explicit literal FFxx accesses; indirect accesses through C are present in the linked source, not guessed by the static audit. Hashes cover decoded source with normalized newlines.
+The per-case source inventory is [GAMBATTE_FAILURES.csv](GAMBATTE_FAILURES.csv). Its intermediate runner columns record the cumulative replay above, including working audio before CGB-C selection. `final_diagnostic` preserves the measured failure message for each remaining case; the runner stops at the first failing model. I/O columns record explicit literal FFxx accesses; indirect accesses through C are present in the linked source, not guessed by the static audit. Hashes cover decoded source with normalized newlines.
 
 ## Complete include-ignored suite comparison
 
-Counts below use suite-scoped identities for both baseline and final logs. All 35 non-Gambatte baseline failures remain unchanged; no case is removed. The generated report totals 3,760 passes and 1,193 failures (4,953 cases), versus a corrected baseline of 3,673 passes and 1,272 failures (4,945 cases). The eight additional cases are the new Rust regression tests.
+Counts below use suite-scoped identities for both baseline and final logs. All 35 non-Gambatte baseline failures remain unchanged. The wave-RAM assertion is explicitly corrected and renamed; other pre-existing tests are retained. The generated report totals 3,797 passes and 1,161 failures (4,958 cases), versus a corrected baseline of 3,673 passes and 1,272 failures (4,945 cases). The 13 additional cases are new Rust regression tests; the wave-RAM test is a one-for-one replacement with a stricter corrected contract.
 
 | Suite | Baseline pass/fail | Final pass/fail | New failures |
 | --- | ---: | ---: | ---: |
 | `additional_roms` | 39/7 | 39/7 | 0 |
 | `age` | 119/0 | 119/0 | 0 |
-| `apu` | 69/0 | 71/0 | 0 |
+| `apu` | 69/0 | 72/0 | 0 |
 | `apu_quirks` | 3/0 | 3/0 | 0 |
 | `bgb_protocol` | 24/0 | 24/0 | 0 |
 | `boot_handoff_state` | 2/0 | 2/0 | 0 |
@@ -172,7 +303,7 @@ Counts below use suite-scoped identities for both baseline and final logs. All 3
 | `dmg_acid2_rom` | 1/0 | 1/0 | 0 |
 | `dmg_sound_roms` | 12/0 | 12/0 | 0 |
 | `doc` | 16/0 | 16/0 | 0 |
-| `gambatte` | 2192/1237 | 2271/1158 | 2 |
+| `gambatte` | 2192/1237 | 2303/1126 | 2 |
 | `gambatte_harness` | 0/0 | 3/0 | 0 |
 | `gbmicrotest` | 510/3 | 510/3 | 0 |
 | `halt_batch` | 4/0 | 4/0 | 0 |
@@ -185,7 +316,7 @@ Counts below use suite-scoped identities for both baseline and final logs. All 3
 | `mealybug_tearoom` | 62/15 | 62/15 | 0 |
 | `mem_timing_rom` | 3/0 | 3/0 | 0 |
 | `mmu` | 19/0 | 22/0 | 0 |
-| `model_boot` | 4/0 | 4/0 | 0 |
+| `model_boot` | 4/0 | 5/0 | 0 |
 | `mooneye_acceptance` | 87/0 | 87/0 | 0 |
 | `mooneye_extended` | 30/2 | 30/2 | 0 |
 | `oam_bug_rom_singles` | 1/0 | 1/0 | 0 |
@@ -194,9 +325,11 @@ Counts below use suite-scoped identities for both baseline and final logs. All 3
 | `prehistorik_probe` | 0/1 | 0/1 | 0 |
 | `rtc_invalid_banks_test` | 1/0 | 1/0 | 0 |
 | `same_suite` | 77/1 | 77/1 | 0 |
-| `serial` | 17/0 | 17/0 | 0 |
+| `serial` | 17/0 | 20/0 | 0 |
 | `sgb` | 8/0 | 8/0 | 0 |
 | `strikethrough` | 1/0 | 1/0 | 0 |
 | `timer` | 13/0 | 13/0 | 0 |
 | `version_api` | 1/0 | 1/0 | 0 |
 | `wilbertpol` | 118/4 | 118/4 | 0 |
+
+The desktop executor briefly disconnected during an intermediate validation run. Persistent logs verified that its debug and release workspace runs passed; its subsequent checks were superseded. Final results above come from a new complete run on the integrated code with bounded compiler concurrency. Dependency policy also passed after allowing Cargo to lock its advisory cache; the initial sandbox-only lock failure was environmental.

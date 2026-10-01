@@ -516,41 +516,34 @@ fn wave_ram_accessible_with_dac_on_when_inactive() {
 }
 
 #[test]
-fn wave_ram_locked_read_returns_latched_nibble_on_dmg() {
-    let mut apu = Apu::new(Model::default());
-    apu.write_reg(0xFF26, 0x80); // enable APU
-    let first_byte = 0x9C; // high nibble 9, low nibble C
-    apu.write_reg(0xFF30, first_byte);
-    for addr in 0xFF31..=0xFF3F {
-        apu.write_reg(addr, 0x00);
-    }
-    apu.write_reg(0xFF1A, 0x80); // DAC on
-    apu.write_reg(0xFF1C, 0x20); // full volume
-    apu.write_reg(0xFF1D, 0xFF);
-    apu.write_reg(0xFF1E, 0x87); // trigger playback
-
-    let mut div = 0u16;
-    let mut latched = None;
-    for _ in 0..256 {
-        tick_machine(&mut apu, &mut div, 1);
-        let value = apu.read_reg(0xFF30);
-        if value != 0xFF {
-            latched = Some(value);
-            break;
+fn wave_ram_locked_read_returns_full_byte_on_dmg() {
+    // Pan Docs wave RAM access and Gambatte ch3_reset_nr4init*_read_ff30
+    // require the full byte at the playback address. The former assertion
+    // demanded duplicated nibbles and encoded the implementation's bug.
+    for first_byte in [0x9c, 0x10, 0x32, 0x54, 0xa5, 0x0f] {
+        let mut apu = Apu::new(Model::default());
+        apu.write_reg(0xFF26, 0x80);
+        apu.write_reg(0xFF30, first_byte);
+        for addr in 0xFF31..=0xFF3F {
+            apu.write_reg(addr, 0x00);
         }
-    }
+        apu.write_reg(0xFF1A, 0x80);
+        apu.write_reg(0xFF1C, 0x20);
+        apu.write_reg(0xFF1D, 0xFF);
+        apu.write_reg(0xFF1E, 0x87);
 
-    let value = latched.expect("expected latched wave sample on DMG-compatible hardware");
-    assert_eq!(
-        value & 0x0F,
-        value >> 4,
-        "locked read should return repeated nibble"
-    );
-    let nibble = value & 0x0F;
-    assert!(
-        nibble == (first_byte >> 4) || nibble == (first_byte & 0x0F),
-        "latched nibble should match one of the waveform nibbles"
-    );
+        let mut div = 0;
+        let mut latched = None;
+        for _ in 0..256 {
+            tick_machine(&mut apu, &mut div, 1);
+            let value = apu.read_reg(0xFF30);
+            if value != 0xFF {
+                latched = Some(value);
+                break;
+            }
+        }
+        assert_eq!(latched, Some(first_byte), "wave RAM byte {first_byte:02x}");
+    }
 }
 
 #[test]
@@ -1146,6 +1139,32 @@ fn pulse_retrigger_does_not_clock_a_pending_duty_write() {
                 tick_machine(&mut apu, &mut div, 1);
             }
             assert_eq!(apu.pcm_samples()[channel], 15);
+        }
+    }
+}
+
+#[test]
+fn noise_length_expiration_is_visible_before_another_waveform_tick() {
+    for model in [
+        Model::default(),
+        Model::Cgb(CgbRevision::RevC),
+        Model::Cgb(CgbRevision::RevE),
+    ] {
+        let mut apu = Apu::new(model);
+        apu.write_reg(0xff26, 0);
+        apu.write_reg(0xff26, 0x80);
+        apu.write_reg(0xff20, 0x3d); // Three length clocks.
+        apu.write_reg(0xff21, 0xf0);
+        apu.write_reg(0xff22, 0x00);
+        apu.write_reg(0xff23, 0xc0);
+        assert_ne!(apu.read_reg(0xff26) & 8, 0);
+        for edge in 0..5 {
+            apu.tick_frame_sequencer(0x1fff, 0x2000, false);
+            assert_eq!(
+                apu.read_reg(0xff26) & 8,
+                if edge == 4 { 0 } else { 8 },
+                "{model:?}, edge {edge}"
+            );
         }
     }
 }
