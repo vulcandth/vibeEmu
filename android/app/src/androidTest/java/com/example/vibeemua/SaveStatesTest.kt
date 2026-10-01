@@ -3,8 +3,8 @@ package com.example.vibeemua
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
@@ -37,19 +37,21 @@ class SaveStatesTest {
                 compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag(tag) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             }
             ready("save-state-11")
-            compose.onNodeWithTag("save-state-11").performScrollTo().performClick()
+            compose.onNodeWithTag("save-state-11").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
             ready("load-state-11")
-            compose.onNodeWithTag("load-state-11").performScrollTo().performClick()
+            compose.onNodeWithTag("load-state-11").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
             ready("load-state-12")
             repeat(2) {
-                compose.onNodeWithTag("load-state-12").performScrollTo().performClick()
+                compose.onNodeWithTag("load-state-12").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
                 ready("load-state-12")
             }
-            compose.onNodeWithText("Done").performClick()
+            compose.onNodeWithText("Done").performSemanticsAction(SemanticsActions.OnClick) { it() }
+            compose.waitUntil(20_000) { compose.onAllNodesWithText("Save states").fetchSemanticsNodes().isEmpty() }
             compose.runOnIdle { visible = true }
             ready("load-state-11")
             compose.onNodeWithTag("load-state-11").performScrollTo()
-            compose.onAllNodes(isRoot()).onLast().captureToImage().asAndroidBitmap().let { bitmap ->
+            compose.waitForIdle()
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().let { bitmap ->
                 File(context.getExternalFilesDir(null), "save-states.png").outputStream().use {
                     bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
                 }

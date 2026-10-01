@@ -25,7 +25,9 @@
   recovery state for undo and conflict recovery, including after restart.
 - [x] Add ten slots, quick/recovery slots, metadata, import/export and undo-load
   on desktop and Android. Reject link/Mobile Adapter sessions in the core.
-- [ ] Complete final verification listed in [Save states](SAVE_STATES.md).
+- [x] Add automated round-trip, continuation, SRAM/recovery, failure-path, desktop
+  worker/render and Android JNI/dialog coverage.
+- [ ] Complete remaining manual device/picker verification in [Save states](SAVE_STATES.md).
 
 ## Verification requiring Matthew or another tester
 

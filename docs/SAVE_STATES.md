@@ -60,7 +60,12 @@ durable/repeated undo, SGB/hybrid borders, pending hardware events, incompatible
 ROM/model/boot configuration, malformed data, external sessions, and failed
 recovery/atomic writes. Desktop-worker and Android-bridge tests exercise
 repeated operations and failure reporting. Android instrumentation exercises
-the visible quick-save/load/undo/reopen flow.
+the visible quick-save/load/undo/reopen flow. The eight-test Android suite passed
+on an Android 16 / API 36 x86_64 emulator using a cold boot and software rendering;
+the first hardware-rendered run aborted in Android system graphics during an
+existing navigation test, before the save-state test ran.
+
+![Android save-state dialog after saving and loading](screenshots/save-states-android.png)
 
 Final command results and CI status are recorded in the pull request. Remaining
 manual verification:
