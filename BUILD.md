@@ -18,7 +18,7 @@ This document provides detailed build instructions for vibeEmu on Windows, Linux
 - **Android Studio** with the Android SDK, SDK Command-line Tools, and NDK if you want to build the Android app
 - **Rust Android targets** if you want to build the Android app:
   ```bash
-  rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+  rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
   ```
 
 ### Linux
@@ -179,7 +179,7 @@ The release build provides significantly better emulation performance and is rec
 **Solution**: Install the Android Rust targets:
 
 ```bash
-rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
 ```
 
 **Issue**: Android build fails because `sdkmanager`, the NDK, or `cargo ndk` is missing.

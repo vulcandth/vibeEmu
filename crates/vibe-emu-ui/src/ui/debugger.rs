@@ -141,10 +141,10 @@ impl DebuggerState {
         self.pending_scroll_to_addr = None;
     }
 
-    pub fn take_pending_scroll(&mut self) -> Option<u16> {
+    pub fn take_pending_scroll(&mut self, pc: u16) -> Option<u16> {
         if self.pending_scroll_to_pc {
             self.pending_scroll_to_pc = false;
-            return Some(u16::MAX); // Sentinel for "scroll to PC"
+            return Some(pc);
         }
         self.pending_scroll_to_addr.take()
     }
@@ -312,6 +312,8 @@ impl DebuggerState {
     }
 
     pub fn load_symbols_for_rom_path(&mut self, rom_path: Option<&Path>) {
+        // A new machine must not inherit inferred code boundaries from the last ROM.
+        self.code_data = CodeDataTracker::new();
         let Some(rom_path) = rom_path else {
             self.sym = None;
             self.sym_path = None;
@@ -661,6 +663,30 @@ impl DebuggerState {
         &self.code_data
     }
 
+    pub fn prepare_code_colors(&mut self, snapshot: &UiSnapshot) {
+        self.code_data.ensure_up_to_date(snapshot);
+    }
+
+    /// Only color bytes identified as code by execution/flow analysis. Unknown
+    /// data stays neutral rather than pretending every memory byte is an opcode.
+    pub fn memory_byte_role(&self, snapshot: &UiSnapshot, addr: u16) -> super::highlight::Role {
+        let bank = snapshot.debugger.active_rom_bank.min(0xff) as u8;
+        let Some(mem) = &snapshot.debugger.mem_image else {
+            return super::highlight::Role::Plain;
+        };
+        for offset in 0..3u16 {
+            let start = addr.wrapping_sub(offset);
+            if self
+                .code_data
+                .code_len_at(start, bank)
+                .is_some_and(|len| u16::from(len) > offset)
+            {
+                return super::highlight::byte_role(mem[start as usize], offset as usize);
+            }
+        }
+        super::highlight::Role::Plain
+    }
+
     pub fn symbols(&self) -> Option<&RgbdsSymbols> {
         self.sym.as_ref()
     }
@@ -765,7 +791,11 @@ impl RgbdsSymbols {
     pub fn first_label_for(&self, bank: u8, addr: u16) -> Option<&str> {
         self.by_bank_addr
             .get(&(bank, addr))
-            .and_then(|v| v.first())
+            .and_then(|v| {
+                v.iter()
+                    .find(|name| !name.contains('.'))
+                    .or_else(|| v.first())
+            })
             .map(|s| s.as_str())
     }
 
@@ -796,6 +826,16 @@ impl RgbdsSymbols {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn follow_resolves_current_pc_without_reserving_ffff() {
+        let mut state = DebuggerState::default();
+        state.request_scroll_to_pc();
+        assert_eq!(state.take_pending_scroll(0x9000), Some(0x9000));
+        state.note_breakpoint_hit(0xff, 0xffff);
+        assert_eq!(state.take_pending_scroll(0x100), Some(0xffff));
+        assert_eq!(state.take_pending_scroll(0x100), None);
+    }
 
     #[test]
     fn parse_sym_file() {

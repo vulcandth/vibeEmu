@@ -67,6 +67,9 @@ class NativeBridge {
 }
 
 class Emulator(private val native: NativeBridge = NativeBridge()) {
+    @Volatile var outputVolume: Int = 100
+    @Volatile var monoOutput: Boolean = false
+    @Volatile var speedPercent: Int = 100
     @Volatile private var handle: Long = 0
     @Volatile private var romLoaded: Boolean = false
     @Volatile var isSgbHost: Boolean = false
@@ -97,38 +100,32 @@ class Emulator(private val native: NativeBridge = NativeBridge()) {
         path: String,
         emulationMode: EmulationMode,
         bootRoms: Map<BootRomMode, ByteArray>,
+        beforeSwap: () -> Unit = {},
     ): Boolean {
         synchronized(nativeLock) {
-            romLoaded = false
-            if (handle != 0L) {
-                native.destroy(handle)
-                handle = 0
-            }
-
-            handle = native.create(emulationMode.nativeId)
-            if (handle == 0L) {
-                romLoaded = false
-                return false
-            }
-
-            for ((mode, bytes) in bootRoms) {
-                if (!native.setBootRom(handle, mode.nativeId, bytes)) {
-                    native.destroy(handle)
-                    handle = 0
-                    return false
+            // Flush before the candidate reads the same cartridge's battery save.
+            if (handle != 0L) native.saveRam(handle)
+            val candidate = native.create(emulationMode.nativeId)
+            if (candidate == 0L) return false
+            var installed = false
+            try {
+                for ((mode, bytes) in bootRoms) {
+                    if (!native.setBootRom(candidate, mode.nativeId, bytes)) return false
                 }
+                if (!native.loadRomFile(candidate, path)) return false
+                val nextHost = native.sgbHost(candidate)
+                val nextDuration = 70_224_000_000_000L / native.clockHz(candidate)
+                beforeSwap()
+                if (handle != 0L) native.destroy(handle)
+                handle = candidate
+                installed = true
+                romLoaded = true
+                isSgbHost = nextHost
+                frameDurationNs = nextDuration
+                return true
+            } finally {
+                if (!installed) native.destroy(candidate)
             }
-
-            romLoaded = native.loadRomFile(handle, path)
-            if (!romLoaded) {
-                native.destroy(handle)
-                handle = 0
-            }
-            if (romLoaded) {
-                isSgbHost = native.sgbHost(handle)
-                frameDurationNs = 70_224_000_000_000L / native.clockHz(handle)
-            } else { isSgbHost = false }
-            return romLoaded
         }
     }
 

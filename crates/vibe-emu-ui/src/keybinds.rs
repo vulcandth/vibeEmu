@@ -3,6 +3,47 @@ use log::{info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BindingKey {
+    Key(Key),
+    ShiftLeft,
+    ShiftRight,
+}
+
+impl std::fmt::Debug for BindingKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Key(key) => key.fmt(f),
+            Self::ShiftLeft => f.write_str("Left Shift"),
+            Self::ShiftRight => f.write_str("Right Shift"),
+        }
+    }
+}
+
+impl From<Key> for BindingKey {
+    fn from(key: Key) -> Self {
+        Self::Key(key)
+    }
+}
+
+impl BindingKey {
+    pub fn down(self, input: &eframe::egui::InputState, shift: [bool; 2]) -> bool {
+        match self {
+            Self::Key(key) => input.key_down(key),
+            Self::ShiftLeft => shift[0],
+            Self::ShiftRight => shift[1],
+        }
+    }
+
+    pub fn pressed(self, input: &eframe::egui::InputState, shift: [bool; 2]) -> bool {
+        match self {
+            Self::Key(key) => input.key_pressed(key),
+            Self::ShiftLeft => shift[0],
+            Self::ShiftRight => shift[1],
+        }
+    }
+}
+
 pub fn default_keybinds_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -27,11 +68,12 @@ pub fn default_keybinds_path() -> PathBuf {
 
 #[derive(Clone)]
 pub struct KeyBindings {
-    joypad: HashMap<Key, u8>,
-    pause: Key,
-    fast_forward: Key,
-    screenshot: Key,
-    quit: Key,
+    joypad: HashMap<BindingKey, u8>,
+    pause: BindingKey,
+    fast_forward: BindingKey,
+    screenshot: BindingKey,
+    quit: BindingKey,
+    quit_bound: bool,
 }
 
 impl Default for KeyBindings {
@@ -43,21 +85,22 @@ impl Default for KeyBindings {
 impl KeyBindings {
     pub fn defaults() -> Self {
         let mut joypad = HashMap::new();
-        joypad.insert(Key::ArrowRight, 0x01);
-        joypad.insert(Key::ArrowLeft, 0x02);
-        joypad.insert(Key::ArrowUp, 0x04);
-        joypad.insert(Key::ArrowDown, 0x08);
-        joypad.insert(Key::S, 0x20); // B
-        joypad.insert(Key::A, 0x10); // A
-        joypad.insert(Key::Tab, 0x40); // Select (egui doesn't distinguish Shift L/R easily)
-        joypad.insert(Key::Enter, 0x80); // Start
+        joypad.insert(BindingKey::Key(Key::ArrowRight), 0x01);
+        joypad.insert(BindingKey::Key(Key::ArrowLeft), 0x02);
+        joypad.insert(BindingKey::Key(Key::ArrowUp), 0x04);
+        joypad.insert(BindingKey::Key(Key::ArrowDown), 0x08);
+        joypad.insert(BindingKey::Key(Key::S), 0x20); // B
+        joypad.insert(BindingKey::Key(Key::A), 0x10); // A
+        joypad.insert(BindingKey::Key(Key::Tab), 0x40); // Select
+        joypad.insert(BindingKey::Key(Key::Enter), 0x80); // Start
 
         Self {
             joypad,
-            pause: Key::P,
-            fast_forward: Key::Space,
-            screenshot: Key::F12,
-            quit: Key::Escape,
+            pause: BindingKey::Key(Key::P),
+            fast_forward: BindingKey::Key(Key::Space),
+            screenshot: BindingKey::Key(Key::F12),
+            quit: BindingKey::Key(Key::Escape),
+            quit_bound: false,
         }
     }
 
@@ -134,7 +177,10 @@ impl KeyBindings {
                 "pause" => bindings.pause = code,
                 "fast_forward" => bindings.fast_forward = code,
                 "screenshot" => bindings.screenshot = code,
-                "quit" => bindings.quit = code,
+                "quit" => {
+                    bindings.quit = code;
+                    bindings.quit_bound = true;
+                }
                 other => warn!(
                     "Ignoring unknown keybind name '{other}' in {}:{}",
                     path.display(),
@@ -146,27 +192,31 @@ impl KeyBindings {
         bindings
     }
 
-    pub fn joypad_mask_for(&self, key: Key) -> Option<u8> {
+    pub fn joypad_mask_for(&self, key: BindingKey) -> Option<u8> {
         self.joypad.get(&key).copied()
     }
 
-    pub fn pause_key(&self) -> Key {
+    pub fn pause_key(&self) -> BindingKey {
         self.pause
     }
 
-    pub fn fast_forward_key(&self) -> Key {
+    pub fn fast_forward_key(&self) -> BindingKey {
         self.fast_forward
     }
 
-    pub fn quit_key(&self) -> Key {
+    pub fn quit_is_bound(&self) -> bool {
+        self.quit_bound
+    }
+
+    pub fn quit_key(&self) -> BindingKey {
         self.quit
     }
 
-    pub fn screenshot_key(&self) -> Key {
+    pub fn screenshot_key(&self) -> BindingKey {
         self.screenshot
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (String, &Key)> {
+    pub fn iter(&self) -> impl Iterator<Item = (String, &BindingKey)> {
         let joypad_names = [
             (0x01, "right"),
             (0x02, "left"),
@@ -190,14 +240,15 @@ impl KeyBindings {
             .into_iter()
     }
 
-    pub fn key_for_joypad_mask(&self, mask: u8) -> Option<Key> {
+    pub fn key_for_joypad_mask(&self, mask: u8) -> Option<BindingKey> {
         self.joypad
             .iter()
             .find(|&(_, &m)| m == mask)
             .map(|(k, _)| *k)
     }
 
-    pub fn rebind(&mut self, target: crate::RebindTarget, key: Key) {
+    pub fn rebind(&mut self, target: crate::RebindTarget, key: impl Into<BindingKey>) {
+        let key = key.into();
         match target {
             crate::RebindTarget::Joypad(mask) => {
                 self.joypad.retain(|_, &mut m| m != mask);
@@ -206,7 +257,10 @@ impl KeyBindings {
             crate::RebindTarget::Pause => self.pause = key,
             crate::RebindTarget::FastForward => self.fast_forward = key,
             crate::RebindTarget::Screenshot => self.screenshot = key,
-            crate::RebindTarget::Quit => self.quit = key,
+            crate::RebindTarget::Quit => {
+                self.quit = key;
+                self.quit_bound = true;
+            }
         }
     }
 
@@ -243,7 +297,9 @@ impl KeyBindings {
             key_to_string(self.fast_forward)
         ));
         lines.push(format!("screenshot = {}", key_to_string(self.screenshot)));
-        lines.push(format!("quit = {}", key_to_string(self.quit)));
+        if self.quit_bound {
+            lines.push(format!("quit = {}", key_to_string(self.quit)));
+        }
 
         let content = lines.join("\n");
         std::fs::write(path, content)?;
@@ -252,7 +308,12 @@ impl KeyBindings {
     }
 }
 
-fn key_to_string(key: Key) -> String {
+fn key_to_string(key: BindingKey) -> String {
+    let key = match key {
+        BindingKey::Key(key) => key,
+        BindingKey::ShiftLeft => return "ShiftLeft".into(),
+        BindingKey::ShiftRight => return "ShiftRight".into(),
+    };
     match key {
         Key::ArrowUp => "Up".to_string(),
         Key::ArrowDown => "Down".to_string(),
@@ -315,7 +376,16 @@ fn key_to_string(key: Key) -> String {
     }
 }
 
-fn parse_key(raw: &str) -> Option<Key> {
+fn parse_key(raw: &str) -> Option<BindingKey> {
+    match raw.trim() {
+        "ShiftLeft" | "LShift" => return Some(BindingKey::ShiftLeft),
+        "ShiftRight" | "RShift" => return Some(BindingKey::ShiftRight),
+        _ => {}
+    }
+    parse_egui_key(raw).map(BindingKey::Key)
+}
+
+fn parse_egui_key(raw: &str) -> Option<Key> {
     let s = raw.trim();
 
     match s {
@@ -392,5 +462,63 @@ fn parse_key(raw: &str) -> Option<Key> {
             }
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn left_and_right_shift_bindings_survive_restart_and_drive_distinct_buttons() {
+        let path = std::env::temp_dir().join(format!(
+            "vibeemu-shift-bindings-{}.toml",
+            std::process::id()
+        ));
+        let mut bindings = KeyBindings::defaults();
+        bindings.rebind(crate::RebindTarget::Joypad(0x40), BindingKey::ShiftLeft);
+        bindings.rebind(crate::RebindTarget::Joypad(0x80), BindingKey::ShiftRight);
+        bindings.rebind(crate::RebindTarget::FastForward, BindingKey::ShiftRight);
+        bindings.save_to_file(&path).unwrap();
+        let restored = KeyBindings::load_from_file(&path);
+        assert_eq!(
+            restored.key_for_joypad_mask(0x40),
+            Some(BindingKey::ShiftLeft)
+        );
+        assert_eq!(
+            restored.key_for_joypad_mask(0x80),
+            Some(BindingKey::ShiftRight)
+        );
+        assert_eq!(restored.fast_forward_key(), BindingKey::ShiftRight);
+        let input = eframe::egui::InputState::default();
+        let select = restored.key_for_joypad_mask(0x40).unwrap();
+        assert!(select.down(&input, [true, false]));
+        assert!(!select.down(&input, [false, true]));
+        assert!(!select.down(&input, [false, false]));
+        assert!(select.pressed(&input, [true, false]));
+        assert_eq!(restored.key_for_joypad_mask(0x10), Some(Key::A.into()));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn escape_menu_default_and_explicit_legacy_quit_survive_round_trip() {
+        let directory =
+            std::env::temp_dir().join(format!("vibeemu-keybinds-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("bindings.toml");
+        KeyBindings::defaults().save_to_file(&path).unwrap();
+        assert!(!KeyBindings::load_from_file(&path).quit_is_bound());
+        std::fs::write(&path, "a = Q\nquit = Escape\n").unwrap();
+        let bindings = KeyBindings::load_from_file(&path);
+        assert!(bindings.quit_is_bound());
+        assert_eq!(bindings.quit_key(), BindingKey::Key(Key::Escape));
+        assert_eq!(
+            bindings.key_for_joypad_mask(0x10),
+            Some(BindingKey::Key(Key::Q))
+        );
+        bindings.save_to_file(&path).unwrap();
+        assert!(KeyBindings::load_from_file(&path).quit_is_bound());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(directory).unwrap();
     }
 }

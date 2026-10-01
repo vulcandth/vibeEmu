@@ -5659,6 +5659,18 @@ impl Ppu {
         (self.stat & 0x78) | 0x80 | mode | if self.lyc_eq_ly { 0x04 } else { 0 }
     }
 
+    /// Inspect palette data without advancing the auto-increment index.
+    pub(crate) fn peek_palette_data(&self, addr: u16) -> u8 {
+        if !self.cgb() || self.dmg_compat {
+            return 0xFF;
+        }
+        match addr {
+            0xFF69 => self.bgpd[Self::palette_ram_index(self.bgpi)],
+            0xFF6B => self.obpd[Self::palette_ram_index(self.obpi)],
+            _ => 0xFF,
+        }
+    }
+
     /// Read a PPU register at `addr`.
     pub fn read_reg(&mut self, addr: u16) -> u8 {
         if self.dmg_compat && matches!(addr, 0xFF69 | 0xFF6B) {
@@ -9004,6 +9016,32 @@ impl Default for Ppu {
 #[cfg(test)]
 mod mode3_timing_tests {
     use super::*;
+
+    #[test]
+    fn palette_inspection_only_reads_data_ports_without_changing_indices() {
+        let mut ppu = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        ppu.bgpi = 0x85;
+        ppu.obpi = 0xbf;
+        ppu.bgpd[5] = 0x25;
+        ppu.obpd[63] = 0x37;
+        for addr in 0xff00..=0xffff {
+            let expected = match addr {
+                0xff69 => 0x25,
+                0xff6b => 0x37,
+                _ => 0xff,
+            };
+            assert_eq!(ppu.peek_palette_data(addr), expected, "{addr:#06x}");
+        }
+        assert_eq!((ppu.bgpi, ppu.obpi), (0x85, 0xbf));
+        assert_eq!((ppu.bgpd[5], ppu.obpd[63]), (0x25, 0x37));
+        ppu.dmg_compat = true;
+        assert_eq!(ppu.peek_palette_data(0xff69), 0xff);
+        assert_eq!(ppu.peek_palette_data(0xff6b), 0xff);
+        assert_eq!((ppu.bgpi, ppu.obpi), (0x85, 0xbf));
+        let dmg = Ppu::new(Model::default());
+        assert_eq!(dmg.peek_palette_data(0xff69), 0xff);
+        assert_eq!(dmg.peek_palette_data(0xff6b), 0xff);
+    }
 
     #[test]
     fn lcd_restart_discards_boot_hold() {

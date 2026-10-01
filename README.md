@@ -43,12 +43,13 @@
 vibeEmu is a Game Boy and Game Boy Color emulator written in Rust. It pairs a
 platform-agnostic emulation core with a desktop frontend built on
 `egui`/`eframe`. The repository also now includes an Android app under
-`android/`. The desktop app is focused on playing games, while the
+`android/`. Desktop offers Play and Develop workspaces for the same running game, while the
 `vibe-emu-core` crate can also be reused as a library in other projects. The
 repository is organized as a Cargo workspace with multiple crates:
 
 - `vibe-emu-core` contains the platform-agnostic emulation library.
 - `vibe-emu-ui` provides the desktop frontend built on the core crate.
+- `vibe-emu-frontend` defines portable preferences, settings categories, and application actions.
 - `vibe-emu-mobile` provides Mobile Adapter GB integration (libmobile wrapper).
 - `vibe-emu-mobile-sys` builds/links libmobile and exposes minimal FFI.
 - `vibe-emu-android` provides the JNI bridge used by the Android app.
@@ -61,6 +62,15 @@ repository is organized as a Cargo workspace with multiple crates:
 - Selectable serial peripherals, including link cable support and Mobile
   Adapter GB.
 - A VRAM viewer for inspecting tiles, maps, sprites, and palettes.
+- Play and Develop workspaces with a debugger, memory editor, and dockable panels.
+- Configurable hardware models, boot ROMs, palettes, audio, and emulation speed.
+
+<p>
+  <a href="docs/screenshots/play.png"><img src="docs/screenshots/play.png" alt="Play workspace with the ROM opening prompt" width="240" /></a>
+  <a href="docs/screenshots/develop.png"><img src="docs/screenshots/develop.png" alt="Develop workspace showing colored disassembly, registers, and editable memory" width="520" /></a>
+</p>
+
+Play (left) and Develop with a synthetic test ROM (right). Click to enlarge.
 
 ## Building
 
@@ -97,11 +107,6 @@ For detailed platform-specific instructions, troubleshooting, and build configur
 
 The Android project lives in `android/` and builds its native library from the
 same workspace sources via `cargo-ndk`.
-
-Android supports all seven hardware models, both SGB/GBC hybrid modes,
-independent boot ROM imports, optional SGB borders and four-controller SGB
-input. Model and boot changes apply on load; Options also offers an explicit
-reload action. See [SGB.md](SGB.md) for mode behavior and frontend coverage.
 
 On Windows, a wrapper-based debug build looks like this:
 
@@ -223,6 +228,11 @@ Run `cargo run -- --help` for the full command-line reference.
 
 ## Logging
 
+Desktop crashes write timestamped text reports in `crashes/` beside `ui.toml`
+(Windows: `%APPDATA%\vibeemu\crashes`). If unavailable, check `vibeemu-crashes`
+in your system temporary directory. Open a report in any text editor to read
+the error and backtrace.
+
 Debug builds default to `info` logging. Release builds default to `off`.
 Override the default with `--log-level`:
 
@@ -256,28 +266,33 @@ The default keyboard controls are:
 - **Space**: Hold to fast-forward
 - **F12**: Capture screenshot
 - **P**: Pause/unpause emulation
-- **Escape**: Quit the emulator
+- **Escape**: Open/close the gameplay menu (existing explicit Quit bindings are preserved)
+- **Ctrl/Cmd+O**: Open ROM
+- **F11** (Windows/Linux), **Ctrl+Cmd+F** (macOS): Toggle fullscreen
 
 Use the **top menu bar** to load ROMs, change settings, capture screenshots, or
 open the VRAM Viewer and serial peripheral settings. Screenshot hotkeys are configurable in
-**Options → Settings... → Keybinds**. Captures are saved to a `screenshots/`
-folder next to the loaded ROM. Display filtering is configurable in
-**Options → Settings... → Emulation**, including separate horizontal/vertical
+**Settings → Settings... → Controls**. Resetting that category restores the new
+Escape behavior. Captures default to a `screenshots/` folder next to the ROM;
+**Capture** lets you choose another destination. Display filtering is configurable in
+**Settings → Settings... → Video & Colors**, including separate horizontal/vertical
 sampling and optional scanline/LCD grid effects.
-The same settings page includes all model boot ROM paths and **Show SGB border**.
+**System & Boot** includes model/revision selection and all model boot ROM paths;
+**Video & Colors** includes palettes and **Show SGB border**.
 Hiding a border crops the composed image (including SGB colors and masks) to
 160x144; screenshots follow the selected view. Use **Apply and reload current ROM**
 after changing the model or boot ROM paths. Reset retains the current machine's
-settings and any captured initial border. Window Scale also offers integer-scaled
-and fit-to-screen fullscreen modes.
+settings and any captured initial border. Window Scale offers integer-scaled and
+fit-to-screen fullscreen. Speed defaults to 100%, with a 2× fast-forward cap. Altered-speed audio
+is muted at the output; the emulated APU continues running.
 
-See [SGB modes and UI review](SGB.md) for the BGB/SameBoy research, behavior,
+See [SGB modes and UI review](docs/SGB.md) for the BGB/SameBoy research, behavior,
 settings coverage, and test strategy.
 
 ## Testing
 
 For core profiling, repeatable performance comparisons, and the 3DS optimization
-roadmap, see [PERFORMANCE.md](PERFORMANCE.md).
+roadmap, see [PERFORMANCE.md](docs/PERFORMANCE.md).
 
 Unit tests for the emulation core can be executed with:
 

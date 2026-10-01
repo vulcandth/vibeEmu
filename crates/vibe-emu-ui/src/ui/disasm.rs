@@ -34,48 +34,48 @@ where
 
     let r = |idx: u8| -> &'static str {
         match idx {
-            0 => "B",
-            1 => "C",
-            2 => "D",
-            3 => "E",
-            4 => "H",
-            5 => "L",
-            6 => "(HL)",
-            7 => "A",
+            0 => "b",
+            1 => "c",
+            2 => "d",
+            3 => "e",
+            4 => "h",
+            5 => "l",
+            6 => "[hl]",
+            7 => "a",
             _ => "?",
         }
     };
 
     let rp = |idx: u8| -> &'static str {
         match idx {
-            0 => "BC",
-            1 => "DE",
-            2 => "HL",
-            3 => "SP",
+            0 => "bc",
+            1 => "de",
+            2 => "hl",
+            3 => "sp",
             _ => "?",
         }
     };
 
     let rp2 = |idx: u8| -> &'static str {
         match idx {
-            0 => "BC",
-            1 => "DE",
-            2 => "HL",
-            3 => "AF",
+            0 => "bc",
+            1 => "de",
+            2 => "hl",
+            3 => "af",
             _ => "?",
         }
     };
 
     let alu = |idx: u8| -> &'static str {
         match idx {
-            0 => "ADD",
-            1 => "ADC",
-            2 => "SUB",
-            3 => "SBC",
-            4 => "AND",
-            5 => "XOR",
-            6 => "OR",
-            7 => "CP",
+            0 => "add",
+            1 => "adc",
+            2 => "sub",
+            3 => "sbc",
+            4 => "and",
+            5 => "xor",
+            6 => "or",
+            7 => "cp",
             _ => "?",
         }
     };
@@ -90,175 +90,183 @@ where
     match x {
         0 => match z {
             0 => match y {
-                0 => ("NOP".to_string(), 1, None),
-                1 => (format!("LD (${:04X}),SP", imm16()), 3, None),
-                2 => ("STOP".to_string(), 2, None),
-                3 => rel("JR"),
-                4 => rel("JR NZ,"),
-                5 => rel("JR Z,"),
-                6 => rel("JR NC,"),
-                7 => rel("JR C,"),
+                0 => ("nop".to_string(), 1, None),
+                1 => (format!("ld [${:04X}], sp", imm16()), 3, Some(imm16())),
+                2 => ("stop".to_string(), 2, None),
+                3 => rel("jr"),
+                4 => rel("jr nz,"),
+                5 => rel("jr z,"),
+                6 => rel("jr nc,"),
+                7 => rel("jr c,"),
                 _ => unreachable!(),
             },
             1 => {
                 let rp_name = rp(p);
                 if q == 0 {
-                    (format!("LD {rp_name},${:04X}", imm16()), 3, None)
+                    (format!("ld {rp_name}, ${:04X}", imm16()), 3, Some(imm16()))
                 } else {
-                    (format!("ADD HL,{rp_name}"), 1, None)
+                    (format!("add hl, {rp_name}"), 1, None)
                 }
             }
             2 => {
                 let s = match (q, p) {
-                    (0, 0) => "LD (BC),A".to_string(),
-                    (0, 1) => "LD (DE),A".to_string(),
-                    (0, 2) => "LD (HL+),A".to_string(),
-                    (0, 3) => "LD (HL-),A".to_string(),
-                    (1, 0) => "LD A,(BC)".to_string(),
-                    (1, 1) => "LD A,(DE)".to_string(),
-                    (1, 2) => "LD A,(HL+)".to_string(),
-                    (1, 3) => "LD A,(HL-)".to_string(),
-                    _ => format!("DB ${op:02X}"),
+                    (0, 0) => "ld [bc], a".to_string(),
+                    (0, 1) => "ld [de], a".to_string(),
+                    (0, 2) => "ld [hli], a".to_string(),
+                    (0, 3) => "ld [hld], a".to_string(),
+                    (1, 0) => "ld a, [bc]".to_string(),
+                    (1, 1) => "ld a, [de]".to_string(),
+                    (1, 2) => "ld a, [hli]".to_string(),
+                    (1, 3) => "ld a, [hld]".to_string(),
+                    _ => format!("db ${op:02X}"),
                 };
                 (s, 1, None)
             }
             3 => {
                 let rp_name = rp(p);
                 if q == 0 {
-                    (format!("INC {rp_name}"), 1, None)
+                    (format!("inc {rp_name}"), 1, None)
                 } else {
-                    (format!("DEC {rp_name}"), 1, None)
+                    (format!("dec {rp_name}"), 1, None)
                 }
             }
-            4 => (format!("INC {}", r(y)), 1, None),
-            5 => (format!("DEC {}", r(y)), 1, None),
-            6 => (format!("LD {},${:02X}", r(y), imm8()), 2, None),
+            4 => (format!("inc {}", r(y)), 1, None),
+            5 => (format!("dec {}", r(y)), 1, None),
+            6 => (format!("ld {}, ${:02X}", r(y), imm8()), 2, None),
             7 => match y {
-                0 => ("RLCA".to_string(), 1, None),
-                1 => ("RRCA".to_string(), 1, None),
-                2 => ("RLA".to_string(), 1, None),
-                3 => ("RRA".to_string(), 1, None),
-                4 => ("DAA".to_string(), 1, None),
-                5 => ("CPL".to_string(), 1, None),
-                6 => ("SCF".to_string(), 1, None),
-                7 => ("CCF".to_string(), 1, None),
-                _ => (format!("DB ${op:02X}"), 1, None),
+                0 => ("rlca".to_string(), 1, None),
+                1 => ("rrca".to_string(), 1, None),
+                2 => ("rla".to_string(), 1, None),
+                3 => ("rra".to_string(), 1, None),
+                4 => ("daa".to_string(), 1, None),
+                5 => ("cpl".to_string(), 1, None),
+                6 => ("scf".to_string(), 1, None),
+                7 => ("ccf".to_string(), 1, None),
+                _ => (format!("db ${op:02X}"), 1, None),
             },
-            _ => (format!("DB ${op:02X}"), 1, None),
+            _ => (format!("db ${op:02X}"), 1, None),
         },
         1 => {
             if op == 0x76 {
-                return ("HALT".to_string(), 1, None);
+                return ("halt".to_string(), 1, None);
             }
-            (format!("LD {},{}", r(y), r(z)), 1, None)
+            (format!("ld {}, {}", r(y), r(z)), 1, None)
         }
         2 => (format!("{} {}", alu(y), r(z)), 1, None),
         3 => match z {
             0 => match y {
-                0 => ("RET NZ".to_string(), 1, None),
-                1 => ("RET Z".to_string(), 1, None),
-                2 => ("RET NC".to_string(), 1, None),
-                3 => ("RET C".to_string(), 1, None),
+                0 => ("ret nz".to_string(), 1, None),
+                1 => ("ret z".to_string(), 1, None),
+                2 => ("ret nc".to_string(), 1, None),
+                3 => ("ret c".to_string(), 1, None),
                 4 => {
                     let offset = imm8();
                     let target = 0xFF00 | (offset as u16);
-                    (format!("LDH (${target:04X}),A"), 2, Some(target))
+                    (format!("ldh [${target:04X}], a"), 2, Some(target))
                 }
                 5 => {
                     let e = imm8() as i8;
-                    (format!("ADD SP,{e}"), 2, None)
+                    (format!("add sp, {e}"), 2, None)
                 }
                 6 => {
                     let offset = imm8();
                     let target = 0xFF00 | (offset as u16);
-                    (format!("LDH A,(${target:04X})"), 2, Some(target))
+                    (format!("ldh a, [${target:04X}]"), 2, Some(target))
                 }
                 7 => {
                     let e = imm8() as i8;
-                    (format!("LD HL,SP+{e}"), 2, None)
+                    (
+                        format!(
+                            "ld hl, sp {} {}",
+                            if e < 0 { "-" } else { "+" },
+                            e.unsigned_abs()
+                        ),
+                        2,
+                        None,
+                    )
                 }
-                _ => (format!("DB ${op:02X}"), 1, None),
+                _ => (format!("db ${op:02X}"), 1, None),
             },
             1 => {
                 if q == 0 {
-                    (format!("POP {}", rp2(p)), 1, None)
+                    (format!("pop {}", rp2(p)), 1, None)
                 } else {
                     match p {
-                        0 => ("RET".to_string(), 1, None),
-                        1 => ("RETI".to_string(), 1, None),
-                        2 => ("JP (HL)".to_string(), 1, None),
-                        3 => ("LD SP,HL".to_string(), 1, None),
-                        _ => (format!("DB ${op:02X}"), 1, None),
+                        0 => ("ret".to_string(), 1, None),
+                        1 => ("reti".to_string(), 1, None),
+                        2 => ("jp hl".to_string(), 1, None),
+                        3 => ("ld sp, hl".to_string(), 1, None),
+                        _ => (format!("db ${op:02X}"), 1, None),
                     }
                 }
             }
             2 => match y {
                 0 => {
                     let target = imm16();
-                    (format!("JP NZ,${target:04X}"), 3, Some(target))
+                    (format!("jp nz, ${target:04X}"), 3, Some(target))
                 }
                 1 => {
                     let target = imm16();
-                    (format!("JP Z,${target:04X}"), 3, Some(target))
+                    (format!("jp z, ${target:04X}"), 3, Some(target))
                 }
                 2 => {
                     let target = imm16();
-                    (format!("JP NC,${target:04X}"), 3, Some(target))
+                    (format!("jp nc, ${target:04X}"), 3, Some(target))
                 }
                 3 => {
                     let target = imm16();
-                    (format!("JP C,${target:04X}"), 3, Some(target))
+                    (format!("jp c, ${target:04X}"), 3, Some(target))
                 }
-                4 => ("LDH (C),A".to_string(), 1, None),
-                5 => (format!("LD (${:04X}),A", imm16()), 3, None),
-                6 => ("LDH A,(C)".to_string(), 1, None),
-                7 => (format!("LD A,(${:04X})", imm16()), 3, None),
-                _ => (format!("DB ${op:02X}"), 1, None),
+                4 => ("ldh [c], a".to_string(), 1, None),
+                5 => (format!("ld [${:04X}], a", imm16()), 3, Some(imm16())),
+                6 => ("ldh a, [c]".to_string(), 1, None),
+                7 => (format!("ld a, [${:04X}]", imm16()), 3, Some(imm16())),
+                _ => (format!("db ${op:02X}"), 1, None),
             },
             3 => match y {
                 0 => {
                     let target = imm16();
-                    (format!("JP ${target:04X}"), 3, Some(target))
+                    (format!("jp ${target:04X}"), 3, Some(target))
                 }
-                1 => ("PREFIX CB".to_string(), 1, None),
-                6 => ("DI".to_string(), 1, None),
-                7 => ("EI".to_string(), 1, None),
-                _ => (format!("DB ${op:02X}"), 1, None),
+                1 => ("prefix cb".to_string(), 1, None),
+                6 => ("di".to_string(), 1, None),
+                7 => ("ei".to_string(), 1, None),
+                _ => (format!("db ${op:02X}"), 1, None),
             },
             4 => match y {
                 0 => {
                     let target = imm16();
-                    (format!("CALL NZ,${target:04X}"), 3, Some(target))
+                    (format!("call nz, ${target:04X}"), 3, Some(target))
                 }
                 1 => {
                     let target = imm16();
-                    (format!("CALL Z,${target:04X}"), 3, Some(target))
+                    (format!("call z, ${target:04X}"), 3, Some(target))
                 }
                 2 => {
                     let target = imm16();
-                    (format!("CALL NC,${target:04X}"), 3, Some(target))
+                    (format!("call nc, ${target:04X}"), 3, Some(target))
                 }
                 3 => {
                     let target = imm16();
-                    (format!("CALL C,${target:04X}"), 3, Some(target))
+                    (format!("call c, ${target:04X}"), 3, Some(target))
                 }
-                _ => (format!("DB ${op:02X}"), 1, None),
+                _ => (format!("db ${op:02X}"), 1, None),
             },
             5 => {
                 if q == 0 {
-                    (format!("PUSH {}", rp2(p)), 1, None)
+                    (format!("push {}", rp2(p)), 1, None)
                 } else if p == 0 {
                     let target = imm16();
-                    (format!("CALL ${target:04X}"), 3, Some(target))
+                    (format!("call ${target:04X}"), 3, Some(target))
                 } else {
-                    (format!("DB ${op:02X}"), 1, None)
+                    (format!("db ${op:02X}"), 1, None)
                 }
             }
             6 => (format!("{} ${:02X}", alu(y), imm8()), 2, None),
-            7 => (format!("RST ${:02X}", y * 8), 1, None),
-            _ => (format!("DB ${op:02X}"), 1, None),
+            7 => (format!("rst ${:02X}", y * 8), 1, None),
+            _ => (format!("db ${op:02X}"), 1, None),
         },
-        _ => (format!("DB ${op:02X}"), 1, None),
+        _ => (format!("db ${op:02X}"), 1, None),
     }
 }
 
@@ -269,38 +277,38 @@ fn decode_cb(op: u8) -> (String, u16) {
 
     let r = |idx: u8| -> &'static str {
         match idx {
-            0 => "B",
-            1 => "C",
-            2 => "D",
-            3 => "E",
-            4 => "H",
-            5 => "L",
-            6 => "(HL)",
-            7 => "A",
+            0 => "b",
+            1 => "c",
+            2 => "d",
+            3 => "e",
+            4 => "h",
+            5 => "l",
+            6 => "[hl]",
+            7 => "a",
             _ => "?",
         }
     };
 
     let rot = |idx: u8| -> &'static str {
         match idx {
-            0 => "RLC",
-            1 => "RRC",
-            2 => "RL",
-            3 => "RR",
-            4 => "SLA",
-            5 => "SRA",
-            6 => "SWAP",
-            7 => "SRL",
+            0 => "rlc",
+            1 => "rrc",
+            2 => "rl",
+            3 => "rr",
+            4 => "sla",
+            5 => "sra",
+            6 => "swap",
+            7 => "srl",
             _ => "?",
         }
     };
 
     let s = match x {
         0 => format!("{} {}", rot(y), r(z)),
-        1 => format!("BIT {y},{}", r(z)),
-        2 => format!("RES {y},{}", r(z)),
-        3 => format!("SET {y},{}", r(z)),
-        _ => format!("DB $CB{op:02X}"),
+        1 => format!("bit {y}, {}", r(z)),
+        2 => format!("res {y}, {}", r(z)),
+        3 => format!("set {y}, {}", r(z)),
+        _ => format!("db $cb{op:02X}"),
     };
 
     (s, 2)
@@ -316,4 +324,75 @@ pub fn format_bytes(mem: &[u8], addr: u16, len: u16) -> String {
         s.push_str(&format!("{b:02X}"));
     }
     s
+}
+
+/// Index the visible memory image, preserving known entry points even when a
+/// linear interpretation of preceding data would skip over them.
+pub fn instruction_addresses(mem: &[u8], anchors: &[u16]) -> Vec<u16> {
+    let mut result = Vec::new();
+    let mut addr = 0usize;
+    while addr < mem.len().min(0x10000) {
+        result.push(addr as u16);
+        let mut next = addr + super::code_data::sm83_instr_len(mem[addr]) as usize;
+        for &anchor in anchors {
+            let anchor = anchor as usize;
+            if addr < anchor && anchor < next {
+                next = anchor;
+            }
+        }
+        addr = next;
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_address_operands_are_symbol_candidates() {
+        for opcode in [0x01, 0x11, 0x21, 0x31, 0x08, 0xea, 0xfa] {
+            let (text, _, target) = decode_sm83(&[opcode, 0, 1], 0);
+            assert_eq!(target, Some(0x100));
+            assert!(text.replace("$0100", "Start").contains("Start"));
+        }
+        // An arbitrary byte immediate must not become an address label.
+        assert_eq!(decode_sm83(&[0x3e, 0x80], 0).2, None);
+    }
+
+    #[test]
+    fn polishedcrystal_dialect() {
+        for (bytes, expected) in [
+            ([0x32, 0, 0], "ld [hld], a"),
+            ([0x2a, 0, 0], "ld a, [hli]"),
+            ([0xe9, 0, 0], "jp hl"),
+            ([0xf8, 0xff, 0], "ld hl, sp - 1"),
+            ([0xf8, 0, 0], "ld hl, sp + 0"),
+            ([0xcb, 0x7e, 0], "bit 7, [hl]"),
+            ([0xea, 0x34, 0x12], "ld [$1234], a"),
+            ([0x20, 0xfe, 0], "jr nz, $0100"),
+        ] {
+            assert_eq!(decode_sm83(&bytes, 0x100).0, expected);
+        }
+    }
+
+    #[test]
+    fn all_opcode_lengths_agree_with_index() {
+        for opcode in 0..=255 {
+            assert_eq!(
+                decode_sm83(&[opcode, 0, 0], 0).1,
+                u16::from(super::super::code_data::sm83_instr_len(opcode)),
+                "{opcode:02X}"
+            );
+        }
+    }
+
+    #[test]
+    fn long_jump_and_last_address_are_always_indexed() {
+        let mem = vec![0xcd; 0x10000];
+        let rows = instruction_addresses(&mem, &[0x8000, 0xffff]);
+        assert!(rows.contains(&0x8000));
+        assert!(rows.contains(&0xffff));
+        assert!(rows.windows(2).all(|r| r[0] < r[1]));
+    }
 }

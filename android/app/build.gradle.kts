@@ -17,7 +17,7 @@ val licenseAssetsDir = generatedAssetsDir.map { it.dir("licenses") }
 val rustThirdPartyMarkdown = monorepoRoot.file("THIRD_PARTY_LICENSES.md")
 val generatedRustThirdPartyHtml = layout.buildDirectory.file("generated/licenses/vibeEmu_THIRD_PARTY_LICENSES.html")
 val cargoTargetDir = layout.buildDirectory.dir("cargo")
-val cargoAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+val cargoAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
 val cargoPath = System.getenv("PATH")
 val cargoBin = System.getenv("USERPROFILE")?.let { "$it\\.cargo\\bin" }
 val defaultSdkRoot = File(System.getProperty("user.home"), "AppData/Local/Android/Sdk").invariantSeparatorsPath
@@ -36,6 +36,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -132,6 +133,10 @@ tasks.register<Copy>("syncLicensesToAssets") {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -154,6 +159,8 @@ tasks.register<Exec>("cargoBuildAndroid") {
     group = "build"
     description = "Build the monorepo Android JNI crate via cargo-ndk"
     workingDir = monorepoRoot.asFile
+
+    inputs.property("cargoAbis", cargoAbis)
 
     inputs.file(monorepoRoot.file("Cargo.toml"))
     inputs.file(monorepoRoot.file("Cargo.lock"))

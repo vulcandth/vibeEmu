@@ -1754,6 +1754,28 @@ impl Apu {
         self.audio_out = state.audio_out;
     }
 
+    /// Inspect stored register/channel state without advancing audio or consuming
+    /// CPU access effects. Wave RAM is unblocked; PCM reflects the cached output.
+    pub(crate) fn peek_reg(&self, addr: u16) -> u8 {
+        match addr {
+            0xFF26 => {
+                (self.nr52 & 0x80)
+                    | u8::from(self.ch1.enabled)
+                    | (u8::from(self.ch2.enabled) << 1)
+                    | (u8::from(self.ch3.enabled) << 2)
+                    | (u8::from(self.ch4.enabled) << 3)
+                    | Self::read_mask(addr)
+            }
+            0xFF30..=0xFF3F => self.wave_ram[(addr - 0xFF30) as usize],
+            0xFF10..=0xFF25 | 0xFF27..=0xFF2F => {
+                self.regs[(addr - 0xFF10) as usize] | Self::read_mask(addr)
+            }
+            0xFF76 if self.cgb_mode() && self.nr52 & 0x80 != 0 => self.pcm12,
+            0xFF77 if self.cgb_mode() && self.nr52 & 0x80 != 0 => self.pcm34,
+            _ => 0xFF,
+        }
+    }
+
     /// Read an APU register at `addr`.
     pub fn read_reg(&mut self, addr: u16) -> u8 {
         self.synchronize_waveforms();

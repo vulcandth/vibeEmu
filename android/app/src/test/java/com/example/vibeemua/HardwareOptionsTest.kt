@@ -4,6 +4,35 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class HardwareOptionsTest {
+    @Test fun keyboardArrowKeysDoNotHideTouchControls() {
+        val keyboardDpad = android.view.InputDevice.SOURCE_KEYBOARD or android.view.InputDevice.SOURCE_DPAD
+        assertFalse(isGameControllerSources(keyboardDpad, true))
+        assertTrue(isGameControllerSources(android.view.InputDevice.SOURCE_DPAD, false))
+        assertTrue(isGameControllerSources(keyboardDpad or android.view.InputDevice.SOURCE_GAMEPAD, true))
+        assertTrue(isGameControllerSources(android.view.InputDevice.SOURCE_JOYSTICK, false))
+    }
+    @Test fun oppositeDirectionsAreNeutralButOtherButtonsRemainPressed() {
+        for (buttons in 0..255) {
+            val result = neutralizeDirections(buttons)
+            assertEquals(buttons and 0xf0, result and 0xf0)
+            assertFalse(result and 3 == 3)
+            assertFalse(result and 12 == 12)
+            assertEquals(result, neutralizeDirections(result))
+        }
+        assertEquals(0x95, neutralizeDirections(0x95))
+    }
+
+    @Test fun newPreferencesHaveConservativeDefaults() {
+        val options = AppOptions()
+        assertEquals(100, options.volume)
+        assertEquals(100, options.speedPercent)
+        assertTrue(options.soundEnabled)
+        assertFalse(options.mono)
+        assertTrue(options.hideTouchWithController)
+        assertEquals(EmulationMode.Auto, options.emulationMode)
+        assertTrue(options.enabledBootRoms.isEmpty())
+    }
+
     @Test fun persistedIdsAndBootFilesRemainCompatible() {
         assertEquals(0, EmulationMode.Auto.nativeId)
         assertEquals(1, EmulationMode.ForceDmg.nativeId)
