@@ -155,3 +155,46 @@ fn faulty_rom_returns_without_hanging_android_frame_loop() {
     handle.load_rom(rom);
     assert!(!handle.run_frame());
 }
+
+#[test]
+fn state_operations_restore_sram_and_report_failed_imports() {
+    let root = std::env::temp_dir().join(format!("vibe-state-jni-{}", std::process::id()));
+    let mut handle = EmulatorHandle::new(EmulationMode::ForceCgb);
+    let mut data = rom(true, false);
+    data[0x147] = 3;
+    data[0x149] = 3;
+    handle.load_rom(data);
+    handle.gb.mmu.cart.as_mut().unwrap().ram.fill(11);
+    assert_eq!(handle.state_operation(&root, 1, 11, &root)["ok"], true);
+    handle.gb.mmu.cart.as_mut().unwrap().ram.fill(22);
+    assert_eq!(handle.state_operation(&root, 2, 11, &root)["ok"], true);
+    assert!(
+        handle
+            .gb
+            .mmu
+            .cart
+            .as_ref()
+            .unwrap()
+            .ram
+            .iter()
+            .all(|&b| b == 11)
+    );
+    assert_eq!(handle.state_operation(&root, 2, 12, &root)["ok"], true);
+    assert!(
+        handle
+            .gb
+            .mmu
+            .cart
+            .as_ref()
+            .unwrap()
+            .ram
+            .iter()
+            .all(|&b| b == 22)
+    );
+    assert_eq!(
+        handle.state_operation(&root, 3, 11, &root.join("missing"))["ok"],
+        false
+    );
+    assert_eq!(handle.state_operation(&root, 1, 99, &root)["ok"], false);
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -17,6 +17,16 @@
 - [ ] Add audio device/rate/latency/channel monitoring and dirty-aware periodic saves.
 - [ ] Preserve conflicting battery saves and add explicit desktop save import/export.
 
+## Save states
+
+- [x] Implement core-owned versioned snapshots for all models and mapper state,
+  CPU/MMU/PPU/APU/timer/DMA/serial/input, RTC, SGB and hybrid borders.
+- [x] Restore all cartridge SRAM by default; atomically preserve a pre-load
+  recovery state for undo and conflict recovery, including after restart.
+- [x] Add ten slots, quick/recovery slots, metadata, import/export and undo-load
+  on desktop and Android. Reject link/Mobile Adapter sessions in the core.
+- [ ] Complete final verification listed in [Save states](SAVE_STATES.md).
+
 ## Verification requiring Matthew or another tester
 
 - [ ] Verify drag/rearrangement and layout restoration with a mouse in the final build.
@@ -30,15 +40,6 @@
 
 ## Deferred implementation
 
-- [ ] Implement core-owned, versioned save states before exposing state controls.
-  Cover every model/mapper and CPU/MMU/PPU/APU/timer/DMA/serial/input, RTC, SGB,
-  and hybrid-border state; test determinism, invalid data, wrong ROM/model, and atomic writes.
-- [ ] Capture and restore all cartridge SRAM by default, including mapper-specific
-  persistent memory. Preserve pre-load SRAM for undo/conflict recovery; verify
-  save/change/load restores every bank and the subsequently flushed battery file.
-  Any preserve-current-SRAM option must be explicit and opt-in.
-- [ ] After snapshot tests pass, add ten slots, quick/recovery slots, metadata,
-  import/export, and undo-load. Reject restoration during external link/Mobile Adapter sessions.
 - [ ] Add bounded rewind, deterministic recording/replay for reverse execution,
   cheats, and cheat search.
 - [ ] Add advanced display/color/audio effects, WAV/stem and PNG-sequence recording.

@@ -59,6 +59,7 @@ repository is organized as a Cargo workspace with multiple crates:
 - Load a ROM from the command line or from the app menu.
 - Configurable keyboard controls with optional gamepad input.
 - Screenshot capture and display filter settings.
+- [Save states](docs/SAVE_STATES.md): ten slots, quick save/load, import/export, and durable undo-load including cartridge SRAM.
 - Selectable serial peripherals, including link cable support and Mobile
   Adapter GB.
 - A VRAM viewer for inspecting tiles, maps, sprites, and palettes.

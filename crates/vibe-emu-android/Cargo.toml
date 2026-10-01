@@ -18,6 +18,7 @@ mobile-system = ["vibe-emu-mobile/system"]
 default = ["mobile-bundled"]
 
 [dependencies]
+serde_json = "1"
 vibe-emu-core.workspace = true
 vibe-emu-mobile = { path = "../vibe-emu-mobile", default-features = false }
 jni = "0.22.4"

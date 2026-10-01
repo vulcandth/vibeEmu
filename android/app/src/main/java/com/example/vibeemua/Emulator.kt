@@ -43,6 +43,8 @@ class NativeBridge {
         }
     }
 
+    external fun stateOperation(handle: Long, root: String, operation: Int, slot: Int, path: String): String?
+
     external fun create(emulationMode: Int): Long
     external fun destroy(handle: Long)
     external fun loadRom(handle: Long, rom: ByteArray): Boolean
@@ -83,6 +85,11 @@ class Emulator(private val native: NativeBridge = NativeBridge()) {
     private var paused: Boolean = false
 
     @Volatile private var foreground: Boolean = true
+
+    fun stateOperation(root: String, operation: Int, slot: Int = 11, path: String = ""): String = synchronized(nativeLock) {
+        check(isReady()) { "No game loaded" }
+        native.stateOperation(handle, root, operation, slot, path) ?: error("State operation failed")
+    }
 
     fun isReady(): Boolean = handle != 0L && romLoaded
 

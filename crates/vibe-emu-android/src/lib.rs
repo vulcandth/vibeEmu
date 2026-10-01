@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+mod save_states;
+
 #[cfg(test)]
 mod tests;
 

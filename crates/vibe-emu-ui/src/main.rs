@@ -2,6 +2,7 @@
 #![allow(unused_imports)]
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+use std::path::PathBuf;
 mod app_settings;
 mod audio;
 mod crash_report;
@@ -9,6 +10,7 @@ mod develop;
 mod develop_layout;
 mod disassembly;
 mod memory;
+mod save_states;
 mod shortcuts;
 mod workspace;
 use vibe_emu_frontend::{Action, SettingsCategory as OptionsTab, Workspace};
@@ -589,13 +591,24 @@ struct Speed {
 }
 
 enum EmuCommand {
+    State(
+        save_states::Request,
+        PathBuf,
+        mpsc::Sender<save_states::Reply>,
+    ),
     SetPaused(bool),
     Reset,
     SetSpeed(Speed),
-    UpdateInput { state: u8, at: Instant },
+    UpdateInput {
+        state: u8,
+        at: Instant,
+    },
     UpdateSgbInput([u8; 3]),
     UpdateBreakpoints(Vec<ui::debugger::BreakpointSpec>),
-    SetRegister { reg: RegisterId, value: u16 },
+    SetRegister {
+        reg: RegisterId,
+        value: u16,
+    },
     Shutdown,
 }
 
@@ -838,6 +851,24 @@ fn run_emulator_thread(
                     debug!("[emu] SetPaused({p})");
                     paused = p;
                     next_frame = Instant::now() + FRAME_TIME;
+                }
+                EmuCommand::State(request, root, reply) => {
+                    let result = match gb.lock() {
+                        Ok(mut gb) => {
+                            input_queue.apply_all(&mut gb.mmu);
+                            let result = save_states::execute(&mut gb, &root, request);
+                            if result.restored {
+                                for player in 0..4 {
+                                    gb.mmu.input.set_player_state(player, 0xff);
+                                }
+                                input_queue = input_timing::InputQueue::default();
+                                next_frame = Instant::now() + FRAME_TIME;
+                            }
+                            result
+                        }
+                        Err(e) => save_states::Reply::error(e.to_string()),
+                    };
+                    let _ = reply.send(result);
                 }
                 EmuCommand::Reset => {
                     info!("[reset] emu-thread reset start");
@@ -1084,6 +1115,7 @@ fn run_emulator_thread(
 type RomLoadResult = Result<(Box<GameBoy>, std::path::PathBuf), String>;
 
 struct VibeEmuApp {
+    states: save_states::StateUi,
     gb: Arc<Mutex<Box<GameBoy>>>,
     emu_tx: mpsc::Sender<EmuCommand>,
     frame_rx: cb::Receiver<EmuEvent>,
@@ -1493,6 +1525,7 @@ impl VibeEmuApp {
             develop_layout: develop_layout::DevelopLayout::load(
                 ui_config_path.with_file_name("workspace.json"),
             ),
+            states: Default::default(),
             ui_config_path,
             ui_config,
             framebuffer,
@@ -1984,6 +2017,8 @@ impl VibeEmuApp {
             || ctx.input(|i| i.modifiers.command || i.modifiers.alt || i.modifiers.ctrl)
             || self.show_options
             || self.show_game_menu
+            || self.states.open
+            || self.states.pending.is_some()
             || self.rebinding.is_some()
             || (!focused && !self.ui_config.preferences.background_controllers)
         {
@@ -2444,6 +2479,10 @@ impl VibeEmuApp {
     }
 
     fn load_rom(&mut self, path: std::path::PathBuf) {
+        if self.states.pending.is_some() {
+            return;
+        }
+
         self.mem_edit = None;
         if self.loading.is_some() {
             return;
@@ -2507,6 +2546,7 @@ impl VibeEmuApp {
                     self.framebuffer = gb.mmu.ppu.display_framebuffer().to_vec();
                 }
                 while self.frame_rx.try_recv().is_ok() {}
+                self.states = Default::default();
                 self.current_rom_path = Some(path.clone());
                 self.add_recent_rom(&path);
                 self.debugger_state.load_symbols_for_rom_path(Some(&path));
@@ -2549,6 +2589,7 @@ impl eframe::App for VibeEmuApp {
         self.handle_file_drop(ctx);
         let previous_dimensions = self.frame_dimensions();
         self.poll_rom_load();
+        self.poll_state_operation();
         if self.loading.is_some() {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
@@ -2556,6 +2597,7 @@ impl eframe::App for VibeEmuApp {
         self.audio_controls.suppress(
             self.paused
                 || self.current_rom_path.is_none()
+                || self.states.pending.is_some()
                 || self.fast_forward
                 || self.ui_config.preferences.speed_percent != 100,
         );
@@ -2575,6 +2617,7 @@ impl eframe::App for VibeEmuApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.draw_save_states(&ctx);
 
         egui::Panel::top("menu_bar").show_inside(ui, |ui| {
             self.draw_menu_bar(ui);
@@ -5746,23 +5789,27 @@ fn main() {
     let emu_link_timestamp = Arc::clone(&local_timestamp);
     let emu_link_doublespeed = Arc::clone(&link_doublespeed);
 
-    let _emu_handle = thread::spawn(move || {
-        run_emulator_thread(
-            emu_gb,
-            speed,
-            initial_paused,
-            EmuThreadChannels {
-                rx: to_emu_rx,
-                frame_tx: from_emu_frame_tx,
-                frame_pool_tx,
-                frame_pool_rx,
-            },
-            emu_ext_clock,
-            emu_slave_ready,
-            emu_link_timestamp,
-            emu_link_doublespeed,
-        );
-    });
+    let _emu_handle = thread::Builder::new()
+        .name("emulator".into())
+        .stack_size(ROM_LOADER_STACK_SIZE)
+        .spawn(move || {
+            run_emulator_thread(
+                emu_gb,
+                speed,
+                initial_paused,
+                EmuThreadChannels {
+                    rx: to_emu_rx,
+                    frame_tx: from_emu_frame_tx,
+                    frame_pool_tx,
+                    frame_pool_rx,
+                },
+                emu_ext_clock,
+                emu_slave_ready,
+                emu_link_timestamp,
+                emu_link_doublespeed,
+            );
+        })
+        .expect("emulator thread");
 
     let scale = ui_config
         .window_size

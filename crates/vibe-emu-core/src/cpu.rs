@@ -54,7 +54,7 @@ const OAM_DMA_STEP_CYCLES: u8 = 4;
 const GDMA_STEP_CYCLES: u8 = 1;
 
 /// LR35902 CPU state.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Cpu {
     /// Accumulator register.
     pub a: u8,
@@ -98,6 +98,12 @@ pub struct Cpu {
     halt_pc: Option<u16>,
     halt_pending: u8,
     dma_conflict_active: bool,
+}
+
+impl Cpu {
+    pub(crate) fn validate_state(&self) -> bool {
+        self.f & 0x0f == 0 && self.ime_enable_delay <= 2 && self.halt_pending <= 0x1f
+    }
 }
 
 impl Cpu {

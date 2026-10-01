@@ -443,27 +443,29 @@ fun EmulatorScreen(
     var romLabel by rememberSaveable { mutableStateOf("No instance loaded") }
     var inputState by remember { mutableStateOf(0xFF) }
     var menuExpanded by remember { mutableStateOf(false) }
+    var statesOpen by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(menuRequest) {
-        if (menuRequest > 0 && screen == UiScreen.Emulator && !loading) menuExpanded = !menuExpanded
+        if (menuRequest > 0 && screen == UiScreen.Emulator && !loading && !statesOpen) menuExpanded = !menuExpanded
     }
     LaunchedEffect(Unit) {
         // Saved navigation may outlive the process; a machine cannot be restored
-        // until complete save states exist. Rotation retains the ViewModel machine.
+        // automatically; users can load a slot after reopening the instance. Rotation retains the machine.
         if (!emulator.isReady()) {
             currentInstanceId = null
+            statesOpen = false
             if (screen == UiScreen.Emulator) screen = UiScreen.Instances
         }
     }
 
-    BackHandler(enabled = screen == UiScreen.Emulator && !loading) {
+    BackHandler(enabled = screen == UiScreen.Emulator && !loading && !statesOpen) {
         menuExpanded = !menuExpanded
     }
 
-    LaunchedEffect(screen, menuExpanded, loading, foreground) {
+    LaunchedEffect(screen, menuExpanded, statesOpen, loading, foreground) {
         // Pause emulation whenever we're not actively on the gameplay screen.
         // This prevents the core from running (and mutating SRAM) while the user is managing instances.
-        val gameplay = screen == UiScreen.Emulator && !menuExpanded && !loading && foreground
+        val gameplay = screen == UiScreen.Emulator && !menuExpanded && !statesOpen && !loading && foreground
         emulator.setPaused(!gameplay)
         onGameplayInputChanged(gameplay)
 
@@ -641,11 +643,17 @@ fun EmulatorScreen(
         }
     }
 
-    if (menuExpanded && screen == UiScreen.Emulator) {
+    if (statesOpen && screen == UiScreen.Emulator && currentInstanceId != null) {
+        SaveStatesDialog(emulator, emuDispatcher,
+            File(GameInstancesRepository(context).instanceDir(currentInstanceId!!), "states"),
+            onDismiss = { statesOpen = false; menuExpanded = true })
+    }
+    if (menuExpanded && !statesOpen && screen == UiScreen.Emulator) {
         GameplayMenu(
             gameName = romLabel,
             onResume = { menuExpanded = false },
             onSettings = { menuExpanded = false; screen = UiScreen.Options },
+            onStates = { statesOpen = true },
             onReset = { emulator.reset(); menuExpanded = false },
             onInstances = { menuExpanded = false; emulator.saveRam(); screen = UiScreen.Instances; onOpenInstances() },
             onAbout = { menuExpanded = false; screen = UiScreen.About },

@@ -17,7 +17,7 @@ pub struct SgbBorder {
     backdrop: u16,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 enum Transfer {
     Palettes,
     Tiles(usize),
@@ -26,8 +26,9 @@ enum Transfer {
 }
 
 /// SNES-side state shared by SGB and SGB2.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Sgb {
+    #[serde(with = "crate::save_state::arrays")]
     command: [u8; 112],
     bit: usize,
     pulse: bool,
@@ -40,16 +41,25 @@ pub struct Sgb {
     player_mask: u8,
     player: u8,
     mask: u8,
+    #[serde(with = "crate::save_state::arrays2")]
     palettes: [[u16; 4]; 4],
+    #[serde(with = "crate::save_state::arrays")]
     palette_ram: [u8; 4096],
+    #[serde(with = "crate::save_state::arrays")]
     attributes: [u8; 360],
+    #[serde(with = "crate::save_state::arrays")]
     attribute_files: [u8; 4050],
+    #[serde(with = "crate::save_state::arrays")]
     tiles: [u8; 8192],
+    #[serde(with = "crate::save_state::arrays")]
     border_map: [u16; 1024],
+    #[serde(with = "crate::save_state::arrays")]
     border_palettes: [u16; 64],
     border_enabled: bool,
     transfer: Option<(Transfer, u8)>,
+    #[serde(with = "crate::save_state::arrays")]
     screen: [u8; 160 * 144],
+    #[serde(with = "crate::save_state::arrays")]
     displayed: [u8; 160 * 144],
     native_screen: Option<Vec<u32>>,
     native_displayed: Option<Vec<u32>>,
@@ -88,6 +98,34 @@ impl Default for Sgb {
             output: vec![0; WIDTH * HEIGHT],
             unsupported: 0,
         }
+    }
+}
+
+impl Sgb {
+    pub(crate) fn validate_state(&self) -> bool {
+        (!self.borrowed_border || (self.native_screen.is_some() && self.native_displayed.is_some()))
+            && self.bit <= 896
+            && matches!(self.players, 1 | 2 | 4)
+            && self.player < 4
+            && self.mask <= 3
+            && self.output.len() == WIDTH * HEIGHT
+            && self
+                .native_screen
+                .as_ref()
+                .is_none_or(|v| v.len() == 160 * 144)
+            && self
+                .native_displayed
+                .as_ref()
+                .is_none_or(|v| v.len() == 160 * 144)
+            && self.attributes.iter().all(|&v| v < 4)
+            && self
+                .screen
+                .iter()
+                .chain(self.displayed.iter())
+                .all(|&v| v < 4)
+            && self
+                .transfer
+                .is_none_or(|(t, _)| !matches!(t, Transfer::Tiles(n) if n != 0 && n != 4096))
     }
 }
 

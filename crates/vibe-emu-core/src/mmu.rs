@@ -102,7 +102,7 @@ fn init_power_on_wram(wram: &mut [[u8; WRAM_BANK_SIZE]; 8], seed: u32) {
 }
 
 /// Transfer mode for CGB DMA operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum DmaMode {
     /// General DMA (immediate)
     Gdma,
@@ -110,7 +110,7 @@ enum DmaMode {
     Hdma,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct HdmaState {
     /// 16-bit source pointer (upper 12 bits writable)
     src: u16,
@@ -127,6 +127,7 @@ struct HdmaState {
 }
 
 /// Memory management unit: the full Game Boy memory map and hardware plumbing.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Mmu {
     // Scoped by Cpu::run_for_dots. Pending clocks never cross a PPU event;
     // memory/register accesses synchronize before observing or changing inputs.
@@ -134,14 +135,17 @@ pub struct Mmu {
     pending_ppu_dots: u16,
     ppu_idle_remaining: u16,
     /// Eight WRAM banks (DMG uses only banks 0 and 1).
+    #[serde(with = "crate::save_state::arrays2")]
     pub wram: [[u8; WRAM_BANK_SIZE]; 8],
     /// Currently selected WRAM bank index (CGB only).
     pub wram_bank: usize,
     /// High RAM (0xFF80–0xFFFE).
+    #[serde(with = "crate::save_state::arrays")]
     pub hram: [u8; 0x7F],
     /// The inserted cartridge, if any.
     pub cart: Option<Cartridge>,
     /// Optional boot ROM image.
+    #[serde(skip)]
     pub boot_rom: Option<Vec<u8>>,
     /// Whether the boot ROM is currently mapped at 0x0000.
     pub boot_mapped: bool,
@@ -208,9 +212,11 @@ pub struct Mmu {
     /// Backing storage for CGB's "not usable" OAM range ($FEA0-$FEFF).
     ///
     /// Real CGB hardware differs by revision here; DMG ignores this region.
+    #[serde(with = "crate::save_state::arrays")]
     cgb_unusable_oam: [u8; 0x60],
 
     /// Active debugger watchpoints.
+    #[serde(skip)]
     pub watchpoints: crate::watchpoints::WatchpointEngine,
 }
 
@@ -229,6 +235,21 @@ impl std::fmt::Debug for Mmu {
             .field("timer", &self.timer)
             .field("serial", &self.serial)
             .finish_non_exhaustive()
+    }
+}
+
+impl Mmu {
+    pub(crate) fn validate_state(&mut self, model: Model) -> bool {
+        self.model == model
+            && self.wram_bank < 8
+            && !self.defer_ppu_ticks
+            && self.pending_ppu_dots == 0
+            && self.dma_cycles <= 640
+            && self.pending_delay <= 8
+            && self.timer.validate_state()
+            && self.serial.validate_state(model)
+            && self.ppu.validate_state(model)
+            && self.apu.validate_state(model)
     }
 }
 

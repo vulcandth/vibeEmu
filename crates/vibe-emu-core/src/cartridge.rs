@@ -6,7 +6,7 @@ use std::{
 };
 
 /// Memory Bank Controller type decoded from the cartridge header.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MbcType {
     /// No MBC; direct ROM access only.
     NoMbc,
@@ -27,9 +27,10 @@ pub enum MbcType {
 }
 
 /// A loaded Game Boy cartridge including ROM, RAM, and MBC state.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Cartridge {
     /// Raw ROM data.
+    #[serde(skip)]
     pub rom: Vec<u8>,
     /// Cartridge RAM (battery-backed save RAM).
     pub ram: Vec<u8>,
@@ -40,17 +41,21 @@ pub struct Cartridge {
     /// Game title extracted from the cartridge header.
     pub title: String,
     cart_type: u8,
+    #[serde(skip)]
     save_path: Option<PathBuf>,
+    #[serde(skip)]
     rtc_path: Option<PathBuf>,
     mbc_state: MbcState,
     cart_bus: Cell<u8>,
     // Invalidated by mapper writes; length checking also covers direct mutation
     // of the public ROM Vec. Offsets cache mapping, never ROM bytes or pointers.
+    #[serde(skip)]
     rom_mapping_len: usize,
+    #[serde(skip)]
     rom_windows: Option<[usize; 2]>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 enum MbcState {
     NoMbc,
     Mbc1 {
@@ -95,7 +100,7 @@ enum MbcState {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum Tpp1Mapping {
     ControlRegisters,
     SramReadOnly,
@@ -103,7 +108,7 @@ enum Tpp1Mapping {
     RtcLatched,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 struct RtcRegisters {
     seconds: u8,
     minutes: u8,
@@ -113,11 +118,12 @@ struct RtcRegisters {
     carry: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Mbc3Rtc {
     regs: RtcRegisters,
     latched: RtcRegisters,
     latched_active: bool,
+    #[serde(skip, default = "SystemTime::now")]
     last_update: SystemTime,
     subsecond_cycles: u32,
 }
@@ -363,7 +369,7 @@ impl Mbc3Rtc {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 struct Tpp1RtcRegisters {
     rtcw: u8,
     rtcdh: u8,
@@ -371,12 +377,13 @@ struct Tpp1RtcRegisters {
     rtcs: u8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Tpp1Rtc {
     regs: Tpp1RtcRegisters,
     latched: Tpp1RtcRegisters,
     running: bool,
     overflow: bool,
+    #[serde(skip, default = "SystemTime::now")]
     last_update: SystemTime,
     subsecond_cycles: u32,
 }
@@ -623,6 +630,34 @@ impl Tpp1Rtc {
 
         self.latched = self.regs;
         true
+    }
+}
+
+impl Cartridge {
+    pub(crate) fn inherit_save_paths(&mut self, current: &Self) {
+        self.save_path.clone_from(&current.save_path);
+        self.rtc_path.clone_from(&current.rtc_path);
+    }
+    pub(crate) fn validate_state(&self, current: &Self) -> bool {
+        let rtc_valid = match &self.mbc_state {
+            MbcState::Mbc3 { rtc, .. } | MbcState::Mbc30 { rtc, .. } => {
+                rtc.as_ref().is_none_or(|r| {
+                    r.subsecond_cycles < RTC_CYCLES_PER_SECOND
+                        && r.regs.days < 512
+                        && r.latched.days < 512
+                })
+            }
+            MbcState::Tpp1 { rtc, .. } => rtc
+                .as_ref()
+                .is_none_or(|r| r.subsecond_cycles < RTC_CYCLES_PER_SECOND),
+            _ => true,
+        };
+        self.mbc == current.mbc
+            && self.cart_type == current.cart_type
+            && self.cgb == current.cgb
+            && self.ram.len() == current.ram.len()
+            && std::mem::discriminant(&self.mbc_state) == std::mem::discriminant(&current.mbc_state)
+            && rtc_valid
     }
 }
 

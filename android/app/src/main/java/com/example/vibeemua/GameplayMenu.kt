@@ -30,6 +30,7 @@ fun GameplayMenu(
     onReset: () -> Unit,
     onInstances: () -> Unit,
     onAbout: () -> Unit,
+    onStates: () -> Unit = {},
 ) {
     val configuration = LocalConfiguration.current
     val isTv = configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
@@ -38,6 +39,7 @@ fun GameplayMenu(
             Text(gameName, style = MaterialTheme.typography.titleLarge)
             Button(onClick = onResume, modifier = Modifier.fillMaxWidth()) { Text("Resume") }
             Button(onClick = onSettings, modifier = Modifier.fillMaxWidth()) { Text("Settings") }
+            Button(onClick = onStates, modifier = Modifier.fillMaxWidth()) { Text("Save states") }
             Button(onClick = onReset, modifier = Modifier.fillMaxWidth()) { Text("Reset") }
             Button(onClick = onInstances, modifier = Modifier.fillMaxWidth()) { Text("Return to instances") }
             TextButton(onClick = onAbout, modifier = Modifier.fillMaxWidth()) { Text("About and licenses") }

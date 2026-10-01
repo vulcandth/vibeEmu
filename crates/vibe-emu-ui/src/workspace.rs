@@ -108,6 +108,19 @@ impl VibeEmuApp {
             Action::Reset => {
                 let _ = self.emu_tx.send(EmuCommand::Reset);
             }
+            Action::SaveStates => {
+                self.states.open = true;
+                self.start_state_operation(save_states::Request::List);
+            }
+            Action::QuickSave => self.start_state_operation(save_states::Request::Save(
+                vibe_emu_core::state_store::Slot::Quick,
+            )),
+            Action::QuickLoad => self.start_state_operation(save_states::Request::Load(
+                vibe_emu_core::state_store::Slot::Quick,
+            )),
+            Action::UndoLoad => self.start_state_operation(save_states::Request::Load(
+                vibe_emu_core::state_store::Slot::Recovery,
+            )),
             Action::Screenshot => self.capture_screenshot(),
             Action::ToggleMute => {
                 self.sound_enabled.fetch_xor(true, Ordering::Relaxed);
@@ -352,6 +365,12 @@ impl VibeEmuApp {
                     self.show_vram_viewer = false;
                 }
             });
+            ui.menu_button("States", |ui| {
+                self.action_button(ui, "Save states…", Action::SaveStates);
+                self.action_button(ui, "Quick save", Action::QuickSave);
+                self.action_button(ui, "Quick load", Action::QuickLoad);
+                self.action_button(ui, "Undo load", Action::UndoLoad);
+            });
             ui.menu_button("Tools", |ui| {
                 self.action_button(ui, "Capture screenshot", Action::Screenshot);
                 self.action_button(ui, "Mute / unmute", Action::ToggleMute);
@@ -416,6 +435,7 @@ impl VibeEmuApp {
             Action::TogglePause,
         );
         self.action_button(ui, "Reset", Action::Reset);
+        self.action_button(ui, "Save states…", Action::SaveStates);
         self.action_button(ui, "Screenshot", Action::Screenshot);
         self.action_button(ui, "Mute / unmute", Action::ToggleMute);
         self.action_button(ui, "Fullscreen", Action::ToggleFullscreen);
