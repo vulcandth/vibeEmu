@@ -110,3 +110,46 @@ fn mgb_halted_dma_resumes_after_interrupt() {
     gb.cpu.step(&mut gb.mmu);
     assert!(gb.mmu.dma_cycles < remaining);
 }
+
+#[test]
+fn cgb_skipped_boot_div_phase_follows_cartridge_mode() {
+    use vibe_emu_core::hardware::CgbRevision;
+    for revision in [
+        CgbRevision::RevA,
+        CgbRevision::RevB,
+        CgbRevision::RevC,
+        CgbRevision::RevD,
+        CgbRevision::RevE,
+    ] {
+        // Native timing is the Gambatte start_inc pair. Compatibility timing
+        // is the first Mooneye boot_div-cgbABCDE read and its preceding cycle.
+        for (native, nops, expected) in [
+            (true, 13, 0x1e),
+            (true, 14, 0x1f),
+            (false, 26, 0x26),
+            (false, 27, 0x27),
+        ] {
+            let mut rom = vec![0; 0x8000];
+            rom[0x143] = if native { 0xc0 } else { 0 };
+            let read_base = if native {
+                rom[0x100..0x103].copy_from_slice(&[0xc3, 0x50, 0x01]);
+                rom[0x150..0x153].copy_from_slice(&[0xc3, 0x00, 0x10]);
+                0x1000
+            } else {
+                rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
+                0x150
+            };
+            rom[read_base + nops..read_base + nops + 2].copy_from_slice(&[0xf0, 0x04]);
+            let mut gb = GameBoy::new(Model::Cgb(revision));
+            gb.load_cart(Cartridge::from_bytes(rom));
+            while usize::from(gb.cpu.pc) != read_base + nops + 2 {
+                assert!(gb.cpu.cycles < 512);
+                gb.cpu.step(&mut gb.mmu);
+            }
+            assert_eq!(
+                gb.cpu.a, expected,
+                "{revision:?}, native={native}, nops={nops}"
+            );
+        }
+    }
+}

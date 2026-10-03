@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::hardware::{DmgRevision, Model};
+use crate::hardware::Model;
 
 /// Clock information for an in-flight serial transfer.
 ///
@@ -145,6 +145,8 @@ pub struct Serial {
     transfer: Option<TransferState>,
     model: Model,
     dmg_compat: bool,
+    // DIV clocks this second divider stage; SC writes restart it low.
+    master_clock: bool,
 }
 
 impl fmt::Debug for Serial {
@@ -228,17 +230,13 @@ impl Serial {
             transfer: None,
             model,
             dmg_compat: false,
+            master_clock: false,
         }
     }
 
     #[inline]
     fn cgb_mode(&self) -> bool {
         self.model.is_cgb() && !self.dmg_compat
-    }
-
-    #[inline]
-    fn dmg_revision(&self) -> DmgRevision {
-        self.model.dmg_revision().unwrap_or_default()
     }
 
     // KEY0 disables the fast serial clock and makes SC.1 read high when
@@ -287,6 +285,9 @@ impl Serial {
                 self.sb_out_buf.push(val);
             }
             0xFF02 => {
+                // SC restarts the serial divider stage, not the CPU divider.
+                // Gambatte's start/restart pairs distinguish the two phases.
+                self.master_clock = false;
                 if let Some(state) = self.transfer.as_mut() {
                     // Mid-transfer SC writes:
                     // - If bit7 is cleared, cancel the transfer.
@@ -360,7 +361,10 @@ impl Serial {
         }
     }
 
-    /// Advance the serial unit by the difference between `prev_div` and `curr_div`.
+    /// Advance serial using a dot-domain divider interval.
+    ///
+    /// Double-speed CGB intervals are converted to CPU clocks before clocking
+    /// the shared serial divider. CPU emulation supplies its actual DIV instead.
     pub fn step(&mut self, prev_div: u16, curr_div: u16, double_speed: bool, if_reg: &mut u8) {
         self.step_steps(
             prev_div,
@@ -379,53 +383,73 @@ impl Serial {
         self.port.requires_instruction_polling()
     }
 
-    /// Advance the serial unit by an explicit number of divider `steps`.
+    /// Advance serial by an explicit number of dot-domain divider `steps`.
     pub fn step_steps(&mut self, prev_div: u16, steps: u16, double_speed: bool, if_reg: &mut u8) {
-        if self.transfer.is_none() {
-            return;
-        }
+        let shift = u32::from(double_speed && self.model.is_cgb());
+        self.step_cpu_steps(
+            prev_div.wrapping_shl(shift),
+            u32::from(steps) << shift,
+            double_speed,
+            if_reg,
+        );
+    }
 
-        let Some(state) = self.transfer.as_ref() else {
-            return;
-        };
-        if !state.internal_clock {
-            return;
-        }
-
-        // In master mode, defer clocking until we have the partner byte.
-        if !self.poll_transfer_byte(true, double_speed) {
-            return;
-        }
-
-        let (clock_bit, phase) = if let Some(state) = self.transfer.as_ref() {
-            (
-                clock_bit_index(self.cgb_mode(), double_speed, state.fast_clock),
-                self.phase_adjust(double_speed, state.fast_clock),
-            )
+    fn clock_bit(&self) -> u8 {
+        // Falling edges of CPU DIV bit 7 (normal) or bit 2 (CGB fast)
+        // toggle the serial clock. Its falling edge shifts one bit, giving
+        // 512 or 16 CPU clocks per bit, independent of CPU speed mode.
+        if self.cgb_mode() && self.sc & 2 != 0 {
+            2
         } else {
-            return;
-        };
-
-        let mut transfer_complete = false;
-        let mut completed_outgoing = 0;
-        if let Some(state) = self.transfer.as_mut() {
-            let mut div = prev_div;
-            let mut prev_clock = ((div.wrapping_sub(phase) >> clock_bit) & 1) != 0;
-
-            for _ in 0..steps {
-                div = div.wrapping_add(1);
-                let clock = ((div.wrapping_sub(phase) >> clock_bit) & 1) != 0;
-                if prev_clock && !clock && state.shift(&mut self.sb) {
-                    transfer_complete = true;
-                    completed_outgoing = state.outgoing;
-                    break;
-                }
-                prev_clock = clock;
-            }
+            7
         }
+    }
 
-        if transfer_complete {
-            self.finish_transfer(completed_outgoing, if_reg);
+    pub(crate) fn step_cpu_steps(
+        &mut self,
+        prev_div: u16,
+        steps: u32,
+        double_speed: bool,
+        if_reg: &mut u8,
+    ) {
+        if !self.transfer.as_ref().is_some_and(|s| s.internal_clock)
+            || !self.poll_transfer_byte(true, double_speed)
+        {
+            return;
+        }
+        let mask = 1 << self.clock_bit();
+        let mut div = prev_div;
+        for _ in 0..steps {
+            let next = div.wrapping_add(1);
+            if div & mask != 0 && next & mask == 0 {
+                self.master_edge(if_reg);
+            }
+            div = next;
+        }
+    }
+
+    // A DIV write can clock the first stage without resetting the second.
+    // The same edge path handles ordinary ticks and this synthetic falling
+    // edge (Gambatte start*_late_div_write and div_write_start pairs).
+    pub(crate) fn on_div_reset(&mut self, prev_div: u16, double_speed: bool, if_reg: &mut u8) {
+        if self.transfer.as_ref().is_some_and(|s| s.internal_clock)
+            && prev_div & (1 << self.clock_bit()) != 0
+            && self.poll_transfer_byte(true, double_speed)
+        {
+            self.master_edge(if_reg);
+        }
+    }
+
+    fn master_edge(&mut self, if_reg: &mut u8) {
+        self.master_clock = !self.master_clock;
+        if self.master_clock {
+            return;
+        }
+        if let Some(state) = self.transfer.as_mut() {
+            if state.shift(&mut self.sb) {
+                let outgoing = state.outgoing;
+                self.finish_transfer(outgoing, if_reg);
+            }
         }
     }
 
@@ -471,21 +495,6 @@ impl Serial {
             .as_ref()
             .filter(|state| !state.internal_clock)
             .map(|state| state.outgoing)
-    }
-
-    fn phase_adjust(&self, double_speed: bool, fast_clock: bool) -> u16 {
-        if self.cgb_mode() {
-            return 0;
-        }
-
-        if double_speed || fast_clock {
-            return 0;
-        }
-
-        match self.dmg_revision() {
-            DmgRevision::RevA | DmgRevision::RevB | DmgRevision::RevC => 0,
-            DmgRevision::Rev0 => 0,
-        }
     }
 
     fn poll_transfer_byte(&mut self, internal_clock: bool, double_speed: bool) -> bool {
@@ -546,20 +555,6 @@ pub fn serial_dot_cycles_per_bit(high_speed: bool, double_speed: bool) -> u32 {
         (false, true) => 256,
         (true, false) => 16,
         (true, true) => 8,
-    }
-}
-
-fn clock_bit_index(cgb_mode: bool, double_speed: bool, fast_clock: bool) -> u32 {
-    if !cgb_mode {
-        // DMG hardware has no double-speed mode.
-        8
-    } else {
-        match (fast_clock, double_speed) {
-            (false, false) => 8,
-            (false, true) => 7,
-            (true, false) => 3,
-            (true, true) => 2,
-        }
     }
 }
 

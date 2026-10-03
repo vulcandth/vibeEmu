@@ -201,8 +201,10 @@ def normalize_status(raw_status: str) -> str:
     return "other"
 
 
-def collect_test_results(runs: Iterable[CommandRun]) -> Dict[str, Tuple[str, str]]:
-    results: Dict[str, Tuple[str, str]] = {}
+def collect_test_results(runs: Iterable[CommandRun]) -> Dict[Tuple[str, str], str]:
+    # Different ROM suites can contain the same relative filename. Keep the
+    # command's suite in the identity so one suite cannot overwrite another.
+    results: Dict[Tuple[str, str], str] = {}
     for run in runs:
         for raw_line in run.output:
             line = raw_line.strip()
@@ -212,18 +214,19 @@ def collect_test_results(runs: Iterable[CommandRun]) -> Dict[str, Tuple[str, str
             test_name = match.group("name").strip()
             raw_status = match.group("status")
             status_key = normalize_status(raw_status)
-            previous = results.get(test_name)
-            if previous and previous[0] != status_key:
+            key = (run.hint, test_name)
+            previous = results.get(key)
+            if previous and previous != status_key:
                 print(
-                    f"Warning: conflicting results for {test_name}: {previous[0]} vs {status_key}",
+                    f"Warning: conflicting results for {run.hint}/{test_name}: {previous} vs {status_key}",
                     file=sys.stderr,
                 )
-            results[test_name] = (status_key, run.hint)
+            results[key] = status_key
     return results
 
 
 def categorize_tests(
-    tests: Dict[str, Tuple[str, str]],
+    tests: Dict[Tuple[str, str], str],
     integration_modules: Dict[str, str],
 ) -> Dict[str, CategorySummary]:
     categories: Dict[str, CategorySummary] = {
@@ -237,7 +240,7 @@ def categorize_tests(
     rom_modules = {name for name, cat in integration_modules.items() if cat == "rom"}
     integration_only = set(integration_modules)
 
-    for full_name, (status_key, hint) in tests.items():
+    for (hint, full_name), status_key in tests.items():
         if hint == "doc" or full_name.startswith("src/"):
             module_name = full_name.split(" - ", 1)[0]
             categories["Doc Tests"].add(module_name, full_name, status_key)

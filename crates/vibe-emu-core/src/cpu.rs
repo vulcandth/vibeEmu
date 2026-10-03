@@ -321,8 +321,12 @@ impl Cpu {
             dot_cycles,
             self.double_speed,
         );
-        mmu.serial
-            .step_steps(prev_dot_div, dot_cycles, self.double_speed, &mut mmu.if_reg);
+        mmu.serial.step_cpu_steps(
+            prev_cpu_div,
+            u32::from(cpu_cycles),
+            self.double_speed,
+            &mut mmu.if_reg,
+        );
 
         mmu.set_dma_halted(self.halted);
         if mmu.dma_active() {

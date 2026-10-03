@@ -915,7 +915,10 @@ impl NoiseChannel {
         if self.length_enable && self.length > 0 {
             self.length -= 1;
             if self.length == 0 {
-                self.pending_disable = true;
+                // Length expiration is visible in NR52 on this DIV edge,
+                // just as for pulse and wave; it does not wait for the LFSR.
+                self.enabled = false;
+                self.pending_disable = false;
                 self.sample_suppressed = true;
                 self.set_pipeline_sample(0);
             }
@@ -1423,17 +1426,14 @@ impl Apu {
         self.ch3.bugged_read_countdown = 2;
         self.ch3.sample_suppressed.set(true);
 
-        if self.cgb_mode() {
-            // CGB: always redirect to the byte at the current playback position
+        // CPU access selects the same full byte CH3 is reading. DMG adds
+        // a narrow access window; it does not duplicate the output nibble.
+        // Gambatte ch3_reset_nr4init_freq7fd/7ff_read_ff30 distinguishes
+        // bytes 10/32/54 from the old synthesized values 00/22/44.
+        if self.cgb_mode() || just_read {
             self.wave_ram[byte_idx]
         } else {
-            // DMG: only accessible during the exact cycle the APU read wave RAM
-            if just_read {
-                let nibble = self.ch3.wave_sample_buffer & 0x0F;
-                (nibble << 4) | nibble
-            } else {
-                0xFF
-            }
+            0xFF
         }
     }
 
@@ -2492,8 +2492,9 @@ impl Apu {
             let prev_countdown = ch.sample_countdown;
             let prev_just_reloaded = ch.just_reloaded;
             let was_active = ch.active;
-            // Apply any pending duty change before computing initial output when triggering
-            ch.duty = ch.duty_next;
+            // A trigger reloads the period/envelope, not the waveform latch.
+            // Keep the pending duty and the initial suppressed sample until a
+            // real duty edge (Gambatte ch1_duty*_pos0 and duty0_to_duty3_pos3).
             let lf_div = (self.lf_div & 0x1) as i32;
 
             // Don't call refresh_sample_length - sample_length has already been updated
@@ -2560,7 +2561,11 @@ impl Apu {
 
             if ch.dac_enabled {
                 let level = DUTY_TABLE[ch.duty as usize][ch.duty_pos as usize];
-                let sample = level * ch.envelope.volume;
+                let sample = if ch.sample_surpressed {
+                    0
+                } else {
+                    level * ch.envelope.volume
+                };
                 if was_active || force_unsurpressed {
                     ch.output_pipeline.fill(sample);
                 } else if !was_active {
@@ -2574,7 +2579,6 @@ impl Apu {
             if was_active {
                 let low_bits = ch.timer & 0x3;
                 new_timer = (new_timer & !0x3) | low_bits;
-                ch.sample_surpressed = false;
             }
             if new_timer <= 0 {
                 new_timer = 1;
@@ -2583,9 +2587,6 @@ impl Apu {
 
             ch.enabled = ch.dac_enabled;
             ch.active = ch.enabled;
-            if was_active {
-                ch.sample_surpressed = false;
-            }
 
             // Clear envelope clock locks on trigger
             if idx == 1 {
