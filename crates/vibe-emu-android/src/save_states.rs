@@ -10,6 +10,15 @@ impl EmulatorHandle {
         path: &std::path::Path,
     ) -> serde_json::Value {
         let result = (|| -> std::io::Result<_> {
+            if operation == 0 {
+                match std::fs::metadata(root) {
+                    Ok(metadata) if !metadata.is_dir() => {
+                        return Err(std::io::Error::other("State directory is not a folder"));
+                    }
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                    _ => {}
+                }
+            }
             let slot = match slot {
                 1..=10 => Slot::Number(slot as u8),
                 11 => Slot::Quick,
@@ -33,13 +42,30 @@ impl EmulatorHandle {
                 self.copy_frame();
             }
             let rows: Vec<_> = Slot::ALL.into_iter().map(|s| {
+                let id = match s { Slot::Number(n) => n, Slot::Quick => 11, Slot::Recovery => 12 };
+                let mut present = false;
+                let mut created = 0;
                 let (description, available) = match store.metadata(s) {
-                    Ok(Some(m)) => (format!("{:?} · cycle {} · Unix {}", m.model, m.cycles, m.created_unix), true),
+                    Ok(Some(m)) => {
+                        present = true;
+                        created = m.created_unix;
+                        // A header alone cannot establish machine/boot compatibility.
+                        match vibe_emu_core::state_store::read(&store.path(s)?)
+                            .and_then(|bytes| self.gb.prepare_state(&bytes)) {
+                            Ok(_) => (format!("{:?} · cycle {}", m.model, m.cycles), true),
+                            Err(e) => (format!("Unavailable: {e}"), false),
+                        }
+                    }
                     Ok(None) => ("Empty".into(), false),
-                    Err(e) => (format!("Unavailable: {e}"), false),
+                    Err(e) => {
+                        // An unreadable store must not look like "no saves" at launch.
+                        present = true;
+                        (format!("Unavailable: {e}"), false)
+                    }
                 };
-                serde_json::json!({"label": s.label(), "description": description, "available": available})
-            }).collect();
+                Ok(serde_json::json!({"slot": id, "label": s.label(), "description": description,
+                    "available": available, "present": present, "created_unix": created}))
+            }).collect::<std::io::Result<_>>()?;
             Ok(rows)
         })();
         match result {

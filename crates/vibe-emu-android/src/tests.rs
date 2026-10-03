@@ -198,3 +198,60 @@ fn state_operations_restore_sram_and_report_failed_imports() {
     assert_eq!(handle.state_operation(&root, 1, 99, &root)["ok"], false);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn running_android_states_validate_each_slot_before_offering_resume() {
+    use vibe_emu_core::state_store::{Slot, StateStore};
+    let root = std::env::temp_dir().join(format!("vibe-resume-jni-{}", std::process::id()));
+    let mut handle = EmulatorHandle::new(EmulationMode::ForceDmg);
+    let data = rom(false, false);
+    assert!(handle.load_rom(data.clone()));
+    for _ in 0..4 {
+        assert!(handle.run_frame());
+    }
+    let saved_frame = handle.frame.clone();
+    let saved_cycles = handle.gb.cpu.cycles;
+    let saved = handle.state_operation(&root, 1, 11, &root);
+    assert_eq!(saved["ok"], true);
+    let quick = &saved["rows"][10];
+    assert_eq!(quick["slot"], 11);
+    assert_eq!(quick["present"], true);
+    assert_eq!(quick["available"], true);
+    assert!(quick["created_unix"].as_u64().unwrap() > 0);
+    assert_eq!(saved["rows"][0]["present"], false);
+    for _ in 0..4 {
+        assert!(handle.run_frame());
+    }
+    assert_eq!(handle.state_operation(&root, 2, 11, &root)["ok"], true);
+    assert_eq!(handle.gb.cpu.cycles, saved_cycles);
+    assert_eq!(handle.frame, saved_frame);
+    handle.copy_frame();
+    assert_eq!(
+        handle.gb.cpu.cycles, saved_cycles,
+        "paused redraw must not advance CPU"
+    );
+
+    let mut different_model = EmulatorHandle::new(EmulationMode::ForceMgb);
+    assert!(different_model.load_rom(data));
+    let incompatible = different_model.state_operation(&root, 0, 11, &root);
+    assert_eq!(incompatible["ok"], true);
+    assert_eq!(incompatible["rows"][10]["present"], true);
+    assert_eq!(incompatible["rows"][10]["available"], false);
+    let store = StateStore::new(&root, &handle.gb).unwrap();
+    std::fs::write(store.path(Slot::Number(1)).unwrap(), b"broken").unwrap();
+    let damaged = handle.state_operation(&root, 0, 11, &root);
+    assert_eq!(damaged["rows"][0]["present"], true);
+    assert_eq!(damaged["rows"][0]["available"], false);
+    std::fs::remove_file(store.path(Slot::Quick).unwrap()).unwrap();
+    assert_eq!(handle.state_operation(&root, 2, 11, &root)["ok"], false);
+    assert_eq!(handle.gb.cpu.cycles, saved_cycles);
+    let blocked = root.join("blocked-store");
+    std::fs::write(&blocked, b"not a directory").unwrap();
+    let unreadable = handle.state_operation(&blocked, 0, 11, &root);
+    assert_eq!(unreadable["ok"], false);
+    std::fs::create_dir(store.path(Slot::Quick).unwrap()).unwrap();
+    let unreadable = handle.state_operation(&root, 0, 11, &root);
+    assert_eq!(unreadable["rows"][10]["present"], true);
+    assert_eq!(unreadable["rows"][10]["available"], false);
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -2,7 +2,11 @@
 
 Desktop: open **States → Save states** in either workspace, or use **F5**
 (quick save), **Shift+F5** (quick load), and **Ctrl+F5 / Cmd+F5** (undo load).
-Android: open the pause menu and choose **Save states**.
+Android: the pause menu has **Quick save**, **Quick load**, and **Save states**.
+Quick uses a dedicated slot; the browser puts it first, followed by numbered
+slots and **Undo load**. Existing saves require replacement confirmation.
+Successful loads/imports close the menu and return to the restored game with
+visible feedback; errors remain visible above the scrolling slot list.
 
 Desktop menus retain visible States and Help entries at the default 2x size.
 Compact spacing preserves the game area; larger text or additional menus wrap
@@ -41,6 +45,31 @@ restored from a file. Frontends refresh video/audio and reconcile live input
 after a load. RTC registers and their fractional emulated time are restored;
 time spent with a state on disk is not added to its RTC.
 
+## Android launch and lifecycle
+
+Opening an instance with saved states offers **Resume saved game**, **Start
+without loading**, or **Cancel**. The suggested state is the newest compatible
+Quick or numbered save by capture time. Same-second ties prefer Quick, then the
+lowest numbered slot. Recovery is available explicitly but never suggested as
+the latest save. There is no automatic save on exit or automatic load on launch.
+Starting without loading boots the ROM with its current battery save; it does
+not delete any slots. Cancel discards the prepared machine without writing its
+SRAM or replacing the active instance.
+
+The chooser checks full state compatibility against this instance's ROM and
+selected hardware/boot configuration. Damaged and incompatible slots show a
+reason; missing or changed files are checked again at load time. A failed load
+keeps the chooser open with the error and does not silently start a new game.
+Each instance has its own state directory even when two instances use the same
+ROM. Loading also writes the usual pre-load Recovery state.
+
+State operations and document-picker ownership live with the retained emulator
+ViewModel. Rotation preserves a pending operation or launch choice. Picker
+cancellation leaves the machine and slots unchanged, and a picker result cannot
+be applied to another instance. After process death, reopen the instance and
+choose a durable save; no in-memory machine or unfinished operation is presumed
+restored. Export captures the current machine, not the highlighted slot.
+
 ## Format and maintenance
 
 Version 1 uses `VIBESTAT`, a little-endian version, SHA-256 payload checksum,
@@ -66,11 +95,16 @@ deterministic continuation, SRAM restoration and subsequent battery flushes,
 durable/repeated undo, SGB/hybrid borders, pending hardware events, incompatible
 ROM/model/boot configuration, malformed data, external sessions, and failed
 recovery/atomic writes. Desktop-worker and Android-bridge tests exercise
-repeated operations and failure reporting. Android instrumentation exercises
-the visible quick-save/load/undo/reopen flow. The eight-test Android suite passed
-on an Android 16 / API 36 x86_64 emulator using a cold boot and software rendering;
-the first hardware-rendered run aborted in Android system graphics during an
-existing navigation test, before the save-state test ran.
+repeated operations and failure reporting. Android regressions use the real
+activity, JNI frame loop, and injected touch/key events to verify Quick load
+rewinds the running machine and visibly resumes, canceled replacement, numbered
+saves, repeated undo, rotation during an in-flight Quick save, durable relaunch,
+and missing-file failure. The system document picker is also rotated and
+canceled, with the state browser and its operation ownership retained.
+Additional ContentResolver/JNI tests cover import/export, damaged/oversized
+files, inaccessible providers, and instance-bound picker results. The original
+dialog-only test used semantic clicks and missed the paused-dialog completion
+bug; it now uses real touch, and the full-activity regression covers completion.
 
 Additional regressions cover metadata browsing, import/export replacement,
 oversized files and captures, reserved slots, malformed fixed arrays, and
@@ -88,13 +122,16 @@ committed dependencies were unchanged by the capture harness.
 
 ![Windows menus at the default 2x size](screenshots/save-states-windows-2x.png)
 
-![Android save-state dialog after saving and loading](screenshots/save-states-android.png)
+![Android pause menu with Quick actions](screenshots/save-states-android-menu.png)
+
+![Android instance resume chooser](screenshots/save-states-android-resume.png)
 
 Final command results and CI status are recorded in the pull request. Remaining
 manual verification:
 
 - Further native Windows/macOS/Linux window and picker interactions, including cancelled
   imports/exports and closing/reopening the state browser during operations.
-- Android physical-device lifecycle, process death, rotation during a picker or
-  state operation, TV/controller navigation, and document-provider failures.
+- Android physical-device lifecycle and OS process eviction, TV/controller
+  navigation, and third-party/cloud document providers. Emulator activity
+  recreation is not physical-device or low-memory process-eviction testing.
 - Power-loss durability on the user's actual filesystem/storage hardware.

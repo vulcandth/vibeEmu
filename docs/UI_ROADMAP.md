@@ -29,6 +29,10 @@
   worker/render and Android JNI/dialog coverage.
 - [x] Bound imported audio phases, cover storage/import failure paths, and keep
   States/Help visible at default desktop 2x size and in wrapped layouts.
+- [x] Make Android Quick actions discoverable, confirm replacement/load, return to
+  gameplay after restore, and retain visible errors and pending work across rotation.
+- [x] Offer a validated per-instance resume choice, explicit start without loading,
+  and safe cancellation; suggest the latest compatible manual save, excluding Recovery.
 - [ ] Complete remaining manual device/picker verification in [Save states](SAVE_STATES.md).
 
 ## Verification requiring Matthew or another tester

@@ -47,9 +47,11 @@ class NativeBridge {
 
     external fun create(emulationMode: Int): Long
     external fun destroy(handle: Long)
+    external fun discard(handle: Long)
     external fun loadRom(handle: Long, rom: ByteArray): Boolean
     external fun loadRomFile(handle: Long, path: String): Boolean
     external fun runFrame(handle: Long, buffer: IntArray): Int
+    external fun copyFrame(handle: Long, buffer: IntArray): Int
     external fun setInput(handle: Long, state: Int)
     external fun setPlayerInput(handle: Long, player: Int, state: Int)
     external fun setShowBorder(handle: Long, show: Boolean)
@@ -131,7 +133,7 @@ class Emulator(private val native: NativeBridge = NativeBridge()) {
                 frameDurationNs = nextDuration
                 return true
             } finally {
-                if (!installed) native.destroy(candidate)
+                if (!installed) native.discard(candidate)
             }
         }
     }
@@ -158,6 +160,10 @@ class Emulator(private val native: NativeBridge = NativeBridge()) {
                 native.clearBootRom(handle, mode.nativeId)
             }
         }
+    }
+
+    fun copyFrame(out: IntArray): FrameSize? = synchronized(nativeLock) {
+        if (isReady()) FrameSize.fromPacked(native.copyFrame(handle, out)) else null
     }
 
     fun renderFrame(out: IntArray): FrameSize? {
@@ -192,11 +198,24 @@ class Emulator(private val native: NativeBridge = NativeBridge()) {
         }
     }
 
-    fun close() {
+    /** Adopt a prepared machine only after the launch choice succeeds. */
+    fun adoptPrepared(candidate: Emulator) = synchronized(nativeLock) {
+        synchronized(candidate.nativeLock) {
+            check(candidate.isReady()) { "Prepared game is no longer available" }
+            if (handle != 0L) native.destroy(handle)
+            handle = candidate.handle
+            romLoaded = true
+            isSgbHost = candidate.isSgbHost
+            frameDurationNs = candidate.frameDurationNs
+            candidate.handle = 0
+            candidate.romLoaded = false
+        }
+    }
+
+    fun close(save: Boolean = true) {
         synchronized(nativeLock) {
             if (handle != 0L) {
-                native.saveRam(handle)
-                native.destroy(handle)
+                if (save) native.destroy(handle) else native.discard(handle)
                 handle = 0
             }
             romLoaded = false

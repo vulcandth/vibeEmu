@@ -232,6 +232,7 @@ class MainActivity : ComponentActivity(), InputManager.InputDeviceListener {
                 EmulatorScreen(
                     vm.emulator,
                     vm.emuDispatcher,
+                    states = vm.states,
                     controllerPressedMasks = controllerPressedMasksState.value,
                     keyboardPressedMask = keyboardPressedMaskState.intValue,
                     controllerNames = controllerNamesState.value,
@@ -382,6 +383,7 @@ class MainActivity : ComponentActivity(), InputManager.InputDeviceListener {
 fun EmulatorScreen(
     emulator: Emulator,
     emuDispatcher: kotlinx.coroutines.CoroutineDispatcher,
+    states: SaveStateSession,
     controllerPressedMasks: List<Int> = List(4) { 0 },
     keyboardPressedMask: Int = 0,
     controllerNames: List<String> = List(4) { "No controller" },
@@ -404,8 +406,7 @@ fun EmulatorScreen(
     var screen by rememberSaveable { mutableStateOf(UiScreen.Instances) }
 
     val scope = rememberCoroutineScope()
-    var loading by remember { mutableStateOf(false) }
-    var loadError by remember { mutableStateOf<String?>(null) }
+    val loading = states.preparing || states.prepared != null
     var currentInstanceId by rememberSaveable { mutableStateOf<String?>(null) }
 
     var appliedSerial by remember { mutableStateOf<SerialPeripheral?>(null) }
@@ -442,11 +443,11 @@ fun EmulatorScreen(
     var status by rememberSaveable { mutableStateOf("Select an instance to play") }
     var romLabel by rememberSaveable { mutableStateOf("No instance loaded") }
     var inputState by remember { mutableStateOf(0xFF) }
-    var menuExpanded by remember { mutableStateOf(false) }
+    var menuExpanded by rememberSaveable { mutableStateOf(false) }
     var statesOpen by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(menuRequest) {
-        if (menuRequest > 0 && screen == UiScreen.Emulator && !loading && !statesOpen) menuExpanded = !menuExpanded
+        if (menuRequest > 0 && screen == UiScreen.Emulator && !loading && !statesOpen && !states.busy) menuExpanded = !menuExpanded
     }
     LaunchedEffect(Unit) {
         // Saved navigation may outlive the process; a machine cannot be restored
@@ -459,7 +460,7 @@ fun EmulatorScreen(
     }
 
     BackHandler(enabled = screen == UiScreen.Emulator && !loading && !statesOpen) {
-        menuExpanded = !menuExpanded
+        if (!states.busy) menuExpanded = !menuExpanded
     }
 
     LaunchedEffect(screen, menuExpanded, statesOpen, loading, foreground) {
@@ -500,50 +501,51 @@ fun EmulatorScreen(
     // Core runs on a dedicated thread (provided by activity).
 
     fun loadInstance(instance: GameInstance) {
-        if (loading) return
-        loading = true
-        loadError = null
-        emulator.setPaused(true)
-        val selected = options
-        scope.launch {
-            try {
-                val loaded = withContext(emuDispatcher) {
-                    val romFile = GameInstancesRepository(context).romFile(instance.id)
-                    val boots = machineSettings.readBootRoms(selected)
-                    romFile.exists() && emulator.loadRomFromFile(romFile.absolutePath, selected.emulationMode, boots) {
-                        machineSettings.commit()
-                    }
-                }
-                check(loaded) { "Failed to load instance or boot ROM" }
-                machineRevision++
-                GameInstancesRepository(context).markPlayed(instance.id)
-                currentInstanceId = instance.id
-                romLabel = instance.nickname
-                status = "Running ${instance.nickname} (${selected.emulationMode.label})"
-                inputState = 0xFF
-                emulator.updateInput(inputState)
-                appliedSerial = null
-                applyRuntimeOptions(selected)
-                hasFrame = false
-                screen = UiScreen.Emulator
-                emulator.setPaused(false)
-                onRomLoaded()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                loadError = e.message ?: "Failed to load instance"
-            } finally { loading = false }
-        }
+        states.prepare(context, instance, options, machineSettings)
     }
 
-    if (loading) {
-        AlertDialog(onDismissRequest = {}, confirmButton = {},
-            title = { Text("Loading game") },
-            text = { Text("Preparing the game and its initial SGB border, if selected...") })
+    val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
+    var consumedLoad by rememberSaveable { mutableIntStateOf(0) }
+    var consumedQuickSave by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(states.completedLoad, states.completedQuickSave) {
+        if (consumedLoad != states.completedLoad || consumedQuickSave != states.completedQuickSave) {
+            consumedLoad = states.completedLoad
+            consumedQuickSave = states.completedQuickSave
+            statesOpen = false
+            menuExpanded = false
+            hasFrame = false
+            snackbar.showSnackbar(states.message)
+        }
     }
-    loadError?.let { error ->
-        AlertDialog(onDismissRequest = { loadError = null },
-            confirmButton = { TextButton(onClick = { loadError = null }) { Text("OK") } },
+    LaunchedEffect(currentInstanceId) {
+        currentInstanceId?.let { states.bind(it, File(GameInstancesRepository(context).instanceDir(it), "states")) }
+    }
+    LaunchedEffect(states.launched) {
+        states.launched?.let { loaded ->
+            machineRevision++
+            currentInstanceId = loaded.instance.id
+            romLabel = loaded.instance.nickname
+            status = "Running ${loaded.instance.nickname} (${loaded.options.emulationMode.label})"
+            inputState = 0xFF
+            emulator.updateInput(inputState)
+            appliedSerial = null
+            applyRuntimeOptions(loaded.options)
+            hasFrame = false
+            menuExpanded = false
+            statesOpen = false
+            screen = UiScreen.Emulator
+            states.consumeLaunch()
+            onRomLoaded()
+        }
+    }
+    if (states.prepared != null) ResumeStateDialog(states)
+    else if (loading) {
+        AlertDialog(onDismissRequest = {}, confirmButton = {},
+            title = { Text("Preparing game") }, text = { Text("Reading the ROM and compatible save states...") })
+    }
+    if (states.prepared == null) states.error?.let { error ->
+        AlertDialog(onDismissRequest = { states.error = null },
+            confirmButton = { TextButton(onClick = { states.error = null }) { Text("OK") } },
             title = { Text("Unable to load game") }, text = { Text(error) })
     }
 
@@ -553,15 +555,17 @@ fun EmulatorScreen(
             var bitmap = Bitmap.createBitmap(FB_WIDTH, FB_HEIGHT, Bitmap.Config.ARGB_8888)
             var nextFrameDeadline = System.nanoTime()
             val maxFrameSkip = 4
+            var drawnHolder: SurfaceHolder? = null
             while (isActive) {
                 // Pacing sleeps alone do not yield a single-thread dispatcher.
                 kotlinx.coroutines.yield()
                 val targetFrameNs = emulator.frameDurationNs * 100L / emulator.speedPercent.coerceIn(1, 400)
-                if (emulator.isReady() && !emulator.isPaused()) {
+                val advancing = !emulator.isPaused()
+                if (emulator.isReady() && (advancing || !hasFrame || surfaceHolder !== drawnHolder)) {
                     // Pace the loop to ~59fps to avoid running too fast.
                     val now = System.nanoTime()
                     val sleepNs = nextFrameDeadline - now
-                    if (sleepNs > 0) {
+                    if (advancing && sleepNs > 0) {
                         sleepForNanos(sleepNs)
                         continue
                     }
@@ -570,7 +574,7 @@ fun EmulatorScreen(
                     var skipped = 0
                     var catchupDeadline = nextFrameDeadline
                     var catchupNow = now
-                    while (skipped < maxFrameSkip && catchupNow - catchupDeadline > targetFrameNs) {
+                    while (advancing && skipped < maxFrameSkip && catchupNow - catchupDeadline > targetFrameNs) {
                         emulator.renderFrame(frameBuffer) // skip draw
                         catchupDeadline += targetFrameNs
                         skipped++
@@ -578,7 +582,7 @@ fun EmulatorScreen(
                     }
                     nextFrameDeadline = catchupDeadline
 
-                    val updated = emulator.renderFrame(frameBuffer)
+                    val updated = if (advancing) emulator.renderFrame(frameBuffer) else emulator.copyFrame(frameBuffer)
                     if (updated != null) {
                         if (bitmap.width != updated.width || bitmap.height != updated.height) {
                             bitmap.recycle()
@@ -596,6 +600,7 @@ fun EmulatorScreen(
                                 canvas.drawColor(android.graphics.Color.BLACK)
                                 canvas.drawBitmap(bitmap, null, destRect, paint)
                                 h.unlockCanvasAndPost(canvas)
+                                drawnHolder = h
                             }
                         }
                         if (!hasFrame || frameSize != updated) {
@@ -620,8 +625,8 @@ fun EmulatorScreen(
         }
     }
 
-    LaunchedEffect(dpadPressedMask, actionPressedMask, metaPressedMask, controllerPressedMasks, keyboardPressedMask, emulator.isSgbHost, loading, screen, menuExpanded, foreground) {
-        if (!loading && screen == UiScreen.Emulator && !menuExpanded && foreground) {
+    LaunchedEffect(dpadPressedMask, actionPressedMask, metaPressedMask, controllerPressedMasks, keyboardPressedMask, emulator.isSgbHost, loading, screen, menuExpanded, statesOpen, foreground) {
+        if (!loading && screen == UiScreen.Emulator && !menuExpanded && !statesOpen && foreground) {
             val touchAndKeyboard = dpadPressedMask or actionPressedMask or metaPressedMask or keyboardPressedMask
             val firstPad = if (emulator.isSgbHost) controllerPressedMasks[0] else controllerPressedMasks.fold(0) { a, b -> a or b }
             inputState = 0xFF and neutralizeDirections(touchAndKeyboard or firstPad).inv()
@@ -644,25 +649,33 @@ fun EmulatorScreen(
     }
 
     if (statesOpen && screen == UiScreen.Emulator && currentInstanceId != null) {
-        SaveStatesDialog(emulator, emuDispatcher,
-            File(GameInstancesRepository(context).instanceDir(currentInstanceId!!), "states"),
-            onDismiss = { statesOpen = false; menuExpanded = true })
+        SaveStatesDialog(states, onDismiss = { statesOpen = false; menuExpanded = true })
+    }
+    LaunchedEffect(menuExpanded, statesOpen) {
+        if (menuExpanded && !statesOpen && !states.busy) states.refresh()
     }
     if (menuExpanded && !statesOpen && screen == UiScreen.Emulator) {
         GameplayMenu(
             gameName = romLabel,
-            onResume = { menuExpanded = false },
+            enabled = !states.busy,
+            stateMessage = states.message,
+            quickAvailable = states.rows.any { it.id == 11 && it.available },
+            onQuickSave = { states.rows.find { it.id == 11 }?.let { states.request(1, it, quick = true) } },
+            onQuickLoad = { states.rows.find { it.id == 11 }?.let { states.request(2, it) } },
+            onResume = { if (!states.busy) menuExpanded = false },
             onSettings = { menuExpanded = false; screen = UiScreen.Options },
             onStates = { statesOpen = true },
             onReset = { emulator.reset(); menuExpanded = false },
             onInstances = { menuExpanded = false; emulator.saveRam(); screen = UiScreen.Instances; onOpenInstances() },
             onAbout = { menuExpanded = false; screen = UiScreen.About },
         )
+        StateConfirmationDialog(states, quick = true)
     }
 
     val showTopBar = (!isLandscape && !isTv) && screen == UiScreen.Emulator
 
     Scaffold(
+        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbar) },
         topBar = {
             if (showTopBar) {
                 TopAppBar(
@@ -717,7 +730,7 @@ fun EmulatorScreen(
                         machineRevision++
                         optionsRepository.save(updated)
                         applyRuntimeOptions(updated)
-                    } catch (error: Exception) { loadError = error.message ?: "Unable to save settings" }
+                    } catch (error: Exception) { states.error = error.message ?: "Unable to save settings" }
                 },
                 onBack = { screen = if (currentInstanceId == null) UiScreen.Instances else UiScreen.Emulator },
                 controllerNames = controllerNames,
@@ -729,7 +742,7 @@ fun EmulatorScreen(
                         options = machineSettings.discard(options)
                         machineRevision++
                         optionsRepository.save(options)
-                    } catch (error: Exception) { loadError = error.message ?: "Unable to discard settings" }
+                    } catch (error: Exception) { states.error = error.message ?: "Unable to discard settings" }
                 },
                 bootRomFiles = remember(machineRevision) {
                     BootRomMode.entries.mapNotNull { mode -> machineSettings.bootFile(options, mode)?.let { mode to it } }.toMap()
@@ -817,7 +830,7 @@ fun EmulatorScreen(
                             frameSize = frameSize,
                             hasFrame = hasFrame,
                             surfaceHolder = surfaceHolder,
-                            onSurfaceHolderChanged = { surfaceHolder = it },
+                            onSurfaceHolderChanged = { surfaceHolder = it; hasFrame = false },
                             dpadPressedMask = dpadPressedMask,
                             onDpadMaskChange = { dpadPressedMask = it },
                             actionPressedMask = actionPressedMask,
@@ -836,7 +849,7 @@ fun EmulatorScreen(
                         frameSize = frameSize,
                         hasFrame = hasFrame,
                         surfaceHolder = surfaceHolder,
-                        onSurfaceHolderChanged = { surfaceHolder = it },
+                        onSurfaceHolderChanged = { surfaceHolder = it; hasFrame = false },
                         dpadPressedMask = dpadPressedMask,
                         onDpadMaskChange = { dpadPressedMask = it },
                         actionPressedMask = actionPressedMask,
