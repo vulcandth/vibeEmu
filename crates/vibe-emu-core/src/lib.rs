@@ -87,3 +87,9 @@ pub mod timer;
 
 /// Super Game Boy host hardware.
 pub mod sgb;
+
+/// Versioned, validated machine snapshots.
+pub mod save_state;
+
+/// Durable save-state slots and recovery.
+pub mod state_store;

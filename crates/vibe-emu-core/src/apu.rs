@@ -29,7 +29,7 @@ use crate::hardware::{CgbRevision, DmgRevision, Model};
 ///
 /// This behavior is derived from SameBoy's `skip_div_event` handling.
 /// See: <https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c>
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 enum SkipDivEvent {
     #[default]
     Inactive,
@@ -61,6 +61,7 @@ const VOLUME_FACTOR: i16 = 64;
 /// each pipeline advance a single word load/store on 32-bit hosts as well.
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug, PartialEq, Clone))]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct OutputPipeline(u32);
 
 impl OutputPipeline {
@@ -120,6 +121,7 @@ const NR44_IDX: usize = (0xFF23 - 0xFF10) as usize;
 /// See: <https://github.com/LIJI32/SameBoy/blob/master/Core/apu.c>
 #[derive(Default, Clone, Copy)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct EnvelopeClock {
     clock: bool,
     locked: bool,
@@ -128,6 +130,7 @@ struct EnvelopeClock {
 
 #[derive(Default, Clone, Copy)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Envelope {
     initial: u8,
     period: u8,
@@ -185,6 +188,7 @@ impl Envelope {
 #[derive(Default)]
 // Handles Channel 1 frequency sweep logic. See TODO.md #257.
 #[cfg_attr(test, derive(Debug, PartialEq, Clone))]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Sweep {
     period: u8,
     negate: bool,
@@ -233,7 +237,7 @@ impl Sweep {
 // Frequency writes are rare compared with waveform edges. Store an exact
 // reciprocal with the latched sample length, including sweep updates, so ARM11
 // does not need a software division each time a batch crosses an edge.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 struct PeriodReciprocal<const INITIAL_PERIOD: u32>(u32);
 
 impl<const INITIAL_PERIOD: u32> Default for PeriodReciprocal<INITIAL_PERIOD> {
@@ -281,6 +285,7 @@ const NOISE_PERIOD_RECIPROCALS: [PeriodReciprocal<2>; 8] = {
 
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug, PartialEq, Clone))]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct SquareChannel {
     enabled: bool,
     dac_enabled: bool,
@@ -298,6 +303,7 @@ struct SquareChannel {
     envelope: Envelope,
     sweep: Option<Sweep>,
     sample_length: u16,
+    #[serde(skip)]
     sample_period_reciprocal: PeriodReciprocal<4096>,
     sample_countdown: i32,
     delay: i32,
@@ -538,6 +544,7 @@ impl SquareChannel {
 }
 
 #[cfg_attr(test, derive(Debug, PartialEq, Clone))]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct WaveChannel {
     enabled: bool,
     dac_enabled: bool,
@@ -547,6 +554,7 @@ struct WaveChannel {
     timer: i32,
     shift: u8,
     sample_length: u16,
+    #[serde(skip)]
     sample_period_reciprocal: PeriodReciprocal<2048>,
     sample_countdown: i32,
     delay: i32,
@@ -562,6 +570,7 @@ struct WaveChannel {
     sample_suppressed: Cell<bool>,
     bugged_read_countdown: u8,
     bugged_read_index: u8,
+    #[serde(with = "crate::save_state::arrays")]
     wave_shadow: [u8; 0x10],
     wave_ram_state: u16,
     tick_count: u8,
@@ -765,6 +774,7 @@ impl WaveChannel {
 
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug, PartialEq, Clone))]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct NoiseChannel {
     enabled: bool,
     dac_enabled: bool,
@@ -917,6 +927,7 @@ impl NoiseChannel {
 }
 
 #[cfg_attr(test, derive(Debug, PartialEq))]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct FrameSequencer {
     step: u8,
 }
@@ -934,6 +945,7 @@ impl FrameSequencer {
 }
 
 /// Audio Processing Unit emulating the Game Boy's four sound channels.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Apu {
     // Scoped by Cpu::run_for_dots: no caller can observe these pending clocks
     // except through MMIO, which synchronizes them before reading/writing.
@@ -946,6 +958,7 @@ pub struct Apu {
     ch2: SquareChannel,
     ch3: WaveChannel,
     ch4: NoiseChannel,
+    #[serde(with = "crate::save_state::arrays")]
     wave_ram: [u8; 0x10],
     nr50: u8,
     nr51: u8,
@@ -955,9 +968,13 @@ pub struct Apu {
     /// floor(2^32 / max(sample_rate, 2)); used for exact sample deadlines.
     sample_rate_reciprocal: u32,
     sample_timer_accum: u64,
+    #[serde(skip)]
     audio_out: Option<AudioProducer>,
+    #[serde(with = "crate::save_state::arrays")]
     pcm_samples: [u8; 4],
+    #[serde(with = "crate::save_state::arrays")]
     pcm_active: [bool; 4],
+    #[serde(with = "crate::save_state::arrays")]
     pcm_mask: [u8; 2],
     speed_factor: f32,
     hp_coef: f32,
@@ -969,6 +986,7 @@ pub struct Apu {
     pcm34: u8,
     pcm_dirty: bool,
     pcm12_ch1_glitch_once: bool,
+    #[serde(with = "crate::save_state::arrays")]
     regs: [u8; 0x30],
     cpu_cycles: u64,
     /// Counts 1 MHz ticks; the low two bits determine the phase of the
@@ -1091,6 +1109,56 @@ pub struct ApuBootSnapshot {
     pub nr51: u8,
     pub nr52: u8,
     pub debug: ApuDebugState,
+}
+
+impl Apu {
+    pub(crate) fn validate_state(&mut self, model: Model) -> bool {
+        // Rebuild arithmetic caches instead of accepting divisors from a file.
+        self.ch1.set_sample_length(self.ch1.sample_length);
+        self.ch2.set_sample_length(self.ch2.sample_length);
+        self.ch3.set_sample_length(self.ch3.sample_length);
+        let envelope =
+            |e: &Envelope| e.volume < 16 && e.initial < 16 && e.period < 8 && e.timer <= 8;
+        let square = |c: &SquareChannel| {
+            c.duty < 4
+                && c.duty_next < 4
+                && c.duty_pos < 8
+                && c.frequency < 2048
+                && c.sample_length < 2048
+                && envelope(&c.envelope)
+                && c.sweep.as_ref().is_none_or(|s| s.shift < 8 && s.period < 8)
+        };
+        self.model == model
+            && !self.defer_cpu_ticks
+            && self.pending_cpu_dots == 0
+            && square(&self.ch1)
+            && square(&self.ch2)
+            && envelope(&self.ch4.envelope)
+            && self.ch3.current_sample_index < 32
+            && self.ch3.wave_position.get() < 32
+            && self.ch3.wave_ram_access_index.get() < 16
+            && self.ch3.bugged_read_index < 16
+            && self.ch3.frequency < 2048
+            && self.ch3.sample_length < 2048
+            && self.ch3.shift <= 4
+            && self.ch4.clock_shift < 16
+            && self.ch4.divisor < 8
+            && self.sequencer.step < 8
+            // Audio stepping keeps the phase below one sample period. An
+            // imported larger value can overflow or flood the live queue.
+            && self.sample_timer_accum < u64::from(model.clock_hz())
+            && self.speed_factor.is_finite()
+            && self.speed_factor > 0.0
+            && [
+                self.hp_coef,
+                self.hp_prev_input_left,
+                self.hp_prev_output_left,
+                self.hp_prev_input_right,
+                self.hp_prev_output_right,
+            ]
+            .iter()
+            .all(|v| v.is_finite())
+    }
 }
 
 impl Apu {

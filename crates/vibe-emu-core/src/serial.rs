@@ -45,6 +45,12 @@ impl Default for SerialTransferClock {
 /// }
 /// ```
 pub trait LinkPort: Send {
+    /// Return a portable stub configuration, or None for an external session.
+    /// Custom endpoints are conservatively excluded from save states.
+    fn save_state_stub(&self) -> Option<bool> {
+        None
+    }
+
     /// Whether the host must observe each CPU instruction, for example to
     /// publish a network timestamp before starting a transfer. Custom endpoints
     /// default to conservative polling; self-contained endpoints may opt out.
@@ -111,6 +117,9 @@ impl NullLinkPort {
 }
 
 impl LinkPort for NullLinkPort {
+    fn save_state_stub(&self) -> Option<bool> {
+        Some(self.loopback)
+    }
     fn requires_instruction_polling(&self) -> bool {
         false
     }
@@ -123,11 +132,15 @@ impl LinkPort for NullLinkPort {
 /// Represents the Game Boy serial registers.
 /// This struct handles SB/SC behavior and raises the serial interrupt
 /// when a transfer completes.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Serial {
     sb: u8,
+    #[serde(default)]
+    stub_loopback: bool,
     sc: u8,
     pub(crate) out_buf: Vec<u8>,
     sb_out_buf: Vec<u8>,
+    #[serde(skip, default = "default_port")]
     port: Box<dyn LinkPort + Send>,
     transfer: Option<TransferState>,
     model: Model,
@@ -147,6 +160,7 @@ impl fmt::Debug for Serial {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct TransferState {
     remaining_bits: u8,
     outgoing: u8,
@@ -189,11 +203,26 @@ impl TransferState {
     }
 }
 
+fn default_port() -> Box<dyn LinkPort + Send> {
+    Box::new(NullLinkPort::default())
+}
+
+impl Serial {
+    pub(crate) fn state_supported(&self) -> bool {
+        self.port.save_state_stub().is_some()
+    }
+    pub(crate) fn validate_state(&mut self, model: Model) -> bool {
+        self.port = Box::new(NullLinkPort::new(self.stub_loopback));
+        self.model == model && self.transfer.as_ref().is_none_or(|t| t.remaining_bits <= 8)
+    }
+}
+
 impl Serial {
     /// Creates a new serial unit.
     pub fn new(model: Model) -> Self {
         Self {
             sb: 0,
+            stub_loopback: false,
             sc: 0x7E,
             out_buf: Vec::new(),
             sb_out_buf: Vec::new(),
@@ -218,12 +247,14 @@ impl Serial {
 
     /// Attaches a link cable endpoint.
     pub fn connect(&mut self, port: Box<dyn LinkPort + Send>) {
+        self.stub_loopback = port.save_state_stub().unwrap_or(false);
         self.port = port;
     }
 
     /// Detach the external device without carrying serial registers or an
     /// in-flight transfer into a replacement machine of a different model.
     pub fn take_port(&mut self) -> Box<dyn LinkPort + Send> {
+        self.stub_loopback = false;
         std::mem::replace(&mut self.port, Box::new(NullLinkPort::default()))
     }
 

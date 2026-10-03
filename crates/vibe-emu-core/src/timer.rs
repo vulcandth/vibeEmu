@@ -1,5 +1,5 @@
 /// Divider and timer unit (DIV/TIMA/TMA/TAC at 0xFF04–0xFF07).
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Timer {
     /// 16-bit internal divider counter. DIV register is the upper 8 bits.
     pub div: u16,
@@ -18,6 +18,12 @@ pub struct Timer {
     reload_delay: u8,
     /// Whether the reload is being applied this cycle
     reloading: bool,
+}
+
+impl Timer {
+    pub(crate) fn validate_state(&self) -> bool {
+        self.tac <= 7 && self.reload_delay <= 4
+    }
 }
 
 impl Timer {

@@ -20,6 +20,10 @@ pub enum Action {
     TogglePause,
     Reset,
     Screenshot,
+    SaveStates,
+    QuickSave,
+    QuickLoad,
+    UndoLoad,
     ToggleMute,
     ToggleFullscreen,
     ToggleMenu,
@@ -68,6 +72,10 @@ impl Action {
                     | Self::TogglePause
                     | Self::Reset
                     | Self::Screenshot
+                    | Self::SaveStates
+                    | Self::QuickSave
+                    | Self::QuickLoad
+                    | Self::UndoLoad
             )
     }
 
