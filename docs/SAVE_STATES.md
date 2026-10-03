@@ -4,6 +4,10 @@ Desktop: open **States → Save states** in either workspace, or use **F5**
 (quick save), **Shift+F5** (quick load), and **Ctrl+F5 / Cmd+F5** (undo load).
 Android: open the pause menu and choose **Save states**.
 
+Desktop menus retain visible States and Help entries at the default 2x size.
+Compact spacing preserves the game area; larger text or additional menus wrap
+onto another row instead of clipping controls.
+
 Each ROM has ten numbered slots, a quick slot, and a recovery slot. Saving a
 slot replaces its previous contents. Import loads an external `.vstate`;
 export captures the current machine. Slot metadata identifies the hardware,
@@ -51,6 +55,9 @@ slots and Recovery always use the atomic core writer.
 The serialized hardware structures are the v1 schema: changes to serialized
 fields require an explicit version/migration decision. Rewind, recording,
 automatic resume and preserve-current-SRAM choices are outside this feature.
+The initial v1 schema includes the upstream serial master-clock phase merged
+before this feature's release; snapshots from earlier experimental PR builds
+are not a supported compatibility baseline.
 
 ## Verification
 
@@ -65,12 +72,28 @@ on an Android 16 / API 36 x86_64 emulator using a cold boot and software renderi
 the first hardware-rendered run aborted in Android system graphics during an
 existing navigation test, before the save-state test ran.
 
+Additional regressions cover metadata browsing, import/export replacement,
+oversized files and captures, reserved slots, malformed fixed arrays, and
+checksummed invalid APU sample phases. A phase at or above the model clock is
+rejected before changing the running machine, SRAM, or Recovery; the largest
+valid phase still resumes through the live audio queue.
+
+Menu tests resize a live egui context between 320, 360, 480, 640 and 1100 points,
+with 1x/1.5x/2x text and Debug present/absent, and repeatedly open States and
+Help. Normal Play mode keeps a single menu row. Native Windows/OpenGL rendering
+was captured at the default 2x size (320x360 client area, 320x288 game area)
+using a generated test ROM and an isolated configuration. The eframe capture
+helper was temporarily delayed to a settled frame; application code and the
+committed dependencies were unchanged by the capture harness.
+
+![Windows menus at the default 2x size](screenshots/save-states-windows-2x.png)
+
 ![Android save-state dialog after saving and loading](screenshots/save-states-android.png)
 
 Final command results and CI status are recorded in the pull request. Remaining
 manual verification:
 
-- Native Windows/macOS/Linux window and picker interactions, including cancelled
+- Further native Windows/macOS/Linux window and picker interactions, including cancelled
   imports/exports and closing/reopening the state browser during operations.
 - Android physical-device lifecycle, process death, rotation during a picker or
   state operation, TV/controller navigation, and document-provider failures.

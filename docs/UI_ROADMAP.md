@@ -27,6 +27,8 @@
   on desktop and Android. Reject link/Mobile Adapter sessions in the core.
 - [x] Add automated round-trip, continuation, SRAM/recovery, failure-path, desktop
   worker/render and Android JNI/dialog coverage.
+- [x] Bound imported audio phases, cover storage/import failure paths, and keep
+  States/Help visible at default desktop 2x size and in wrapped layouts.
 - [ ] Complete remaining manual device/picker verification in [Save states](SAVE_STATES.md).
 
 ## Verification requiring Matthew or another tester

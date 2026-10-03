@@ -1144,6 +1144,9 @@ impl Apu {
             && self.ch4.clock_shift < 16
             && self.ch4.divisor < 8
             && self.sequencer.step < 8
+            // Audio stepping keeps the phase below one sample period. An
+            // imported larger value can overflow or flood the live queue.
+            && self.sample_timer_accum < u64::from(model.clock_hz())
             && self.speed_factor.is_finite()
             && self.speed_factor > 0.0
             && [

@@ -37,6 +37,72 @@ fn run(gb: &mut GameBoy, count: usize) {
     }
 }
 
+fn edited_state(bytes: &[u8], edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut json = serde_json::from_slice(&bytes[44..]).unwrap();
+    edit(&mut json);
+    let payload = serde_json::to_vec(&json).unwrap();
+    let mut bytes = bytes[..12].to_vec();
+    bytes.extend_from_slice(&Sha256::digest(&payload));
+    bytes.extend(payload);
+    bytes
+}
+
+#[test]
+fn imported_audio_phase_is_bounded_before_install_or_recovery_write() {
+    for model in [
+        Model::default(),
+        Model::Mgb,
+        Model::from_cgb_flag(true),
+        Model::Sgb,
+        Model::Sgb2,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut gb = machine(model, 3, 3);
+        let audio = gb.mmu.apu.enable_output(44_100);
+        run(&mut gb, 37);
+        let store = StateStore::new(dir.path(), &gb).unwrap();
+        store.save(&gb, Slot::Quick).unwrap();
+        store.load(&mut gb, Slot::Quick).unwrap();
+        let recovery = store.path(Slot::Recovery).unwrap();
+        let previous = std::fs::read(&recovery).unwrap();
+        let state = gb.save_state().unwrap();
+        for phase in [u64::from(model.clock_hz()), u64::from(u32::MAX), u64::MAX] {
+            let bad = edited_state(&state, |json| {
+                json["machine"]["mmu"]["apu"]["sample_timer_accum"] = phase.into();
+            });
+            let pc = gb.cpu.pc;
+            let cycles = gb.cpu.cycles;
+            let ram = gb.mmu.cart.as_ref().unwrap().ram.clone();
+            assert!(
+                store.load_bytes(&mut gb, &bad).is_err(),
+                "{model:?}: {phase}"
+            );
+            assert_eq!(gb.cpu.pc, pc);
+            assert_eq!(gb.cpu.cycles, cycles);
+            assert_eq!(gb.mmu.cart.as_ref().unwrap().ram, ram);
+            assert_eq!(std::fs::read(&recovery).unwrap(), previous);
+        }
+        // The largest valid phase must still emit and normalize with the live
+        // output queue after restore (including the SGB's different clock).
+        let valid = edited_state(&state, |json| {
+            json["machine"]["mmu"]["apu"]["sample_timer_accum"] = (model.clock_hz() - 1).into();
+        });
+        store.load_bytes(&mut gb, &valid).unwrap();
+        while audio.pop_stereo().is_some() {}
+        run(&mut gb, 100);
+        assert!(audio.pop_stereo().is_some());
+        let json: serde_json::Value =
+            serde_json::from_slice(&gb.save_state().unwrap()[44..]).unwrap();
+        assert!(
+            json["machine"]["mmu"]["apu"]["sample_timer_accum"]
+                .as_u64()
+                .unwrap()
+                < u64::from(model.clock_hz())
+        );
+    }
+}
+
 #[test]
 fn every_model_and_mapper_roundtrips_and_continues_deterministically() {
     let models = [
@@ -87,6 +153,141 @@ fn every_model_and_mapper_roundtrips_and_continues_deterministically() {
             );
         }
     }
+}
+
+#[test]
+fn browser_lists_empty_saved_corrupt_and_reserved_slots() {
+    let dir = tempfile::tempdir().unwrap();
+    let gb = machine(Model::Mgb, 3, 3);
+    let store = StateStore::new(dir.path(), &gb).unwrap();
+    for slot in Slot::ALL {
+        assert!(store.metadata(slot).unwrap().is_none());
+        assert!(!slot.label().is_empty());
+        if slot != Slot::Recovery {
+            store.save(&gb, slot).unwrap();
+            let metadata = store.metadata(slot).unwrap().unwrap();
+            assert_eq!(metadata.model, gb.model);
+            assert_eq!(metadata.rom_sha256, save_state::rom_identity(&gb).unwrap());
+            assert_eq!(metadata.cycles, gb.cpu.cycles);
+        }
+    }
+    assert!(store.save(&gb, Slot::Recovery).is_err());
+    assert!(store.metadata(Slot::Recovery).unwrap().is_none());
+    for slot in [Slot::Number(0), Slot::Number(11), Slot::Number(255)] {
+        assert!(store.path(slot).is_err());
+        assert!(store.metadata(slot).is_err());
+    }
+    let path = store.path(Slot::Number(1)).unwrap();
+    std::fs::write(&path, b"corrupt state").unwrap();
+    assert!(store.metadata(Slot::Number(1)).is_err());
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert!(store.metadata(Slot::Number(1)).is_err());
+}
+
+#[test]
+fn export_import_replacement_and_failed_import_preserve_recovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut gb = machine(Model::Mgb, 3, 3);
+    let store = StateStore::new(dir.path(), &gb).unwrap();
+    let external = dir.path().join("exported/game.vstate");
+    store.export(&gb, &external).unwrap();
+    run(&mut gb, 91);
+    gb.mmu.cart.as_mut().unwrap().ram.fill(0x42);
+    store.export(&gb, &external).unwrap();
+    let saved_pc = gb.cpu.pc;
+    let saved_cycles = gb.cpu.cycles;
+    run(&mut gb, 33);
+    gb.mmu.cart.as_mut().unwrap().ram.fill(0x99);
+    let previous_cycles = gb.cpu.cycles;
+    store.import(&mut gb, &external).unwrap();
+    assert_eq!(gb.cpu.pc, saved_pc);
+    assert_eq!(gb.cpu.cycles, saved_cycles);
+    assert!(gb.mmu.cart.as_ref().unwrap().ram.iter().all(|b| *b == 0x42));
+    assert_eq!(
+        store.metadata(Slot::Recovery).unwrap().unwrap().cycles,
+        previous_cycles
+    );
+    let recovery = std::fs::read(store.path(Slot::Recovery).unwrap()).unwrap();
+    for path in [dir.path().join("missing.vstate"), external.clone()] {
+        std::fs::write(&external, b"invalid export").unwrap();
+        assert!(store.import(&mut gb, &path).is_err());
+        assert_eq!(gb.cpu.cycles, saved_cycles);
+        assert_eq!(
+            std::fs::read(store.path(Slot::Recovery).unwrap()).unwrap(),
+            recovery
+        );
+    }
+    // A directory in place of the destination makes replacement fail safely.
+    assert!(store.export(&gb, dir.path()).is_err());
+    store.load(&mut gb, Slot::Recovery).unwrap();
+    assert_eq!(gb.cpu.cycles, previous_cycles);
+    assert!(gb.mmu.cart.as_ref().unwrap().ram.iter().all(|b| *b == 0x99));
+}
+
+#[test]
+fn oversized_files_and_machine_snapshots_are_rejected() {
+    use vibe_emu_core::state_store;
+    let dir = tempfile::tempdir().unwrap();
+    let mut gb = machine(Model::Mgb, 3, 3);
+    let store = StateStore::new(dir.path(), &gb).unwrap();
+    let path = dir.path().join("oversized.vstate");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(save_state::MAX_STATE_BYTES as u64 + 1)
+        .unwrap();
+    drop(file);
+    assert!(
+        state_store::read(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("size limit")
+    );
+    assert!(store.import(&mut gb, &path).is_err());
+    assert_eq!(gb.cpu.pc, 0x100);
+    assert!(store.metadata(Slot::Recovery).unwrap().is_none());
+    // Public cartridge storage can be enlarged by a caller. Export must not
+    // replace a valid file with a snapshot that the reader cannot accept.
+    store.save(&gb, Slot::Quick).unwrap();
+    let quick = store.path(Slot::Quick).unwrap();
+    let previous = std::fs::read(&quick).unwrap();
+    gb.mmu
+        .cart
+        .as_mut()
+        .unwrap()
+        .ram
+        .resize(save_state::MAX_STATE_BYTES, 255);
+    assert!(
+        store
+            .save(&gb, Slot::Quick)
+            .unwrap_err()
+            .to_string()
+            .contains("size limit")
+    );
+    assert_eq!(std::fs::read(quick).unwrap(), previous);
+}
+
+#[test]
+fn malformed_fixed_arrays_and_missing_rom_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut empty = GameBoy::new(Model::Mgb);
+    assert!(empty.save_state().is_err());
+    assert!(StateStore::new(dir.path(), &empty).is_err());
+    let mut gb = machine(Model::Mgb, 3, 3);
+    let bytes = gb.save_state().unwrap();
+    assert!(empty.load_state(&bytes).is_err());
+    for length in [0, 126, 128] {
+        let bad = edited_state(&bytes, |json| {
+            json["machine"]["mmu"]["hram"] = vec![0; length].into();
+        });
+        assert!(gb.load_state(&bad).is_err(), "HRAM length {length}");
+        assert_eq!(gb.cpu.pc, 0x100);
+    }
+    let no_cart = edited_state(&bytes, |json| {
+        json["machine"]["mmu"]["cart"] = serde_json::Value::Null
+    });
+    assert!(gb.load_state(&no_cart).is_err());
+    let bad_metadata = edited_state(&bytes, |json| json["metadata"] = serde_json::Value::Null);
+    assert!(save_state::metadata(&bad_metadata).is_err());
 }
 
 #[test]

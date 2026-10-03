@@ -223,8 +223,11 @@ impl VibeEmuApp {
     }
 
     pub(super) fn draw_menu_bar(&mut self, ui: &mut egui::Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
+        let show_debug = self.ui_config.preferences.workspace == Workspace::Develop
+            || self.show_debugger
+            || !self.develop_layout.floating_panels().is_empty();
+        main_menu_bar(ui, show_debug, |ui, menu| match menu {
+            MainMenu::File => {
                 self.action_button(ui, "Open ROM…", Action::OpenRom);
                 submenu(ui, "Recent ROMs", |ui| {
                     for path in self
@@ -278,8 +281,8 @@ impl VibeEmuApp {
                 self.action_button(ui, "Close ROM", Action::CloseRom);
                 ui.separator();
                 self.action_button(ui, "Exit", Action::Quit);
-            });
-            ui.menu_button("Emulation", |ui| {
+            }
+            MainMenu::Emulation => {
                 self.action_button(
                     ui,
                     if self.paused { "Resume" } else { "Pause" },
@@ -315,8 +318,8 @@ impl VibeEmuApp {
                 submenu(ui, "Hardware mode", |ui| {
                     self.draw_emulation_mode_submenu(ui);
                 });
-            });
-            ui.menu_button("View", |ui| {
+            }
+            MainMenu::View => {
                 self.action_button(ui, "Play workspace", Action::Play);
                 self.action_button(ui, "Develop workspace", Action::Develop);
                 self.action_button(ui, "Fullscreen", Action::ToggleFullscreen);
@@ -364,14 +367,14 @@ impl VibeEmuApp {
                     self.show_watchpoints = false;
                     self.show_vram_viewer = false;
                 }
-            });
-            ui.menu_button("States", |ui| {
+            }
+            MainMenu::States => {
                 self.action_button(ui, "Save states…", Action::SaveStates);
                 self.action_button(ui, "Quick save", Action::QuickSave);
                 self.action_button(ui, "Quick load", Action::QuickLoad);
                 self.action_button(ui, "Undo load", Action::UndoLoad);
-            });
-            ui.menu_button("Tools", |ui| {
+            }
+            MainMenu::Tools => {
                 self.action_button(ui, "Capture screenshot", Action::Screenshot);
                 self.action_button(ui, "Mute / unmute", Action::ToggleMute);
                 submenu(ui, "Peripherals", |ui| {
@@ -381,21 +384,16 @@ impl VibeEmuApp {
                 ui.checkbox(&mut self.show_debugger, "Detached debugger");
                 ui.checkbox(&mut self.show_watchpoints, "Watchpoints");
                 ui.checkbox(&mut self.show_vram_viewer, "VRAM viewer");
-            });
-            if self.ui_config.preferences.workspace == Workspace::Develop
-                || self.show_debugger
-                || !self.develop_layout.floating_panels().is_empty()
-            {
-                ui.menu_button("Debug", |ui| {
-                    for &(action, label) in shortcuts::DEBUG_COMMANDS {
-                        self.action_button(ui, label, action);
-                    }
-                });
             }
-            ui.menu_button("Settings", |ui| {
+            MainMenu::Debug => {
+                for &(action, label) in shortcuts::DEBUG_COMMANDS {
+                    self.action_button(ui, label, action);
+                }
+            }
+            MainMenu::Settings => {
                 self.action_button(ui, "Settings…", Action::Settings);
-            });
-            ui.menu_button("Help", |ui| {
+            }
+            MainMenu::Help => {
                 if ui.button("Controls").clicked() {
                     self.options_tab = OptionsTab::Controls;
                     self.show_options = true;
@@ -403,7 +401,7 @@ impl VibeEmuApp {
                 if ui.button("About and licenses").clicked() {
                     self.show_about = true;
                 }
-            });
+            }
         });
         ui.horizontal_wrapped(|ui| {
             for (label, workspace, action) in [
@@ -446,6 +444,67 @@ impl VibeEmuApp {
         self.action_button(ui, "Play workspace", Action::Play);
         self.action_button(ui, "Develop workspace", Action::Develop);
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MainMenu {
+    File,
+    Emulation,
+    View,
+    States,
+    Tools,
+    Debug,
+    Settings,
+    Help,
+}
+
+impl MainMenu {
+    const ALL: [Self; 8] = [
+        Self::File,
+        Self::Emulation,
+        Self::View,
+        Self::States,
+        Self::Tools,
+        Self::Debug,
+        Self::Settings,
+        Self::Help,
+    ];
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::File => "File",
+            Self::Emulation => "Emulation",
+            Self::View => "View",
+            Self::States => "States",
+            Self::Tools => "Tools",
+            Self::Debug => "Debug",
+            Self::Settings => "Settings",
+            Self::Help => "Help",
+        }
+    }
+}
+
+fn main_menu_bar(
+    ui: &mut egui::Ui,
+    show_debug: bool,
+    mut content: impl FnMut(&mut egui::Ui, MainMenu),
+) {
+    egui::MenuBar::new().ui(ui, |ui| {
+        // Keep every top-level menu discoverable at the default 2x size and
+        // enlarged text settings. Inherit the native menu ownership/config so
+        // wrapped rows still support hover switching and keyboard navigation.
+        ui.horizontal_wrapped(|ui| {
+            // Compact gaps keep normal Play menus on one row at 320pt,
+            // preserving room for the 2x game image. Larger text or Debug
+            // can wrap without making any menu unreachable.
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for menu in MainMenu::ALL {
+                if menu != MainMenu::Debug || show_debug {
+                    ui.menu_button(menu.title(), |ui| content(ui, menu));
+                }
+            }
+        });
+    });
 }
 
 fn menu_command_button<'a>(ui: &egui::Ui, label: &'a str, shortcut: &'a str) -> egui::Button<'a> {
@@ -516,6 +575,123 @@ pub(super) fn submenu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_main_menus_remain_visible_and_open_after_resize() {
+        for show_debug in [false, true] {
+            for text_scale in [1.0, 1.5, 2.0] {
+                let ctx = egui::Context::default();
+                ctx.global_style_mut(|style| {
+                    style.animation_time = 0.0;
+                    for font in style.text_styles.values_mut() {
+                        font.size *= text_scale;
+                    }
+                });
+                let draw = |width, events| {
+                    ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 400.0),
+                            )),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            egui::Panel::top("menus").show_inside(ui, |ui| {
+                                main_menu_bar(ui, show_debug, |ui, menu| {
+                                    let _ = ui.button(format!("{} commands", menu.title()));
+                                });
+                            });
+                        },
+                    )
+                };
+                // Resize the same live context down and back up, with Debug
+                // both present and absent, rather than testing fresh layouts.
+                for width in [640.0, 480.0, 320.0, 360.0, 1100.0, 320.0] {
+                    draw(
+                        width,
+                        vec![egui::Event::Key {
+                            key: egui::Key::Escape,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: Default::default(),
+                        }],
+                    );
+                    draw(width, vec![]);
+                    let output = draw(width, vec![]);
+                    let mut triggers = Vec::new();
+                    let mut first_row = None;
+                    for menu in MainMenu::ALL {
+                        if menu == MainMenu::Debug && !show_debug {
+                            continue;
+                        }
+                        let text = output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                egui::epaint::Shape::Text(text)
+                                    if text.galley.text() == menu.title() =>
+                                {
+                                    Some((text.visual_bounding_rect(), shape.clip_rect, text.pos.y))
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| panic!("{menu:?} missing at {width}/{text_scale}"));
+                        assert!(
+                            text.0.left() >= 0.0 && text.0.right() <= width,
+                            "{menu:?} off screen: {text:?}"
+                        );
+                        assert!(text.1.contains_rect(text.0), "{menu:?} clipped: {text:?}");
+                        if !show_debug && text_scale == 1.0 {
+                            let top = *first_row.get_or_insert(text.2);
+                            assert!(
+                                (text.2 - top).abs() < 1.0,
+                                "normal Play menu must preserve the 2x game area"
+                            );
+                        }
+                        if matches!(menu, MainMenu::States | MainMenu::Help) {
+                            triggers.push((menu, text.0.center()));
+                        }
+                    }
+                    for (menu, pos) in triggers {
+                        for pressed in [true, false] {
+                            draw(
+                                width,
+                                vec![
+                                    egui::Event::PointerMoved(pos),
+                                    egui::Event::PointerButton {
+                                        pos,
+                                        button: egui::PointerButton::Primary,
+                                        pressed,
+                                        modifiers: Default::default(),
+                                    },
+                                ],
+                            );
+                        }
+                        draw(width, vec![]);
+                        let output = draw(width, vec![]);
+                        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+                            egui::epaint::Shape::Text(text) if text.galley.text() == format!("{} commands", menu.title())
+                                && shape.clip_rect.contains_rect(text.visual_bounding_rect())
+                                && text.visual_bounding_rect().right() <= width)), "{menu:?} popup inaccessible at {width}/{text_scale}");
+                        draw(
+                            width,
+                            vec![egui::Event::Key {
+                                key: egui::Key::Escape,
+                                physical_key: None,
+                                pressed: true,
+                                repeat: false,
+                                modifiers: Default::default(),
+                            }],
+                        );
+                        draw(width, vec![]);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn settings_menu_keeps_label_and_shortcut_visible_and_separated() {
