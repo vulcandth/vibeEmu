@@ -30,17 +30,27 @@ fun GameplayMenu(
     onReset: () -> Unit,
     onInstances: () -> Unit,
     onAbout: () -> Unit,
+    onStates: () -> Unit = {},
+    onQuickSave: () -> Unit = {},
+    onQuickLoad: () -> Unit = {},
+    quickAvailable: Boolean = false,
+    enabled: Boolean = true,
+    stateMessage: String = "",
 ) {
     val configuration = LocalConfiguration.current
     val isTv = configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
     val content: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(gameName, style = MaterialTheme.typography.titleLarge)
-            Button(onClick = onResume, modifier = Modifier.fillMaxWidth()) { Text("Resume") }
-            Button(onClick = onSettings, modifier = Modifier.fillMaxWidth()) { Text("Settings") }
-            Button(onClick = onReset, modifier = Modifier.fillMaxWidth()) { Text("Reset") }
-            Button(onClick = onInstances, modifier = Modifier.fillMaxWidth()) { Text("Return to instances") }
-            TextButton(onClick = onAbout, modifier = Modifier.fillMaxWidth()) { Text("About and licenses") }
+            Button(enabled = enabled, onClick = onResume, modifier = Modifier.fillMaxWidth()) { Text("Resume") }
+            if (stateMessage.isNotEmpty()) Text(stateMessage, style = MaterialTheme.typography.bodySmall)
+            Button(enabled = enabled, onClick = onQuickSave, modifier = Modifier.fillMaxWidth()) { Text("Quick save") }
+            Button(enabled = enabled && quickAvailable, onClick = onQuickLoad, modifier = Modifier.fillMaxWidth()) { Text("Quick load") }
+            Button(enabled = enabled, onClick = onSettings, modifier = Modifier.fillMaxWidth()) { Text("Settings") }
+            Button(enabled = enabled, onClick = onStates, modifier = Modifier.fillMaxWidth()) { Text("Save states") }
+            Button(enabled = enabled, onClick = onReset, modifier = Modifier.fillMaxWidth()) { Text("Reset") }
+            Button(enabled = enabled, onClick = onInstances, modifier = Modifier.fillMaxWidth()) { Text("Return to instances") }
+            TextButton(enabled = enabled, onClick = onAbout, modifier = Modifier.fillMaxWidth()) { Text("About and licenses") }
         }
     }
     if (!isTv && configuration.screenWidthDp < 600) {

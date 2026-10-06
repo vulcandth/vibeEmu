@@ -290,7 +290,7 @@ const MODE3_OBJ_FETCH_STAGE_HIGH: u8 = 5;
 /// On DMG hardware, OAM can become corrupted during PPU mode 2 (OAM scan) when
 /// the CPU accesses OAM, or when the CPU's 16-bit increment/decrement unit drives
 /// an address in the OAM range. CGB hardware is not affected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum OamBugAccess {
     /// A CPU read from OAM during mode 2.
     Read,
@@ -399,10 +399,12 @@ impl<T: Copy + Default> PixelFifo<T> {
 // VRAM directly. The complete tag is compared; hash collisions only cause misses.
 const TILE_ROW_CACHE_LEN: usize = 64;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct DecodedTileRow {
     key: u32,
+    #[serde(with = "crate::save_state::arrays")]
     pixels: [u32; 8],
+    #[serde(with = "crate::save_state::arrays")]
     color_zero: [bool; 8],
 }
 
@@ -415,13 +417,17 @@ impl DecodedTileRow {
 }
 
 /// Pixel Processing Unit emulating the Game Boy / Game Boy Color display hardware.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Ppu {
+    #[serde(skip, default = "PpuTuning::process_default")]
     tuning: &'static PpuTuning,
     /// Two VRAM banks (bank 1 is CGB-only).
+    #[serde(with = "crate::save_state::arrays2")]
     pub vram: [[u8; VRAM_BANK_SIZE]; 2],
     /// Currently selected VRAM bank (0 or 1).
     pub vram_bank: usize,
     /// Object Attribute Memory (160 bytes).
+    #[serde(with = "crate::save_state::arrays")]
     pub oam: [u8; OAM_SIZE],
 
     render_vram_blocked: bool,
@@ -458,13 +464,20 @@ pub struct Ppu {
     lcd_startup_blank: bool,
 
     bgpi: u8,
+    #[serde(with = "crate::save_state::arrays")]
     bgpd: [u8; PAL_RAM_SIZE],
     obpi: u8,
+    #[serde(with = "crate::save_state::arrays")]
     obpd: [u8; PAL_RAM_SIZE],
+    #[serde(with = "crate::save_state::arrays")]
     cgb_bg_color_table: [u32; 32],
+    #[serde(with = "crate::save_state::arrays")]
     tile_row_cache: [DecodedTileRow; TILE_ROW_CACHE_LEN],
+    #[serde(with = "crate::save_state::arrays")]
     cgb_obj_color_table: [u32; 32],
+    #[serde(with = "crate::save_state::arrays")]
     dmg_bg_color_table: [u32; 1024],
+    #[serde(with = "crate::save_state::arrays2")]
     dmg_obj_color_table: [[u32; 4]; 2],
     /// Object priority mode register (OPRI)
     opri: u8,
@@ -490,16 +503,24 @@ pub struct Ppu {
     mode2_scy_write: Option<(u8, u8)>,
 
     /// Completed pixel output in 0x00RRGGBB format; updated once per frame.
+    #[serde(with = "crate::save_state::arrays")]
     pub framebuffer: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
     /// Optional SNES-side Super Game Boy host.
     pub sgb: Option<Box<crate::sgb::Sgb>>,
+    #[serde(with = "crate::save_state::arrays")]
     line_priority: [bool; SCREEN_WIDTH],
+    #[serde(with = "crate::save_state::arrays")]
     line_color_zero: [bool; SCREEN_WIDTH],
+    #[serde(with = "crate::save_state::arrays")]
     cgb_line_obj_enabled: [bool; SCREEN_WIDTH],
+    #[serde(with = "crate::save_state::arrays")]
     dmg_line_lcdc_at_pixel: [u8; SCREEN_WIDTH],
+    #[serde(with = "crate::save_state::arrays")]
     dmg_line_mode3_t_at_pixel: [u16; SCREEN_WIDTH],
+    #[serde(with = "crate::save_state::arrays")]
     dmg_line_obj_size_16: [bool; SCREEN_WIDTH],
     /// Latched sprites for the current scanline
+    #[serde(with = "crate::save_state::arrays")]
     line_sprites: [Sprite; MAX_SPRITES_PER_LINE],
     sprite_count: usize,
     oam_scan_index: usize,
@@ -538,10 +559,13 @@ pub struct Ppu {
     dmg_startup_stage: Option<usize>,
     dmg_post_startup_line2: bool,
     #[cfg(feature = "ppu-trace")]
+    #[serde(skip)]
     debug_lcd_enable_timer: Option<u64>,
     #[cfg(feature = "ppu-trace")]
+    #[serde(skip)]
     debug_prev_mode: u8,
     /// Runtime DMG palette (allows choosing alternate non-green palettes)
+    #[serde(with = "crate::save_state::arrays")]
     dmg_palette: [u32; 4],
 
     // --- DMG timing quirks ---
@@ -551,11 +575,14 @@ pub struct Ppu {
     // (BGP) being visible, so we record BGP writes during MODE3 and re-sample
     // them per output pixel when generating the scanline.
     dmg_line_bgp_base: u8,
+    #[serde(with = "crate::save_state::arrays")]
     dmg_line_bgp_at_pixel: [u8; SCREEN_WIDTH],
     dmg_bgp_event_count: usize,
+    #[serde(with = "crate::save_state::arrays")]
     dmg_bgp_events: [DmgBgpEvent; DMG_BGP_EVENTS_MAX],
     dmg_line_obp0_base: u8,
     dmg_obp0_event_count: usize,
+    #[serde(with = "crate::save_state::arrays")]
     dmg_obp0_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
     dmg_hblank_render_pending: bool,
 
@@ -566,25 +593,33 @@ pub struct Ppu {
     // for per-pixel BG enable behavior when bit 0 changes during mode 3.
     mode3_lcdc_base: u8,
     mode3_lcdc_event_count: usize,
+    #[serde(with = "crate::save_state::arrays")]
     mode3_lcdc_events: [Mode3LcdcEvent; MODE3_LCDC_EVENTS_MAX],
     mode3_scx_base: u8,
     mode3_scx_event_count: usize,
+    #[serde(with = "crate::save_state::arrays")]
     mode3_scx_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
     mode3_scy_base: u8,
     mode3_scy_event_count: usize,
+    #[serde(with = "crate::save_state::arrays")]
     mode3_scy_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
     mode3_wx_base: u8,
     mode3_wx_event_count: usize,
+    #[serde(with = "crate::save_state::arrays")]
     mode3_wx_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
     mode3_wy_base: u8,
     mode3_wy_event_count: usize,
+    #[serde(with = "crate::save_state::arrays")]
     mode3_wy_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
     mode3_obj_fetch_base: u8,
     mode3_obj_fetch_event_count: usize,
+    #[serde(with = "crate::save_state::arrays")]
     mode3_obj_fetch_events: [Mode3RegEvent; MODE3_REG_EVENTS_MAX],
     mode3_pop_event_count: usize,
+    #[serde(with = "crate::save_state::arrays")]
     mode3_pop_events: [Mode3PopEvent; MODE3_POP_EVENTS_MAX],
     pending_reg_write_count: usize,
+    #[serde(with = "crate::save_state::arrays")]
     pending_reg_writes: [PendingRegWrite; PENDING_REG_WRITES_MAX],
     dmg_prev_line_window_active: bool,
     dmg_prev2_line_window_active: bool,
@@ -607,7 +642,7 @@ impl std::fmt::Debug for Ppu {
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct DmgBgpEvent {
     t: u16,
     x: u8,
@@ -621,7 +656,7 @@ const MODE3_REG_EVENTS_MAX: usize = 64;
 const MODE3_POP_EVENTS_MAX: usize = 256;
 const PENDING_REG_WRITES_MAX: usize = 8;
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct PendingRegWrite {
     addr: u16,
     val: u8,
@@ -936,7 +971,7 @@ define_trace_line_filter!(
     "VIBEEMU_TRACE_DMG_BG_OUTPUT_LINES"
 );
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct Mode3LcdcEvent {
     t: u16,
     x: u8,
@@ -945,13 +980,13 @@ struct Mode3LcdcEvent {
     fetcher_state: u8,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct Mode3RegEvent {
     t: u16,
     val: u8,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct Mode3PopEvent {
     t: u16,
     position_in_line: i16,
@@ -960,7 +995,7 @@ struct Mode3PopEvent {
 /// Default DMG palette colors in 0x00RRGGBB order for the `pixels` crate.
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct Sprite {
     x: i16,
     y: i16,
@@ -986,6 +1021,39 @@ impl Sprite {
         self.obj_size16_low = false;
         self.obj_data_valid = false;
         self.fetch_t_valid = false;
+    }
+}
+
+impl Ppu {
+    pub(crate) fn validate_state(&self, model: Model) -> bool {
+        self.model == model
+            && self.vram_bank < 2
+            && self.mode < 4
+            && self.stat_mode < 4
+            && self.ly <= 153
+            && self.mode_clock <= 456
+            && self.sprite_count <= MAX_SPRITES_PER_LINE
+            && self.oam_scan_index <= TOTAL_SPRITES
+            && self.mode3_sprite_latch_index <= MAX_SPRITES_PER_LINE
+            && self.mode3_obj_fetch_sprite_index < MAX_SPRITES_PER_LINE
+            && self.mode3_lcd_x <= SCREEN_WIDTH as u16
+            && self.dmg_bgp_event_count <= DMG_BGP_EVENTS_MAX
+            && self.dmg_obp0_event_count <= MODE3_REG_EVENTS_MAX
+            && self.mode3_lcdc_event_count <= MODE3_LCDC_EVENTS_MAX
+            && self.mode3_scx_event_count <= MODE3_REG_EVENTS_MAX
+            && self.mode3_scy_event_count <= MODE3_REG_EVENTS_MAX
+            && self.mode3_wx_event_count <= MODE3_REG_EVENTS_MAX
+            && self.mode3_wy_event_count <= MODE3_REG_EVENTS_MAX
+            && self.mode3_obj_fetch_event_count <= MODE3_REG_EVENTS_MAX
+            && self.mode3_pop_event_count <= MODE3_POP_EVENTS_MAX
+            && self.pending_reg_write_count <= PENDING_REG_WRITES_MAX
+            && self.dmg_startup_stage.is_none_or(|v| v <= 6)
+            && self.line_sprites.iter().all(|s| {
+                s.oam_index < TOTAL_SPRITES
+                    && (-8..=247).contains(&s.x)
+                    && (-16..=239).contains(&s.y)
+            })
+            && self.sgb.as_ref().is_none_or(|s| s.validate_state())
     }
 }
 

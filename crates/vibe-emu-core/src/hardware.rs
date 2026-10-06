@@ -3,6 +3,7 @@
 ///
 /// Used to model revision-specific quirks that affect timing and observable
 /// behavior.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum DmgRevision {
     /// Original DMG revision 0.
     Rev0,
@@ -20,6 +21,7 @@ pub enum DmgRevision {
 ///
 /// Used to model revision-specific quirks (e.g. PPU and APU behaviors) that
 /// differ across CGB motherboard revisions.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum CgbRevision {
     /// Original CGB revision 0.
     Rev0,
@@ -58,7 +60,7 @@ impl CgbRevision {
 /// Combines the system family with its board/silicon revision
 /// into a single typed value. This eliminates the `cgb: bool` parameter that
 /// was previously threaded through every constructor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Model {
     /// Original Game Boy (DMG) with the given board revision.
     Dmg(DmgRevision),

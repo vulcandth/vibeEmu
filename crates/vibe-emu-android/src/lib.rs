@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+mod save_states;
+
 #[cfg(test)]
 mod tests;
 
@@ -430,6 +432,20 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_clearBootRom(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_com_example_vibeemua_NativeBridge_discard(
+    _env: EnvUnowned,
+    _class: JClass,
+    handle: jlong,
+) {
+    protect_void(|| unsafe {
+        if handle != 0 {
+            // A canceled launch must never write its candidate's battery RAM.
+            drop(Box::from_raw(handle as *mut EmulatorHandle));
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_vibeemua_NativeBridge_destroy(
     _env: EnvUnowned,
     _class: JClass,
@@ -538,6 +554,20 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_runFrame(
     handle: jlong,
     buffer: JIntArray,
 ) -> jint {
+    frame_to_java(env, handle, buffer, true)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_example_vibeemua_NativeBridge_copyFrame(
+    env: EnvUnowned,
+    _class: JClass,
+    handle: jlong,
+    buffer: JIntArray,
+) -> jint {
+    frame_to_java(env, handle, buffer, false)
+}
+
+fn frame_to_java(env: EnvUnowned, handle: jlong, buffer: JIntArray, advance: bool) -> jint {
     catch_unwind(AssertUnwindSafe(|| unsafe {
         // The JVM supplies an attached environment for this native call.
         let mut guard = jni::AttachGuard::from_unowned(env.as_raw());
@@ -546,8 +576,11 @@ pub extern "system" fn Java_com_example_vibeemua_NativeBridge_runFrame(
             return 0;
         };
 
-        if !handle.run_frame() {
+        if advance && !handle.run_frame() {
             return 0;
+        }
+        if !advance {
+            handle.copy_frame();
         }
 
         let len = match buffer.len(env) {

@@ -24,6 +24,15 @@ pub fn defaults(mac: bool) -> Vec<(Action, KeyboardShortcut)> {
     let command = Modifiers::COMMAND;
     let shift_command = command | Modifiers::SHIFT;
     let mut bindings = vec![
+        (
+            Action::QuickSave,
+            KeyboardShortcut::new(Modifiers::NONE, Key::F5),
+        ),
+        (
+            Action::QuickLoad,
+            KeyboardShortcut::new(Modifiers::SHIFT, Key::F5),
+        ),
+        (Action::UndoLoad, KeyboardShortcut::new(command, Key::F5)),
         (Action::OpenRom, KeyboardShortcut::new(command, Key::O)),
         (
             Action::ReloadRom,
@@ -119,6 +128,9 @@ impl VibeEmuApp {
     }
 
     pub(super) fn action_enabled(&self, action: Action) -> bool {
+        if self.states.pending.is_some() && (action.requires_game() || action == Action::OpenRom) {
+            return false;
+        }
         if !action.available(self.current_rom_path.is_some(), self.loading.is_some()) {
             return false;
         }

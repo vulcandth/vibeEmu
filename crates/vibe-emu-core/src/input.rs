@@ -1,8 +1,9 @@
 /// Joypad input register (P1/JOYP) and button-state tracking.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Input {
     p1: u8,
     state: u8,
+    #[serde(with = "crate::save_state::arrays")]
     extra_players: [u8; 3],
 }
 
