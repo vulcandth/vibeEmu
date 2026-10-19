@@ -270,6 +270,41 @@ impl Mmu {
 }
 
 impl Mmu {
+    /// CPU clocks that cannot yet change an IRQ or memory-bus owner. The
+    /// device-local queues already exclude their next observable event.
+    #[inline]
+    pub(crate) fn cpu_batch_idle_cycles(&self, double_speed: bool) -> u16 {
+        if self.dma_active() || self.gdma_active() || self.serial.transfer_active() {
+            return 0;
+        }
+        self.peripheral_batch
+            .timer_limit
+            .saturating_sub(self.peripheral_batch.timer_cycles)
+            .min(
+                self.ppu_idle_remaining
+                    .saturating_mul(if double_speed { 2 } else { 1 }),
+            )
+    }
+
+    /// Transfer a certified sequence of ordinary M-cycles to the device queues
+    /// once. No IRQ, serial edge or DMA activity can occur in this interval.
+    pub(crate) fn queue_idle_cpu_cycles(&mut self, cycles: u16, double_speed: bool) {
+        debug_assert!(self.peripheral_batch.active && self.defer_ppu_ticks);
+        debug_assert!(cycles <= self.cpu_batch_idle_cycles(double_speed));
+        let dots = cycles >> u32::from(double_speed);
+        let cpu_div = self.cpu_div();
+        let dot_div = self.dot_div;
+        self.dot_div = dot_div.wrapping_add(dots);
+        self.peripheral_batch.timer_cycles += cycles;
+        self.peripheral_batch.rtc_cycles += u32::from(cycles);
+        self.pending_ppu_dots += dots;
+        self.ppu_idle_remaining -= dots;
+        // Preserve a sequence of single-M-cycle APU calls. One long CPU tick
+        // (e.g. interrupt entry) has different output-pipeline/sample ordering.
+        self.apu
+            .run_halt_steps(dots, cpu_div, dot_div, double_speed);
+    }
+
     pub(crate) fn begin_peripheral_batch(&mut self) {
         debug_assert!(!self.peripheral_batch.active);
         self.peripheral_batch.active = true;

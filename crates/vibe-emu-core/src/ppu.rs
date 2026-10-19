@@ -996,6 +996,7 @@ struct Mode3PopEvent {
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
 #[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 struct Sprite {
     x: i16,
     y: i16,
@@ -7118,6 +7119,96 @@ impl Ppu {
         }
     }
 
+    // During an uninterrupted OBJ fetch, only three of its five stages read
+    // memory. With a stable LCDC the intermediate dots only advance the held
+    // BG fetcher and delay counter. Preserve partial fetches at observations,
+    // while applying each crossed read once instead of rerunning the complete
+    // pixel/match scheduler for every stage. Raster writes and DMA retain the
+    // original dot path.
+    fn advance_dmg_obj_fetch_run(&mut self, requested: u16) -> u16 {
+        let stage = self.mode3_obj_fetch_stage;
+        if self.mode3_lcdc_event_count != 0
+            || self.lcdc & 2 == 0
+            || !(MODE3_OBJ_FETCH_STAGE_ATTR_0..=MODE3_OBJ_FETCH_STAGE_HIGH).contains(&stage)
+            || self.mode3_fetcher_state > 6
+        {
+            return 0;
+        }
+        let dots = requested.min(u16::from(MODE3_OBJ_FETCH_STAGE_HIGH + 1 - stage));
+        let next_stage = stage + dots as u8;
+        let idx = self.mode3_obj_fetch_sprite_index;
+        if stage == MODE3_OBJ_FETCH_STAGE_ATTR_0 {
+            let base = self.line_sprites[idx].oam_index * 4;
+            let tile = self.oam_read_for_ppu(base + 2);
+            let flags = self.oam_read_for_ppu(base + 3);
+            let clock = self.mode3_render_clock() + 1;
+            let sprite = &mut self.line_sprites[idx];
+            sprite.tile = tile;
+            sprite.flags = flags;
+            sprite.clear_fetch_state();
+            sprite.fetched = true;
+            sprite.fetch_t = clock;
+            sprite.fetch_t_valid = true;
+        }
+        // Without LCDC events every biased time sample resolves to the line
+        // base. The live-sampling tuning still reads the current register.
+        let size_16 = if self.tuning.dmg_obj_size_tuning.fetch_use_live_lcdc {
+            self.lcdc & 4 != 0
+        } else {
+            self.mode3_lcdc_base & 4 != 0
+        };
+        if stage <= MODE3_OBJ_FETCH_STAGE_LOW_0 && next_stage > MODE3_OBJ_FETCH_STAGE_LOW_0 {
+            let sprite = self.line_sprites[idx];
+            let lcdc = (self.lcdc & !4) | (u8::from(size_16) << 2);
+            let addr =
+                self.compute_obj_row_addr_from_lcdc(sprite.y, sprite.tile, sprite.flags, lcdc);
+            let lo = self.vram_read_for_render(0, addr);
+            let sprite = &mut self.line_sprites[idx];
+            sprite.obj_row_addr = addr as u16;
+            sprite.obj_row_valid = true;
+            sprite.obj_size16_low = size_16;
+            sprite.obj_lo = lo;
+        }
+        if next_stage > MODE3_OBJ_FETCH_STAGE_HIGH {
+            let sprite = self.line_sprites[idx];
+            let fine = self.scx & 7;
+            let size_16 = size_16
+                || (fine != 0
+                    && sprite.obj_row_valid
+                    && sprite.obj_size16_low
+                    && !(self.is_cgb_dmg_compat_mode() && fine >= 4));
+            let lcdc = (self.lcdc & !4) | (u8::from(size_16) << 2);
+            let addr =
+                self.compute_obj_row_addr_from_lcdc(sprite.y, sprite.tile, sprite.flags, lcdc);
+            self.line_sprites[idx].obj_hi = self.vram_read_for_render(0, addr + 1);
+            self.line_sprites[idx].obj_data_valid = true;
+            self.mode3_obj_fetch_active = false;
+            self.mode3_obj_fetch_stage = 0;
+        } else {
+            self.mode3_obj_fetch_stage = next_stage;
+        }
+        let match_x = self.dmg_sprite_match_x(self.mode3_position_in_line);
+        if match_x != self.mode3_last_match_x {
+            self.mode3_last_match_x = match_x;
+            self.mode3_same_x_toggle = match_x & 2 != 0 && match_x & 4 == 0;
+        }
+        let until_push = u16::from(7 - self.mode3_fetcher_state);
+        if self.mode3_bg_fifo == 0 && dots >= until_push {
+            self.mode3_bg_fifo = 8;
+            self.mode3_fetcher_state = (dots - until_push).min(6) as u8;
+        } else {
+            self.mode3_fetcher_state = (u16::from(self.mode3_fetcher_state) + dots).min(6) as u8;
+        }
+        self.mode3_render_delay = self.mode3_render_delay.saturating_sub(dots);
+        self.mode_clock += dots;
+        #[cfg(feature = "ppu-trace")]
+        if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+            *timer += u64::from(dots);
+        }
+        self.record_mode3_obj_fetch_transition_if_needed(true);
+        dots
+    }
+
     // Catch up a transfer interval certified free of CPU-visible boundaries.
     // Internal fetch/latch boundaries still execute in order, but do not need
     // the outer mode/IRQ/register-write machinery on every individual dot.
@@ -7139,6 +7230,12 @@ impl Ppu {
                         *timer += u64::from(run);
                     }
                     dots -= run;
+                    continue;
+                }
+            } else if self.mode3_obj_fetch_active {
+                let fetch = self.advance_dmg_obj_fetch_run(dots);
+                if fetch != 0 {
+                    dots -= fetch;
                     continue;
                 }
             } else {
@@ -8855,6 +8952,141 @@ impl Ppu {
     }
 
     fn render_bg_window_scanline_lcdc_fetcher(&mut self) {
+        if self.is_cgb_native_mode()
+            && (self.ly < self.wy
+                || self.wx > WINDOW_X_MAX
+                || (self.mode3_lcdc_base & 0x20 == 0
+                    && self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+                        .iter()
+                        .all(|event| event.val & 0x20 == 0)))
+        {
+            if self.sprite_count > 0 {
+                self.render_cgb_raster_bg_scanline::<true>();
+            } else {
+                self.render_cgb_raster_bg_scanline::<false>();
+            }
+        } else {
+            self.render_bg_window_scanline_lcdc_fetcher_dots();
+        }
+    }
+
+    // Advance one chronological LCDC reader, reporting a falling TILE_SEL
+    // edge on this exact dot. Fetch and output readers advance independently:
+    // the next tile's reads overlap the current tile's FIFO output.
+    fn advance_raster_lcdc_sample(&self, index: &mut usize, value: &mut u8, t: u16) -> bool {
+        let events = &self.mode3_lcdc_events[..self.mode3_lcdc_event_count];
+        let mut falling_edge = false;
+        while *index < events.len() && events[*index].t <= t {
+            let event = events[*index];
+            falling_edge |= event.t == t && *value & 0x10 != 0 && event.val & 0x10 == 0;
+            *value = event.val;
+            *index += 1;
+        }
+        falling_edge
+    }
+
+    // Without a window restart, this renderer's FIFO drains exactly one row
+    // between pushes. Its name, low and high reads therefore form repeating
+    // eight-dot transactions. Sample those three dots directly, then copy the
+    // decoded output span. LCDC still gates OBJ output at each pixel time, and
+    // falling TILE_SEL edges can independently corrupt either bitplane.
+    fn render_cgb_raster_bg_scanline<const TRACK_PRIORITY: bool>(&mut self) {
+        let scx = if self.mode3_scx_event_count > 0 {
+            self.mode3_scx_base
+        } else {
+            self.scx
+        };
+        let bg_y = self.ly.wrapping_add(self.scy);
+        let tile_row = usize::from(bg_y >> 3) * 32;
+        let tile_y = usize::from(bg_y & 7);
+        let row_base = usize::from(self.ly) * SCREEN_WIDTH;
+        let left_obj = self.mode3_lcdc_base & 2 != 0
+            && self.line_sprites[..self.sprite_count]
+                .iter()
+                .any(|sprite| sprite.x <= 0);
+        let mut name_t = 5 + u16::from(left_obj) * 6;
+        let max_dots = self
+            .mode3_target_cycles
+            .max(MODE3_CYCLES)
+            .saturating_add(64);
+        let mut fetch_lcdc = self.mode3_lcdc_base;
+        let mut fetch_event = 0;
+        let mut output_lcdc = self.mode3_lcdc_base;
+        let mut output_event = 0;
+        let mut tile_index = 0;
+        let mut discard = usize::from(scx & 7);
+        let mut x = 0;
+        while x < SCREEN_WIDTH {
+            let output_t = name_t + 6 + discard as u16;
+            let run = (8 - discard)
+                .min(SCREEN_WIDTH - x)
+                .min(usize::from(max_dots.saturating_sub(output_t)));
+            if run == 0 {
+                break;
+            }
+            self.advance_raster_lcdc_sample(&mut fetch_event, &mut fetch_lcdc, name_t);
+            let map = if fetch_lcdc & 8 != 0 {
+                BG_MAP_1_BASE
+            } else {
+                BG_MAP_0_BASE
+            };
+            let fetch_scx = Self::mode3_reg_value_at_t(
+                scx,
+                &self.mode3_scx_events,
+                self.mode3_scx_event_count,
+                name_t,
+            );
+            let pixel = i32::from(fetch_scx) - i32::from(scx & 7) + tile_index * 8;
+            let map_addr = map + tile_row + ((pixel >> 3) & 31) as usize;
+            let tile = self.vram_read_for_render(0, map_addr);
+            let attr = self.vram_read_for_render(1, map_addr);
+            let bank = usize::from(attr & 8 != 0);
+            let row = if attr & 0x40 != 0 { 7 - tile_y } else { tile_y };
+            let lo_glitch =
+                self.advance_raster_lcdc_sample(&mut fetch_event, &mut fetch_lcdc, name_t + 2);
+            let lo = if lo_glitch {
+                tile
+            } else {
+                let addr = Self::bg_tile_row_plane_addr(tile, row, fetch_lcdc & 0x10 != 0, false);
+                self.vram_read_for_render(bank, addr)
+            };
+            let hi_glitch =
+                self.advance_raster_lcdc_sample(&mut fetch_event, &mut fetch_lcdc, name_t + 4);
+            let hi = if hi_glitch {
+                tile
+            } else {
+                let addr = Self::bg_tile_row_plane_addr(tile, row, fetch_lcdc & 0x10 != 0, true);
+                self.vram_read_for_render(bank, addr)
+            };
+            let key = u32::from(lo)
+                | (u32::from(hi) << 8)
+                | (u32::from(attr & 7) << 16)
+                | (u32::from(attr & 0x20) << 14);
+            self.copy_cached_tile_row::<TRACK_PRIORITY>(key, row_base, x, discard, run);
+            if TRACK_PRIORITY {
+                self.line_priority[x..x + run].fill(attr & 0x80 != 0);
+                let mut offset = 0;
+                while offset < run {
+                    let t = output_t + offset as u16;
+                    self.advance_raster_lcdc_sample(&mut output_event, &mut output_lcdc, t);
+                    let next = if output_event < self.mode3_lcdc_event_count {
+                        usize::from(self.mode3_lcdc_events[output_event].t - t).min(run - offset)
+                    } else {
+                        run - offset
+                    };
+                    self.cgb_line_obj_enabled[x + offset..x + offset + next]
+                        .fill(output_lcdc & 2 != 0);
+                    offset += next;
+                }
+            }
+            x += run;
+            discard = 0;
+            tile_index += 1;
+            name_t += 8;
+        }
+    }
+
+    fn render_bg_window_scanline_lcdc_fetcher_dots(&mut self) {
         #[derive(Clone, Copy, Default)]
         struct FifoPixel {
             color_id: u8,
@@ -9803,6 +10035,104 @@ mod mode3_timing_tests {
     }
 
     #[test]
+    fn obj_fetch_runs_preserve_each_partial_stage_and_bus_observation() {
+        for model in [
+            Model::Dmg(DmgRevision::RevC),
+            Model::Mgb,
+            Model::Cgb(CgbRevision::RevB),
+            Model::Agb,
+        ] {
+            for live_lcdc in [false, true] {
+                let mut tuning = PpuTuning::process_default().clone();
+                tuning.dmg_obj_size_tuning.fetch_use_live_lcdc = live_lcdc;
+                tuning.dmg_obj_size_tuning.fetch_t_bias = -11;
+                tuning.dmg_obj_size_tuning.fetch_hi_t_delta = 19;
+                tuning.dmg_obj_size_tuning.object_match_bias = 2;
+                let tuning: &'static PpuTuning = Box::leak(Box::new(tuning));
+                let mut fast = Ppu::new(model);
+                let mut reference = Ppu::new(model);
+                for lcdc in [0x93, 0x97] {
+                    for fine in 0..8 {
+                        for stage in MODE3_OBJ_FETCH_STAGE_ATTR_0..=MODE3_OBJ_FETCH_STAGE_HIGH {
+                            for requested in [1, 2, 5] {
+                                for phase in [0, 4, 6] {
+                                    for fifo in [0, 1, 8] {
+                                        for ppu in [&mut fast, &mut reference] {
+                                            ppu.tuning = tuning;
+                                            ppu.dmg_compat = model.is_cgb();
+                                            ppu.lcdc = lcdc;
+                                            ppu.scx = fine;
+                                            ppu.ly = 9;
+                                            ppu.begin_mode3_line();
+                                            ppu.dmg_begin_transfer_line();
+                                            ppu.mode = MODE_TRANSFER;
+                                            ppu.mode_clock = 48;
+                                            ppu.mode3_target_cycles = 300;
+                                            ppu.mode3_position_in_line = 8;
+                                            ppu.mode3_lcd_x = 9;
+                                            ppu.mode3_obj_fetch_active = true;
+                                            ppu.mode3_obj_fetch_stage =
+                                                MODE3_OBJ_FETCH_STAGE_ATTR_0;
+                                            ppu.mode3_obj_fetch_sprite_index = 1;
+                                            ppu.line_sprites[1] = Sprite {
+                                                x: 8,
+                                                y: 0,
+                                                oam_index: 1,
+                                                ..Sprite::default()
+                                            };
+                                            ppu.oam[6] = 3;
+                                            ppu.oam[7] = 0x40;
+                                            ppu.render_vram_blocked = false;
+                                            ppu.mgb_halted_dma_bus = None;
+                                            ppu.vram[0].fill(0x5a);
+                                            for _ in MODE3_OBJ_FETCH_STAGE_ATTR_0..stage {
+                                                ppu.mode_clock += 1;
+                                                ppu.mode3_latch_sprite_attributes::<false>();
+                                            }
+                                            // Observe between stages, then change each bus
+                                            // before resuming. Earlier reads must remain latched.
+                                            ppu.oam[6] = 5;
+                                            ppu.oam[7] = 0;
+                                            ppu.vram[0].fill(0xa5);
+                                            ppu.set_render_vram_blocked(fine == 7);
+                                            if model == Model::Mgb && fine == 3 {
+                                                ppu.mgb_halted_dma_bus = Some([9, 0x40]);
+                                            }
+                                            ppu.mode3_bg_fifo = fifo;
+                                            ppu.mode3_fetcher_state = phase;
+                                            ppu.mode3_render_delay = u16::from(fine);
+                                        }
+                                        let dots = fast.advance_dmg_obj_fetch_run(requested);
+                                        assert_eq!(dots, requested.min(u16::from(6 - stage)));
+                                        for _ in 0..dots {
+                                            reference.mode_clock += 1;
+                                            reference.mode3_latch_sprite_attributes::<false>();
+                                        }
+                                        assert_fifo_timing_equal(&fast, &reference);
+                                        assert_eq!(fast.line_sprites, reference.line_sprites);
+                                        assert_eq!(fast.mode_clock, reference.mode_clock);
+                                        assert_eq!(
+                                            fast.mode3_obj_fetch_event_count,
+                                            reference.mode3_obj_fetch_event_count
+                                        );
+                                        for (a, b) in fast
+                                            .mode3_obj_fetch_events
+                                            .iter()
+                                            .zip(&reference.mode3_obj_fetch_events)
+                                        {
+                                            assert_eq!((a.t, a.val), (b.t, b.val));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn transfer_observation_deadlines_preserve_complete_state() {
         fn assert_complete_state(fast: &Ppu, reference: &Ppu) {
             let fast = serde_json::to_value(fast).unwrap();
@@ -9860,7 +10190,9 @@ mod mode3_timing_tests {
                             }
                             ppu.write_reg(0xff40, 0xf7);
                             ppu.step_inner::<false>(454 * line + 84, &mut 0);
-                            ppu.write_reg(0xff40, 0xf3);
+                            if custom_tuning {
+                                ppu.write_reg(0xff40, 0xf3);
+                            }
                             ppu
                         };
                         let mut fast = make_ppu();
@@ -10089,7 +10421,7 @@ mod mode3_timing_tests {
                 }
             }
             actual.render_cgb_bg_window_scanline_with_mode3_lcdc();
-            reference.render_bg_window_scanline_lcdc_fetcher();
+            reference.render_bg_window_scanline_lcdc_fetcher_dots();
             assert_eq!(
                 actual.framebuffer, reference.framebuffer,
                 "iteration={iteration}"
@@ -10743,7 +11075,7 @@ mod mode3_timing_tests {
                             ppu.framebuffer[row..row + SCREEN_WIDTH].fill(0xdeadbeef);
                         }
                         actual.render_cgb_bg_window_scanline_with_mode3_lcdc();
-                        expected.render_bg_window_scanline_lcdc_fetcher();
+                        expected.render_bg_window_scanline_lcdc_fetcher_dots();
                         let row = usize::from(actual.ly) * SCREEN_WIDTH;
                         assert_eq!(
                             actual.framebuffer[row..row + SCREEN_WIDTH],
@@ -10758,6 +11090,173 @@ mod mode3_timing_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn cgb_raster_transactions_match_dot_fetcher() {
+        let mut actual = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        let mut expected = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        let mut random = 0x9a367fe1u32;
+        for byte in actual.vram.iter_mut().flatten() {
+            random ^= random << 13;
+            random ^= random >> 17;
+            random ^= random << 5;
+            *byte = random as u8;
+        }
+        expected.vram = actual.vram;
+        for ppu in [&mut actual, &mut expected] {
+            for (i, color) in ppu.cgb_bg_color_table.iter_mut().enumerate() {
+                *color = (i as u32 + 1) * 0x020103;
+            }
+        }
+        // Sweep every event dot through both bitplane reads and pixel output,
+        // including duplicate-time edges, map/OBJ changes, SCX tile-address
+        // changes, offscreen windows, flips, both banks and blocked VRAM.
+        for scx in 0..8u8 {
+            for sprites in 0..3 {
+                for first_event in 0..224u16 {
+                    for pattern in 0..4 {
+                        for ppu in [&mut actual, &mut expected] {
+                            let lcdc = if pattern == 3 { 0xb3 } else { 0x93 };
+                            ppu.lcdc = lcdc;
+                            ppu.mode3_lcdc_base = lcdc;
+                            ppu.mode3_lcdc_event_count = if pattern == 2 { 64 } else { 4 };
+                            for (i, event) in ppu.mode3_lcdc_events[..ppu.mode3_lcdc_event_count]
+                                .iter_mut()
+                                .enumerate()
+                            {
+                                event.t = first_event + i as u16 * if pattern == 1 { 0 } else { 3 };
+                                event.val = lcdc ^ [0x10, 0x08, 0x1a, 0][i & 3];
+                            }
+                            ppu.scx = scx;
+                            ppu.mode3_scx_base = scx;
+                            ppu.mode3_scx_event_count = 2;
+                            ppu.mode3_scx_events[0] = Mode3RegEvent {
+                                t: first_event,
+                                val: scx.wrapping_add(117),
+                            };
+                            ppu.mode3_scx_events[1] = Mode3RegEvent {
+                                t: first_event + 5,
+                                val: 255 - scx,
+                            };
+                            ppu.scy = first_event as u8;
+                            ppu.ly = scx * 17;
+                            ppu.wx = if pattern == 3 { 255 } else { 0 };
+                            ppu.wy = 0;
+                            ppu.win_line_counter = 37;
+                            ppu.dmg_window_triggered = false;
+                            ppu.sprite_count = sprites;
+                            ppu.line_sprites[0].x = if sprites == 1 { -4 } else { 40 };
+                            ppu.line_sprites[1].x = 100;
+                            ppu.render_vram_blocked = first_event % 31 == 0;
+                            ppu.mode3_target_cycles = 172 + first_event;
+                            ppu.line_priority.fill(true);
+                            ppu.line_color_zero.fill(false);
+                            ppu.cgb_line_obj_enabled.fill(false);
+                            let row = usize::from(ppu.ly) * SCREEN_WIDTH;
+                            ppu.framebuffer[row..row + SCREEN_WIDTH].fill(0xdeadbeef);
+                        }
+                        actual.render_bg_window_scanline_lcdc_fetcher();
+                        expected.render_bg_window_scanline_lcdc_fetcher_dots();
+                        let row = usize::from(actual.ly) * SCREEN_WIDTH;
+                        assert_eq!(
+                            actual.framebuffer[row..row + SCREEN_WIDTH],
+                            expected.framebuffer[row..row + SCREEN_WIDTH],
+                            "SCX={scx} sprites={sprites} event={first_event} pattern={pattern}"
+                        );
+                        assert_eq!(actual.line_priority, expected.line_priority);
+                        assert_eq!(actual.line_color_zero, expected.line_color_zero);
+                        assert_eq!(actual.cgb_line_obj_enabled, expected.cgb_line_obj_enabled);
+                        assert_eq!(actual.win_line_counter, expected.win_line_counter);
+                        assert_eq!(actual.dmg_window_triggered, expected.dmg_window_triggered);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn raster_cache_state_restores_and_continues_exactly() {
+        // Match the save-state decoder's stack: PPU deserialization constructs
+        // its fixed framebuffer and cache arrays by value before boxing them.
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let model = Model::Cgb(CgbRevision::RevE);
+                let mut initial = Ppu::new(model);
+                initial.lcdc = 0x93;
+                initial.ly = 12;
+                initial.scx = 3;
+                initial.scy = 29;
+                initial.begin_mode3_line();
+                initial.sprite_count = 1;
+                initial.line_sprites[0].x = 0;
+                initial.mode3_lcdc_event_count = 4;
+                for (event, (t, val)) in initial.mode3_lcdc_events.iter_mut().zip([
+                    (7, 0x83),
+                    (9, 0x9b),
+                    (23, 0x81),
+                    (97, 0x93),
+                ]) {
+                    *event = Mode3LcdcEvent {
+                        t,
+                        val,
+                        ..Mode3LcdcEvent::default()
+                    };
+                }
+                for (i, byte) in initial.vram.iter_mut().flatten().enumerate() {
+                    *byte = (i as u8).wrapping_mul(19).wrapping_add((i >> 8) as u8);
+                }
+                for (i, color) in initial.cgb_bg_color_table.iter_mut().enumerate() {
+                    *color = (i as u32 + 1) * 0x020103;
+                }
+                initial.render_bg_window_scanline_lcdc_fetcher();
+                assert!(initial.tile_row_cache.iter().any(|row| row.key != u32::MAX));
+                let bytes = serde_json::to_vec(&initial).unwrap();
+                let mut restored: Box<Ppu> = serde_json::from_slice(&bytes).unwrap();
+                let mut reference: Box<Ppu> = serde_json::from_slice(&bytes).unwrap();
+                assert!(restored.validate_state(model));
+                assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+
+                for observation in 0..8 {
+                    for ppu in [&mut restored, &mut reference] {
+                        match observation {
+                            1 => ppu.vram[0][..0x1800].fill(0x69),
+                            2 => {
+                                ppu.write_reg(0xff68, 0x80);
+                                ppu.write_reg(0xff69, 0xff);
+                                ppu.write_reg(0xff69, 0x1f);
+                            }
+                            3 => ppu.vram[1][0x1800..].fill(0xe9),
+                            4 => ppu.set_render_vram_blocked(true),
+                            5 => ppu.set_render_vram_blocked(false),
+                            6 => {
+                                ppu.set_dmg_compat_mode(true);
+                                ppu.dmg_line_bgp_base = 0xe4;
+                            }
+                            7 => ppu.set_dmg_compat_mode(false),
+                            _ => {}
+                        }
+                    }
+                    restored.render_bg_window_scanline_lcdc_fetcher();
+                    reference.render_bg_window_scanline_lcdc_fetcher_dots();
+                    let actual = serde_json::to_value(&restored).unwrap();
+                    let expected = serde_json::to_value(&reference).unwrap();
+                    for (field, value) in expected.as_object().unwrap() {
+                        // Cache entries describe host work already performed;
+                        // every emulated/observable field must remain exact.
+                        if field != "tile_row_cache" {
+                            assert!(
+                                actual.get(field) == Some(value),
+                                "observation={observation} field={field}"
+                            );
+                        }
+                    }
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

@@ -56,6 +56,35 @@ const CPU_CLOCK_HZ: u32 = 4_194_304;
 const FRAME_SEQUENCER_PERIOD: u32 = 8192;
 const VOLUME_FACTOR: i16 = 64;
 
+/// Round to nearest, ties away from zero, then saturate exactly as `round() as
+/// i16`. Decode the float directly so ARM11 needs no floating-point round helper.
+#[inline]
+fn round_pcm_sample(sample: f32) -> i16 {
+    let bits = sample.to_bits();
+    let magnitude = bits & 0x7fff_ffff;
+    if magnitude < 0x3f00_0000 {
+        return 0;
+    }
+    if magnitude >= 0x4700_0000 {
+        // Rust's saturating float cast maps NaNs to zero and infinities to
+        // the corresponding endpoint, as it does finite values outside i16.
+        return if magnitude > 0x7f80_0000 {
+            0
+        } else if bits >> 31 == 0 {
+            i16::MAX
+        } else {
+            i16::MIN
+        };
+    }
+    // In [0.5, 32768), the binary point is 9..=24 bits below the end of the
+    // implicit-leading-one significand. Add half a unit before shifting.
+    let shift = 150 - (magnitude >> 23);
+    let significand = (magnitude & 0x007f_ffff) | 0x0080_0000;
+    let rounded = ((significand + (1 << (shift - 1))) >> shift) as i32;
+    let sign = (bits as i32) >> 31;
+    ((rounded ^ sign) - sign).min(i32::from(i16::MAX)) as i16
+}
+
 /// Three byte-wide sample latches, newest in the low byte. Packing them makes
 /// each pipeline advance a single word load/store on 32-bit hosts as well.
 #[derive(Default)]
@@ -981,6 +1010,13 @@ pub struct Apu {
     hp_prev_output_left: f32,
     hp_prev_input_right: f32,
     hp_prev_output_right: f32,
+    // A constant input can leave a nonzero subnormal fixed point in the f32
+    // filter. Reuse that exact state after observing it repeat, so silence
+    // does not keep paying for subnormal multiplication on every sample.
+    #[serde(skip)]
+    hp_steady_left: bool,
+    #[serde(skip)]
+    hp_steady_right: bool,
     pcm12: u8,
     pcm34: u8,
     pcm_dirty: bool,
@@ -1526,6 +1562,8 @@ impl Apu {
         self.hp_prev_output_left = 0.0;
         self.hp_prev_input_right = 0.0;
         self.hp_prev_output_right = 0.0;
+        self.hp_steady_left = false;
+        self.hp_steady_right = false;
         self.pcm12 = 0;
         self.pcm34 = 0;
         self.pcm_dirty = false;
@@ -1719,6 +1757,8 @@ impl Apu {
             hp_prev_output_left: 0.0,
             hp_prev_input_right: 0.0,
             hp_prev_output_right: 0.0,
+            hp_steady_left: false,
+            hp_steady_right: false,
             pcm12: 0,
             pcm34: 0,
             pcm_dirty: true,
@@ -1818,6 +1858,8 @@ impl Apu {
         self.sample_rate_reciprocal = ((1u64 << 32) / u64::from(state.sample_rate.max(2))) as u32;
         self.speed_factor = state.speed_factor;
         self.hp_coef = Apu::calc_hp_coef(state.sample_rate);
+        self.hp_steady_left = false;
+        self.hp_steady_right = false;
         self.audio_out = state.audio_out;
     }
 
@@ -4367,6 +4409,8 @@ impl Apu {
             self.hp_prev_output_left = 0.0;
             self.hp_prev_input_right = 0.0;
             self.hp_prev_output_right = 0.0;
+            self.hp_steady_left = false;
+            self.hp_steady_right = false;
             (0, 0)
         } else {
             self.dc_block(left_sample, right_sample)
@@ -4374,16 +4418,44 @@ impl Apu {
     }
 
     fn dc_block(&mut self, left: i16, right: i16) -> (i16, i16) {
-        let r = self.hp_coef;
-        let left_in = left as f32;
-        let right_in = right as f32;
-        let left_out = left_in - self.hp_prev_input_left + r * self.hp_prev_output_left;
-        let right_out = right_in - self.hp_prev_input_right + r * self.hp_prev_output_right;
-        self.hp_prev_input_left = left_in;
-        self.hp_prev_output_left = left_out;
-        self.hp_prev_input_right = right_in;
-        self.hp_prev_output_right = right_out;
-        (left_out.round() as i16, right_out.round() as i16)
+        #[inline]
+        fn filter_sample(
+            input: i16,
+            coefficient: f32,
+            prev_input: &mut f32,
+            prev_output: &mut f32,
+            steady: &mut bool,
+        ) -> i16 {
+            let input = input as f32;
+            let same_input = input.to_bits() == prev_input.to_bits();
+            if !(*steady && same_input) {
+                let output = input - *prev_input + coefficient * *prev_output;
+                // Bit equality preserves signed zero as well as subnormals.
+                // Do not memoize exceptional results from a malformed state.
+                *steady =
+                    same_input && output.to_bits() == prev_output.to_bits() && output.is_finite();
+                *prev_input = input;
+                *prev_output = output;
+            }
+            round_pcm_sample(*prev_output)
+        }
+
+        (
+            filter_sample(
+                left,
+                self.hp_coef,
+                &mut self.hp_prev_input_left,
+                &mut self.hp_prev_output_left,
+                &mut self.hp_steady_left,
+            ),
+            filter_sample(
+                right,
+                self.hp_coef,
+                &mut self.hp_prev_input_right,
+                &mut self.hp_prev_output_right,
+                &mut self.hp_steady_right,
+            ),
+        )
     }
 
     /// Current frequency register value for channel 1.
@@ -4422,6 +4494,8 @@ impl Apu {
         self.sample_rate_reciprocal = ((1u64 << 32) / u64::from(rate.max(2))) as u32;
         self.sample_timer_accum = 0;
         self.hp_coef = Apu::calc_hp_coef(rate);
+        self.hp_steady_left = false;
+        self.hp_steady_right = false;
         // Queue sizing is handled by `enable_output()`.
     }
 
@@ -4619,6 +4693,166 @@ impl Default for Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pcm_conversion_matches_float_rounding_and_saturation() {
+        let check = |sample: f32| {
+            assert_eq!(
+                round_pcm_sample(sample),
+                sample.round() as i16,
+                "sample={sample:?}, bits={:08x}",
+                sample.to_bits()
+            );
+        };
+        // Every output transition, its tie, and the adjacent representable
+        // floats on both sides, including the asymmetric saturation endpoints.
+        for integer in 0..=32768 {
+            let tie = (integer as f32 + 0.5).to_bits();
+            for bits in [tie - 1, tie, tie + 1] {
+                check(f32::from_bits(bits));
+                check(f32::from_bits(bits | 0x8000_0000));
+            }
+        }
+        for bits in [
+            0,
+            1,
+            0x007f_ffff,
+            0x0080_0000,
+            0x3f00_0000,
+            0x46ff_ff00,
+            0x4700_0000,
+            0x7f7f_ffff,
+            0x7f80_0000,
+            0x7f80_0001,
+            0x7fc0_0000,
+            0x7fff_ffff,
+        ] {
+            check(f32::from_bits(bits));
+            check(f32::from_bits(bits | 0x8000_0000));
+        }
+        let mut bits = 0x624f_a839u32;
+        for _ in 0..1_000_000 {
+            bits = bits.wrapping_mul(1664525).wrapping_add(1013904223);
+            check(f32::from_bits(bits));
+        }
+    }
+
+    fn check_dc_block(apu: &mut Apu, history: &mut [f32; 4], left: i16, right: i16) {
+        // Keep the original recurrence and conversion independent of both
+        // optimized helpers, and compare the internal f32 state bit for bit.
+        let left_in = left as f32;
+        let right_in = right as f32;
+        let left_out = left_in - history[0] + apu.hp_coef * history[1];
+        let right_out = right_in - history[2] + apu.hp_coef * history[3];
+        *history = [left_in, left_out, right_in, right_out];
+        assert_eq!(
+            apu.dc_block(left, right),
+            (left_out.round() as i16, right_out.round() as i16)
+        );
+        assert_eq!(
+            [
+                apu.hp_prev_input_left,
+                apu.hp_prev_output_left,
+                apu.hp_prev_input_right,
+                apu.hp_prev_output_right,
+            ]
+            .map(f32::to_bits),
+            history.map(f32::to_bits)
+        );
+    }
+
+    #[test]
+    fn high_pass_fixed_points_match_original_recurrence() {
+        for rate in [0, 1, 8_000, 44_100, 48_000, 96_000, 192_000, u32::MAX] {
+            let mut apu = Apu::new(Model::default());
+            apu.set_sample_rate(rate);
+            let mut history = [0.0; 4];
+            for _ in 0..150_000 {
+                check_dc_block(&mut apu, &mut history, 1024, i16::MIN);
+            }
+            if rate != u32::MAX {
+                assert!(apu.hp_steady_left && apu.hp_steady_right, "rate={rate}");
+            }
+            if (8_000..=192_000).contains(&rate) {
+                assert!(history[1].is_subnormal(), "rate={rate}");
+                assert!(history[3].is_subnormal(), "rate={rate}");
+            }
+            // Disturb each channel independently after convergence. The
+            // cached state must not suppress the next audible DC-offset edge.
+            let mut random = 0x2c49_8301u32;
+            for iteration in 0..4096 {
+                random = random.wrapping_mul(1664525).wrapping_add(1013904223);
+                let left = if iteration < 1024 {
+                    1024
+                } else {
+                    random as i16
+                };
+                let right = if iteration >= 2048 {
+                    0
+                } else {
+                    (random >> 16) as i16
+                };
+                check_dc_block(&mut apu, &mut history, left, right);
+            }
+        }
+    }
+
+    #[test]
+    fn high_pass_fixed_point_cache_is_transient_and_invalidated() {
+        let mut apu = Apu::new(Model::default());
+        // This tiny decay preserves these subnormal states, while a normal
+        // sample rate changes them. Seed a state like one restored from disk.
+        apu.set_sample_rate(u32::MAX);
+        apu.hp_prev_input_left = 1024.0;
+        apu.hp_prev_output_left = f32::from_bits(0x0001_0000);
+        apu.hp_prev_input_right = -2048.0;
+        apu.hp_prev_output_right = f32::from_bits(0x8001_0000);
+        let mut history = [
+            apu.hp_prev_input_left,
+            apu.hp_prev_output_left,
+            apu.hp_prev_input_right,
+            apu.hp_prev_output_right,
+        ];
+        check_dc_block(&mut apu, &mut history, 1024, -2048);
+        assert!(apu.hp_steady_left && apu.hp_steady_right);
+
+        let serialized = serde_json::to_value(&apu).unwrap();
+        assert!(serialized.get("hp_steady_left").is_none());
+        assert!(serialized.get("hp_steady_right").is_none());
+        let mut restored: Apu = serde_json::from_value(serialized).unwrap();
+        assert!(!restored.hp_steady_left && !restored.hp_steady_right);
+        let mut restored_history = history;
+        check_dc_block(&mut restored, &mut restored_history, 1024, -2048);
+        assert!(restored.hp_steady_left && restored.hp_steady_right);
+
+        apu.set_sample_rate(48_000);
+        assert!(!apu.hp_steady_left && !apu.hp_steady_right);
+        check_dc_block(&mut apu, &mut history, 1024, -2048);
+        let output_state = apu.take_output_state();
+        apu.set_sample_rate(u32::MAX);
+        check_dc_block(&mut apu, &mut history, 1024, -2048);
+        assert!(apu.hp_steady_left && apu.hp_steady_right);
+        apu.restore_output_state(output_state);
+        assert!(!apu.hp_steady_left && !apu.hp_steady_right);
+        check_dc_block(&mut apu, &mut history, 1024, -2048);
+
+        for power_off in [false, true] {
+            apu.hp_steady_left = true;
+            apu.hp_steady_right = true;
+            if power_off {
+                apu.power_off();
+            } else {
+                apu.ch1.dac_enabled = false;
+                apu.ch2.dac_enabled = false;
+                apu.ch3.dac_enabled = false;
+                apu.ch4.dac_enabled = false;
+                assert_eq!(apu.mix_output(), (0, 0));
+            }
+            assert!(!apu.hp_steady_left && !apu.hp_steady_right);
+            history = [0.0; 4];
+            check_dc_block(&mut apu, &mut history, -8192, 8192);
+        }
+    }
 
     const SAMPLE_CLOCK_MODELS: [Model; 7] = [
         Model::Dmg(DmgRevision::RevC),

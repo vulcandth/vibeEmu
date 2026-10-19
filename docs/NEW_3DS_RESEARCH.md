@@ -2,54 +2,78 @@
 
 ## October 2026 status
 
-The latest [PPU and peripheral scheduling pass](PERFORMANCE.md#october-2026-larger-ppu-and-peripheral-intervals)
-continues from `d88515b` on `codex/performance-new-3ds-refresh`. The preceding
-[accuracy refresh](PERFORMANCE.md#october-2026-refresh-after-accuracy-improvements)
-started at `b7938e4` and measured the cost of the newer accuracy and save-state
-work. The historical ARM and PGO results below are not current measurements.
+The latest [architectural performance pass](PERFORMANCE.md#october-2026-shared-cpu-deadlines-tile-transactions-and-exact-audio)
+continues from `ae825c6` on `codex/performance-new-3ds-refresh`. The previous
+[scheduling pass](PERFORMANCE.md#october-2026-larger-ppu-and-peripheral-intervals)
+and [accuracy refresh](PERFORMANCE.md#october-2026-refresh-after-accuracy-improvements)
+are measured separately below. Historical ARM and PGO results are not current
+measurements.
 
-The PPU now defers transfer work across internal sprite-fetch boundaries until
-a CPU observation or an external event deadline. Catch-up retains sprite
-latches, visible/hidden pixel timestamps, FIFO state, raster LCDC captures and
-OBJ-size tuning. Timer updates stop before observable overflow/reload effects;
-RTC clocks synchronize before cartridge observations, including DMA reads.
-DIV consumers still receive the exact current divider. Pending clocks are
-flushed before runner returns and the new scheduling fields are not serialized.
+Ordinary CPU M-cycles now share a deadline, avoiding repeated dispatch into
+every peripheral before the next observation. Stable sprite fetches project
+crossed phases together; native CGB raster backgrounds without window
+activation use tile transactions with unchanged name/bitplane read timing.
+Audio reuses only bit-identical settled floating-point filter states and uses
+exact PCM rounding. MMIO, interrupts, DMA, serial, OAM corruption and clock
+changes retain their timing boundaries and fallbacks. New scheduling/filter
+fields are transient. Existing serialized tile-cache contents can differ,
+but save schema and restored rendering behavior are preserved.
 
-Seven alternating baseline/candidate pairs per workload retain identical
-output signatures. Relative to `d88515b`, the corpus geometric-mean throughput
-gain is **1.149×**, with **1.030–1.466×** individual speedups and **3.1–32.0%**
-fewer process instructions. DMG acid2 improves by 1.466×, CGB acid2 by 1.156×,
-and CGB acid-hell by 1.302×. These are Linux host results; the Polished sequence
-is introductory, and the corpus is not representative gameplay. The report
-records the exact models, frame budgets, counters and equivalence checks.
-Formatting, strict workspace Clippy, full debug and release tests, and the
-all-features core check passed. The validated core matches the benchmark
-snapshot byte for byte.
+Seven alternating baseline/candidate pairs per workload have identical
+video/audio/timing signatures. Against `ae825c6`, the corpus geometric-mean
+throughput gain is **1.222× (22.2%)**, with individual speedups of
+**1.077–1.424×**. CPU instructions improve by 1.180×, CGB wave audio by 1.261×,
+DMG acid2 by 1.178× and raster acid-hell by 1.424×. Six cases retire
+**5.0–29.6% fewer instructions**; CGB acid2 retires 0.14% more despite running
+faster. The report records the exact models, frame budgets, counters and
+output-equivalence checks. These are Linux host results for this corpus and
+an introductory Polished sequence, not representative gameplay, Windows
+results or console measurements.
 
-Using the same old planning assumptions, current required additional speedups
-are approximately **1.08× for the Polished CGB intro, 1.02× for DMG acid2,
-1.69× for the CPU test and 1.95× for CGB acid-hell**. These supersede the earlier
-figures for planning and are **not measured console speeds**. DMG acid2 now
-falls within the provisional 1.1× gate, but the demanding CPU/raster cases do
-not. The gate itself remains an uncalibrated heuristic, not hardware acceptance.
-Broad gameplay traces and refreshed target measurements are still needed
-before claiming New 3DS/2DS readiness.
+Both full debug and release suites passed 1,588 ordinary tests plus a nested
+tuning test each, with 41 existing ignored tests. Focused PPU trace, independent renderer,
+filter-recurrence, shared-clock bus/IRQ and save-restoration comparisons pass.
+Formatting, strict workspace Clippy and the all-features core check pass.
+The measured core source matches the validated working tree byte for byte.
 
-The next measured host hotspots include sprite fetches, audio sample emission,
-CPU instruction/clock orchestration and peripheral dispatch. Possible follow-ups
-include fewer run-limit queries during active sprite fetches, shared bounded
-peripheral elapsed counters and less audio transport overhead. The original
-ranked opportunities below include work already completed; use the current
-performance report to distinguish those from remaining targets. No additional
-speedup is assumed for those ideas.
+Under the old **uncalibrated** instruction-budget assumptions, required
+additional speedup is approximately **1.02× for the Polished CGB intro,
+0.97× for DMG acid2, 1.37× for CPU instructions and 1.38× for CGB acid-hell**.
+CPU/raster stress improved from 1.69× / 1.95×, but still exceed the provisional
+1.1× planning gate. Neither that gate nor the ARM/x86 instruction ratio is
+hardware acceptance evidence. The model does not capture the ARM11 cost of
+these particular branches, memory accesses or floating-point operations.
 
-`scripts/build_profile_revision.py` builds an isolated Cargo harness and retains
-source lockfile dependency versions. The core's dependencies mean the old
-direct-rustc PGO script needs a similar update before reuse. The ARM library
-procedure below also needs revalidation with that dependency graph. This pass
-adds no ARM build or console frontend and does not credit desktop timing gains
-directly to console performance.
+A fresh target build also found a concrete portability blocker. Using the
+installed Rust 1.100.0 nightly (`feaadeeac`, LLVM 23.1.1), this offline command
+compiled target std and dependencies but failed before generating the core
+library:
+
+```bash
+cargo +nightly rustc --offline --locked -p vibe-emu-core --lib --release \
+  --target armv6k-nintendo-3ds -Z build-std=std,panic_abort \
+  --target-dir /tmp/vibe-perf-aggressive/arm-target -- --emit=asm
+```
+
+The current `tempfile` dependency pulls in `rustix 1.1.4`; its
+`src/backend/libc/fs/dir.rs:91` calls `c::dirfd`, which is absent from the
+Nintendo 3DS libc bindings. This is a dependency-graph portability failure,
+not a missing offline download. No SDK, dependency patch or permanent target
+configuration was added. No console executable was linked or run, and the
+September assembly success below applies only to its named older revision.
+The build log and exact command/compiler metadata are retained under
+`/tmp/vibe-perf-aggressive/arm-target/`.
+
+The next target work needs a portable persistence/temp-file dependency path,
+broader gameplay workloads, and refreshed ARM/hardware measurements before
+claiming New 3DS/2DS readiness. Host optimization can still target unsupported
+raster/window intervals and remaining CPU/memory dispatch, but no gain is
+assumed for unmeasured ideas. The historical ranked opportunities below
+include work already completed; consult the latest performance report first.
+
+`scripts/build_profile_revision.py` builds the isolated host Cargo harness
+with pinned dependency versions. The old direct-rustc PGO script still needs
+the equivalent dependency-aware update before reuse.
 
 ## September 2026 research and implementation follow-up
 

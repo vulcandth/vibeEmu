@@ -1,7 +1,9 @@
 # Core performance and the 3DS target
 
-The [October 2026 scheduling follow-up](#october-2026-larger-ppu-and-peripheral-intervals)
-extends exact PPU intervals and batches timer/RTC updates. The preceding
+The latest [October 2026 architectural pass](#october-2026-shared-cpu-deadlines-tile-transactions-and-exact-audio)
+combines CPU clock dispatch, PPU tile transactions and exact settled audio
+filter states. The prior [scheduling follow-up](#october-2026-larger-ppu-and-peripheral-intervals)
+extends PPU intervals and batches timer/RTC updates. The preceding
 [accuracy refresh](#october-2026-refresh-after-accuracy-improvements) measures
 the regression from newer accuracy work and removes redundant clock work.
 Earlier measurements below describe their named revisions; they are not
@@ -15,6 +17,147 @@ The subsequent [implementation pass](#arm-setup-caching-ppu-cartridge-and-apu)
 removes those costs and the square/wave edge divisions from the hot ARM paths.
 The [FIFO/noise pass and branch comparison](#fifo-and-noise-optimizations-branch-comparison-with-main)
 cover the complete performance branch against `main`.
+
+## October 2026: shared CPU deadlines, tile transactions and exact audio
+
+Baseline: `ae825c6`, the previous scheduling pass on the same branch. This
+pass tests a broader reorganization of CPU/device scheduling, PPU raster
+replay and audio filtering. It retains the same hardware behavior and audio
+samples, with no quality setting or reduced-accuracy mode.
+
+- Ordinary CPU M-cycles share one deadline bounded by the existing PPU and
+  timer observation limits. Between deadlines, only the CPU cycle count and
+  two small scheduling counters advance. The pending interval transfers to
+  the device queues once, avoiding repeated APU/timer/RTC/serial/DMA dispatch.
+  Device-address fetches, reads and writes, mapper writes, OAM incrementer
+  effects, HALT/STOP, speed changes and runner returns synchronize clocks.
+  Active DMA/serial and IRQ-producing ticks retain their existing ordering.
+  APU calls spanning multiple M-cycles remain indivisible; queued single
+  M-cycles preserve their original pipeline and sample sequence.
+- Stable OBJ fetches process crossed attribute/low/high stages together,
+  retaining partial fetch state, bus reads and timestamps. Native CGB raster
+  backgrounds without window activation use eight-dot tile transactions
+  instead of replaying every dot. Name and bitplane reads still sample LCDC
+  at the original times, including TILE_SEL corruption and per-pixel OBJ
+  gating. Window, DMG/compatibility and unsupported cases retain the old
+  renderer. The scalar timing and dot-renderer implementations remain
+  independent test references.
+- The audio high-pass filter reuses a finite state only after the same input
+  produces the exact same floating-point output bits. This avoids repeatedly
+  multiplying subnormal values after a filter settles; it neither flushes
+  them to zero nor changes the recurrence. Exact float-bit PCM rounding also
+  replaces the floating rounding helper, preserving ties, saturation and
+  exceptional-value behavior.
+
+New CPU and filter bookkeeping is transient and omitted from serialization.
+The PPU reuses its existing tile-row cache; derived cache contents can differ
+from the old raster renderer, but the save schema and restored behavior are
+unchanged. No dependencies or build settings changed.
+
+Linux x86-64 Intel Core i7-4790, Rust 1.98.1, optimization level 3, thin LTO,
+one codegen unit, no native-CPU flags or PGO. Both isolated builds use the
+same harness, compiler, environment and pinned dependency lockfiles. Seven
+alternating pairs per workload, with no concurrent builds or tests. Polished
+uses 1,800 measured / 300 warmup frames; other cases use 600 / 120. Audio is
+48 kHz except the explicit silent case. Headers select DMG RevC or CGB RevE.
+Values below are medians:
+
+| Workload | Previous branch head | This pass | Speedup | Less time |
+| --- | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 1.092276 s | 0.975263 s | 1.120× | 10.71% |
+| Polished Crystal, silent | 0.833635 s | 0.774094 s | 1.077× | 7.14% |
+| DMG acid2 | 0.357341 s | 0.303342 s | 1.178× | 15.11% |
+| Blargg CPU instructions | 0.522710 s | 0.442795 s | 1.180× | 15.29% |
+| CGB acid2 | 0.152807 s | 0.113221 s | 1.350× | 25.91% |
+| Blargg CGB 12-wave | 0.242302 s | 0.192121 s | 1.261× | 20.71% |
+| CGB acid-hell | 0.579149 s | 0.406577 s | 1.424× | 29.80% |
+
+All **98 timing outputs** match model, dots, video hash, audio hash, sample
+count and final PC. The equal-weight geometric-mean throughput gain is
+**1.222× (22.2%)**, equivalent to **18.16% less geometric elapsed
+time**. The raster workload improves by 1.424×, CPU instructions by 1.180×
+and CGB wave audio by 1.261×. These are direct comparisons against `ae825c6`;
+do not multiply medians from earlier sessions to infer cumulative speedup.
+The corpus and Polished intro are not representative gameplay, Windows
+measurements, or console benchmarks.
+
+Separate user-space counters cover startup, 600 measured plus 120 warmup
+frames, hashing and audio draining: 12.05475 emulated seconds. All 14 counter
+outputs also match their paired signatures. Six cases retire fewer
+instructions; CGB acid2 retires 0.14% more despite taking less time. Instruction
+counts alone do not express the cost of subnormal floating-point arithmetic.
+
+| Workload | Baseline instructions | This pass | Fewer instructions | Billion instructions / emulated second | New 3DS remaining speedup |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 3,737,215,535 | 3,528,002,050 | 5.60% | 0.293 | 1.02× |
+| Polished Crystal, silent | 2,994,571,248 | 2,805,898,503 | 6.30% | 0.233 | 0.81× |
+| DMG acid2 | 3,523,432,228 | 3,346,837,432 | 5.01% | 0.278 | 0.97× |
+| Blargg CPU instructions | 5,825,622,712 | 4,722,677,197 | 18.93% | 0.392 | 1.37× |
+| CGB acid2 | 1,490,553,629 | 1,492,703,380 | -0.14% | 0.124 | 0.43× |
+| Blargg CGB 12-wave | 3,379,635,632 | 2,601,393,018 | 23.03% | 0.216 | 0.75× |
+| CGB acid-hell | 6,729,878,103 | 4,740,976,425 | 29.55% | 0.393 | 1.38× |
+
+The final column retains the **uncalibrated** planning model: 1.5 ARM
+instructions per x86 instruction, 1.5 ARM cycles per instruction, 80% of one
+804 MHz core. CPU and raster stress fall from roughly 1.69× / 1.95× to
+**1.37× / 1.38×** required additional speedup. The provisional 1.1× gate is
+still not met across the corpus. The model does not quantify how these
+particular changes behave on ARM11; no console readiness is claimed.
+
+The initial shared-clock/PCM experiment improved CPU and wave workloads but
+made raster stress about 2% slower. That version was not retained as the
+final result. Tile transactions, direct transfer of certified clock intervals,
+and exact settled-filter reuse produced the combined results above. Isolated
+PCM conversion saved only about 0.8–0.9% of instructions on Polished/DMG and
+slightly regressed the wave timing; it is not credited with the larger gains.
+
+Validation:
+
+- All 58 focused PPU tests pass with `ppu-trace`: 17,280 partial OBJ-fetch
+  cases, 21,504 raster cases, complete timing-state comparisons, and cached
+  rendering after serialization/restoration, VRAM edits and palette changes.
+- All 29 APU unit tests pass, including every i16 rounding transition, one
+  million arbitrary float bit patterns, more than 1.2 million original-filter
+  comparisons, rate/output resets, and serialization.
+- Four new shared-clock tests cover device-address opcode/operand fetches,
+  ROM-to-VRAM access-lock boundaries, 20 OAM incrementer/stack opcodes,
+  EI/HALT/interrupt-stack IE effects, DMA, timer wakeups and exact audio.
+  Existing bounded-runner/timer/RTC/serial/speed-switch comparisons also pass.
+- `cargo fmt --all` and strict workspace/all-targets Clippy: passed.
+- `cargo test`: 1,588 ordinary tests plus one nested tuning test passed;
+  41 existing ignored tests, no failures.
+- `cargo check -p vibe-emu-core --all-features`: passed.
+- `cargo test --release`: 1,588 ordinary tests plus one nested tuning test
+  passed; 41 existing ignored tests, no failures.
+- Final core source matches the measured snapshot byte for byte.
+- Gambatte remains a separate opt-in suite and was not rerun here; see
+  [GAMBATTE_REVIEW.md](GAMBATTE_REVIEW.md) for existing findings.
+
+An offline Nintendo 3DS library-code-generation attempt with the installed
+Rust 1.100.0 nightly compiled target std but failed before producing a core
+library: `tempfile` pulls in `rustix 1.1.4`, whose directory implementation
+calls `libc::dirfd`, absent from this target's bindings. This exposes a current
+portability blocker in the newer dependency graph. No dependency patch,
+SDK installation, executable linking or console execution was performed.
+The earlier successful ARM assembly audit applies to its historical revision.
+
+Reproduce the host comparison with the printed binary paths:
+
+```bash
+python3 scripts/build_profile_revision.py --revision ae825c6 --output /tmp/vibe-aggressive
+python3 scripts/build_profile_revision.py --output /tmp/vibe-aggressive
+python3 scripts/benchmark_core.py /path/to/baseline/profile_core \
+  /path/to/candidate/profile_core polishedcrystal-debug-3.2.3.gbc --runs 7
+```
+
+Evidence: `/tmp/vibe-perf-aggressive/final/` contains timings, counters,
+matching signatures and binary provenance. `baseline-helper/` and
+`final-helper/` retain source snapshots, build records, lockfiles and binaries.
+`candidate1/`, `candidate2/` and `apu-only/` contain exploratory results;
+the final tables use only `final/`. Validation logs are `clippy.log`,
+`cargo-test{,-release}.log`, `clock-batch-tests.log` and `all-features.log`.
+`arm-target/metadata.json` and `arm-target/build.log` record the failed target
+build, compiler and exact command.
 
 ## October 2026: larger PPU and peripheral intervals
 
