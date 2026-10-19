@@ -305,12 +305,7 @@ impl Cpu {
         let prev_dot_div = mmu.dot_div;
         mmu.dot_div = mmu.dot_div.wrapping_add(dot_cycles);
 
-        if let Some(cart) = mmu.cart.as_mut() {
-            cart.step_rtc(cpu_cycles);
-        }
-
-        let prev_cpu_div = mmu.timer.div;
-        mmu.timer.step(cpu_cycles, &mut mmu.if_reg);
+        let prev_cpu_div = mmu.step_cpu_peripherals(cpu_cycles);
 
         // Advance APU domains in the same order as before (2 MHz -> frame sequencer -> 1 MHz).
         mmu.apu.run_cpu_tick_steps(
@@ -704,9 +699,9 @@ impl Cpu {
     /// serial transfer. The final instruction may exceed the budget. A zero
     /// budget does nothing; STOP/faults return after at most one step.
     ///
-    /// CPU, timer and bus accesses retain their normal timing. APU/PPU clocks
-    /// are combined between observations and synchronized before returning.
-    /// PPU batches stop before events, preserving interrupt and DMA timing.
+    /// CPU and bus accesses retain their normal timing. Peripheral clocks are
+    /// combined between observations and synchronized before returning. Timer
+    /// and PPU batches stop before events, preserving interrupt and DMA timing.
     /// Attached link endpoints retain instruction polling unless they opt out.
     /// Debuggers requiring instruction boundaries should use [`Self::step`].
     pub fn run_for_dots(&mut self, mmu: &mut crate::mmu::Mmu, dots: u16) {
@@ -718,6 +713,7 @@ impl Cpu {
             return;
         }
         let target = self.cycles + u64::from(dots);
+        mmu.begin_peripheral_batch();
         mmu.apu.begin_cpu_batch();
         mmu.begin_ppu_batch();
         while self.cycles < target {
@@ -738,6 +734,7 @@ impl Cpu {
         }
         mmu.end_ppu_batch();
         mmu.apu.end_cpu_batch();
+        mmu.end_peripheral_batch();
     }
 
     /// Execute one instruction, or combine HALT cycles within `max_idle_dots`.
@@ -749,6 +746,7 @@ impl Cpu {
     /// Use `step` when observing the machine after every instruction/M-cycle.
     pub fn step_with_halt_batch(&mut self, mmu: &mut crate::mmu::Mmu, max_idle_dots: u16) {
         mmu.synchronize_ppu();
+        mmu.synchronize_timer();
         if self.halted
             && !self.stopped
             && !self.faulted
@@ -768,12 +766,8 @@ impl Cpu {
                 let cpu_cycles = dots << u32::from(self.double_speed);
                 self.cycles += u64::from(dots);
                 let prev_dot_div = mmu.dot_div;
-                let prev_cpu_div = mmu.timer.div;
                 mmu.dot_div = mmu.dot_div.wrapping_add(dots);
-                if let Some(cart) = mmu.cart.as_mut() {
-                    cart.step_rtc(cpu_cycles);
-                }
-                mmu.timer.step(cpu_cycles, &mut mmu.if_reg);
+                let prev_cpu_div = mmu.step_cpu_peripherals(cpu_cycles);
                 mmu.apu
                     .run_halt_steps(dots, prev_cpu_div, prev_dot_div, self.double_speed);
                 let hblank = mmu.ppu.step(dots, &mut mmu.if_reg);

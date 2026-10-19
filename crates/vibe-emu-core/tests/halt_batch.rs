@@ -26,7 +26,7 @@ fn machine(model: Model, double_speed: bool, ime: bool) -> GameBoy {
 
 #[test]
 fn halt_batches_preserve_wakeup_dma_serial_and_frame_boundaries() {
-    for model in [Model::default(), Model::Cgb(Default::default())] {
+    for model in [Model::default(), Model::Mgb, Model::Cgb(Default::default())] {
         for double_speed in [false, true] {
             if double_speed && model.is_dmg() {
                 continue;

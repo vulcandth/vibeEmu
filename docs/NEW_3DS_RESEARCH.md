@@ -2,45 +2,53 @@
 
 ## October 2026 status
 
-The [accuracy-preserving performance refresh](PERFORMANCE.md#october-2026-refresh-after-accuracy-improvements)
-starts from `b7938e4`, after the newer accuracy and save-state work. It rebuilds
-the previous performance merge for comparison and uses the current core as the
-equivalence baseline. The historical ARM and PGO results below are not current
-measurements.
+The latest [PPU and peripheral scheduling pass](PERFORMANCE.md#october-2026-larger-ppu-and-peripheral-intervals)
+continues from `d88515b` on `codex/performance-new-3ds-refresh`. The preceding
+[accuracy refresh](PERFORMANCE.md#october-2026-refresh-after-accuracy-improvements)
+started at `b7938e4` and measured the cost of the newer accuracy and save-state
+work. The historical ARM and PGO results below are not current measurements.
 
-The original configuration, mapper, FIFO and reciprocal-division optimizations
-are still present. The refresh removes additional repeated work: transfer-mode
-LYC checks, unchanged OBJ-size captures, repeated renderer-clock calculations,
-runtime silent sample-clock remainder, and calls into idle DMA machinery.
-Reference paths and new differential tests retain the accurate timing rules,
-including delayed LYC writes and the distinct SGB clock. No console frontend,
-reduced-accuracy mode, or new save-state fields are introduced.
+The PPU now defers transfer work across internal sprite-fetch boundaries until
+a CPU observation or an external event deadline. Catch-up retains sprite
+latches, visible/hidden pixel timestamps, FIFO state, raster LCDC captures and
+OBJ-size tuning. Timer updates stop before observable overflow/reload effects;
+RTC clocks synchronize before cartridge observations, including DMA reads.
+DIV consumers still receive the exact current divider. Pending clocks are
+flushed before runner returns and the new scheduling fields are not serialized.
 
-Seven alternating baseline/candidate pairs per workload retain identical output
-signatures. The corpus geometric-mean throughput gain is 1.079×, with 3.6–11.3%
-less elapsed core time and 3.9–9.6% fewer process instructions. Full debug and
-release workspace tests, strict Clippy, formatting, and all-feature core
-compilation pass. See the performance report for timings, counts, and limits.
+Seven alternating baseline/candidate pairs per workload retain identical
+output signatures. Relative to `d88515b`, the corpus geometric-mean throughput
+gain is **1.149×**, with **1.030–1.466×** individual speedups and **3.1–32.0%**
+fewer process instructions. DMG acid2 improves by 1.466×, CGB acid2 by 1.156×,
+and CGB acid-hell by 1.302×. These are Linux host results; the Polished sequence
+is introductory, and the corpus is not representative gameplay. The report
+records the exact models, frame budgets, counters and equivalence checks.
+Formatting, strict workspace Clippy, full debug and release tests, and the
+all-features core check passed. The validated core matches the benchmark
+snapshot byte for byte.
 
-Applying the same old planning assumptions to the new counts leaves an
-estimated 1.12× requirement for the Polished CGB intro, 1.50× for DMG acid2,
-1.75× for the CPU test, and 2.58× for CGB acid-hell. These are **not measured
-console speeds**. They supersede the September figures for current planning
-and still leave a substantial gap on demanding cases.
+Using the same old planning assumptions, current required additional speedups
+are approximately **1.08× for the Polished CGB intro, 1.02× for DMG acid2,
+1.69× for the CPU test and 1.95× for CGB acid-hell**. These supersede the earlier
+figures for planning and are **not measured console speeds**. DMG acid2 now
+falls within the provisional 1.1× gate, but the demanding CPU/raster cases do
+not. The gate itself remains an uncalibrated heuristic, not hardware acceptance.
+Broad gameplay traces and refreshed target measurements are still needed
+before claiming New 3DS/2DS readiness.
 
-The remaining priority is still structural scheduling: larger exact DMG FIFO
-intervals and fewer per-M-cycle timer/RTC/peripheral updates. The original
-ranked opportunities below include work already completed; use the latest
-performance report to distinguish those from remaining targets. Broad gameplay
-traces and refreshed target measurements are still needed before claiming
-New 3DS/2DS readiness. The existing approximately 91% planning gate remains
-an uncalibrated heuristic, not a hardware acceptance result.
+The next measured host hotspots include sprite fetches, audio sample emission,
+CPU instruction/clock orchestration and peripheral dispatch. Possible follow-ups
+include fewer run-limit queries during active sprite fetches, shared bounded
+peripheral elapsed counters and less audio transport overhead. The original
+ranked opportunities below include work already completed; use the current
+performance report to distinguish those from remaining targets. No additional
+speedup is assumed for those ideas.
 
-`scripts/build_profile_revision.py` now builds an isolated Cargo harness and
-retains source lockfile dependency versions. The core's new dependencies mean
-the old direct-rustc PGO script needs a similar update before reuse. The ARM
-library procedure below also needs revalidation with that dependency graph;
-this refresh does not claim a new ARM build or credit desktop timing gains
+`scripts/build_profile_revision.py` builds an isolated Cargo harness and retains
+source lockfile dependency versions. The core's dependencies mean the old
+direct-rustc PGO script needs a similar update before reuse. The ARM library
+procedure below also needs revalidation with that dependency graph. This pass
+adds no ARM build or console frontend and does not credit desktop timing gains
 directly to console performance.
 
 ## September 2026 research and implementation follow-up

@@ -1,9 +1,11 @@
 # Core performance and the 3DS target
 
-The [October 2026 refresh](#october-2026-refresh-after-accuracy-improvements)
-measures the newer accuracy changes and removes redundant PPU, audio-clock,
-and idle DMA work. Earlier measurements below describe their named revisions;
-they are not measurements of the current core.
+The [October 2026 scheduling follow-up](#october-2026-larger-ppu-and-peripheral-intervals)
+extends exact PPU intervals and batches timer/RTC updates. The preceding
+[accuracy refresh](#october-2026-refresh-after-accuracy-improvements) measures
+the regression from newer accuracy work and removes redundant clock work.
+Earlier measurements below describe their named revisions; they are not
+measurements of the current core.
 
 The earlier [New 3DS research pass](NEW_3DS_RESEARCH.md) audits actual ARMv6K
 assembly and refreshes PGO measurements against `f0f47e4`. It identifies
@@ -13,6 +15,144 @@ The subsequent [implementation pass](#arm-setup-caching-ppu-cartridge-and-apu)
 removes those costs and the square/wave edge divisions from the hot ARM paths.
 The [FIFO/noise pass and branch comparison](#fifo-and-noise-optimizations-branch-comparison-with-main)
 cover the complete performance branch against `main`.
+
+## October 2026: larger PPU and peripheral intervals
+
+Baseline: `d88515b`, the end of the accuracy refresh below. Same branch,
+Linux x86-64 Intel Core i7-4790 and Rust 1.98.1, optimization level 3, thin LTO,
+one codegen unit, no native-CPU flags or PGO. Both binaries use the isolated
+Cargo revision builder with the same harness and pinned dependencies.
+
+The PPU now distinguishes a CPU-visible deadline from an internal fetch
+boundary. During transfer it can defer work until just before end-of-transfer
+housekeeping, while memory/register accesses synchronize earlier. Catch-up
+processes sprite latches in their original order and projects stable visible
+pixels, hidden startup pixels, scroll delays, FIFO refills, and trailing dots.
+Mode transitions, STAT/LYC effects, queued writes and active OAM DMA retain
+their existing clock boundaries. MGB held-DMA-bus changes synchronize pending
+fetches before changing the bus value.
+
+Raster lines can also use stable intervals after LCDC writes. The bulk paths
+retain per-pixel LCDC/BGP values, every pixel/pop timestamp, event-buffer
+capacity behavior, and phase/bias-dependent OBJ-size captures. The original
+unoptimized PPU specialization remains the reference. Merely adding hidden
+pixel runs to the old short-interval scheduler increased DMG work; the retained
+implementation combines those projections with longer observation intervals.
+
+Peripheral scheduling is scoped to `Cpu::run_for_dots`:
+
+- Timer clocks accumulate only before the next possible overflow or pending
+  write/reload effect. Register observations, DIV resets, HALT boundaries and
+  runner returns synchronize them. APU and serial receive the exact logical
+  divider even while TIMA updates are deferred; IRQ-producing ticks retain
+  their original ordering.
+- RTC clocks accumulate until cartridge control writes, cartridge RAM/RTC
+  reads or writes (including DMA), or the runner return. The accumulator is
+  wide enough for double-speed scopes and STOP's settling interval. Existing
+  RTC clock-domain semantics remain unchanged.
+- Long standalone timer steps jump between overflow events and retain scalar
+  processing of pending writes/reloads. Existing short-step and direct-field
+  edge-latch behavior is preserved.
+
+The new scheduler bookkeeping is transient and omitted from serialization.
+There are no save-state format changes, new dependencies, reduced-quality
+modes, or pending device clocks surviving a public runner return.
+
+Seven alternating baseline/candidate pairs per workload, with no concurrent
+builds or tests. Polished uses 1,800 measured / 300 warmup frames; the other
+workloads use 600 / 120. Audio is 48 kHz except for the explicit silent case.
+Cartridge headers select DMG RevC or CGB RevE. Values are medians:
+
+| Workload | Previous branch head | Scheduling changes | Speedup | Less time |
+| --- | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 1.052251 s | 1.021405 s | 1.030× | 2.93% |
+| Polished Crystal, silent | 0.835742 s | 0.774376 s | 1.079× | 7.34% |
+| DMG acid2 | 0.495883 s | 0.338360 s | 1.466× | 31.77% |
+| Blargg CPU instructions | 0.521346 s | 0.498587 s | 1.046× | 4.37% |
+| CGB acid2 | 0.168175 s | 0.145541 s | 1.156× | 13.46% |
+| Blargg CGB 12-wave | 0.245415 s | 0.237602 s | 1.033× | 3.18% |
+| CGB acid-hell | 0.706535 s | 0.542511 s | 1.302× | 23.22% |
+
+All 14 runs per workload matched hardware model, dot count, frame/video hash,
+audio hash, sample count and final PC. The equal-weight geometric-mean
+throughput improvement is **1.149×** (14.9%); individual speedups range from
+1.030× to 1.466×. These measurements describe this corpus and introductory
+Polished sequence, not arbitrary gameplay, Windows, or console performance.
+They are a direct comparison with `d88515b`; do not multiply them by medians
+from earlier measurement sessions to infer a cumulative speedup.
+
+Separate user-space instruction counts cover startup, 600 measured plus 120
+warmup frames, hashing and audio draining: 12.05475 emulated seconds per run.
+All seven workloads retire fewer instructions:
+
+| Workload | Baseline instructions | Scheduling instructions | Fewer instructions | Billion instructions / emulated second | New 3DS remaining speedup |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 3,864,395,240 | 3,737,217,096 | 3.29% | 0.310 | 1.08× |
+| Polished Crystal, silent | 3,121,750,942 | 2,994,571,283 | 4.07% | 0.248 | 0.87× |
+| DMG acid2 | 5,183,066,995 | 3,523,431,935 | 32.02% | 0.292 | 1.02× |
+| Blargg CPU instructions | 6,014,526,943 | 5,825,622,243 | 3.14% | 0.483 | 1.69× |
+| CGB acid2 | 1,782,041,341 | 1,490,553,506 | 16.36% | 0.124 | 0.43× |
+| Blargg CGB 12-wave | 3,515,941,176 | 3,379,638,093 | 3.88% | 0.280 | 0.98× |
+| CGB acid-hell | 8,882,219,682 | 6,729,877,834 | 24.23% | 0.558 | 1.95× |
+
+The last column retains the earlier **uncalibrated** assumptions: 1.5 ARM
+instructions per x86 instruction, 1.5 ARM cycles per instruction and 80% of
+one 804 MHz core. It is not measured console speed. The DMG acid2 estimate
+falls from about 1.50× to 1.02× required additional speedup, but CPU and raster
+stress still need approximately **1.69× and 1.95×** under that same model.
+The approximate 1.1× planning gate is still not satisfied across the corpus.
+Hardware validation remains deferred; this pass adds no ARM build or console
+frontend and makes no claim of New 3DS/2DS readiness.
+
+Fresh 6,000/300-frame cycle profiles leave DMG sprite-latch processing at 12.6%
+of samples, audio sample emission at 12.4%, PPU stepping at 6.3%, and visible
+FIFO run-limit calculation at 5.0%. Polished still spends 11.4% in CPU clock
+orchestration, 10.1% in instruction stepping, and 3.0% in the new peripheral
+step helper. These are exclusive host symbol shares, including inlined work,
+not ARM timings or additive subsystem costs. Remaining candidates include
+avoiding redundant run-limit queries during active sprite fetches, sharing a
+bounded elapsed counter between timer and RTC, and reducing audio transport
+and repeated CPU/peripheral call overhead. None has a measured gain here.
+
+Validation:
+
+- Focused PPU tests: all 55 passed, including complete serialized-state
+  comparison across 96 hardware/tuning/restart/scroll configurations and
+  eight observation boundaries each. The same comparison passed with
+  `ppu-trace`, including its elapsed trace clock.
+- Independent timer dot-reference tests cover overflow/reload collisions,
+  writes, interrupt flags, DIV wrap and historical direct-field behavior.
+- Bounded-runner comparisons cover timer/MMIO/serial/APU, MBC3/MBC30/TPP1 RTC
+  operations and restoration, OAM/GDMA reads, speed switches, scopes exceeding
+  65,535 CPU clocks, and the expanded MGB HALT/DMA cases.
+- `cargo fmt --all`: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- `cargo test`: 1,578 passed plus the isolated tuning subprocess; 41 existing
+  ignored tests, no failures.
+- `cargo test --release`: 1,578 passed plus the isolated tuning subprocess;
+  41 existing ignored tests, no failures.
+- `cargo check -p vibe-emu-core --all-features`: passed.
+- Final core source matches the benchmark snapshot byte for byte.
+- Gambatte was not run; it remains a separate opt-in suite with existing
+  findings documented in [GAMBATTE_REVIEW.md](GAMBATTE_REVIEW.md).
+
+Reproduce against the preceding branch head using the printed binary paths:
+
+```bash
+python3 scripts/build_profile_revision.py --revision d88515b --output /tmp/vibe-scheduling
+python3 scripts/build_profile_revision.py --output /tmp/vibe-scheduling
+python3 scripts/benchmark_core.py /path/to/baseline/profile_core \
+  /path/to/candidate/profile_core polishedcrystal-debug-3.2.3.gbc --runs 7
+```
+
+Temporary evidence is under `/tmp/vibe-perf-scheduling/`: `final/` contains
+all alternating timing logs, `final-results.json`, `counters.json`, counter
+output/signatures and binary provenance. `baseline-helper/` and
+`candidate3-helper/` retain the measured source snapshots, build records,
+lockfiles and binaries. `final-{dmg,polished}.perf` and corresponding reports
+contain the final profiles. Earlier `candidate1/` and `candidate2/` results
+are exploratory and are not used for the final table. Validation logs are
+`clippy.log`, `cargo-test{,-release}.log`, and `all-features.log`.
 
 ## October 2026 refresh after accuracy improvements
 
