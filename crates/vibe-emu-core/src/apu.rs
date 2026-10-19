@@ -51,7 +51,6 @@ macro_rules! apu_trace {
     ($($arg:tt)*) => {};
 }
 
-#[cfg(test)]
 const CPU_CLOCK_HZ: u32 = 4_194_304;
 // 512 Hz frame sequencer tick (not doubled in CGB mode)
 const FRAME_SEQUENCER_PERIOD: u32 = 8192;
@@ -4275,13 +4274,21 @@ impl Apu {
         let rate = self.sample_rate as u64;
         let sample_period = u64::from(self.model.clock_hz());
         self.sample_timer_accum += rate * cycles as u64;
-        if self.audio_out.is_none() {
-            self.sample_timer_accum %= sample_period;
+        if self.sample_timer_accum < sample_period {
             return;
         }
-        if self.sample_timer_accum >= sample_period {
-            self.emit_audio_samples();
+        if self.audio_out.is_none() {
+            // Keep both divisors constant: the ordinary clock reduces to a
+            // mask, while SGB retains its exact SNES-derived sample phase.
+            // A runtime u64 remainder here requires software division on ARM11.
+            self.sample_timer_accum = if matches!(self.model, Model::Sgb) {
+                self.sample_timer_accum % u64::from(Model::Sgb.clock_hz())
+            } else {
+                self.sample_timer_accum % u64::from(CPU_CLOCK_HZ)
+            };
+            return;
         }
+        self.emit_audio_samples();
     }
 
     // Sample production is much less frequent than the emulated CPU ticks.
@@ -4612,6 +4619,132 @@ impl Default for Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SAMPLE_CLOCK_MODELS: [Model; 7] = [
+        Model::Dmg(DmgRevision::RevC),
+        Model::Cgb(CgbRevision::RevE),
+        Model::Mgb,
+        Model::Sgb,
+        Model::Sgb2,
+        Model::Agb0,
+        Model::Agb,
+    ];
+
+    #[test]
+    fn silent_sample_clock_matches_exact_remainders_for_both_hardware_clocks() {
+        let mut random = 0x8c31_b25du32;
+        for model in SAMPLE_CLOCK_MODELS {
+            let clock = model.clock_hz();
+            let mut apu = Apu::new(model);
+            for rate in [
+                0,
+                1,
+                32_768,
+                44_100,
+                48_000,
+                96_000,
+                192_000,
+                clock - 1,
+                clock,
+                clock + 1,
+                u32::MAX,
+            ] {
+                apu.set_sample_rate(rate);
+                let mut check = |phase: u32, dots: u16| {
+                    apu.sample_timer_accum = u64::from(phase);
+                    apu.advance_sample_clock(dots);
+                    assert_eq!(
+                        apu.sample_timer_accum,
+                        (u64::from(phase) + u64::from(rate) * u64::from(dots)) % u64::from(clock),
+                        "model={model:?} rate={rate} phase={phase} dots={dots}"
+                    );
+                };
+                for phase in [0, 1, clock / 2, clock - 2, clock - 1] {
+                    for dots in [0, 1, 2, 4, 17, 87, 88, 89, 255, 4096, 16_384, u16::MAX] {
+                        check(phase, dots);
+                    }
+                }
+                for _ in 0..256 {
+                    random = random.wrapping_mul(1664525).wrapping_add(1013904223);
+                    let phase = random % clock;
+                    random = random.wrapping_mul(1664525).wrapping_add(1013904223);
+                    check(phase, random as u16);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sample_clock_preserves_audio_and_phase_across_output_boundaries() {
+        for model in SAMPLE_CLOCK_MODELS {
+            let clock = u64::from(model.clock_hz());
+            for rate in [0, 1, 32_768, 44_100, 48_000, 96_000, 192_000] {
+                for capacity in [1, 3, 128] {
+                    let make = || {
+                        let mut apu = Apu::new(model);
+                        apu.set_sample_rate(rate);
+                        let (producer, consumer) = audio_queue(capacity);
+                        apu.audio_out = Some(producer);
+                        apu.sample_timer_accum = clock - 1;
+                        apu.nr50 = 0x65;
+                        apu.nr51 = 0xa5;
+                        apu.ch1.dac_enabled = true;
+                        apu.ch2.dac_enabled = true;
+                        apu.ch3.dac_enabled = true;
+                        apu.ch4.dac_enabled = true;
+                        (apu, consumer)
+                    };
+                    let (mut actual, audio) = make();
+                    let (mut expected, reference_audio) = make();
+                    for (iteration, dots) in
+                        [0, 1, 2, 4, 17, 87, 88, 89, 255, 4096, 16_384, u16::MAX]
+                            .into_iter()
+                            .enumerate()
+                    {
+                        for apu in [&mut actual, &mut expected] {
+                            apu.ch1.output_pipeline.fill((iteration % 16) as u8);
+                            apu.ch2.output_pipeline.fill(((iteration * 3) % 16) as u8);
+                            apu.ch3.output_pipeline.fill(((iteration * 7) % 16) as u8);
+                            apu.ch4.output_pipeline.fill(((iteration * 11) % 16) as u8);
+                            apu.set_speed(if iteration % 5 == 4 { 2.0 } else { 1.0 });
+                        }
+                        // Save-state restoration can temporarily detach an
+                        // existing queue without resetting the sample phase.
+                        let detached = (iteration % 4 == 2)
+                            .then(|| (actual.take_output_state(), expected.take_output_state()));
+                        actual.advance_sample_clock(dots);
+
+                        // Reference the clock's exact quotient/remainder, then
+                        // emit every elapsed sample even when the queue is full.
+                        let total = expected.sample_timer_accum + u64::from(rate) * u64::from(dots);
+                        expected.sample_timer_accum = total % clock;
+                        if expected.audio_out.is_some() {
+                            for _ in 0..total / clock {
+                                let (left, right) = expected.mix_output();
+                                expected.push_samples(left, right);
+                            }
+                        }
+                        if let Some((actual_state, expected_state)) = detached {
+                            actual.restore_output_state(actual_state);
+                            expected.restore_output_state(expected_state);
+                        }
+                        assert_same_apu_state(&actual, &expected);
+                        // Retain samples across some calls to exercise the
+                        // queue's drop-newest behavior as well as empty queues.
+                        if iteration % 3 == 2 {
+                            loop {
+                                let sample = audio.pop_stereo();
+                                assert_eq!(sample, reference_audio.pop_stereo());
+                                if sample.is_none() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn speed_switch_alternates_delayed_frame_sequencer_edges() {

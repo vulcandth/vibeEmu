@@ -1582,12 +1582,20 @@ impl Mmu {
     }
 
     /// Advance the ongoing OAM DMA transfer if active.
+    #[inline]
     pub fn dma_step(&mut self, cycles: u16) {
         if self.dma_cycles == 0 && self.pending_delay == 0 {
             self.ppu.oam_dma_current_dest = 0xA1;
             return;
         }
 
+        self.dma_step_active(cycles);
+    }
+
+    // Ordinary CPU ticks only need the idle check above. Keep the byte transfer
+    // and bus-conflict machinery out of that frequently inlined path.
+    #[inline(never)]
+    fn dma_step_active(&mut self, cycles: u16) {
         for _ in 0..cycles {
             self.ppu.oam_dma_current_dest = 0xA1;
             if self.pending_delay > 0 {

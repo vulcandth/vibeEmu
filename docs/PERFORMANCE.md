@@ -1,13 +1,177 @@
 # Core performance and the 3DS target
 
-The latest [New 3DS research pass](NEW_3DS_RESEARCH.md) audits actual ARMv6K
+The [October 2026 refresh](#october-2026-refresh-after-accuracy-improvements)
+measures the newer accuracy changes and removes redundant PPU, audio-clock,
+and idle DMA work. Earlier measurements below describe their named revisions;
+they are not measurements of the current core.
+
+The earlier [New 3DS research pass](NEW_3DS_RESEARCH.md) audits actual ARMv6K
 assembly and refreshes PGO measurements against `f0f47e4`. It identifies
 recurring PPU configuration barriers and software division in cartridge reads
 as concrete next targets, with separate plans for the larger DMG gap.
 The subsequent [implementation pass](#arm-setup-caching-ppu-cartridge-and-apu)
 removes those costs and the square/wave edge divisions from the hot ARM paths.
-The latest [FIFO/noise pass and branch comparison](#fifo-and-noise-optimizations-branch-comparison-with-main)
+The [FIFO/noise pass and branch comparison](#fifo-and-noise-optimizations-branch-comparison-with-main)
 cover the complete performance branch against `main`.
+
+## October 2026 refresh after accuracy improvements
+
+Baseline: `b7938e4`, after the accuracy, additional hardware-model, debugger,
+and save-state work. Linux x86-64, Intel Core i7-4790, Rust 1.98.1, optimization
+level 3, thin LTO, one codegen unit, no native-CPU flags and no PGO. All timings
+are core-only; neither Windows nor a Nintendo console was benchmarked.
+
+First, rebuilt the previous performance merge (`53c4c61`) and compared it with
+the current baseline using the shared profiling harness. Five alternating
+pairs per workload, with no concurrent builds or tests. Values are medians;
+48 kHz audio is enabled except in the explicit silent case:
+
+| Workload | Measured / warmup frames | Previous performance merge | Current baseline | More time |
+| --- | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 1,800 / 300 | 0.997652 s | 1.122139 s | 12.48% |
+| Polished Crystal, silent | 1,800 / 300 | 0.775622 s | 0.888859 s | 14.60% |
+| DMG acid2 | 600 / 120 | 0.422248 s | 0.577072 s | 36.67% |
+| Blargg CPU instructions | 600 / 120 | 0.530515 s | 0.580367 s | 9.40% |
+| CGB acid2 | 600 / 120 | 0.164366 s | 0.180820 s | 10.01% |
+| Blargg CGB 12-wave | 600 / 120 | 0.251543 s | 0.285167 s | 13.37% |
+| CGB acid-hell | 600 / 120 | 0.585562 s | 0.799606 s | 36.55% |
+
+Every workload has a higher median in this run. Some individual runs vary
+substantially, so these percentages should not be read as precise regression
+estimates for other sessions or arbitrary gameplay. The revisions also have
+different behavior. Only the two acid2 cases have identical complete output
+signatures across these historical revisions. Polished, CPU and wave
+have video/audio/phase differences, and acid-hell has a different final PC.
+Each revision is deterministic across its repeated runs. These historical
+comparisons measure the cost of the newer implementation; they are not
+equivalence checks and do not justify reverting accuracy fixes.
+
+Fresh 6,000/300-frame cycle profiles identify redundant work around the accurate
+state machines. DMG acid2 spends 17.6% of samples in sprite-latch processing,
+10.9% in PPU stepping, and 4.7% in LYC comparison. Polished Crystal spends 11.6%
+in CPU clock orchestration, 3.3% in DMA stepping, and 1.7% in LYC comparison.
+These are exclusive host symbol shares, including inlined work and harness
+overhead, not subsystem timings or ARM costs.
+
+Changes in this pass:
+
+- Skip the per-dot LYC recomputation during pixel transfer, when LY and its
+  comparison phase are fixed. Immediate and delayed register writes still
+  update coincidence, and line/startup transitions retain their checks.
+- Skip OBJ-size capture writes on lines without LCDC writes. Line setup has
+  already filled every capture with that exact value. Lines with LCDC events
+  retain the original capture path, including non-default tuning. Reuse the
+  renderer clock within each sprite-latch call.
+- Normalize silent audio phase with explicit constant divisors for the normal
+  and SGB clocks. The normal clock becomes a mask instead of a runtime 64-bit
+  remainder. Calls before the next sample boundary return before inspecting
+  the output queue. Mixing, filtering, sample rates, and queue behavior remain
+  unchanged.
+- Inline the small idle DMA check while keeping the active transfer body in
+  a separate function. Both active transfers and idle bus-state cleanup retain
+  their original behavior.
+
+There are no new persistent fields, serialized-state changes, lookup tables,
+dependencies, timing shortcuts, or reduced-quality audio/video modes. The PPU's
+unoptimized specialization remains a reference for differential tests. New
+tests cover all hardware families and revisions for LYC write latency and STAT
+boundaries, non-default OBJ capture tuning and mode changes, and exact sample
+phase/output across both clock rates, extreme input ranges, queue overflow,
+muting, and output detach/restore.
+
+Final comparison against `b7938e4`, seven alternating pairs per workload,
+with both binaries built by the same isolated Cargo helper and no concurrent
+builds or tests. Frame budgets and output modes match the historical table
+above. Values are medians:
+
+| Workload | Current baseline | Optimized | Speedup | Less time |
+| --- | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 1.164106 s | 1.086589 s | 1.071× | 6.66% |
+| Polished Crystal, silent | 0.879888 s | 0.847824 s | 1.038× | 3.64% |
+| DMG acid2 | 0.580143 s | 0.514845 s | 1.127× | 11.26% |
+| Blargg CPU instructions | 0.590230 s | 0.542359 s | 1.088× | 8.11% |
+| CGB acid2 | 0.183162 s | 0.171954 s | 1.065× | 6.12% |
+| Blargg CGB 12-wave | 0.279734 s | 0.258565 s | 1.082× | 7.57% |
+| CGB acid-hell | 0.788990 s | 0.725776 s | 1.087× | 8.01% |
+
+Every comparison matched hardware model, dot count, frame/video hash, audio
+hash, sample count, and final PC. The equal-weight geometric mean is **1.079×**
+throughput across these seven cases. This is a corpus-specific result; the
+Polished sequence is introductory and the corpus is not representative gameplay.
+Host timing varies, so retain the raw runs and do not multiply ratios from
+separate comparison sessions.
+
+User-space retired instruction counts provide a separate work measure. Each
+counter run includes 600 measured plus 120 warmup frames, startup, hashing, and
+queue draining. This is 12.05475 emulated seconds; it is broader than the timed
+core region. All seven workloads retire fewer instructions:
+
+| Workload | Baseline instructions | Optimized instructions | Fewer instructions | Optimized billion instructions / emulated second | New 3DS remaining speedup |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Polished Crystal, 48 kHz audio | 4,022,173,715 | 3,864,395,680 | 3.92% | 0.321 | 1.12× |
+| Polished Crystal, silent | 3,283,525,081 | 3,121,751,119 | 4.93% | 0.259 | 0.91× |
+| DMG acid2 | 5,650,212,439 | 5,183,067,474 | 8.27% | 0.430 | 1.50× |
+| Blargg CPU instructions | 6,432,788,838 | 6,014,526,612 | 6.50% | 0.499 | 1.75× |
+| CGB acid2 | 1,903,391,037 | 1,782,041,093 | 6.38% | 0.148 | 0.52× |
+| Blargg CGB 12-wave | 3,792,849,878 | 3,515,940,444 | 7.30% | 0.292 | 1.02× |
+| CGB acid-hell | 9,828,472,137 | 8,882,218,818 | 9.63% | 0.737 | 2.58× |
+
+The last column reuses the earlier **uncalibrated** planning assumptions:
+1.5 ARM instructions per x86 instruction, 1.5 ARM cycles per instruction, and
+80% of one 804 MHz application core. These are not measured console speeds or
+confidence bounds. DMG, CPU and raster stress still require roughly **1.50×,
+1.75× and 2.58×** further speedup under that model, above the provisional 1.1×
+planning gate. Hardware validation remains deferred. No desktop elapsed-time
+speedup or old PGO result is multiplied into this instruction estimate.
+The host benchmark's executable text decreases from 592,548 to 592,124 bytes;
+that is not a measurement of console executable size.
+
+Fresh final profiles still put DMG sprite-latch work at 15.5%, PPU stepping
+at 11.9%, and FIFO run-limit calculation at 6.2% of samples. LYC comparison
+falls from 4.7% to 1.0%. Polished still spends 12.1% in CPU clock orchestration
+and 3.6% in timer stepping. These support the next structural targets: larger
+exact DMG intervals and fewer peripheral updates per M-cycle. They do not
+establish a predicted speedup for those changes.
+
+The revision builder now uses an isolated Cargo harness workspace because the
+core is no longer dependency-free. It preserves source snapshots, the shared
+harness, compiler/build provenance, and source lockfile dependency versions;
+`--offline` uses cached dependencies and `--prepare-only` writes the snapshot
+without compiling. Historical and current builds were both exercised. The
+older PGO script and ARM assembly procedure below predate these dependencies;
+this pass does not validate them against the current dependency graph.
+
+Validation of the final source:
+
+- `cargo fmt --all` and formatting check: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- `cargo test`: 1,569 passed, plus the isolated tuning subprocess; 41 existing
+  ignored tests, no failures.
+- `cargo test --release`: 1,569 passed, plus the isolated tuning subprocess;
+  41 existing ignored tests, no failures.
+- `cargo check -p vibe-emu-core --all-features`: passed.
+- Revision helper: historical and current dependency-aware builds passed,
+  including source lockfile pin checks; Python compilation passed. The older
+  `Cpu::step` harness adaptation was checked in prepare-only mode.
+- Gambatte was not run in this pass; its existing failures and accuracy review
+  remain documented separately in [GAMBATTE_REVIEW.md](GAMBATTE_REVIEW.md).
+
+Reproduce the current comparison with the two printed binary paths:
+
+```bash
+python3 scripts/build_profile_revision.py --revision b7938e4 --output /tmp/vibe-refresh
+python3 scripts/build_profile_revision.py --output /tmp/vibe-refresh
+python3 scripts/benchmark_core.py /path/to/baseline/profile_core \
+  /path/to/candidate/profile_core polishedcrystal-debug-3.2.3.gbc --runs 7
+```
+
+Temporary evidence from this run is under `/tmp/vibe-perf-refresh/`:
+`history.json`, `history.log`, `final-results.json`, `final-<workload>.log`,
+`counters.json`, `counts-{baseline,final}-<workload>.csv`, profiling files and
+reports, `clippy.log`, `cargo-test{,-release}.log`, and `all-features.log`.
+`history/`, `baseline-helper/`, and `current-helper/` contain the source snapshots,
+lockfiles, build logs, compiler records, and binaries. Earlier exploratory
+measurements are retained separately in `exploratory/`.
 
 ## FIFO and noise optimizations: branch comparison with main
 
@@ -127,7 +291,7 @@ added to the emulator.
 
 ## Reproducing measurements
 
-Build the dependency-free emulation core's profiling example:
+Build the core-only profiling example:
 
 ```bash
 cargo build --release -p vibe-emu-core --example profile_core
@@ -1131,6 +1295,10 @@ and `/tmp/vibe-pass10-apu`; the latter includes all three optimizations. ARM
 assembly is under `/tmp/vibe-3ds-assembly-pass10/`.
 
 ## Rough 3DS budget without hardware testing
+
+This section records the September FIFO/noise pass. The
+[October refresh](#october-2026-refresh-after-accuracy-improvements) applies the
+same assumptions to the newer core; use its counts for current planning.
 
 Use instruction counts as a work proxy, not desktop FPS scaled by clock speed.
 [libctru's clock constants](https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/os.h) specify roughly

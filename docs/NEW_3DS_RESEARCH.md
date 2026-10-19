@@ -1,5 +1,50 @@
 # New 3DS performance research
 
+## October 2026 status
+
+The [accuracy-preserving performance refresh](PERFORMANCE.md#october-2026-refresh-after-accuracy-improvements)
+starts from `b7938e4`, after the newer accuracy and save-state work. It rebuilds
+the previous performance merge for comparison and uses the current core as the
+equivalence baseline. The historical ARM and PGO results below are not current
+measurements.
+
+The original configuration, mapper, FIFO and reciprocal-division optimizations
+are still present. The refresh removes additional repeated work: transfer-mode
+LYC checks, unchanged OBJ-size captures, repeated renderer-clock calculations,
+runtime silent sample-clock remainder, and calls into idle DMA machinery.
+Reference paths and new differential tests retain the accurate timing rules,
+including delayed LYC writes and the distinct SGB clock. No console frontend,
+reduced-accuracy mode, or new save-state fields are introduced.
+
+Seven alternating baseline/candidate pairs per workload retain identical output
+signatures. The corpus geometric-mean throughput gain is 1.079×, with 3.6–11.3%
+less elapsed core time and 3.9–9.6% fewer process instructions. Full debug and
+release workspace tests, strict Clippy, formatting, and all-feature core
+compilation pass. See the performance report for timings, counts, and limits.
+
+Applying the same old planning assumptions to the new counts leaves an
+estimated 1.12× requirement for the Polished CGB intro, 1.50× for DMG acid2,
+1.75× for the CPU test, and 2.58× for CGB acid-hell. These are **not measured
+console speeds**. They supersede the September figures for current planning
+and still leave a substantial gap on demanding cases.
+
+The remaining priority is still structural scheduling: larger exact DMG FIFO
+intervals and fewer per-M-cycle timer/RTC/peripheral updates. The original
+ranked opportunities below include work already completed; use the latest
+performance report to distinguish those from remaining targets. Broad gameplay
+traces and refreshed target measurements are still needed before claiming
+New 3DS/2DS readiness. The existing approximately 91% planning gate remains
+an uncalibrated heuristic, not a hardware acceptance result.
+
+`scripts/build_profile_revision.py` now builds an isolated Cargo harness and
+retains source lockfile dependency versions. The core's new dependencies mean
+the old direct-rustc PGO script needs a similar update before reuse. The ARM
+library procedure below also needs revalidation with that dependency graph;
+this refresh does not claim a new ARM build or credit desktop timing gains
+directly to console performance.
+
+## September 2026 research and implementation follow-up
+
 Implementation follow-up: [PPU configuration snapshots, cartridge bank caching,
 and square/wave reciprocal division](PERFORMANCE.md#arm-setup-caching-ppu-cartridge-and-apu)
 are now implemented and audited in ARM assembly. The findings and benchmarks
