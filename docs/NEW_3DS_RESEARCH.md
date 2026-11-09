@@ -1,5 +1,39 @@
 # New 3DS performance research
 
+## November 2026 continuation
+
+The [CPU layout pass](PERFORMANCE.md#november-2026-cpu-clock-code-layout)
+continues from `b07b777`. Seven alternating pairs retain identical output
+signatures, with 4.63% geometric-mean host throughput improvement. CPU stress
+improves by 1.170× and raster stress by 1.061×; DMG acid2 regresses by 3.22%.
+Full debug/release tests and strict Clippy pass. The old instruction-budget
+model still asks for about **1.28× / 1.35×** additional CPU/raster speedup,
+so the broader target remains unfinished.
+
+An isolated target-build prototype makes only filesystem-backed `state_store`
+and its `tempfile` dependency optional. The default still includes slot-file
+storage; `--no-default-features` retains the complete emulation core and
+buffer-based save-state encoding/decoding. This prototype successfully builds
+an ARMv6K core rlib and assembly using the installed Rust 1.100.0 nightly and
+`-Z build-std=std,panic_abort`. It demonstrates a route around the dependency
+failure below, without patching libc/rustix or changing emulation. It is not
+yet a production feature, a linked console executable, or a runtime test.
+
+Both the `b07b777` CPU and the retained clock-layout CPU were compiled with
+that same prototype configuration. In the emitted ARM `Cpu::step`, textual
+instruction sites increase from 3,780 to 5,264 while its 99 static calls to
+`tick_clocks` disappear; conditional calls into the device path remain. This
+is a code-size/cache tradeoff, not proof of fewer executed ARM instructions or
+a console speedup. No hardware CPI or ARM/x86 dynamic ratio is inferred.
+
+Sources, compiler commands and logs are under
+`/tmp/vibe-perf-november/arm-core/`; assembly is preserved as
+`arm-baseline.s` and `arm-layout.s`, with static counts in
+`arm-layout-counts.json`. The normal core's dependency graph is unchanged:
+shipping the optional storage boundary and validating its feature combinations
+remain follow-up work. The October target failure remains relevant to the
+unchanged default configuration.
+
 ## October 2026 status
 
 The latest [architectural performance pass](PERFORMANCE.md#october-2026-shared-cpu-deadlines-tile-transactions-and-exact-audio)

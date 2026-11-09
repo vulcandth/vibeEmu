@@ -314,7 +314,7 @@ impl Cpu {
         self.tick_clocks(mmu, CYCLES_PER_M_CYCLE * u16::from(m_cycles));
     }
 
-    #[inline]
+    #[inline(always)]
     fn tick_clocks(&mut self, mmu: &mut crate::mmu::Mmu, cpu_cycles: u16) {
         let dot_cycles = cpu_cycles >> u32::from(self.double_speed);
         self.cycles += dot_cycles as u64;
@@ -340,7 +340,7 @@ impl Cpu {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn synchronize_bus_access(&mut self, mmu: &mut crate::mmu::Mmu, addr: u16, write: bool) {
         // ROM fetches and ordinary RAM cannot observe device clocks. Mapper
         // writes, cartridge RAM/RTC, video memory and all I/O can. HRAM remains
@@ -354,6 +354,7 @@ impl Cpu {
         }
     }
 
+    #[inline(never)]
     fn tick_devices(&mut self, mmu: &mut crate::mmu::Mmu, cpu_cycles: u16) {
         let dot_cycles = cpu_cycles >> u32::from(self.double_speed);
 

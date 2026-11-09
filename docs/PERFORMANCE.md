@@ -1,6 +1,7 @@
 # Core performance and the 3DS target
 
-The latest [October 2026 architectural pass](#october-2026-shared-cpu-deadlines-tile-transactions-and-exact-audio)
+The [November CPU layout experiment](#november-2026-cpu-clock-code-layout)
+passed full validation. The [October 2026 architectural pass](#october-2026-shared-cpu-deadlines-tile-transactions-and-exact-audio)
 combines CPU clock dispatch, PPU tile transactions and exact settled audio
 filter states. The prior [scheduling follow-up](#october-2026-larger-ppu-and-peripheral-intervals)
 extends PPU intervals and batches timer/RTC updates. The preceding
@@ -17,6 +18,61 @@ The subsequent [implementation pass](#arm-setup-caching-ppu-cartridge-and-apu)
 removes those costs and the square/wave edge divisions from the hot ARM paths.
 The [FIFO/noise pass and branch comparison](#fifo-and-noise-optimizations-branch-comparison-with-main)
 cover the complete performance branch against `main`.
+
+## November 2026: CPU clock code layout
+
+Continuation baseline: `b07b777`. Rebuilt from the current branch because the
+October temporary evidence directories no longer exist. The compiler remains
+Rust 1.98.1; host release settings, pinned dependencies and the profiling
+harness are unchanged. Fresh 6,000/300-frame cycle profiles put CPU stress at
+18.5% instruction stepping, 17.3% clock dispatch, 15.1% MMU reads, and 5.1%
+bus-access synchronization. These are exclusive host samples, not ARM costs.
+
+Three isolated source experiments were compared over five alternating pairs
+of CPU stress, raster stress and the Polished intro (1,800/300 frames each):
+
+- Force the short `tick_clocks` and `synchronize_bus_access` paths to inline,
+  while keeping `tick_devices` out of line: speedups 1.123× / 1.052× / 1.028×.
+- Add an inline CPU ROM-read path retaining DMA/boot checks, cartridge mapping,
+  bus latches and watchpoints: 0.999× / 1.065× / 1.002×. Not retained.
+- Add forced MMU read inlining to the clock-layout variant:
+  1.015× / 1.040× / 1.009×. Not retained.
+
+Only the clock-layout attributes are currently applied. They change compiler
+placement, not clock deadlines, bus semantics or rendering algorithms. Seven
+alternating pairs across the usual corpus retain identical model/dots/video/
+audio/sample/PC signatures. Polished uses 1,800/300 frames; other cases use
+600/120. Audio is 48 kHz except the silent case. The table reports medians,
+plus independent 600/120-frame process instruction counts and the same
+uncalibrated 3DS planning factors used below:
+
+| Workload | Baseline | Candidate | Speedup | Fewer instructions | Remaining 3DS factor |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| polished | 0.943793 s | 0.922915 s | 1.023× | 2.21% | 1.00× |
+| silent | 0.754492 s | 0.720920 s | 1.047× | 2.78% | 0.79× |
+| dmg | 0.296922 s | 0.306495 s | 0.969× | 0.40% | 0.97× |
+| cpu | 0.450532 s | 0.385130 s | 1.170× | 6.68% | 1.28× |
+| cgb | 0.110132 s | 0.107681 s | 1.023× | 0.44% | 0.43× |
+| wave | 0.189082 s | 0.181393 s | 1.042× | 5.39% | 0.71× |
+| hell | 0.420344 s | 0.396019 s | 1.061× | 1.73% | 1.35× |
+
+Geometric mean throughput improves **4.63%**. DMG acid2 takes 3.22%
+more time despite a small instruction-count decrease; this regression is
+explicitly retained in the comparison. CPU and raster stress improve, but
+neither reaches the provisional 1.1× planning gate. These desktop code-layout
+gains cannot be credited directly as ARM speedups. The broader goal remains
+active; current evidence does not establish New 3DS readiness.
+
+Formatting and strict workspace/all-targets Clippy passed. Both full debug
+and release suites passed 1,588 ordinary tests plus the nested tuning test,
+with 41 existing ignored tests and no failures. Evidence and isolated source
+diffs are in
+`/tmp/vibe-perf-november/`: `baseline/`, `layout/`, `rom-path/`, `inline-bus/`,
+`retained/`, and `cpu-report.txt` / `hell-report.txt`. Compiler/dependency
+identity and retained source equality were checked before timing. The earlier
+ARM `tempfile`/`rustix` blocker remains unresolved. Next work must go beyond
+compiler placement to reduce device-dispatch or memory-access work, and
+restore target code generation for a current ARM assessment.
 
 ## October 2026: shared CPU deadlines, tile transactions and exact audio
 
