@@ -197,7 +197,10 @@ its own summary and must not be accidentally omitted or double-counted.
 Then compare the final measured source against the final tested source, update
 [PERFORMANCE.md](PERFORMANCE.md), and commit a focused change. A PR should name
 baselines, gains/regressions, accuracy evidence and remaining hardware limits.
-Check CI on the exact PR head before merging; keep optimization paused if
+Check CI on the exact PR head before merging. For dependency advisory failures,
+apply patched versions, rerun the full checks and regenerate notices with the
+CI-pinned cargo-about version (see BUILD.md); keep advisory checking enabled.
+Verify that benchmark dependency pins still describe the final core; keep optimization paused if
 hardware availability or the user's requested stopping point has not changed.
 
 ## Resume on New Nintendo 3DS/2DS

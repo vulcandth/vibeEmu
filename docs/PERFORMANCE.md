@@ -1,7 +1,9 @@
 # Core performance and New 3DS readiness
 
 Updated 2026-11-09. Core checkpoint: `1fab122`; the documentation/tooling
-follow-up does not change emulation. Host optimization is paused pending
+follow-up does not change emulation. Pre-merge CI also required patched
+TLS/archive dependencies and a Windows clipboard update; the measured normal
+core dependency versions/checksums remain unchanged. Host optimization is paused pending
 New Nintendo 3DS/2DS access. The limited benchmark corpus meets our provisional
 host instruction-budget gate, but **console speed is unverified**.
 
