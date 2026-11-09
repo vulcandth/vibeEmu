@@ -1,5 +1,6 @@
 /// Divider and timer unit (DIV/TIMA/TMA/TAC at 0xFF04–0xFF07).
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(Clone, PartialEq, Eq))]
 pub struct Timer {
     /// 16-bit internal divider counter. DIV register is the upper 8 bits.
     pub div: u16,
@@ -172,7 +173,7 @@ impl Timer {
             }
 
             // Count falling edges directly when no overflow can occur. The
-            // delayed reload/write collision path below remains cycle-stepped.
+            // delayed reload/write collision path below handles its own events.
             // Public register fields can be changed directly by callers, so
             // require a synchronized signal before using this edge count.
             if self.tac & 4 != 0 && self.last_signal == self.signal() {
@@ -187,7 +188,48 @@ impl Timer {
             }
         }
 
-        for _ in 0..cycles {
+        self.step_events(cycles, if_reg);
+    }
+
+    // Keep overflow arithmetic out of the common short CPU tick. Long deferred
+    // intervals need individual dots only while reload/write effects are pending.
+    #[inline(never)]
+    fn step_events(&mut self, mut cycles: u16, if_reg: &mut u8) {
+        while cycles != 0 {
+            if self.pending_reload.is_none()
+                && self.tma_latch.is_none()
+                && self.last_signal == self.signal()
+            {
+                if self.tac & 4 == 0 {
+                    self.div = self.div.wrapping_add(cycles);
+                    self.reloading = false;
+                    return;
+                }
+                let shift = [10, 4, 6, 8][(self.tac & 3) as usize];
+                let low = u32::from(self.div) & ((1 << shift) - 1);
+                let to_overflow = ((256 - u32::from(self.tima)) << shift) - low;
+                self.reloading = false;
+                if u32::from(cycles) < to_overflow {
+                    self.tima += ((low + u32::from(cycles)) >> shift) as u8;
+                    self.div = self.div.wrapping_add(cycles);
+                    self.last_signal = self.signal();
+                    return;
+                }
+
+                // Exactly this falling edge changes FF to 00. The following
+                // three delay dots and reload dot still use the scalar path,
+                // preserving TMA/TIMA writes and the final reloading latch.
+                self.div = self.div.wrapping_add(to_overflow as u16);
+                self.tima = 0;
+                self.pending_reload = Some(self.tma);
+                self.reload_delay = 3;
+                self.last_signal = false;
+                cycles -= to_overflow as u16;
+                continue;
+            }
+
+            // Also retain the original first-dot behavior if a caller changed
+            // the public DIV/TAC fields without updating the edge latch.
             self.reloading = false;
             if let Some(val) = self.pending_reload {
                 if self.reload_delay == 0 {
@@ -208,6 +250,7 @@ impl Timer {
                 self.increment(if_reg, tma_old);
             }
             self.last_signal = new;
+            cycles -= 1;
         }
     }
 
@@ -315,6 +358,37 @@ impl Default for Timer {
 mod tests {
     use super::*;
 
+    // Independent dot model: do not call the optimized step, signal, or
+    // increment helpers, including when checking overflow/reload collisions.
+    fn step_reference(timer: &mut Timer, cycles: u16, if_reg: &mut u8) {
+        for _ in 0..cycles {
+            timer.reloading = false;
+            if let Some(value) = timer.pending_reload {
+                if timer.reload_delay == 0 {
+                    timer.tima = value;
+                    *if_reg |= 4;
+                    timer.pending_reload = None;
+                    timer.reloading = true;
+                } else {
+                    timer.reload_delay -= 1;
+                }
+            }
+            let old_tma = timer.tma_latch.take();
+            timer.div = timer.div.wrapping_add(1);
+            let bit = [0x200, 0x08, 0x20, 0x80][usize::from(timer.tac & 3)];
+            let signal = timer.tac & 4 != 0 && timer.div & bit != 0;
+            if timer.last_signal && !signal {
+                let (value, overflow) = timer.tima.overflowing_add(1);
+                timer.tima = value;
+                if overflow {
+                    timer.pending_reload = Some(old_tma.unwrap_or(timer.tma));
+                    timer.reload_delay = 3;
+                }
+            }
+            timer.last_signal = signal;
+        }
+    }
+
     #[test]
     fn batched_edges_and_idle_deadlines_match_single_cycles() {
         for tac in 0..8 {
@@ -335,10 +409,8 @@ mod tests {
                         let mut actual_if = 0xe0;
                         let mut expected_if = actual_if;
                         actual.step(cycles, &mut actual_if);
-                        for _ in 0..cycles {
-                            expected.step(1, &mut expected_if);
-                        }
-                        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+                        step_reference(&mut expected, cycles, &mut expected_if);
+                        assert_eq!(actual, expected);
                         assert_eq!(actual_if, expected_if);
                         if cycles <= idle {
                             assert_eq!(actual_if, 0xe0);
@@ -348,6 +420,88 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn event_steps_preserve_writes_around_overflow_and_reload() {
+        for tac in 4..8 {
+            let period = [1024, 16, 64, 256][usize::from(tac & 3)];
+            for tma in [0, 1, 127, 254, 255] {
+                for delay in 0..=5 {
+                    for addr in 0xff04..=0xff07 {
+                        for value in [0, 5, 255] {
+                            let mut actual = Timer::new();
+                            actual.div = period - 1;
+                            actual.write(0xff07, tac, &mut 0);
+                            actual.tima = 255;
+                            actual.tma = tma;
+                            let mut expected = actual.clone();
+                            let mut actual_if = 0xe0;
+                            let mut expected_if = actual_if;
+                            actual.step(1 + delay, &mut actual_if);
+                            step_reference(&mut expected, 1 + delay, &mut expected_if);
+                            actual.write(addr, value, &mut actual_if);
+                            expected.write(addr, value, &mut expected_if);
+                            // Check the exact reload dot before taking a long
+                            // interval through repeated overflows and DIV wrap.
+                            for cycles in [0, 1, 2, 3, 4, 5, 257, u16::MAX] {
+                                actual.step(cycles, &mut actual_if);
+                                step_reference(&mut expected, cycles, &mut expected_if);
+                                assert_eq!(
+                                    actual, expected,
+                                    "tac={tac} tma={tma} delay={delay} addr={addr:04x} value={value} cycles={cycles}"
+                                );
+                                assert_eq!(actual_if, expected_if);
+                                actual_if = 0xe0;
+                                expected_if = 0xe0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn event_steps_preserve_direct_field_edge_latch_behavior() {
+        // Direct field edits have historical short-step semantics: a step
+        // before the first divider edge refreshes the latch without TIMA work.
+        for tac in 4..8 {
+            let period = [1024, 16, 64, 256][usize::from(tac & 3)];
+            for last_signal in [false, true] {
+                let mut timer = Timer::new();
+                timer.tac = tac;
+                timer.last_signal = last_signal;
+                timer.tima = 10;
+                let mut actual = timer.clone();
+                actual.step(period - 1, &mut 0);
+                assert_eq!(actual.tima, 10);
+                assert_eq!(actual.div, period - 1);
+                assert!(actual.last_signal);
+
+                // A step reaching an edge retains the original dot behavior,
+                // including an initially stale high latch at divider zero.
+                for cycles in [period, period + 1, u16::MAX] {
+                    let mut actual = timer.clone();
+                    let mut expected = timer.clone();
+                    let mut actual_if = 0;
+                    let mut expected_if = 0;
+                    actual.step(cycles, &mut actual_if);
+                    step_reference(&mut expected, cycles, &mut expected_if);
+                    assert_eq!(actual, expected);
+                    assert_eq!(actual_if, expected_if);
+                }
+            }
+        }
+        let mut timer = Timer::new();
+        timer.last_signal = true;
+        timer.tima = 10;
+        timer.step(u16::MAX, &mut 0);
+        assert_eq!(
+            timer.tima, 10,
+            "disabled fast path does not clock a stale latch"
+        );
+        assert!(!timer.last_signal);
     }
 
     #[test]

@@ -53,9 +53,20 @@ const CYCLES_PER_M_CYCLE_DOUBLE: u16 = 2; // double-speed mode
 const OAM_DMA_STEP_CYCLES: u8 = 4;
 const GDMA_STEP_CYCLES: u8 = 1;
 
+/// One deadline shared by ordinary CPU M-cycles. Device-local clocks may wait
+/// until an observation, but an interrupt or bus-ownership event may not.
+#[derive(Debug, Default)]
+struct ClockBatch {
+    active: bool,
+    pending: u16,
+    remaining: u16,
+}
+
 /// LR35902 CPU state.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Cpu {
+    #[serde(skip)]
+    clock_batch: ClockBatch,
     /// Accumulator register.
     pub a: u8,
     /// Flags register (Z/N/H/C in bits 7-4).
@@ -102,7 +113,11 @@ pub struct Cpu {
 
 impl Cpu {
     pub(crate) fn validate_state(&self) -> bool {
-        self.f & 0x0f == 0 && self.ime_enable_delay <= 2 && self.halt_pending <= 0x1f
+        !self.clock_batch.active
+            && self.clock_batch.pending == 0
+            && self.f & 0x0f == 0
+            && self.ime_enable_delay <= 2
+            && self.halt_pending <= 0x1f
     }
 }
 
@@ -112,6 +127,7 @@ impl Cpu {
     pub fn new(model: Model) -> Self {
         match model {
             Model::Cgb(_) | Model::Agb0 | Model::Agb => Self {
+                clock_batch: ClockBatch::default(),
                 a: CGB_BOOT_A,
                 f: if model.is_agb() { 0 } else { CGB_BOOT_F },
                 b: if model.is_agb() { 1 } else { CGB_BOOT_B },
@@ -176,6 +192,7 @@ impl Cpu {
                     ),
                 };
                 Self {
+                    clock_batch: ClockBatch::default(),
                     a,
                     f,
                     b,
@@ -211,6 +228,7 @@ impl Cpu {
     /// re-initialize early.
     pub fn new_power_on() -> Self {
         Self {
+            clock_batch: ClockBatch::default(),
             a: 0,
             f: 0,
             b: 0,
@@ -291,26 +309,76 @@ impl Cpu {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn tick(&mut self, mmu: &mut crate::mmu::Mmu, m_cycles: u8) {
         self.tick_clocks(mmu, CYCLES_PER_M_CYCLE * u16::from(m_cycles));
     }
 
-    #[inline]
+    #[inline(always)]
     fn tick_clocks(&mut self, mmu: &mut crate::mmu::Mmu, cpu_cycles: u16) {
         let dot_cycles = cpu_cycles >> u32::from(self.double_speed);
-
         self.cycles += dot_cycles as u64;
+
+        if cpu_cycles == 4 && self.clock_batch.remaining >= 4 {
+            self.clock_batch.remaining -= 4;
+            self.clock_batch.pending += 4;
+            return;
+        }
+        self.tick_clock_boundary(mmu, cpu_cycles);
+    }
+
+    #[inline(never)]
+    fn tick_clock_boundary(&mut self, mmu: &mut crate::mmu::Mmu, cpu_cycles: u16) {
+        self.synchronize_clocks(mmu);
+        if cpu_cycles == 4 && self.clock_batch.active && !self.halted && !self.stopped {
+            // An observation invalidates a deadline, but need not require a
+            // device event. Re-certify after the access, before advancing the
+            // next ordinary M-cycle. Multi-cycle ticks retain their indivisible
+            // APU pipeline ordering through tick_devices below.
+            let remaining = mmu.refresh_cpu_batch_idle_cycles(self.double_speed);
+            if remaining >= 4 {
+                self.clock_batch.remaining = remaining - 4;
+                self.clock_batch.pending = 4;
+                return;
+            }
+        }
+        self.tick_devices(mmu, cpu_cycles);
+        if self.clock_batch.active && !self.halted && !self.stopped {
+            self.clock_batch.remaining = mmu.cpu_batch_idle_cycles(self.double_speed);
+        }
+    }
+
+    #[inline]
+    fn synchronize_clocks(&mut self, mmu: &mut crate::mmu::Mmu) {
+        self.clock_batch.remaining = 0;
+        let pending = std::mem::take(&mut self.clock_batch.pending);
+        if pending != 0 {
+            mmu.queue_idle_cpu_cycles(pending, self.double_speed);
+        }
+    }
+
+    #[inline(always)]
+    fn synchronize_bus_access(&mut self, mmu: &mut crate::mmu::Mmu, addr: u16, write: bool) {
+        // ROM fetches and ordinary RAM cannot observe device clocks. Mapper
+        // writes, cartridge RAM/RTC, video memory and all I/O can. HRAM remains
+        // ordinary RAM; IE is included among the observations.
+        if (write && addr < 0x8000)
+            || (0x8000..=0xbfff).contains(&addr)
+            || (0xfe00..=0xff7f).contains(&addr)
+            || addr == 0xffff
+        {
+            self.synchronize_clocks(mmu);
+        }
+    }
+
+    #[inline(never)]
+    fn tick_devices(&mut self, mmu: &mut crate::mmu::Mmu, cpu_cycles: u16) {
+        let dot_cycles = cpu_cycles >> u32::from(self.double_speed);
 
         let prev_dot_div = mmu.dot_div;
         mmu.dot_div = mmu.dot_div.wrapping_add(dot_cycles);
 
-        if let Some(cart) = mmu.cart.as_mut() {
-            cart.step_rtc(cpu_cycles);
-        }
-
-        let prev_cpu_div = mmu.timer.div;
-        mmu.timer.step(cpu_cycles, &mut mmu.if_reg);
+        let prev_cpu_div = mmu.step_cpu_peripherals(cpu_cycles);
 
         // Advance APU domains in the same order as before (2 MHz -> frame sequencer -> 1 MHz).
         mmu.apu.run_cpu_tick_steps(
@@ -370,6 +438,7 @@ impl Cpu {
 
     #[inline(always)]
     fn fetch8(&mut self, mmu: &mut crate::mmu::Mmu) -> u8 {
+        self.synchronize_bus_access(mmu, self.pc, false);
         mmu.last_cpu_pc = Some(self.pc);
         let val = mmu.read_byte(self.pc);
         self.pc = self.pc.wrapping_add(1);
@@ -386,6 +455,7 @@ impl Cpu {
 
     #[inline(always)]
     fn read8(&mut self, mmu: &mut crate::mmu::Mmu, addr: u16) -> u8 {
+        self.synchronize_bus_access(mmu, addr, false);
         mmu.last_cpu_pc = Some(self.pc);
         let val = if self.dma_conflict_active
             && ((0xA000..=0xBFFF).contains(&addr) || (0xC000..=0xFDFF).contains(&addr))
@@ -407,6 +477,7 @@ impl Cpu {
 
     #[inline(always)]
     fn write8(&mut self, mmu: &mut crate::mmu::Mmu, addr: u16, val: u8) {
+        self.synchronize_bus_access(mmu, addr, true);
         mmu.last_cpu_pc = Some(self.pc);
         if !(self.dma_conflict_active
             && ((0xA000..=0xBFFF).contains(&addr) || (0xC000..=0xFDFF).contains(&addr)))
@@ -437,10 +508,16 @@ impl Cpu {
     }
 
     #[inline(always)]
-    fn dmg_oam_bug_idu_if_needed(mmu: &mut crate::mmu::Mmu, addr: u16, access: OamBugAccess) {
+    fn dmg_oam_bug_idu_if_needed(
+        &mut self,
+        mmu: &mut crate::mmu::Mmu,
+        addr: u16,
+        access: OamBugAccess,
+    ) {
         // Blargg oam_bug: corruption is triggered by the CPU's 16-bit
         // inc/dec unit driving an address in $FE00-$FEFF during mode 2.
         if (0xFE00..=0xFEFF).contains(&addr) {
+            self.synchronize_clocks(mmu);
             mmu.synchronize_ppu();
             mmu.ppu.oam_bug_access(addr, access);
         }
@@ -457,11 +534,11 @@ impl Cpu {
         // POP performs two reads with an implied increment of SP after each read.
         // The internal 16-bit incrementer can trigger the DMG OAM bug based on
         // the current SP value during mode 2.
-        Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::ReadDuringIncDec);
+        self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::ReadDuringIncDec);
         let lo = self.read8(mmu, self.sp) as u16;
         // POP counts as two increments of SP.
         self.sp = self.sp.wrapping_add(1);
-        Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::ReadDuringIncDec);
+        self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::ReadDuringIncDec);
         let hi = self.read8(mmu, self.sp) as u16;
         self.sp = self.sp.wrapping_add(1);
         (hi << 8) | lo
@@ -633,7 +710,7 @@ impl Cpu {
             // push to match hardware (mooneye "interrupts/ie_push").
 
             // Upper byte push.
-            Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+            self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
             self.sp = self.sp.wrapping_sub(1);
             self.write8(mmu, self.sp, (return_pc >> 8) as u8);
 
@@ -664,7 +741,7 @@ impl Cpu {
             };
 
             // Lower byte push.
-            Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+            self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
             self.sp = self.sp.wrapping_sub(1);
             self.write8(mmu, self.sp, return_pc as u8);
 
@@ -704,9 +781,9 @@ impl Cpu {
     /// serial transfer. The final instruction may exceed the budget. A zero
     /// budget does nothing; STOP/faults return after at most one step.
     ///
-    /// CPU, timer and bus accesses retain their normal timing. APU/PPU clocks
-    /// are combined between observations and synchronized before returning.
-    /// PPU batches stop before events, preserving interrupt and DMA timing.
+    /// CPU and bus accesses retain their normal timing. Peripheral clocks are
+    /// combined between observations and synchronized before returning. Timer
+    /// and PPU batches stop before events, preserving interrupt and DMA timing.
     /// Attached link endpoints retain instruction polling unless they opt out.
     /// Debuggers requiring instruction boundaries should use [`Self::step`].
     pub fn run_for_dots(&mut self, mmu: &mut crate::mmu::Mmu, dots: u16) {
@@ -718,14 +795,17 @@ impl Cpu {
             return;
         }
         let target = self.cycles + u64::from(dots);
+        mmu.begin_peripheral_batch();
         mmu.apu.begin_cpu_batch();
         mmu.begin_ppu_batch();
+        self.clock_batch.active = true;
+        self.clock_batch.remaining = mmu.cpu_batch_idle_cycles(self.double_speed);
         while self.cycles < target {
             let before = self.cycles;
             if self.halted {
                 self.step_with_halt_batch(mmu, (target - self.cycles) as u16);
             } else {
-                self.step(mmu);
+                self.step_instruction(mmu);
             }
             if mmu.ppu.frame_ready()
                 || mmu.serial.transfer_active()
@@ -736,8 +816,11 @@ impl Cpu {
                 break;
             }
         }
+        self.synchronize_clocks(mmu);
+        self.clock_batch = ClockBatch::default();
         mmu.end_ppu_batch();
         mmu.apu.end_cpu_batch();
+        mmu.end_peripheral_batch();
     }
 
     /// Execute one instruction, or combine HALT cycles within `max_idle_dots`.
@@ -748,7 +831,9 @@ impl Cpu {
     /// the budget just as with [`Self::step`].
     /// Use `step` when observing the machine after every instruction/M-cycle.
     pub fn step_with_halt_batch(&mut self, mmu: &mut crate::mmu::Mmu, max_idle_dots: u16) {
+        self.synchronize_clocks(mmu);
         mmu.synchronize_ppu();
+        mmu.synchronize_timer();
         if self.halted
             && !self.stopped
             && !self.faulted
@@ -768,12 +853,8 @@ impl Cpu {
                 let cpu_cycles = dots << u32::from(self.double_speed);
                 self.cycles += u64::from(dots);
                 let prev_dot_div = mmu.dot_div;
-                let prev_cpu_div = mmu.timer.div;
                 mmu.dot_div = mmu.dot_div.wrapping_add(dots);
-                if let Some(cart) = mmu.cart.as_mut() {
-                    cart.step_rtc(cpu_cycles);
-                }
-                mmu.timer.step(cpu_cycles, &mut mmu.if_reg);
+                let prev_cpu_div = mmu.step_cpu_peripherals(cpu_cycles);
                 mmu.apu
                     .run_halt_steps(dots, prev_cpu_div, prev_dot_div, self.double_speed);
                 let hblank = mmu.ppu.step(dots, &mut mmu.if_reg);
@@ -787,6 +868,14 @@ impl Cpu {
 
     /// Execute one instruction and update internal state accordingly.
     pub fn step(&mut self, mmu: &mut crate::mmu::Mmu) {
+        self.step_instruction(mmu);
+    }
+
+    // Keep the bounded runner's decoder in its loop, allowing clock-deadline
+    // and register state to remain visible across instruction boundaries.
+    // The public single-step entry uses the same decoder and timing rules.
+    #[inline(always)]
+    fn step_instruction(&mut self, mmu: &mut crate::mmu::Mmu) {
         if self.faulted {
             // Keep hardware clocks advancing after a CPU fault so callers that
             // wait on PPU/timer progress do not spin forever. Frontends can
@@ -850,11 +939,13 @@ impl Cpu {
             self.halt_bug = false;
             self.read8(mmu, self.pc)
         } else {
+            self.synchronize_bus_access(mmu, self.pc, false);
             mmu.last_cpu_pc = Some(self.pc);
             let opcode = mmu.read_byte(self.pc);
             self.pc = self.pc.wrapping_add(1);
             // STOP latches the following opcode before the speed-switch wait.
             if opcode == 0x10 && mmu.key1 & 1 != 0 {
+                self.synchronize_bus_access(mmu, self.pc, false);
                 self.stop_prefetch = Some((self.pc, mmu.read_byte(self.pc)));
             }
             self.tick(mmu, 1);
@@ -885,6 +976,7 @@ impl Cpu {
                 let val = old.wrapping_add(1);
                 self.set_bc(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    self.synchronize_clocks(mmu);
                     mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
@@ -950,6 +1042,7 @@ impl Cpu {
                 let val = old.wrapping_sub(1);
                 self.set_bc(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    self.synchronize_clocks(mmu);
                     mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
@@ -985,19 +1078,23 @@ impl Cpu {
             }
             0x10 => {
                 // STOP
+                self.synchronize_clocks(mmu);
                 mmu.synchronize_ppu();
                 if mmu.key1 & 0x01 != 0 {
                     self.tick(mmu, 1);
+                    self.synchronize_clocks(mmu);
                     mmu.reset_div_for_speed_switch();
                     mmu.key1 &= !0x01;
                     mmu.key1 ^= 0x80;
                     self.double_speed = mmu.key1 & 0x80 != 0;
                     mmu.apu.on_speed_switch(self.double_speed);
+                    self.synchronize_clocks(mmu);
                     mmu.synchronize_ppu();
                     mmu.ppu.on_speed_switch(self.double_speed);
                     self.speed_switch_stall(mmu);
                 } else {
                     let _ = self.fetch8(mmu);
+                    self.synchronize_clocks(mmu);
                     mmu.reset_div();
                     if mmu.is_cgb() {
                         // If STOP begins in mode 3, the already-in-flight pixel
@@ -1021,6 +1118,7 @@ impl Cpu {
                 let val = old.wrapping_add(1);
                 self.set_de(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    self.synchronize_clocks(mmu);
                     mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
@@ -1086,6 +1184,7 @@ impl Cpu {
                 let val = old.wrapping_sub(1);
                 self.set_de(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    self.synchronize_clocks(mmu);
                     mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
@@ -1145,6 +1244,7 @@ impl Cpu {
                 let val = old.wrapping_add(1);
                 self.set_hl(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    self.synchronize_clocks(mmu);
                     mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
@@ -1225,6 +1325,7 @@ impl Cpu {
                 let val = old.wrapping_sub(1);
                 self.set_hl(val);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    self.synchronize_clocks(mmu);
                     mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
@@ -1282,6 +1383,7 @@ impl Cpu {
                 let old = self.sp;
                 self.sp = self.sp.wrapping_add(1);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    self.synchronize_clocks(mmu);
                     mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
@@ -1351,6 +1453,7 @@ impl Cpu {
                 let old = self.sp;
                 self.sp = self.sp.wrapping_sub(1);
                 if (0xFE00..=0xFEFF).contains(&old) {
+                    self.synchronize_clocks(mmu);
                     mmu.synchronize_ppu();
                     mmu.ppu.oam_bug_access(old, OamBugAccess::Write);
                 }
@@ -1628,7 +1731,7 @@ impl Cpu {
             0xC4 => {
                 let addr = self.fetch16(mmu);
                 if self.f & FLAG_Z == 0 {
-                    Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+                    self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
                     self.tick(mmu, 1);
                     self.push_stack(mmu, self.pc);
                     self.pc = addr;
@@ -1636,7 +1739,7 @@ impl Cpu {
             }
             0xC5 => {
                 let val = self.get_bc();
-                Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+                self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
                 self.tick(mmu, 1);
                 self.push_stack(mmu, val);
             }
@@ -1664,7 +1767,7 @@ impl Cpu {
                     0xFF => 0x38,
                     _ => unreachable!(),
                 };
-                Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+                self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
                 self.tick(mmu, 1);
                 self.push_stack(mmu, self.pc);
                 self.pc = target;
@@ -1696,7 +1799,7 @@ impl Cpu {
             0xCC => {
                 let addr = self.fetch16(mmu);
                 if self.f & FLAG_Z != 0 {
-                    Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+                    self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
                     self.tick(mmu, 1);
                     self.push_stack(mmu, self.pc);
                     self.pc = addr;
@@ -1704,7 +1807,7 @@ impl Cpu {
             }
             0xCD => {
                 let addr = self.fetch16(mmu);
-                Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+                self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
                 self.tick(mmu, 1);
                 self.push_stack(mmu, self.pc);
                 self.pc = addr;
@@ -1746,7 +1849,7 @@ impl Cpu {
             0xD4 => {
                 let addr = self.fetch16(mmu);
                 if self.f & FLAG_C == 0 {
-                    Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+                    self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
                     self.tick(mmu, 1);
                     self.push_stack(mmu, self.pc);
                     self.pc = addr;
@@ -1754,7 +1857,7 @@ impl Cpu {
             }
             0xD5 => {
                 let val = self.get_de();
-                Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+                self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
                 self.tick(mmu, 1);
                 self.push_stack(mmu, val);
             }
@@ -1795,7 +1898,7 @@ impl Cpu {
             0xDC => {
                 let addr = self.fetch16(mmu);
                 if self.f & FLAG_C != 0 {
-                    Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+                    self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
                     self.tick(mmu, 1);
                     self.push_stack(mmu, self.pc);
                     self.pc = addr;
@@ -1831,7 +1934,7 @@ impl Cpu {
             }
             0xE5 => {
                 let val = self.get_hl();
-                Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+                self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
                 self.tick(mmu, 1);
                 self.push_stack(mmu, val);
             }
@@ -1888,7 +1991,7 @@ impl Cpu {
             }
             0xF5 => {
                 let val = ((self.a as u16) << 8) | (self.f as u16 & 0xF0);
-                Self::dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
+                self.dmg_oam_bug_idu_if_needed(mmu, self.sp, OamBugAccess::Write);
                 self.tick(mmu, 1);
                 self.push_stack(mmu, val);
             }

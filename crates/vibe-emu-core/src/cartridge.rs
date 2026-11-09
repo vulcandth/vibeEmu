@@ -1001,22 +1001,30 @@ impl Cartridge {
         value
     }
 
+    /// Read a ROM-window address, preserving mapping refresh and bus latching.
+    /// Callers must exclude cartridge RAM and registers.
+    #[inline(always)]
+    pub(crate) fn read_rom(&mut self, addr: u16) -> u8 {
+        debug_assert!(addr < 0x8000);
+        if self.rom_mapping_len != self.rom.len() {
+            self.refresh_rom_mapping();
+        }
+        match self.rom_windows {
+            Some(windows) => {
+                let offset = windows[(addr >> 14) as usize] + (addr as usize & 0x3FFF);
+                Self::bus_read(
+                    &self.cart_bus,
+                    self.rom.get(offset).copied().unwrap_or(0xFF),
+                )
+            }
+            None => 0xFF,
+        }
+    }
+
     /// Read a byte from the cartridge bus using a caller-supplied open-bus value.
     pub fn read_with_open_bus(&mut self, addr: u16, open_bus: u8) -> u8 {
         if addr < 0x8000 {
-            if self.rom_mapping_len != self.rom.len() {
-                self.refresh_rom_mapping();
-            }
-            return match self.rom_windows {
-                Some(windows) => {
-                    let offset = windows[(addr >> 14) as usize] + (addr as usize & 0x3FFF);
-                    Self::bus_read(
-                        &self.cart_bus,
-                        self.rom.get(offset).copied().unwrap_or(0xFF),
-                    )
-                }
-                None => 0xFF,
-            };
+            return self.read_rom(addr);
         }
         let cart_bus = &self.cart_bus;
         match (&mut self.mbc_state, addr) {

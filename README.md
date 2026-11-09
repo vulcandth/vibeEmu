@@ -293,7 +293,9 @@ settings coverage, and test strategy.
 ## Testing
 
 For core profiling, repeatable performance comparisons, and the 3DS optimization
-roadmap, see [PERFORMANCE.md](docs/PERFORMANCE.md).
+results, see [PERFORMANCE.md](docs/PERFORMANCE.md). The
+[performance workflow](docs/PERFORMANCE_WORKFLOW.md) documents baseline builds,
+benchmarks, accuracy checks, and how to resume New 3DS validation.
 
 Unit tests for the emulation core can be executed with:
 

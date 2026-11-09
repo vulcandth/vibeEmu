@@ -91,5 +91,6 @@ pub mod sgb;
 /// Versioned, validated machine snapshots.
 pub mod save_state;
 
-/// Durable save-state slots and recovery.
+/// Durable save-state slots and recovery (the default `state-store` feature).
+#[cfg(feature = "state-store")]
 pub mod state_store;

@@ -126,10 +126,23 @@ struct HdmaState {
     cancelled: bool,
 }
 
+/// Transient scheduling state, valid only inside `Cpu::run_for_dots`.
+/// Timer clocks stop before the next overflow; RTC clocks have no interrupt
+/// deadline and are synchronized before cartridge observations instead.
+#[derive(Default)]
+struct PeripheralBatch {
+    active: bool,
+    timer_cycles: u16,
+    timer_limit: u16,
+    rtc_cycles: u32,
+}
+
 /// Memory management unit: the full Game Boy memory map and hardware plumbing.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Mmu {
-    // Scoped by Cpu::run_for_dots. Pending clocks never cross a PPU event;
+    #[serde(skip)]
+    peripheral_batch: PeripheralBatch,
+    // Scoped by Cpu::run_for_dots. Pending clocks never cross a CPU-visible PPU event;
     // memory/register accesses synchronize before observing or changing inputs.
     defer_ppu_ticks: bool,
     pending_ppu_dots: u16,
@@ -244,6 +257,9 @@ impl Mmu {
             && self.wram_bank < 8
             && !self.defer_ppu_ticks
             && self.pending_ppu_dots == 0
+            && !self.peripheral_batch.active
+            && self.peripheral_batch.timer_cycles == 0
+            && self.peripheral_batch.rtc_cycles == 0
             && self.dma_cycles <= 640
             && self.pending_delay <= 8
             && self.timer.validate_state()
@@ -254,6 +270,129 @@ impl Mmu {
 }
 
 impl Mmu {
+    /// CPU clocks that cannot yet change an IRQ or memory-bus owner. The
+    /// device-local queues already exclude their next observable event.
+    #[inline]
+    pub(crate) fn cpu_batch_idle_cycles(&self, double_speed: bool) -> u16 {
+        if self.dma_active() || self.gdma_active() || self.serial.transfer_active() {
+            return 0;
+        }
+        self.peripheral_batch
+            .timer_limit
+            .saturating_sub(self.peripheral_batch.timer_cycles)
+            .min(
+                self.ppu_idle_remaining
+                    .saturating_mul(if double_speed { 2 } else { 1 }),
+            )
+    }
+
+    /// Re-certify the current post-access PPU state before choosing a new CPU
+    /// interval. Pending timer effects and bus owners retain their old limits.
+    pub(crate) fn refresh_cpu_batch_idle_cycles(&mut self, double_speed: bool) -> u16 {
+        debug_assert!(self.peripheral_batch.active && self.defer_ppu_ticks);
+        self.refresh_ppu_deadline();
+        self.cpu_batch_idle_cycles(double_speed)
+    }
+
+    #[inline]
+    fn refresh_ppu_deadline(&mut self) {
+        // A bus observation catches the PPU up and invalidates its previous
+        // deadline. Re-certify the post-access state before forcing a clock
+        // through the PPU. Never query a stale PPU with queued dots; delayed
+        // writes, IRQ edges, DMA and mode boundaries still limit idle_dots().
+        if self.ppu_idle_remaining == 0 && self.pending_ppu_dots == 0 {
+            self.ppu_idle_remaining = self.ppu.idle_dots();
+        }
+    }
+
+    /// Transfer a certified sequence of ordinary M-cycles to the device queues
+    /// once. No IRQ, serial edge or DMA activity can occur in this interval.
+    pub(crate) fn queue_idle_cpu_cycles(&mut self, cycles: u16, double_speed: bool) {
+        debug_assert!(self.peripheral_batch.active && self.defer_ppu_ticks);
+        debug_assert!(cycles <= self.cpu_batch_idle_cycles(double_speed));
+        let dots = cycles >> u32::from(double_speed);
+        let cpu_div = self.cpu_div();
+        let dot_div = self.dot_div;
+        self.dot_div = dot_div.wrapping_add(dots);
+        self.peripheral_batch.timer_cycles += cycles;
+        self.peripheral_batch.rtc_cycles += u32::from(cycles);
+        self.pending_ppu_dots += dots;
+        self.ppu_idle_remaining -= dots;
+        // Preserve a sequence of single-M-cycle APU calls. One long CPU tick
+        // (e.g. interrupt entry) has different output-pipeline/sample ordering.
+        self.apu
+            .run_halt_steps(dots, cpu_div, dot_div, double_speed);
+    }
+
+    pub(crate) fn begin_peripheral_batch(&mut self) {
+        debug_assert!(!self.peripheral_batch.active);
+        self.peripheral_batch.active = true;
+        self.peripheral_batch.timer_limit = self.timer.idle_cycles();
+    }
+
+    pub(crate) fn end_peripheral_batch(&mut self) {
+        self.synchronize_timer();
+        self.synchronize_rtc();
+        self.peripheral_batch.active = false;
+    }
+
+    /// Current CPU divider, including clocks before the next timer event.
+    #[inline]
+    fn cpu_div(&self) -> u16 {
+        self.timer
+            .div
+            .wrapping_add(self.peripheral_batch.timer_cycles)
+    }
+
+    /// Advance CPU-clock peripherals and return the divider before this tick.
+    /// APU and serial use this logical divider even when TIMA can wait. An
+    /// overflow/reload still runs at its original CPU tick, before IRQ polling.
+    #[inline]
+    pub(crate) fn step_cpu_peripherals(&mut self, cycles: u16) -> u16 {
+        if !self.peripheral_batch.active {
+            let prev_div = self.timer.div;
+            if let Some(cart) = self.cart.as_mut() {
+                cart.step_rtc(cycles);
+            }
+            self.timer.step(cycles, &mut self.if_reg);
+            prev_div
+        } else {
+            let prev_div = self.cpu_div();
+            self.peripheral_batch.rtc_cycles += u32::from(cycles);
+            let pending = u32::from(self.peripheral_batch.timer_cycles) + u32::from(cycles);
+            if pending <= u32::from(self.peripheral_batch.timer_limit) {
+                self.peripheral_batch.timer_cycles = pending as u16;
+            } else {
+                self.synchronize_timer();
+                self.timer.step(cycles, &mut self.if_reg);
+                self.peripheral_batch.timer_limit = self.timer.idle_cycles();
+            }
+            prev_div
+        }
+    }
+
+    #[inline]
+    pub(crate) fn synchronize_timer(&mut self) {
+        self.peripheral_batch.timer_limit = 0;
+        let cycles = std::mem::take(&mut self.peripheral_batch.timer_cycles);
+        if cycles != 0 {
+            self.timer.step(cycles, &mut self.if_reg);
+        }
+    }
+
+    fn synchronize_rtc(&mut self) {
+        let mut cycles = std::mem::take(&mut self.peripheral_batch.rtc_cycles);
+        if let Some(cart) = self.cart.as_mut() {
+            // Double-speed runs and STOP's settling interval can exceed a
+            // u16 CPU-cycle budget. Keep the public cartridge API unchanged.
+            while cycles != 0 {
+                let part = cycles.min(u32::from(u16::MAX)) as u16;
+                cart.step_rtc(part);
+                cycles -= u32::from(part);
+            }
+        }
+    }
+
     pub(crate) fn begin_ppu_batch(&mut self) {
         debug_assert!(!self.defer_ppu_ticks);
         // Both timing models now expose safe observation deadlines. MMIO,
@@ -267,7 +406,7 @@ impl Mmu {
         self.defer_ppu_ticks = false;
     }
 
-    /// Catch up strictly before the next PPU event. No interrupt, mode change,
+    /// Catch up strictly before the next CPU-visible PPU event. No interrupt, mode change,
     /// or HBlank DMA can occur here; those retain the original CPU tick boundary.
     #[inline]
     pub(crate) fn synchronize_ppu(&mut self) {
@@ -284,6 +423,7 @@ impl Mmu {
         if !self.defer_ppu_ticks {
             return self.ppu.step(dots, &mut self.if_reg);
         }
+        self.refresh_ppu_deadline();
         if dots <= self.ppu_idle_remaining {
             self.ppu_idle_remaining -= dots;
             self.pending_ppu_dots += dots;
@@ -502,6 +642,7 @@ impl Mmu {
         };
 
         Self {
+            peripheral_batch: PeripheralBatch::default(),
             wram,
             wram_bank: 1,
             hram,
@@ -567,6 +708,7 @@ impl Mmu {
         init_power_on_wram(&mut wram, power_on_wram_seed(model));
 
         Self {
+            peripheral_batch: PeripheralBatch::default(),
             wram,
             wram_bank: 1,
             hram: [0; 0x7F],
@@ -885,11 +1027,14 @@ impl Mmu {
                     0xFF
                 }
             }
-            0xA000..=0xBFFF => self
-                .cart
-                .as_mut()
-                .map(|c| c.read_with_open_bus(addr, self.main_bus))
-                .unwrap_or(0xFF),
+            0xA000..=0xBFFF => {
+                // This path also serves OAM/VRAM DMA reads of RTC registers.
+                self.synchronize_rtc();
+                self.cart
+                    .as_mut()
+                    .map(|c| c.read_with_open_bus(addr, self.main_bus))
+                    .unwrap_or(0xFF)
+            }
             0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize],
             0xD000..=0xDFFF => self.wram[self.wram_bank][(addr - 0xD000) as usize],
             0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize],
@@ -1120,7 +1265,38 @@ impl Mmu {
 
     /// Read a byte from the memory map, subject to DMA blocking and bus-open rules.
     pub fn read_byte(&mut self, addr: u16) -> u8 {
+        // Ordinary memory neither observes peripheral clocks nor changes bus
+        // ownership. Keep it in this small dispatcher; device reads and ROM
+        // overlays/conflicts retain the synchronized path below. WRAM and HRAM
+        // remain readable during DMA (CPU-specific conflicts are handled by Cpu).
+        let value = match addr {
+            0x0000..=0x7fff if !self.boot_mapped && self.dma_cycles == 0 => {
+                self.cart.as_mut().map_or(0xff, |cart| cart.read_rom(addr))
+            }
+            0xc000..=0xcfff | 0xe000..=0xefff => self.wram[0][usize::from(addr & 0xfff)],
+            0xd000..=0xdfff | 0xf000..=0xfdff => {
+                self.wram[self.wram_bank][usize::from(addr & 0xfff)]
+            }
+            0xff80..=0xfffe => {
+                let value = self.hram[usize::from(addr - 0xff80)];
+                self.data_bus = value;
+                self.watchpoints.note_read(self.last_cpu_pc, addr, value);
+                return value;
+            }
+            _ => return self.read_byte_observed(addr),
+        };
+        self.data_bus = value;
+        self.main_bus = value;
+        self.watchpoints.note_read(self.last_cpu_pc, addr, value);
+        value
+    }
+
+    #[inline(never)]
+    fn read_byte_observed(&mut self, addr: u16) -> u8 {
         self.synchronize_ppu_access(addr);
+        if (0xff04..=0xff07).contains(&addr) {
+            self.synchronize_timer();
+        }
         let value = self.read_byte_inner(addr, false);
         self.data_bus = value;
         if Self::updates_main_bus(addr) {
@@ -1145,6 +1321,10 @@ impl Mmu {
         } else {
             addr
         };
+
+        if (0xff04..=0xff07).contains(&addr) {
+            self.synchronize_timer();
+        }
 
         // DMA owns the VRAM bus independently of the CPU access lock.
         if (0x8000..=0x9fff).contains(&addr) {
@@ -1241,6 +1421,7 @@ impl Mmu {
                 }
             }
             0x0000..=0x7FFF | 0xA000..=0xBFFF => {
+                self.synchronize_rtc();
                 if let Some(cart) = self.cart.as_mut() {
                     cart.write(addr, val);
                 }
@@ -1340,14 +1521,17 @@ impl Mmu {
             0xFF04 => {
                 self.reset_div();
             }
-            0xFF05..=0xFF07 => self.timer.write(addr, val, &mut self.if_reg),
+            0xFF05..=0xFF07 => {
+                self.synchronize_timer();
+                self.timer.write(addr, val, &mut self.if_reg);
+            }
             // IF: only bits 0-4 are writable; bits 5-7 remain set.
             0xFF0F => self.if_reg = (val & 0x1F) | 0xE0,
             0xFF10..=0xFF25 | 0xFF27..=0xFF3F => self.apu.write_reg(addr, val),
             0xFF26 => {
                 let double_speed = self.key1 & 0x80 != 0;
-                self.apu
-                    .write_reg_with_div(addr, val, self.timer.div, double_speed);
+                let div = self.cpu_div();
+                self.apu.write_reg_with_div(addr, val, div, double_speed);
             }
             0xFF40 => {
                 let lcd_was_on = self.ppu.lcd_enabled();
@@ -1552,13 +1736,22 @@ impl Mmu {
     }
 
     pub(crate) fn set_dma_halted(&mut self, halted: bool) {
-        if self.model != Model::Mgb || !halted || self.dma_cycles == 0 {
+        if self.model != Model::Mgb {
             self.ppu.mgb_halted_dma_bus = None;
+            return;
+        }
+        if !halted || self.dma_cycles == 0 {
+            if self.ppu.mgb_halted_dma_bus.is_some() {
+                // Deferred sprite fetches must still see the old held bus.
+                self.synchronize_ppu();
+                self.ppu.mgb_halted_dma_bus = None;
+            }
             return;
         }
         if self.ppu.mgb_halted_dma_bus.is_some() {
             return;
         }
+        self.synchronize_ppu();
         // On MGB, HALT gates DMA while the in-flight word still drives OAM.
         // The measured corruption is described in Mooneye's
         // madness/mgb_oam_dma_halt_sprites.s. No bytes are committed to OAM.
@@ -1582,12 +1775,20 @@ impl Mmu {
     }
 
     /// Advance the ongoing OAM DMA transfer if active.
+    #[inline]
     pub fn dma_step(&mut self, cycles: u16) {
         if self.dma_cycles == 0 && self.pending_delay == 0 {
             self.ppu.oam_dma_current_dest = 0xA1;
             return;
         }
 
+        self.dma_step_active(cycles);
+    }
+
+    // Ordinary CPU ticks only need the idle check above. Keep the byte transfer
+    // and bus-conflict machinery out of that frequently inlined path.
+    #[inline(never)]
+    fn dma_step_active(&mut self, cycles: u16) {
         for _ in 0..cycles {
             self.ppu.oam_dma_current_dest = 0xA1;
             if self.pending_delay > 0 {
@@ -1761,6 +1962,7 @@ impl Mmu {
     }
 
     fn reset_div_inner(&mut self, speed_switch: bool) {
+        self.synchronize_timer();
         // rDIV reset affects the CPU divider (timer.div). The PPU/APU dot clock
         // domain keeps running and is not reset by writes to FF04.
         let prev_div = self.timer.div;
@@ -1786,6 +1988,7 @@ impl Mmu {
     }
 
     fn tick(&mut self, m_cycles: u32) {
+        self.synchronize_timer();
         let dot_cycles = if self.key1 & 0x80 != 0 {
             2 * m_cycles as u16
         } else {
@@ -1818,6 +2021,82 @@ impl Default for Mmu {
 mod inspection_tests {
     use super::*;
     use crate::watchpoints::Watchpoint;
+
+    #[test]
+    fn memory_dispatch_preserves_full_bus_reads_and_observation_state() {
+        for model in [Model::default(), Model::Cgb(CgbRevision::RevE)] {
+            for boot in [false, true] {
+                for dma_source in [None, Some(0x0000), Some(0xc000)] {
+                    let make = || {
+                        let mut mmu = Mmu::new(model);
+                        let mut rom = vec![0; 0x20000];
+                        for (i, byte) in rom.iter_mut().enumerate() {
+                            *byte = (i as u8).wrapping_mul(17) ^ (i >> 14) as u8;
+                        }
+                        rom[0x143] = if model.is_cgb() { 0x80 } else { 0 };
+                        rom[0x147] = 3;
+                        rom[0x148] = 2;
+                        rom[0x149] = 3;
+                        mmu.load_cart(Cartridge::from_bytes(rom));
+                        mmu.write_byte(0x0000, 0x0a);
+                        mmu.write_byte(0x2000, 3);
+                        mmu.write_byte(0xff70, 5);
+                        for (bank, bytes) in mmu.wram.iter_mut().enumerate() {
+                            for (offset, byte) in bytes.iter_mut().enumerate() {
+                                *byte = (offset as u8).wrapping_mul(29) ^ (bank as u8 * 17);
+                            }
+                        }
+                        for (offset, byte) in mmu.hram.iter_mut().enumerate() {
+                            *byte = (offset as u8).wrapping_mul(11);
+                        }
+                        if boot {
+                            mmu.load_boot_rom(vec![0xa5; 0x900]);
+                        }
+                        if let Some(source) = dma_source {
+                            mmu.write_byte(0xff46, (source >> 8) as u8);
+                            mmu.dma_step(24);
+                        }
+                        mmu.last_cpu_pc = Some(0x4567);
+                        mmu.watchpoints.set_watchpoints(vec![Watchpoint {
+                            id: 7,
+                            enabled: true,
+                            range: 0..=u16::MAX,
+                            on_read: true,
+                            on_write: false,
+                            on_execute: false,
+                            on_jump: false,
+                            value_match: None,
+                            message: None,
+                        }]);
+                        mmu
+                    };
+                    let mut fast = make();
+                    let mut reference = make();
+                    for addr in 0..=u16::MAX {
+                        assert_eq!(
+                            fast.read_byte(addr),
+                            reference.read_byte_observed(addr),
+                            "{model:?}, boot={boot}, DMA={dma_source:?}, address={addr:04x}"
+                        );
+                        assert_eq!(
+                            (fast.data_bus, fast.main_bus),
+                            (reference.data_bus, reference.main_bus)
+                        );
+                        assert_eq!(
+                            fast.watchpoints.take_hit(),
+                            reference.watchpoints.take_hit()
+                        );
+                    }
+                    // Include mapper/bus latches and side effects of every I/O
+                    // read, not just the values returned by the dispatchers.
+                    assert!(
+                        serde_json::to_value(&fast).unwrap()
+                            == serde_json::to_value(&reference).unwrap()
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn inspection_preserves_bus_oam_palette_dma_and_watchpoint_state() {

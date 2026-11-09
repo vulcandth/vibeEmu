@@ -537,6 +537,10 @@ pub struct Ppu {
     mode3_fetcher_state: u8,
     mode3_obj_fetch_active: bool,
     mode3_obj_data_stable: bool,
+    // Derived from the line initializer and subsequent LCDC.2 writes. A loaded
+    // state conservatively resumes captures until the next line initializer.
+    #[serde(skip)]
+    mode3_obj_size_stable: bool,
     mode3_obj_fetch_stage: u8,
     mode3_obj_fetch_sprite_index: usize,
     mode3_render_delay: u16,
@@ -996,6 +1000,7 @@ struct Mode3PopEvent {
 const DMG_PALETTE: [u32; 4] = [0x009BBC0F, 0x008BAC0F, 0x00306230, 0x000F380F];
 
 #[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 struct Sprite {
     x: i16,
     y: i16,
@@ -1134,6 +1139,7 @@ impl Ppu {
             mode3_bg_fifo: 8,
             mode3_fetcher_state: 0,
             mode3_obj_fetch_active: false,
+            mode3_obj_size_stable: false,
             mode3_obj_data_stable: false,
             mode3_obj_fetch_stage: 0,
             mode3_obj_fetch_sprite_index: 0,
@@ -1401,6 +1407,7 @@ impl Ppu {
         self.dmg_line_lcdc_at_pixel.fill(self.mode3_lcdc_base);
         self.dmg_line_mode3_t_at_pixel.fill(0);
         self.dmg_line_obj_size_16.fill((self.lcdc & 0x04) != 0);
+        self.mode3_obj_size_stable = true;
 
         // Mirror the simplified DMG fetcher/FIFO timing model used by
         // `dmg_compute_mode3_cycles_for_line` so Mode 3 sprite attribute reads
@@ -3485,7 +3492,7 @@ impl Ppu {
         }
     }
 
-    fn mode3_latch_sprite_attributes(&mut self) {
+    fn mode3_latch_sprite_attributes<const SKIP_STABLE_CAPTURE: bool>(&mut self) {
         if (1..=0xA0).contains(&self.oam_dma_current_dest) {
             self.invalidate_mode3_obj_data();
         }
@@ -3493,6 +3500,7 @@ impl Ppu {
         if offset > 0 && self.mode_clock <= offset as u16 {
             return;
         }
+        let render_clock = (self.mode_clock as i16 - offset).max(0) as u16;
         let obj_fetch_active_before = self.mode3_obj_fetch_active;
         // Use the same simplified DMG pipeline model as
         // `dmg_compute_mode3_cycles_for_line` to decide *when* an object match
@@ -3500,30 +3508,35 @@ impl Ppu {
         // This keeps OAM tile/flags reads close to hardware timing so DMA overlap
         // hits the intended bytes.
         let obj_size_tuning = &self.tuning.dmg_obj_size_tuning;
-        let cap_base_x = if obj_size_tuning.capture_use_position {
-            let x = self.mode3_position_in_line + 8;
-            if (0..SCREEN_WIDTH as i16).contains(&x) {
-                Some(x as usize)
+        // The line initializer already captured a stable LCDC.2 at every
+        // position. Writes to unrelated LCDC bits cannot change those values.
+        // The unoptimized specialization preserves the original dot reference.
+        if !SKIP_STABLE_CAPTURE || !self.mode3_obj_size_stable {
+            let cap_base_x = if obj_size_tuning.capture_use_position {
+                let x = self.mode3_position_in_line + 8;
+                if (0..SCREEN_WIDTH as i16).contains(&x) {
+                    Some(x as usize)
+                } else {
+                    None
+                }
+            } else if self.mode3_lcd_x < SCREEN_WIDTH as u16 {
+                Some(self.mode3_lcd_x as usize)
             } else {
                 None
+            };
+            if let Some(mut cap_x) = cap_base_x {
+                let phase = ((render_clock >> 2) & 1) as i16;
+                let cap_bias =
+                    obj_size_tuning.capture_bias + phase * obj_size_tuning.capture_phase_weight;
+                if cap_bias < 0 {
+                    cap_x = cap_x.saturating_sub((-cap_bias) as usize);
+                } else {
+                    cap_x = cap_x
+                        .saturating_add(cap_bias as usize)
+                        .min(SCREEN_WIDTH - 1);
+                }
+                self.dmg_line_obj_size_16[cap_x] = (self.lcdc & 0x04) != 0;
             }
-        } else if self.mode3_lcd_x < SCREEN_WIDTH as u16 {
-            Some(self.mode3_lcd_x as usize)
-        } else {
-            None
-        };
-        if let Some(mut cap_x) = cap_base_x {
-            let phase = ((self.mode3_render_clock() >> 2) & 1) as i16;
-            let cap_bias =
-                obj_size_tuning.capture_bias + phase * obj_size_tuning.capture_phase_weight;
-            if cap_bias < 0 {
-                cap_x = cap_x.saturating_sub((-cap_bias) as usize);
-            } else {
-                cap_x = cap_x
-                    .saturating_add(cap_bias as usize)
-                    .min(SCREEN_WIDTH - 1);
-            }
-            self.dmg_line_obj_size_16[cap_x] = (self.lcdc & 0x04) != 0;
         }
 
         if self.is_cgb_native_mode() {
@@ -3616,7 +3629,7 @@ impl Ppu {
                             self.line_sprites[idx].clear_fetch_state();
                             self.line_sprites[idx].fetched = true;
                             if !self.line_sprites[idx].fetch_t_valid {
-                                self.line_sprites[idx].fetch_t = self.mode3_render_clock();
+                                self.line_sprites[idx].fetch_t = render_clock;
                                 self.line_sprites[idx].fetch_t_valid = true;
                             }
                             self.mode3_obj_fetch_stage = MODE3_OBJ_FETCH_STAGE_ATTR_1;
@@ -3636,8 +3649,7 @@ impl Ppu {
                             } else {
                                 obj_size_tuning.fetch_t_bias
                             } + self.dmg_obj_size_fetch_t_compat_adjust();
-                            let sample_t = (self.mode3_render_clock() as i16 + low_bias)
-                                .clamp(0, max_t) as u16;
+                            let sample_t = (render_clock as i16 + low_bias).clamp(0, max_t) as u16;
                             let mut size_16 = if obj_size_tuning.fetch_use_live_lcdc {
                                 (self.lcdc & 0x04) != 0
                             } else {
@@ -3684,8 +3696,7 @@ impl Ppu {
                                 + obj_size_tuning.fetch_hi_t_delta
                                 + self.dmg_obj_size_fetch_t_compat_adjust()
                                 + self.dmg_obj_size_fetch_hi_t_compat_adjust();
-                            let sample_t = (self.mode3_render_clock() as i16 + high_bias)
-                                .clamp(0, max_t) as u16;
+                            let sample_t = (render_clock as i16 + high_bias).clamp(0, max_t) as u16;
                             let mut size_16 = if obj_size_tuning.fetch_use_live_lcdc {
                                 (self.lcdc & 0x04) != 0
                             } else {
@@ -3780,7 +3791,7 @@ impl Ppu {
 
                     self.line_sprites[idx].clear_fetch_state();
                     self.line_sprites[idx].fetch_t_valid = true;
-                    self.line_sprites[idx].fetch_t = self.mode3_render_clock();
+                    self.line_sprites[idx].fetch_t = render_clock;
                     self.mode3_obj_fetch_active = true;
                     self.mode3_obj_fetch_stage = MODE3_OBJ_FETCH_STAGE_ATTR_0;
                     self.mode3_obj_fetch_sprite_index = idx;
@@ -3835,13 +3846,13 @@ impl Ppu {
                     &mut self.mode3_bg_fifo,
                     &mut self.mode3_fetcher_state,
                 );
-                self.record_mode3_pop_event(self.mode3_render_clock(), self.mode3_position_in_line);
+                self.record_mode3_pop_event(render_clock, self.mode3_position_in_line);
                 if self.mode3_lcd_x > prev_lcd_x {
                     let out_x = self.mode3_lcd_x.saturating_sub(1) as usize;
                     if out_x < SCREEN_WIDTH {
                         self.dmg_line_bgp_at_pixel[out_x] = self.bgp;
                         self.dmg_line_lcdc_at_pixel[out_x] = self.lcdc;
-                        self.dmg_line_mode3_t_at_pixel[out_x] = self.mode3_render_clock();
+                        self.dmg_line_mode3_t_at_pixel[out_x] = render_clock;
                     }
                 }
             }
@@ -5833,6 +5844,9 @@ impl Ppu {
                     self.record_mode3_lcdc_event(self.mode3_render_clock(), val);
                 }
 
+                if (old_lcdc ^ val) & 4 != 0 {
+                    self.mode3_obj_size_stable = false;
+                }
                 self.lcdc = val;
                 // DMG: clearing OBJ enable during an active object fetch aborts
                 // that fetch; the object is skipped for this line.
@@ -6841,7 +6855,6 @@ impl Ppu {
             || self.mode3_lcd_x >= SCREEN_WIDTH as u16
             || self.mode3_bg_fifo == 0
             || self.mode3_fetcher_state > 6
-            || self.mode3_lcdc_event_count != 0
             || (1..=0xa0).contains(&self.oam_dma_current_dest)
         {
             return 0;
@@ -6867,6 +6880,60 @@ impl Ppu {
         dots
     }
 
+    // The startup pixels and fetcher-only stalls are observable timing work,
+    // but do not touch visible pixels. Certify them separately so the ordinary
+    // visible FIFO run keeps its small, established projection path.
+    fn dmg_nonvisible_run_limit(&self) -> u16 {
+        if self.mode3_obj_fetch_active
+            || self.mode3_fetcher_state > 6
+            || (1..=0xa0).contains(&self.oam_dma_current_dest)
+            || self.mode_clock < self.mode3_render_offset().max(0) as u16
+        {
+            return 0;
+        }
+        let hidden = self.mode3_render_delay == 0
+            && self.mode3_bg_fifo != 0
+            && self.mode3_lcd_x < SCREEN_WIDTH as u16;
+        let mut dots = if hidden {
+            if self.mode3_position_in_line >= -1 {
+                return 0;
+            }
+            // Leave the first visible pop on the original dot path.
+            let mut hidden = (-self.mode3_position_in_line - 1) as u16;
+            if self.mode3_position_in_line < -7 {
+                // Object matching changes from fixed zero to the biased X
+                // coordinate here; never project across that discontinuity.
+                hidden = hidden.min((-7 - self.mode3_position_in_line) as u16);
+            }
+            if self.mode3_bg_fifo <= 6 - self.mode3_fetcher_state {
+                hidden = hidden.min(u16::from(self.mode3_bg_fifo));
+            }
+            hidden
+        } else if self.mode3_render_delay != 0 {
+            self.mode3_render_delay
+        } else if self.mode3_lcd_x >= SCREEN_WIDTH as u16 {
+            u16::MAX
+        } else {
+            // An empty FIFO fills on the dot after fetcher state six.
+            u16::from(7 - self.mode3_fetcher_state)
+        };
+        dots = dots.min(
+            self.mode3_target_cycles
+                .saturating_sub(self.mode3_render_clock().max(self.mode_clock) + 2),
+        );
+        if self.mode3_sprite_latch_index < self.sprite_count {
+            let raw_x = (self.line_sprites[self.mode3_sprite_latch_index].x + 8).clamp(0, 255);
+            let match_x = self.dmg_sprite_match_x(self.mode3_position_in_line);
+            if raw_x <= i16::from(match_x) {
+                return 0;
+            }
+            if hidden {
+                dots = dots.min((raw_x - i16::from(match_x)) as u16);
+            }
+        }
+        dots
+    }
+
     #[inline]
     fn dmg_sprite_match_x(&self, position: i16) -> u8 {
         if position < -7 {
@@ -6879,7 +6946,65 @@ impl Ppu {
         .clamp(0, 255) as u8
     }
 
+    // Raster writes do not prevent a stable run: the current LCDC value is
+    // constant until the next write. Preserve the dot path's OBJ-size captures
+    // by filling the exact positions it visits. Capture phase changes every
+    // four renderer dots; native CGB keeps its capture position stationary.
+    fn capture_obj_sizes_for_run<const ADVANCE_PIXELS: bool>(&mut self, dots: u16) {
+        let tuning = &self.tuning.dmg_obj_size_tuning;
+        let base = if tuning.capture_use_position {
+            i32::from(self.mode3_position_in_line) + 8
+        } else {
+            i32::from(self.mode3_lcd_x)
+        };
+        let first_clock = self.mode3_render_clock() + 1;
+        let size_16 = self.lcdc & 4 != 0;
+        if !ADVANCE_PIXELS {
+            // A stationary capture can visit at most two positions. Store the
+            // initial phase and, only if crossed, the other four-dot phase.
+            if dots == 0 || !(0..SCREEN_WIDTH as i32).contains(&base) {
+                return;
+            }
+            let phase = ((first_clock >> 2) & 1) as i16;
+            let bias = tuning.capture_bias + phase * tuning.capture_phase_weight;
+            let position = (base + i32::from(bias)).clamp(0, SCREEN_WIDTH as i32 - 1) as usize;
+            self.dmg_line_obj_size_16[position] = size_16;
+            if tuning.capture_phase_weight != 0 && dots > 4 - (first_clock & 3) {
+                let bias = tuning.capture_bias + (phase ^ 1) * tuning.capture_phase_weight;
+                let position = (base + i32::from(bias)).clamp(0, SCREEN_WIDTH as i32 - 1) as usize;
+                self.dmg_line_obj_size_16[position] = size_16;
+            }
+            return;
+        }
+        let mut offset = 0;
+        while offset < dots {
+            let clock = first_clock + offset;
+            let phase = ((clock >> 2) & 1) as i16;
+            let run = if tuning.capture_phase_weight == 0 {
+                dots - offset
+            } else {
+                (4 - (clock & 3)).min(dots - offset)
+            };
+            let first = base + i32::from(offset);
+            let end = first + i32::from(run);
+            // The dot path rejects offscreen base positions before applying
+            // the bias. Only the biased positions themselves are clamped.
+            let first = first.max(0);
+            let end = end.min(SCREEN_WIDTH as i32);
+            if first < end {
+                let bias = i32::from(tuning.capture_bias + phase * tuning.capture_phase_weight);
+                let start = (first + bias).clamp(0, SCREEN_WIDTH as i32 - 1) as usize;
+                let end = (end - 1 + bias).clamp(0, SCREEN_WIDTH as i32 - 1) as usize + 1;
+                self.dmg_line_obj_size_16[start..end].fill(size_16);
+            }
+            offset += run;
+        }
+    }
+
     fn advance_dmg_fifo_run(&mut self, dots: u16) {
+        if !self.mode3_obj_size_stable {
+            self.capture_obj_sizes_for_run::<true>(dots);
+        }
         let last_match = self.dmg_sprite_match_x(self.mode3_position_in_line + dots as i16 - 1);
         if last_match != self.mode3_last_match_x {
             self.mode3_last_match_x = last_match;
@@ -6898,8 +7023,11 @@ impl Ppu {
         let start = usize::from(self.mode3_lcd_x);
         let end = start + usize::from(dots);
         self.dmg_line_bgp_at_pixel[start..end].fill(self.bgp);
-        // LCDC and OBJ-size captures already equal their line initialization:
-        // the deadline rejects any line with an LCDC change.
+        if self.mode3_lcdc_event_count != 0 {
+            self.dmg_line_lcdc_at_pixel[start..end].fill(self.lcdc);
+        }
+        // Stable OBJ-size captures retain the line initializer's values;
+        // actual size changes and per-pixel LCDC writes are preserved above.
         // The certified run ends before transfer housekeeping, so these times
         // cannot need clamping. Reserve both ranges once, retaining every pop
         // timestamp while avoiding per-pixel capacity and count updates.
@@ -6939,9 +7067,225 @@ impl Ppu {
         }
     }
 
-    /// Dots before the next event, restricted to intervals already handled by
-    /// the PPU's bulk stepping paths. Stop strictly before mode transitions so
-    /// STAT, frame delivery, and HBlank DMA keep their original M-cycle timing.
+    fn advance_dmg_nonvisible_run(&mut self, dots: u16) {
+        let hidden = self.mode3_render_delay == 0
+            && self.mode3_bg_fifo != 0
+            && self.mode3_lcd_x < SCREEN_WIDTH as u16;
+        if !self.mode3_obj_size_stable {
+            if hidden && self.tuning.dmg_obj_size_tuning.capture_use_position {
+                self.capture_obj_sizes_for_run::<true>(dots);
+            } else {
+                self.capture_obj_sizes_for_run::<false>(dots);
+            }
+        }
+        let final_position = self.mode3_position_in_line + if hidden { dots as i16 - 1 } else { 0 };
+        let last_match = self.dmg_sprite_match_x(final_position);
+        if last_match != self.mode3_last_match_x {
+            self.mode3_last_match_x = last_match;
+            self.mode3_same_x_toggle = last_match & 2 != 0 && last_match & 4 == 0;
+        }
+        if hidden {
+            let fifo = u16::from(self.mode3_bg_fifo);
+            if dots < fifo || fifo <= u16::from(6 - self.mode3_fetcher_state) {
+                self.mode3_bg_fifo -= dots as u8;
+                self.mode3_fetcher_state =
+                    (u16::from(self.mode3_fetcher_state) + dots).min(6) as u8;
+            } else {
+                let phase = ((dots - fifo) & 7) as u8;
+                self.mode3_bg_fifo = 8 - phase;
+                self.mode3_fetcher_state = phase.min(6);
+            }
+            // Hidden pops are retained too: later raster/window replay uses
+            // this complete schedule even though no framebuffer pixel appeared.
+            let clock = self.mode3_render_clock();
+            let count = self.mode3_pop_event_count;
+            let added = usize::from(dots).min(MODE3_POP_EVENTS_MAX - count);
+            for (offset, event) in self.mode3_pop_events[count..count + added]
+                .iter_mut()
+                .enumerate()
+            {
+                *event = Mode3PopEvent {
+                    t: clock + offset as u16 + 1,
+                    position_in_line: self.mode3_position_in_line + offset as i16 + 1,
+                };
+            }
+            self.mode3_pop_event_count += added;
+            if added < usize::from(dots) {
+                self.mode3_pop_events[MODE3_POP_EVENTS_MAX - 1] = Mode3PopEvent {
+                    t: clock + dots,
+                    position_in_line: self.mode3_position_in_line + dots as i16,
+                };
+            }
+            self.mode3_position_in_line += dots as i16;
+        } else {
+            // Without pops a nonempty FIFO holds the fetcher at state six.
+            // An empty FIFO first refills, then reaches the same held state.
+            let until_push = u16::from(7 - self.mode3_fetcher_state);
+            if self.mode3_bg_fifo == 0 && dots >= until_push {
+                self.mode3_bg_fifo = 8;
+                self.mode3_fetcher_state = (dots - until_push).min(6) as u8;
+            } else {
+                self.mode3_fetcher_state =
+                    (u16::from(self.mode3_fetcher_state) + dots).min(6) as u8;
+            }
+            self.mode3_render_delay = self.mode3_render_delay.saturating_sub(dots);
+        }
+        self.mode_clock += dots;
+        #[cfg(feature = "ppu-trace")]
+        if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+            *timer += u64::from(dots);
+        }
+    }
+
+    // During an uninterrupted OBJ fetch, only three of its five stages read
+    // memory. With a stable LCDC the intermediate dots only advance the held
+    // BG fetcher and delay counter. Preserve partial fetches at observations,
+    // while applying each crossed read once instead of rerunning the complete
+    // pixel/match scheduler for every stage. Raster writes and DMA retain the
+    // original dot path.
+    fn advance_dmg_obj_fetch_run(&mut self, requested: u16) -> u16 {
+        let stage = self.mode3_obj_fetch_stage;
+        if self.mode3_lcdc_event_count != 0
+            || self.lcdc & 2 == 0
+            || !(MODE3_OBJ_FETCH_STAGE_ATTR_0..=MODE3_OBJ_FETCH_STAGE_HIGH).contains(&stage)
+            || self.mode3_fetcher_state > 6
+        {
+            return 0;
+        }
+        let dots = requested.min(u16::from(MODE3_OBJ_FETCH_STAGE_HIGH + 1 - stage));
+        let next_stage = stage + dots as u8;
+        let idx = self.mode3_obj_fetch_sprite_index;
+        if stage == MODE3_OBJ_FETCH_STAGE_ATTR_0 {
+            let base = self.line_sprites[idx].oam_index * 4;
+            let tile = self.oam_read_for_ppu(base + 2);
+            let flags = self.oam_read_for_ppu(base + 3);
+            let clock = self.mode3_render_clock() + 1;
+            let sprite = &mut self.line_sprites[idx];
+            sprite.tile = tile;
+            sprite.flags = flags;
+            sprite.clear_fetch_state();
+            sprite.fetched = true;
+            sprite.fetch_t = clock;
+            sprite.fetch_t_valid = true;
+        }
+        // Without LCDC events every biased time sample resolves to the line
+        // base. The live-sampling tuning still reads the current register.
+        let size_16 = if self.tuning.dmg_obj_size_tuning.fetch_use_live_lcdc {
+            self.lcdc & 4 != 0
+        } else {
+            self.mode3_lcdc_base & 4 != 0
+        };
+        if stage <= MODE3_OBJ_FETCH_STAGE_LOW_0 && next_stage > MODE3_OBJ_FETCH_STAGE_LOW_0 {
+            let sprite = self.line_sprites[idx];
+            let lcdc = (self.lcdc & !4) | (u8::from(size_16) << 2);
+            let addr =
+                self.compute_obj_row_addr_from_lcdc(sprite.y, sprite.tile, sprite.flags, lcdc);
+            let lo = self.vram_read_for_render(0, addr);
+            let sprite = &mut self.line_sprites[idx];
+            sprite.obj_row_addr = addr as u16;
+            sprite.obj_row_valid = true;
+            sprite.obj_size16_low = size_16;
+            sprite.obj_lo = lo;
+        }
+        if next_stage > MODE3_OBJ_FETCH_STAGE_HIGH {
+            let sprite = self.line_sprites[idx];
+            let fine = self.scx & 7;
+            let size_16 = size_16
+                || (fine != 0
+                    && sprite.obj_row_valid
+                    && sprite.obj_size16_low
+                    && !(self.is_cgb_dmg_compat_mode() && fine >= 4));
+            let lcdc = (self.lcdc & !4) | (u8::from(size_16) << 2);
+            let addr =
+                self.compute_obj_row_addr_from_lcdc(sprite.y, sprite.tile, sprite.flags, lcdc);
+            self.line_sprites[idx].obj_hi = self.vram_read_for_render(0, addr + 1);
+            self.line_sprites[idx].obj_data_valid = true;
+            self.mode3_obj_fetch_active = false;
+            self.mode3_obj_fetch_stage = 0;
+        } else {
+            self.mode3_obj_fetch_stage = next_stage;
+        }
+        let match_x = self.dmg_sprite_match_x(self.mode3_position_in_line);
+        if match_x != self.mode3_last_match_x {
+            self.mode3_last_match_x = match_x;
+            self.mode3_same_x_toggle = match_x & 2 != 0 && match_x & 4 == 0;
+        }
+        let until_push = u16::from(7 - self.mode3_fetcher_state);
+        if self.mode3_bg_fifo == 0 && dots >= until_push {
+            self.mode3_bg_fifo = 8;
+            self.mode3_fetcher_state = (dots - until_push).min(6) as u8;
+        } else {
+            self.mode3_fetcher_state = (u16::from(self.mode3_fetcher_state) + dots).min(6) as u8;
+        }
+        self.mode3_render_delay = self.mode3_render_delay.saturating_sub(dots);
+        self.mode_clock += dots;
+        #[cfg(feature = "ppu-trace")]
+        if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+            *timer += u64::from(dots);
+        }
+        self.record_mode3_obj_fetch_transition_if_needed(true);
+        dots
+    }
+
+    // Catch up a transfer interval certified free of CPU-visible boundaries.
+    // Internal fetch/latch boundaries still execute in order, but do not need
+    // the outer mode/IRQ/register-write machinery on every individual dot.
+    fn advance_transfer_run(&mut self, mut dots: u16) {
+        let native_cgb = self.is_cgb_native_mode();
+        while dots != 0 {
+            if native_cgb {
+                let run = self
+                    .next_cgb_transfer_event()
+                    .saturating_sub(self.mode_clock.saturating_add(1))
+                    .min(dots);
+                if run != 0 {
+                    if !self.mode3_obj_size_stable {
+                        self.capture_obj_sizes_for_run::<false>(run);
+                    }
+                    self.mode_clock += run;
+                    #[cfg(feature = "ppu-trace")]
+                    if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+                        *timer += u64::from(run);
+                    }
+                    dots -= run;
+                    continue;
+                }
+            } else if self.mode3_obj_fetch_active {
+                let fetch = self.advance_dmg_obj_fetch_run(dots);
+                if fetch != 0 {
+                    dots -= fetch;
+                    continue;
+                }
+            } else {
+                let visible = self.dmg_fifo_run_limit().min(dots);
+                if visible != 0 {
+                    self.advance_dmg_fifo_run(visible);
+                    dots -= visible;
+                    continue;
+                }
+                let nonvisible = self.dmg_nonvisible_run_limit().min(dots);
+                if nonvisible != 0 {
+                    self.advance_dmg_nonvisible_run(nonvisible);
+                    dots -= nonvisible;
+                    continue;
+                }
+            }
+            self.mode_clock += 1;
+            #[cfg(feature = "ppu-trace")]
+            if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
+                *timer += 1;
+            }
+            self.mode3_latch_sprite_attributes::<true>();
+            dots -= 1;
+        }
+    }
+
+    /// Dots before the next externally observable PPU event. Internal transfer
+    /// fetches can wait until a synchronized CPU observation, then execute in
+    /// order during catch-up. Stop strictly before end-of-transfer housekeeping,
+    /// mode changes, and IRQ events so frame delivery and HBlank DMA retain
+    /// their original M-cycle timing. Callers must synchronize before PPU access
+    /// or changes to its VRAM/OAM buses.
     pub(crate) fn idle_dots(&self) -> u16 {
         if self.clock_hold_cycles != 0
             || self.lcdc & 0x80 == 0
@@ -6954,14 +7298,9 @@ impl Ppu {
             return 0;
         }
         let event = match self.mode {
-            MODE_TRANSFER
-                if self.is_cgb_native_mode()
-                    && self.mode3_lcdc_event_count == 0
-                    && !(1..=0xA0).contains(&self.oam_dma_current_dest) =>
-            {
-                self.next_cgb_transfer_event()
+            MODE_TRANSFER if !(1..=0xA0).contains(&self.oam_dma_current_dest) => {
+                self.mode3_target_cycles.saturating_sub(1)
             }
-            MODE_TRANSFER if self.is_dmg_mode() => return self.dmg_fifo_run_limit(),
             MODE_HBLANK => {
                 if self.dmg_hblank_render_pending {
                     self.next_hblank_event()
@@ -7006,7 +7345,6 @@ impl Ppu {
                 MODE_TRANSFER
                     if BATCH_TRANSFER
                         && self.is_cgb_native_mode()
-                        && self.mode3_lcdc_event_count == 0
                         && !(1..=0xA0).contains(&self.oam_dma_current_dest)
                         && self.mode_clock.saturating_add(remaining)
                             < self.next_cgb_transfer_event() =>
@@ -7014,10 +7352,13 @@ impl Ppu {
                     // Native CGB's current live timing model has no observable
                     // work between OBJ attribute latches. Its pixel fetcher is
                     // replayed separately when rendering raster effects.
-                    // Register writes, STAT delays and DMA stay on the dot path;
+                    // Pending writes, STAT delays and DMA stay on the dot path;
                     // the end-of-transfer fallback also latches offscreen OBJs.
-                    // A stable LCDC also leaves the DMG size-capture array equal
-                    // to its line initialization, even if KEY0 changes modes later.
+                    // Preserve size captures after raster writes in case KEY0
+                    // changes to compatibility rendering later in the line.
+                    if !self.mode3_obj_size_stable {
+                        self.capture_obj_sizes_for_run::<false>(remaining);
+                    }
                     self.mode_clock += remaining;
                     #[cfg(feature = "ppu-trace")]
                     if let Some(timer) = self.debug_lcd_enable_timer.as_mut() {
@@ -7032,6 +7373,25 @@ impl Ppu {
                         && remaining <= self.dmg_fifo_run_limit() =>
                 {
                     self.advance_dmg_fifo_run(remaining);
+                    return false;
+                }
+                MODE_TRANSFER
+                    if BATCH_TRANSFER
+                        && self.is_dmg_mode()
+                        && remaining != 0
+                        && remaining <= self.dmg_nonvisible_run_limit() =>
+                {
+                    self.advance_dmg_nonvisible_run(remaining);
+                    return false;
+                }
+                MODE_TRANSFER
+                    if BATCH_TRANSFER
+                        && remaining >= 8
+                        && !(1..=0xA0).contains(&self.oam_dma_current_dest)
+                        && self.mode_clock.saturating_add(remaining)
+                            < self.mode3_target_cycles.saturating_sub(1) =>
+                {
+                    self.advance_transfer_run(remaining);
                     return false;
                 }
                 MODE_HBLANK => {
@@ -7166,7 +7526,12 @@ impl Ppu {
                 }
             }
 
-            self.update_lyc_compare();
+            // LY and its comparison phase stay fixed throughout transfer.
+            // LCDC/LYC writes update coincidence themselves, including delayed
+            // writes below. Keep the original dot path as a test reference.
+            if !BATCH_TRANSFER || self.mode != MODE_TRANSFER {
+                self.update_lyc_compare();
+            }
 
             self.mode_clock += increment;
             self.tick_pending_reg_writes();
@@ -7213,7 +7578,7 @@ impl Ppu {
                             if self.is_dmg_mode() {
                                 self.dmg_begin_transfer_line();
                                 for _ in 0..(-self.mode3_render_offset()).max(0) {
-                                    self.mode3_latch_sprite_attributes();
+                                    self.mode3_latch_sprite_attributes::<BATCH_TRANSFER>();
                                 }
                             }
                             self.refresh_stat_irq_if_dirty(if_reg);
@@ -7317,7 +7682,7 @@ impl Ppu {
                         if self.is_dmg_mode() {
                             self.dmg_begin_transfer_line();
                             for _ in 0..(-self.mode3_render_offset()).max(0) {
-                                self.mode3_latch_sprite_attributes();
+                                self.mode3_latch_sprite_attributes::<BATCH_TRANSFER>();
                             }
                         }
                         if self.dmg_post_startup_line2 {
@@ -7337,7 +7702,7 @@ impl Ppu {
                     }
                 }
                 MODE_TRANSFER => {
-                    self.mode3_latch_sprite_attributes();
+                    self.mode3_latch_sprite_attributes::<BATCH_TRANSFER>();
                     let target = self.mode3_target_cycles;
                     if self.mode_clock >= target {
                         // Complete the deferred renderer dots before replaying
@@ -7345,7 +7710,7 @@ impl Ppu {
                         let offset = self.mode3_render_offset();
                         for _ in 0..offset.max(0) {
                             self.mode_clock += 1;
-                            self.mode3_latch_sprite_attributes();
+                            self.mode3_latch_sprite_attributes::<BATCH_TRANSFER>();
                         }
                         self.mode_clock -= offset.max(0) as u16;
                         self.complete_stable_obj_rows();
@@ -8605,6 +8970,208 @@ impl Ppu {
     }
 
     fn render_bg_window_scanline_lcdc_fetcher(&mut self) {
+        if self.is_cgb_native_mode() {
+            let window_possible = self.ly >= self.wy
+                && self.wx <= WINDOW_X_MAX
+                && (self.mode3_lcdc_base & 0x20 != 0
+                    || self.mode3_lcdc_events[..self.mode3_lcdc_event_count]
+                        .iter()
+                        .any(|event| event.val & 0x20 != 0));
+            match (self.sprite_count > 0, window_possible) {
+                (true, true) => self.render_cgb_raster_scanline::<true, true>(),
+                (false, true) => self.render_cgb_raster_scanline::<false, true>(),
+                (true, false) => self.render_cgb_raster_scanline::<true, false>(),
+                (false, false) => self.render_cgb_raster_scanline::<false, false>(),
+            }
+        } else {
+            self.render_bg_window_scanline_lcdc_fetcher_dots();
+        }
+    }
+
+    // Before the window restart, this fetcher's visible BG FIFO outputs one
+    // pixel per dot after its startup/fine-scroll delay. Find the first dot
+    // where both WX and LCDC.5 permit a restart, consuming same-dot writes
+    // together. Once started, this renderer keeps the window active.
+    fn cgb_window_activation_dot(&self, first_bg_pixel: u16, max_dots: u16) -> Option<u16> {
+        if self.ly < self.wy || self.wx > WINDOW_X_MAX {
+            return None;
+        }
+        let x = u16::from(self.wx.saturating_sub(7));
+        let mut trigger = if x == 0 { 0 } else { first_bg_pixel + x };
+        let mut lcdc = self.mode3_lcdc_base;
+        for event in &self.mode3_lcdc_events[..self.mode3_lcdc_event_count] {
+            if event.t > trigger {
+                if lcdc & 0x20 != 0 {
+                    break;
+                }
+                trigger = event.t;
+            }
+            lcdc = event.val;
+        }
+        (lcdc & 0x20 != 0 && trigger < max_dots && trigger < first_bg_pixel + SCREEN_WIDTH as u16)
+            .then_some(trigger)
+    }
+
+    // Advance one chronological LCDC reader, reporting a falling TILE_SEL
+    // edge on this exact dot. Fetch and output readers advance independently:
+    // the next tile's reads overlap the current tile's FIFO output.
+    fn advance_raster_lcdc_sample(&self, index: &mut usize, value: &mut u8, t: u16) -> bool {
+        let events = &self.mode3_lcdc_events[..self.mode3_lcdc_event_count];
+        let mut falling_edge = false;
+        while *index < events.len() && events[*index].t <= t {
+            let event = events[*index];
+            falling_edge |= event.t == t && *value & 0x10 != 0 && event.val & 0x10 == 0;
+            *value = event.val;
+            *index += 1;
+        }
+        falling_edge
+    }
+
+    // Between startup and the window restart, or after that restart, the FIFO
+    // drains one row between pushes. Sample name/low/high at the original dots
+    // and copy decoded spans, truncating BG output at the restart. LCDC still
+    // gates each OBJ output and can independently corrupt either bitplane.
+    fn render_cgb_raster_scanline<const TRACK_PRIORITY: bool, const WINDOW: bool>(&mut self) {
+        let scx = if self.mode3_scx_event_count > 0 {
+            self.mode3_scx_base
+        } else {
+            self.scx
+        };
+        let bg_y = self.ly.wrapping_add(self.scy);
+        let bg_tile_row = usize::from(bg_y >> 3) * 32;
+        let bg_tile_y = usize::from(bg_y & 7);
+        let row_base = usize::from(self.ly) * SCREEN_WIDTH;
+        let left_obj = self.mode3_lcdc_base & 2 != 0
+            && self.line_sprites[..self.sprite_count]
+                .iter()
+                .any(|sprite| sprite.x <= 0);
+        let startup = 4 + u16::from(left_obj) * 6;
+        let mut name_t = startup + 1;
+        let max_dots = self
+            .mode3_target_cycles
+            .max(MODE3_CYCLES)
+            .saturating_add(64);
+        let mut fetch_lcdc = self.mode3_lcdc_base;
+        let mut fetch_event = 0;
+        let mut output_lcdc = self.mode3_lcdc_base;
+        let mut output_event = 0;
+        let mut tile_index = 0;
+        let mut discard = usize::from(scx & 7);
+        let first_bg_pixel = name_t + 6 + discard as u16;
+        let window_t = if WINDOW {
+            self.cgb_window_activation_dot(first_bg_pixel, max_dots)
+        } else {
+            None
+        };
+        let window_x = window_t.map_or(SCREEN_WIDTH, |t| {
+            usize::from(t.saturating_sub(first_bg_pixel))
+        });
+        let mut window_active = false;
+        let mut x = 0;
+        while x < SCREEN_WIDTH {
+            if WINDOW
+                && !window_active
+                && x == window_x
+                && let Some(t) = window_t
+            {
+                window_active = true;
+                discard = 0;
+                tile_index = 0;
+                // Reset fetch phases, retaining any unconsumed startup stall.
+                name_t = t.max(startup) + 1;
+            }
+            let end = if window_active {
+                SCREEN_WIDTH
+            } else {
+                window_x
+            };
+            let output_t = name_t + 6 + discard as u16;
+            let run = (8 - discard)
+                .min(end - x)
+                .min(usize::from(max_dots.saturating_sub(output_t)));
+            if run == 0 {
+                break;
+            }
+            self.advance_raster_lcdc_sample(&mut fetch_event, &mut fetch_lcdc, name_t);
+            let map_bit = if window_active { 0x40 } else { 0x08 };
+            let map = if fetch_lcdc & map_bit != 0 {
+                BG_MAP_1_BASE
+            } else {
+                BG_MAP_0_BASE
+            };
+            let (tile_row, tile_y, pixel) = if window_active {
+                (
+                    usize::from(self.win_line_counter >> 3) * 32,
+                    usize::from(self.win_line_counter & 7),
+                    tile_index * 8,
+                )
+            } else {
+                let fetch_scx = Self::mode3_reg_value_at_t(
+                    scx,
+                    &self.mode3_scx_events,
+                    self.mode3_scx_event_count,
+                    name_t,
+                );
+                (
+                    bg_tile_row,
+                    bg_tile_y,
+                    i32::from(fetch_scx) - i32::from(scx & 7) + tile_index * 8,
+                )
+            };
+            let map_addr = map + tile_row + ((pixel >> 3) & 31) as usize;
+            let tile = self.vram_read_for_render(0, map_addr);
+            let attr = self.vram_read_for_render(1, map_addr);
+            let bank = usize::from(attr & 8 != 0);
+            let row = if attr & 0x40 != 0 { 7 - tile_y } else { tile_y };
+            let lo_glitch =
+                self.advance_raster_lcdc_sample(&mut fetch_event, &mut fetch_lcdc, name_t + 2);
+            let lo = if lo_glitch {
+                tile
+            } else {
+                let addr = Self::bg_tile_row_plane_addr(tile, row, fetch_lcdc & 0x10 != 0, false);
+                self.vram_read_for_render(bank, addr)
+            };
+            let hi_glitch =
+                self.advance_raster_lcdc_sample(&mut fetch_event, &mut fetch_lcdc, name_t + 4);
+            let hi = if hi_glitch {
+                tile
+            } else {
+                let addr = Self::bg_tile_row_plane_addr(tile, row, fetch_lcdc & 0x10 != 0, true);
+                self.vram_read_for_render(bank, addr)
+            };
+            let key = u32::from(lo)
+                | (u32::from(hi) << 8)
+                | (u32::from(attr & 7) << 16)
+                | (u32::from(attr & 0x20) << 14);
+            self.copy_cached_tile_row::<TRACK_PRIORITY>(key, row_base, x, discard, run);
+            if TRACK_PRIORITY {
+                self.line_priority[x..x + run].fill(attr & 0x80 != 0);
+                let mut offset = 0;
+                while offset < run {
+                    let t = output_t + offset as u16;
+                    self.advance_raster_lcdc_sample(&mut output_event, &mut output_lcdc, t);
+                    let next = if output_event < self.mode3_lcdc_event_count {
+                        usize::from(self.mode3_lcdc_events[output_event].t - t).min(run - offset)
+                    } else {
+                        run - offset
+                    };
+                    self.cgb_line_obj_enabled[x + offset..x + offset + next]
+                        .fill(output_lcdc & 2 != 0);
+                    offset += next;
+                }
+            }
+            x += run;
+            discard = 0;
+            tile_index += 1;
+            name_t += 8;
+        }
+        if window_active {
+            self.win_line_counter = self.win_line_counter.wrapping_add(1);
+            self.dmg_window_triggered = true;
+        }
+    }
+
+    fn render_bg_window_scanline_lcdc_fetcher_dots(&mut self) {
         #[derive(Clone, Copy, Default)]
         struct FifoPixel {
             color_id: u8,
@@ -9313,7 +9880,7 @@ mod mode3_timing_tests {
                         actual.advance_dmg_fifo_run(dots);
                         for _ in 0..dots {
                             reference.mode_clock += 1;
-                            reference.mode3_latch_sprite_attributes();
+                            reference.mode3_latch_sprite_attributes::<false>();
                         }
                         assert_fifo_timing_equal(&actual, &reference);
                         assert_eq!(actual.mode_clock, reference.mode_clock);
@@ -9352,10 +9919,491 @@ mod mode3_timing_tests {
                 fast.advance_dmg_fifo_run(dots);
                 for _ in 0..dots {
                     reference.mode_clock += 1;
-                    reference.mode3_latch_sprite_attributes();
+                    reference.mode3_latch_sprite_attributes::<false>();
                 }
                 assert_fifo_timing_equal(&fast, &reference);
                 assert_eq!(fast.mode_clock, reference.mode_clock);
+            }
+        }
+    }
+
+    #[test]
+    fn stable_obj_size_captures_match_original_with_nondefault_tuning() {
+        for capture_use_position in [false, true] {
+            for (capture_bias, capture_phase_weight) in [(-5, 11), (5, -11)] {
+                let mut tuning = PpuTuning::process_default().clone();
+                tuning.dmg_obj_size_tuning.capture_use_position = capture_use_position;
+                tuning.dmg_obj_size_tuning.capture_bias = capture_bias;
+                tuning.dmg_obj_size_tuning.capture_phase_weight = capture_phase_weight;
+                let tuning: &'static PpuTuning = Box::leak(Box::new(tuning));
+                for (model, compat) in [
+                    (Model::Dmg(DmgRevision::RevC), false),
+                    (Model::Cgb(CgbRevision::RevB), false),
+                    (Model::Cgb(CgbRevision::RevB), true),
+                    (Model::Cgb(CgbRevision::RevE), true),
+                ] {
+                    for line in [0, 1] {
+                        for lcdc in [0x93, 0x97] {
+                            let make_ppu = || {
+                                let mut ppu = Ppu::new(model);
+                                ppu.tuning = tuning;
+                                ppu.set_dmg_compat_mode(compat);
+                                ppu.write_reg(0xff40, 0);
+                                for (sprite, x) in ppu.oam.chunks_exact_mut(4).zip([0, 16, 88, 168])
+                                {
+                                    sprite.copy_from_slice(&[16, x, x, 0]);
+                                }
+                                ppu.write_reg(0xff40, lcdc);
+                                let mut interrupts = 0;
+                                ppu.step_inner::<false>(454 * line + 80, &mut interrupts);
+                                assert_eq!(
+                                    (ppu.ly, ppu.mode, ppu.mode_clock),
+                                    (line as u8, MODE_TRANSFER, 0)
+                                );
+                                ppu
+                            };
+                            let mut fast = make_ppu();
+                            let mut reference = make_ppu();
+                            for dot in 1..=fast.mode3_target_cycles {
+                                // Start with the initialized captures, switch
+                                // native/compat rendering while still stable,
+                                // then exercise actual LCDC.2 transitions.
+                                if model.is_cgb() && matches!(dot, 24 | 96) {
+                                    let compatible = if dot == 24 { !compat } else { compat };
+                                    fast.set_dmg_compat_mode(compatible);
+                                    reference.set_dmg_compat_mode(compatible);
+                                }
+                                if matches!(dot, 8 | 16 | 32 | 64) {
+                                    fast.write_reg(0xff40, fast.lcdc ^ 8);
+                                    reference.write_reg(0xff40, reference.lcdc ^ 8);
+                                }
+                                if dot == 20 {
+                                    assert!(fast.mode3_obj_size_stable);
+                                    let saved = serde_json::to_vec(&fast).unwrap();
+                                    fast = serde_json::from_slice(&saved).unwrap();
+                                    // Keep the same injected process tuning.
+                                    fast.tuning = tuning;
+                                    assert!(!fast.mode3_obj_size_stable);
+                                }
+                                if matches!(dot, 48 | 112) {
+                                    fast.write_reg(0xff40, fast.lcdc ^ 4);
+                                    reference.write_reg(0xff40, reference.lcdc ^ 4);
+                                }
+                                fast.mode_clock += 1;
+                                reference.mode_clock += 1;
+                                fast.mode3_latch_sprite_attributes::<true>();
+                                reference.mode3_latch_sprite_attributes::<false>();
+                                assert_fifo_timing_equal(&fast, &reference);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stationary_obj_captures_match_every_phase_and_clamped_position() {
+        for capture_use_position in [false, true] {
+            for (capture_bias, capture_phase_weight) in [(2, 0), (-5, 11), (5, -11)] {
+                let mut tuning = PpuTuning::process_default().clone();
+                tuning.dmg_obj_size_tuning.capture_use_position = capture_use_position;
+                tuning.dmg_obj_size_tuning.capture_bias = capture_bias;
+                tuning.dmg_obj_size_tuning.capture_phase_weight = capture_phase_weight;
+                let tuning: &'static PpuTuning = Box::leak(Box::new(tuning));
+                let mut fast = Ppu::new(Model::Cgb(CgbRevision::RevE));
+                let mut reference = Ppu::new(Model::Cgb(CgbRevision::RevE));
+                for clock in 24..32 {
+                    for base in [-1, 0, 1, 7, 151, 158, 159, 160] {
+                        for dots in [0, 1, 2, 3, 4, 7, 8, 9, 31, 255] {
+                            for size in [false, true] {
+                                for ppu in [&mut fast, &mut reference] {
+                                    ppu.tuning = tuning;
+                                    ppu.lcdc = 0x91 | (u8::from(size) << 2);
+                                    ppu.mode_clock = clock;
+                                    ppu.mode3_position_in_line = base - 8;
+                                    ppu.mode3_lcd_x = base as u16;
+                                    for (x, value) in
+                                        ppu.dmg_line_obj_size_16.iter_mut().enumerate()
+                                    {
+                                        *value = x & 1 != 0;
+                                    }
+                                }
+                                fast.capture_obj_sizes_for_run::<false>(dots);
+                                for _ in 0..dots {
+                                    reference.mode_clock += 1;
+                                    reference.mode3_latch_sprite_attributes::<false>();
+                                }
+                                assert_eq!(
+                                    fast.dmg_line_obj_size_16, reference.dmg_line_obj_size_16,
+                                    "position={capture_use_position}, bias={capture_bias}, weight={capture_phase_weight}, clock={clock}, base={base}, dots={dots}, size={size}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn raster_transfer_runs_preserve_tuned_captures_and_pixel_events() {
+        for capture_use_position in [false, true] {
+            for (capture_bias, capture_phase_weight) in [(2, 0), (-5, 11), (5, -11)] {
+                let mut tuning = PpuTuning::process_default().clone();
+                tuning.dmg_obj_size_tuning.capture_use_position = capture_use_position;
+                tuning.dmg_obj_size_tuning.capture_bias = capture_bias;
+                tuning.dmg_obj_size_tuning.capture_phase_weight = capture_phase_weight;
+                let tuning: &'static PpuTuning = Box::leak(Box::new(tuning));
+                for (model, compat) in [
+                    (Model::Dmg(DmgRevision::RevC), false),
+                    (Model::Cgb(CgbRevision::RevE), false),
+                    (Model::Cgb(CgbRevision::RevB), true),
+                ] {
+                    let mut fast = Ppu::new(model);
+                    let mut reference = Ppu::new(model);
+                    for clock in 24..32 {
+                        for position in [0, 7, 143, 151, 158] {
+                            for requested in [1, 2, 4, 7, 13, 64] {
+                                for ppu in [&mut fast, &mut reference] {
+                                    ppu.tuning = tuning;
+                                    ppu.set_dmg_compat_mode(compat);
+                                    ppu.lcdc = 0x91;
+                                    ppu.begin_mode3_line();
+                                    ppu.dmg_begin_transfer_line();
+                                    ppu.mode = MODE_TRANSFER;
+                                    ppu.stat_mode = MODE_TRANSFER;
+                                    ppu.stat_mode_delay = 0;
+                                    ppu.clock_hold_cycles = 0;
+                                    ppu.dmg_startup_cycle = None;
+                                    ppu.mode_clock = clock;
+                                    ppu.mode3_target_cycles = 400;
+                                    ppu.mode3_position_in_line = position;
+                                    ppu.mode3_lcd_x = (position + 1) as u16;
+                                    ppu.mode3_render_delay = 0;
+                                    ppu.mode3_bg_fifo = 8;
+                                    ppu.mode3_fetcher_state = 0;
+                                    // Leave distinct previous captures so an
+                                    // over-wide fill cannot pass unnoticed.
+                                    for (x, size) in ppu.dmg_line_obj_size_16.iter_mut().enumerate()
+                                    {
+                                        *size = x & 1 != 0;
+                                    }
+                                    ppu.write_reg(0xff40, 0x95);
+                                    ppu.stat_irq_dirty = false;
+                                }
+                                let dots = requested.min(fast.idle_dots());
+                                assert_ne!(dots, 0, "raster runs must be certified");
+                                let mut fast_if = 0;
+                                let mut reference_if = 0;
+                                assert!(!fast.step(dots, &mut fast_if));
+                                assert!(!reference.step_inner::<false>(dots, &mut reference_if));
+                                assert_eq!(fast_if, reference_if);
+                                assert_eq!(fast.mode_clock, reference.mode_clock);
+                                assert_fifo_timing_equal(&fast, &reference);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nonvisible_transfer_runs_match_dot_state_and_event_capacity() {
+        for capture_use_position in [false, true] {
+            let mut tuning = PpuTuning::process_default().clone();
+            tuning.dmg_obj_size_tuning.capture_use_position = capture_use_position;
+            tuning.dmg_obj_size_tuning.capture_bias = -3;
+            tuning.dmg_obj_size_tuning.capture_phase_weight = 9;
+            let tuning: &'static PpuTuning = Box::leak(Box::new(tuning));
+            for model in [Model::Dmg(DmgRevision::RevC), Model::Cgb(CgbRevision::RevB)] {
+                let mut fast = Ppu::new(model);
+                let mut reference = Ppu::new(model);
+                for position in [-16, -8, -7, -2, -1, 159] {
+                    for fifo in [0, 1, 4, 8] {
+                        for phase in 0..=6 {
+                            for delay in [0, 1, 4, 7] {
+                                for count in [0, MODE3_POP_EVENTS_MAX - 1, MODE3_POP_EVENTS_MAX] {
+                                    for ppu in [&mut fast, &mut reference] {
+                                        ppu.tuning = tuning;
+                                        ppu.dmg_compat = model.is_cgb();
+                                        ppu.lcdc = 0x91;
+                                        ppu.begin_mode3_line();
+                                        ppu.dmg_begin_transfer_line();
+                                        ppu.mode = MODE_TRANSFER;
+                                        ppu.stat_mode = MODE_TRANSFER;
+                                        ppu.stat_mode_delay = 0;
+                                        ppu.clock_hold_cycles = 0;
+                                        ppu.dmg_startup_cycle = None;
+                                        ppu.mode_clock = 24 + phase as u16;
+                                        ppu.mode3_target_cycles = 400;
+                                        ppu.mode3_position_in_line = position;
+                                        ppu.mode3_lcd_x = if position < 0 { 0 } else { 160 };
+                                        ppu.mode3_render_delay = delay;
+                                        ppu.mode3_bg_fifo = fifo;
+                                        ppu.mode3_fetcher_state = phase;
+                                        ppu.mode3_pop_event_count = count;
+                                        ppu.mode3_last_match_x = 255;
+                                        for (x, size) in
+                                            ppu.dmg_line_obj_size_16.iter_mut().enumerate()
+                                        {
+                                            *size = x & 1 != 0;
+                                        }
+                                        ppu.write_reg(0xff40, 0x95);
+                                        ppu.stat_irq_dirty = false;
+                                    }
+                                    let dots = fast.dmg_nonvisible_run_limit().min(31);
+                                    if dots == 0 {
+                                        continue;
+                                    }
+                                    let mut fast_if = 0;
+                                    let mut reference_if = 0;
+                                    assert!(!fast.step(dots, &mut fast_if));
+                                    assert!(
+                                        !reference.step_inner::<false>(dots, &mut reference_if)
+                                    );
+                                    assert_eq!(fast_if, reference_if);
+                                    assert_eq!(fast.mode_clock, reference.mode_clock);
+                                    assert_fifo_timing_equal(&fast, &reference);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn obj_fetch_runs_preserve_each_partial_stage_and_bus_observation() {
+        for model in [
+            Model::Dmg(DmgRevision::RevC),
+            Model::Mgb,
+            Model::Cgb(CgbRevision::RevB),
+            Model::Agb,
+        ] {
+            for live_lcdc in [false, true] {
+                let mut tuning = PpuTuning::process_default().clone();
+                tuning.dmg_obj_size_tuning.fetch_use_live_lcdc = live_lcdc;
+                tuning.dmg_obj_size_tuning.fetch_t_bias = -11;
+                tuning.dmg_obj_size_tuning.fetch_hi_t_delta = 19;
+                tuning.dmg_obj_size_tuning.object_match_bias = 2;
+                let tuning: &'static PpuTuning = Box::leak(Box::new(tuning));
+                let mut fast = Ppu::new(model);
+                let mut reference = Ppu::new(model);
+                for lcdc in [0x93, 0x97] {
+                    for fine in 0..8 {
+                        for stage in MODE3_OBJ_FETCH_STAGE_ATTR_0..=MODE3_OBJ_FETCH_STAGE_HIGH {
+                            for requested in [1, 2, 5] {
+                                for phase in [0, 4, 6] {
+                                    for fifo in [0, 1, 8] {
+                                        for ppu in [&mut fast, &mut reference] {
+                                            ppu.tuning = tuning;
+                                            ppu.dmg_compat = model.is_cgb();
+                                            ppu.lcdc = lcdc;
+                                            ppu.scx = fine;
+                                            ppu.ly = 9;
+                                            ppu.begin_mode3_line();
+                                            ppu.dmg_begin_transfer_line();
+                                            ppu.mode = MODE_TRANSFER;
+                                            ppu.mode_clock = 48;
+                                            ppu.mode3_target_cycles = 300;
+                                            ppu.mode3_position_in_line = 8;
+                                            ppu.mode3_lcd_x = 9;
+                                            ppu.mode3_obj_fetch_active = true;
+                                            ppu.mode3_obj_fetch_stage =
+                                                MODE3_OBJ_FETCH_STAGE_ATTR_0;
+                                            ppu.mode3_obj_fetch_sprite_index = 1;
+                                            ppu.line_sprites[1] = Sprite {
+                                                x: 8,
+                                                y: 0,
+                                                oam_index: 1,
+                                                ..Sprite::default()
+                                            };
+                                            ppu.oam[6] = 3;
+                                            ppu.oam[7] = 0x40;
+                                            ppu.render_vram_blocked = false;
+                                            ppu.mgb_halted_dma_bus = None;
+                                            ppu.vram[0].fill(0x5a);
+                                            for _ in MODE3_OBJ_FETCH_STAGE_ATTR_0..stage {
+                                                ppu.mode_clock += 1;
+                                                ppu.mode3_latch_sprite_attributes::<false>();
+                                            }
+                                            // Observe between stages, then change each bus
+                                            // before resuming. Earlier reads must remain latched.
+                                            ppu.oam[6] = 5;
+                                            ppu.oam[7] = 0;
+                                            ppu.vram[0].fill(0xa5);
+                                            ppu.set_render_vram_blocked(fine == 7);
+                                            if model == Model::Mgb && fine == 3 {
+                                                ppu.mgb_halted_dma_bus = Some([9, 0x40]);
+                                            }
+                                            ppu.mode3_bg_fifo = fifo;
+                                            ppu.mode3_fetcher_state = phase;
+                                            ppu.mode3_render_delay = u16::from(fine);
+                                        }
+                                        let dots = fast.advance_dmg_obj_fetch_run(requested);
+                                        assert_eq!(dots, requested.min(u16::from(6 - stage)));
+                                        for _ in 0..dots {
+                                            reference.mode_clock += 1;
+                                            reference.mode3_latch_sprite_attributes::<false>();
+                                        }
+                                        assert_fifo_timing_equal(&fast, &reference);
+                                        assert_eq!(fast.line_sprites, reference.line_sprites);
+                                        assert_eq!(fast.mode_clock, reference.mode_clock);
+                                        assert_eq!(
+                                            fast.mode3_obj_fetch_event_count,
+                                            reference.mode3_obj_fetch_event_count
+                                        );
+                                        for (a, b) in fast
+                                            .mode3_obj_fetch_events
+                                            .iter()
+                                            .zip(&reference.mode3_obj_fetch_events)
+                                        {
+                                            assert_eq!((a.t, a.val), (b.t, b.val));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transfer_observation_deadlines_preserve_complete_state() {
+        fn assert_complete_state(fast: &Ppu, reference: &Ppu) {
+            let fast = serde_json::to_value(fast).unwrap();
+            let reference = serde_json::to_value(reference).unwrap();
+            for (field, expected) in reference.as_object().unwrap() {
+                assert!(fast.get(field) == Some(expected), "PPU field {field}");
+            }
+        }
+
+        for custom_tuning in [false, true] {
+            let mut tuning = PpuTuning::process_default().clone();
+            if custom_tuning {
+                tuning.dmg_obj_size_tuning.capture_use_position = true;
+                tuning.dmg_obj_size_tuning.capture_bias = -5;
+                tuning.dmg_obj_size_tuning.capture_phase_weight = 11;
+                tuning.dmg_obj_size_tuning.object_match_bias = 1;
+                tuning.dmg_mode3_scx_start_delay_bias = 2;
+            }
+            let tuning: &'static PpuTuning = Box::leak(Box::new(tuning));
+            for (model, compat) in [
+                (Model::Dmg(DmgRevision::Rev0), false),
+                (Model::Dmg(DmgRevision::RevC), false),
+                (Model::Mgb, false),
+                (Model::Sgb, false),
+                (Model::Sgb2, false),
+                (Model::Cgb(CgbRevision::Rev0), false),
+                (Model::Cgb(CgbRevision::RevB), false),
+                (Model::Cgb(CgbRevision::RevE), false),
+                (Model::Cgb(CgbRevision::RevB), true),
+                (Model::Cgb(CgbRevision::RevE), true),
+                (Model::Agb0, false),
+                (Model::Agb, true),
+            ] {
+                for line in [0, 1] {
+                    for fine_scroll in [0, 7] {
+                        let make_ppu = || {
+                            let mut ppu = Ppu::new(model);
+                            ppu.tuning = tuning;
+                            ppu.set_dmg_compat_mode(compat);
+                            ppu.write_reg(0xff40, 0);
+                            ppu.write_reg(0xff43, fine_scroll);
+                            ppu.write_reg(0xff4a, 0);
+                            ppu.write_reg(0xff4b, 79);
+                            ppu.write_reg(0xff41, 0x78);
+                            for (i, sprite) in ppu.oam.chunks_exact_mut(4).enumerate() {
+                                sprite.copy_from_slice(&[
+                                    16 + (i / 10) as u8 * 8,
+                                    [0, 8, 8, 24, 79, 80, 128, 160, 167, 255][i % 10],
+                                    i as u8,
+                                    (i as u8).wrapping_mul(37),
+                                ]);
+                            }
+                            for (i, byte) in ppu.vram.iter_mut().flatten().enumerate() {
+                                *byte = (i as u8).wrapping_mul(19).wrapping_add((i >> 8) as u8);
+                            }
+                            ppu.write_reg(0xff40, 0xf7);
+                            ppu.step_inner::<false>(454 * line + 84, &mut 0);
+                            if custom_tuning {
+                                ppu.write_reg(0xff40, 0xf3);
+                            }
+                            ppu
+                        };
+                        let mut fast = make_ppu();
+                        let mut reference = make_ppu();
+                        let mut fast_if = 0;
+                        let mut reference_if = 0;
+                        for observation in 0..8 {
+                            match observation {
+                                1 => {
+                                    let value = fast.ly.wrapping_add(1);
+                                    fast.write_lyc(value, custom_tuning, &mut fast_if);
+                                    reference.write_lyc(value, custom_tuning, &mut reference_if);
+                                    assert_eq!(fast.idle_dots(), 0);
+                                }
+                                2 => {
+                                    fast.write_stat(0x78, &mut fast_if);
+                                    reference.write_stat(0x78, &mut reference_if);
+                                }
+                                3 => {
+                                    fast.queue_lcdc_write(fast.lcdc ^ 4, 2);
+                                    reference.queue_lcdc_write(reference.lcdc ^ 4, 2);
+                                    fast.write_reg(0xff43, 3);
+                                    reference.write_reg(0xff43, 3);
+                                    assert_eq!(fast.idle_dots(), 0);
+                                }
+                                4 => {
+                                    fast.write_reg(0xff4b, 0);
+                                    reference.write_reg(0xff4b, 0);
+                                }
+                                5 => {
+                                    fast.oam_dma_current_dest = 1;
+                                    reference.oam_dma_current_dest = 1;
+                                    fast.oam[2] = 0x77;
+                                    reference.oam[2] = 0x77;
+                                }
+                                6 => {
+                                    fast.oam_dma_current_dest = 0xa1;
+                                    reference.oam_dma_current_dest = 0xa1;
+                                    if model.is_cgb() {
+                                        fast.set_dmg_compat_mode(!compat);
+                                        reference.set_dmg_compat_mode(!compat);
+                                    }
+                                }
+                                _ => {}
+                            }
+                            let cycles = if observation == 0 {
+                                let available = fast.idle_dots();
+                                assert_eq!(
+                                    available,
+                                    fast.mode3_target_cycles - fast.mode_clock - 2
+                                );
+                                assert!(available >= 8);
+                                available
+                            } else {
+                                [0, 4, 7, 128, 257, 7, 456, 511][observation]
+                            };
+                            let hblank = fast.step(cycles, &mut fast_if);
+                            let reference_hblank =
+                                reference.step_inner::<false>(cycles, &mut reference_if);
+                            assert_eq!(hblank, reference_hblank);
+                            assert_eq!(fast_if, reference_if);
+                            assert_complete_state(&fast, &reference);
+                            #[cfg(feature = "ppu-trace")]
+                            assert_eq!(
+                                fast.debug_lcd_enable_timer,
+                                reference.debug_lcd_enable_timer
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -9514,7 +10562,7 @@ mod mode3_timing_tests {
                 }
             }
             actual.render_cgb_bg_window_scanline_with_mode3_lcdc();
-            reference.render_bg_window_scanline_lcdc_fetcher();
+            reference.render_bg_window_scanline_lcdc_fetcher_dots();
             assert_eq!(
                 actual.framebuffer, reference.framebuffer,
                 "iteration={iteration}"
@@ -9927,6 +10975,123 @@ mod mode3_timing_tests {
     }
 
     #[test]
+    fn transfer_comparator_matches_dot_reference_with_pending_writes() {
+        for model in [
+            Model::Dmg(DmgRevision::Rev0),
+            Model::Dmg(DmgRevision::RevA),
+            Model::Dmg(DmgRevision::RevB),
+            Model::Dmg(DmgRevision::RevC),
+            Model::Mgb,
+            Model::Sgb,
+            Model::Sgb2,
+            Model::Cgb(CgbRevision::Rev0),
+            Model::Cgb(CgbRevision::RevA),
+            Model::Cgb(CgbRevision::RevB),
+            Model::Cgb(CgbRevision::RevC),
+            Model::Cgb(CgbRevision::RevD),
+            Model::Cgb(CgbRevision::RevE),
+            Model::Agb0,
+            Model::Agb,
+        ] {
+            for (compat, double_speed) in
+                [(false, false), (false, true), (true, false), (true, true)]
+            {
+                if !model.is_cgb() && (compat || double_speed) {
+                    continue;
+                }
+                let make_ppu = || {
+                    let mut ppu = Ppu::new(model);
+                    ppu.set_dmg_compat_mode(compat);
+                    ppu.write_reg(0xff40, 0);
+                    ppu.write_reg(0xff40, 0x91);
+                    // Start on the first ordinary line, after LCD-enable timing.
+                    ppu.step_inner::<false>(454 + 80, &mut 0);
+                    assert_eq!((ppu.ly, ppu.mode, ppu.mode_clock), (1, MODE_TRANSFER, 0));
+                    // A harmless OBJ-enable event forces transfer onto the dot
+                    // fallback, where the comparator optimization is exercised.
+                    ppu.write_reg(0xff40, 0x93);
+                    ppu.write_reg(0xff45, 255);
+                    ppu.write_reg(0xff41, 0x40);
+                    ppu
+                };
+                let mut fast = make_ppu();
+                let mut reference = make_ppu();
+                let mut fast_if = 0;
+                let mut reference_if = 0;
+                fast.write_lyc(1, double_speed, &mut fast_if);
+                reference.write_lyc(1, double_speed, &mut reference_if);
+                let write_delay = if model.is_cgb() {
+                    if double_speed { 2 } else { 4 }
+                } else {
+                    0
+                };
+                // Check the externally observable write latency explicitly, so
+                // this test is not only a comparison of shared implementation.
+                assert_eq!(fast.read_stat(double_speed) & 4 != 0, write_delay == 0);
+                assert_eq!(fast_if & 2 != 0, write_delay == 0);
+                for dot in 1..=4 {
+                    fast.step(1, &mut fast_if);
+                    reference.step_inner::<false>(1, &mut reference_if);
+                    assert_eq!(fast.read_stat(double_speed) & 4 != 0, dot >= write_delay);
+                    assert_eq!(fast_if & 2 != 0, dot >= write_delay);
+                    assert_eq!(fast_if, reference_if);
+                }
+                // Cross transfer/HBlank and HBlank/OAM with writes on adjacent
+                // dots, including overlapping queued writes and STAT changes.
+                for dot in 0..456 {
+                    fast_if = 0;
+                    reference_if = 0;
+                    if matches!(dot, 0..=8 | 163..=177 | 366..=378) {
+                        let lyc = match dot % 3 {
+                            0 => fast.ly,
+                            1 => fast.ly.wrapping_add(1),
+                            _ => 255,
+                        };
+                        fast.write_lyc(lyc, double_speed, &mut fast_if);
+                        reference.write_lyc(lyc, double_speed, &mut reference_if);
+                    }
+                    if matches!(dot, 16..=19 | 168..=171 | 368..=371) {
+                        let stat = if dot & 1 == 0 { 0 } else { 0x78 };
+                        fast.write_stat(stat, &mut fast_if);
+                        reference.write_stat(stat, &mut reference_if);
+                    }
+                    let fast_hblank = fast.step(1, &mut fast_if);
+                    let reference_hblank = reference.step_inner::<false>(1, &mut reference_if);
+                    assert_eq!(fast_hblank, reference_hblank);
+                    assert_eq!(fast_if, reference_if, "{model:?}, dot={dot}");
+                    assert_eq!(
+                        (
+                            fast.mode,
+                            fast.mode_clock,
+                            fast.ly,
+                            fast.ly_for_comparison,
+                            fast.lyc,
+                            fast.lyc_eq_ly,
+                            fast.stat_irq_line,
+                            fast.stat_irq_dirty,
+                            fast.pending_reg_write_count,
+                            fast.read_stat(double_speed),
+                        ),
+                        (
+                            reference.mode,
+                            reference.mode_clock,
+                            reference.ly,
+                            reference.ly_for_comparison,
+                            reference.lyc,
+                            reference.lyc_eq_ly,
+                            reference.stat_irq_line,
+                            reference.stat_irq_dirty,
+                            reference.pending_reg_write_count,
+                            reference.read_stat(double_speed),
+                        ),
+                        "{model:?}, compat={compat}, double_speed={double_speed}, dot={dot}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn line_153_zero_comparison_uses_model_timing() {
         for model in [Model::Dmg(DmgRevision::RevC), Model::Cgb(CgbRevision::RevE)] {
             for batched in [false, true] {
@@ -10051,7 +11216,7 @@ mod mode3_timing_tests {
                             ppu.framebuffer[row..row + SCREEN_WIDTH].fill(0xdeadbeef);
                         }
                         actual.render_cgb_bg_window_scanline_with_mode3_lcdc();
-                        expected.render_bg_window_scanline_lcdc_fetcher();
+                        expected.render_bg_window_scanline_lcdc_fetcher_dots();
                         let row = usize::from(actual.ly) * SCREEN_WIDTH;
                         assert_eq!(
                             actual.framebuffer[row..row + SCREEN_WIDTH],
@@ -10066,6 +11231,189 @@ mod mode3_timing_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn cgb_raster_transactions_match_dot_fetcher() {
+        let mut actual = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        let mut expected = Ppu::new(Model::Cgb(CgbRevision::RevE));
+        let mut random = 0x9a367fe1u32;
+        for byte in actual.vram.iter_mut().flatten() {
+            random ^= random << 13;
+            random ^= random >> 17;
+            random ^= random << 5;
+            *byte = random as u8;
+        }
+        expected.vram = actual.vram;
+        for ppu in [&mut actual, &mut expected] {
+            for (i, color) in ppu.cgb_bg_color_table.iter_mut().enumerate() {
+                *color = (i as u32 + 1) * 0x020103;
+            }
+        }
+        // Sweep every event dot through both bitplane reads and pixel output,
+        // including duplicate-time edges, map/OBJ changes, SCX tile-address
+        // changes, offscreen windows, flips, both banks and blocked VRAM.
+        for scx in 0..8u8 {
+            for sprites in 0..3 {
+                for first_event in 0..224u16 {
+                    for pattern in 0..8 {
+                        for ppu in [&mut actual, &mut expected] {
+                            let lcdc = if matches!(pattern, 3 | 4 | 6 | 7) {
+                                0xb3
+                            } else {
+                                0x93
+                            };
+                            ppu.lcdc = lcdc;
+                            ppu.mode3_lcdc_base = lcdc;
+                            ppu.mode3_lcdc_event_count = if pattern == 2 { 64 } else { 4 };
+                            for (i, event) in ppu.mode3_lcdc_events[..ppu.mode3_lcdc_event_count]
+                                .iter_mut()
+                                .enumerate()
+                            {
+                                event.t = first_event + i as u16 * if pattern == 1 { 0 } else { 3 };
+                                event.val = lcdc
+                                    ^ if pattern >= 4 {
+                                        [0x30, 0x48, 0x7a, 0][i & 3]
+                                    } else {
+                                        [0x10, 0x08, 0x1a, 0][i & 3]
+                                    };
+                            }
+                            ppu.scx = scx;
+                            ppu.mode3_scx_base = scx;
+                            ppu.mode3_scx_event_count = 2;
+                            ppu.mode3_scx_events[0] = Mode3RegEvent {
+                                t: first_event,
+                                val: scx.wrapping_add(117),
+                            };
+                            ppu.mode3_scx_events[1] = Mode3RegEvent {
+                                t: first_event + 5,
+                                val: 255 - scx,
+                            };
+                            ppu.scy = first_event as u8;
+                            ppu.ly = scx * 17;
+                            ppu.wx = if pattern >= 4 {
+                                [0, 1, 6, 7, 8, 15, 87, 166, 167, 255]
+                                    [usize::from(first_event) % 10]
+                            } else if pattern == 3 {
+                                255
+                            } else {
+                                0
+                            };
+                            ppu.wy = if pattern == 7 { ppu.ly + 1 } else { 0 };
+                            ppu.win_line_counter = 37;
+                            ppu.dmg_window_triggered = false;
+                            ppu.sprite_count = sprites;
+                            ppu.line_sprites[0].x = if sprites == 1 { -4 } else { 40 };
+                            ppu.line_sprites[1].x = 100;
+                            ppu.render_vram_blocked = first_event % 31 == 0;
+                            ppu.mode3_target_cycles = 172 + first_event;
+                            ppu.line_priority.fill(true);
+                            ppu.line_color_zero.fill(false);
+                            ppu.cgb_line_obj_enabled.fill(false);
+                            let row = usize::from(ppu.ly) * SCREEN_WIDTH;
+                            ppu.framebuffer[row..row + SCREEN_WIDTH].fill(0xdeadbeef);
+                        }
+                        actual.render_bg_window_scanline_lcdc_fetcher();
+                        expected.render_bg_window_scanline_lcdc_fetcher_dots();
+                        let row = usize::from(actual.ly) * SCREEN_WIDTH;
+                        assert_eq!(
+                            actual.framebuffer[row..row + SCREEN_WIDTH],
+                            expected.framebuffer[row..row + SCREEN_WIDTH],
+                            "SCX={scx} sprites={sprites} event={first_event} pattern={pattern}"
+                        );
+                        assert_eq!(actual.line_priority, expected.line_priority);
+                        assert_eq!(actual.line_color_zero, expected.line_color_zero);
+                        assert_eq!(actual.cgb_line_obj_enabled, expected.cgb_line_obj_enabled);
+                        assert_eq!(actual.win_line_counter, expected.win_line_counter);
+                        assert_eq!(actual.dmg_window_triggered, expected.dmg_window_triggered);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn raster_cache_state_restores_and_continues_exactly() {
+        // Match the save-state decoder's stack: PPU deserialization constructs
+        // its fixed framebuffer and cache arrays by value before boxing them.
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let model = Model::Cgb(CgbRevision::RevE);
+                let mut initial = Ppu::new(model);
+                initial.lcdc = 0x93;
+                initial.ly = 12;
+                initial.scx = 3;
+                initial.scy = 29;
+                initial.begin_mode3_line();
+                initial.sprite_count = 1;
+                initial.line_sprites[0].x = 0;
+                initial.mode3_lcdc_event_count = 4;
+                for (event, (t, val)) in initial.mode3_lcdc_events.iter_mut().zip([
+                    (7, 0x83),
+                    (9, 0x9b),
+                    (23, 0x81),
+                    (97, 0x93),
+                ]) {
+                    *event = Mode3LcdcEvent {
+                        t,
+                        val,
+                        ..Mode3LcdcEvent::default()
+                    };
+                }
+                for (i, byte) in initial.vram.iter_mut().flatten().enumerate() {
+                    *byte = (i as u8).wrapping_mul(19).wrapping_add((i >> 8) as u8);
+                }
+                for (i, color) in initial.cgb_bg_color_table.iter_mut().enumerate() {
+                    *color = (i as u32 + 1) * 0x020103;
+                }
+                initial.render_bg_window_scanline_lcdc_fetcher();
+                assert!(initial.tile_row_cache.iter().any(|row| row.key != u32::MAX));
+                let bytes = serde_json::to_vec(&initial).unwrap();
+                let mut restored: Box<Ppu> = serde_json::from_slice(&bytes).unwrap();
+                let mut reference: Box<Ppu> = serde_json::from_slice(&bytes).unwrap();
+                assert!(restored.validate_state(model));
+                assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+
+                for observation in 0..8 {
+                    for ppu in [&mut restored, &mut reference] {
+                        match observation {
+                            1 => ppu.vram[0][..0x1800].fill(0x69),
+                            2 => {
+                                ppu.write_reg(0xff68, 0x80);
+                                ppu.write_reg(0xff69, 0xff);
+                                ppu.write_reg(0xff69, 0x1f);
+                            }
+                            3 => ppu.vram[1][0x1800..].fill(0xe9),
+                            4 => ppu.set_render_vram_blocked(true),
+                            5 => ppu.set_render_vram_blocked(false),
+                            6 => {
+                                ppu.set_dmg_compat_mode(true);
+                                ppu.dmg_line_bgp_base = 0xe4;
+                            }
+                            7 => ppu.set_dmg_compat_mode(false),
+                            _ => {}
+                        }
+                    }
+                    restored.render_bg_window_scanline_lcdc_fetcher();
+                    reference.render_bg_window_scanline_lcdc_fetcher_dots();
+                    let actual = serde_json::to_value(&restored).unwrap();
+                    let expected = serde_json::to_value(&reference).unwrap();
+                    for (field, value) in expected.as_object().unwrap() {
+                        // Cache entries describe host work already performed;
+                        // every emulated/observable field must remain exact.
+                        if field != "tile_row_cache" {
+                            assert!(
+                                actual.get(field) == Some(value),
+                                "observation={observation} field={field}"
+                            );
+                        }
+                    }
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]
