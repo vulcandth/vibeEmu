@@ -309,7 +309,7 @@ impl Cpu {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn tick(&mut self, mmu: &mut crate::mmu::Mmu, m_cycles: u8) {
         self.tick_clocks(mmu, CYCLES_PER_M_CYCLE * u16::from(m_cycles));
     }
@@ -324,7 +324,24 @@ impl Cpu {
             self.clock_batch.pending += 4;
             return;
         }
+        self.tick_clock_boundary(mmu, cpu_cycles);
+    }
+
+    #[inline(never)]
+    fn tick_clock_boundary(&mut self, mmu: &mut crate::mmu::Mmu, cpu_cycles: u16) {
         self.synchronize_clocks(mmu);
+        if cpu_cycles == 4 && self.clock_batch.active && !self.halted && !self.stopped {
+            // An observation invalidates a deadline, but need not require a
+            // device event. Re-certify after the access, before advancing the
+            // next ordinary M-cycle. Multi-cycle ticks retain their indivisible
+            // APU pipeline ordering through tick_devices below.
+            let remaining = mmu.refresh_cpu_batch_idle_cycles(self.double_speed);
+            if remaining >= 4 {
+                self.clock_batch.remaining = remaining - 4;
+                self.clock_batch.pending = 4;
+                return;
+            }
+        }
         self.tick_devices(mmu, cpu_cycles);
         if self.clock_batch.active && !self.halted && !self.stopped {
             self.clock_batch.remaining = mmu.cpu_batch_idle_cycles(self.double_speed);
@@ -788,7 +805,7 @@ impl Cpu {
             if self.halted {
                 self.step_with_halt_batch(mmu, (target - self.cycles) as u16);
             } else {
-                self.step(mmu);
+                self.step_instruction(mmu);
             }
             if mmu.ppu.frame_ready()
                 || mmu.serial.transfer_active()
@@ -851,6 +868,14 @@ impl Cpu {
 
     /// Execute one instruction and update internal state accordingly.
     pub fn step(&mut self, mmu: &mut crate::mmu::Mmu) {
+        self.step_instruction(mmu);
+    }
+
+    // Keep the bounded runner's decoder in its loop, allowing clock-deadline
+    // and register state to remain visible across instruction boundaries.
+    // The public single-step entry uses the same decoder and timing rules.
+    #[inline(always)]
+    fn step_instruction(&mut self, mmu: &mut crate::mmu::Mmu) {
         if self.faulted {
             // Keep hardware clocks advancing after a CPU fault so callers that
             // wait on PPU/timer progress do not spin forever. Frontends can

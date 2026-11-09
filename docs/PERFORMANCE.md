@@ -1,5 +1,8 @@
 # Core performance and the 3DS target
 
+The [November clock-interval pass](#november-2026-renewing-clock-intervals-after-bus-observations)
+reduces dispatch after bus observations and reaches the provisional host
+instruction-budget gate. Work is paused for later hardware validation.
 The [November PPU capture/window pass](#november-2026-ppu-size-captures-and-window-transactions)
 removes redundant capture work and extends tile transactions through CGB
 window restarts. The [November memory-dispatch pass](#november-2026-memory-dispatch-and-portable-save-buffers)
@@ -22,6 +25,99 @@ The subsequent [implementation pass](#arm-setup-caching-ppu-cartridge-and-apu)
 removes those costs and the square/wave edge divisions from the hot ARM paths.
 The [FIFO/noise pass and branch comparison](#fifo-and-noise-optimizations-branch-comparison-with-main)
 cover the complete performance branch against `main`.
+
+## November 2026: renewing clock intervals after bus observations
+
+Continuation baseline: `885cf94`. Bus observations previously invalidated a
+safe PPU interval even when the post-access state allowed another interval.
+The MMU now recomputes that deadline only when no PPU dots are queued. CPU
+clock boundaries can then queue the next ordinary M-cycle without dispatching
+every peripheral. Existing timer limits, DMA/serial exclusions, delayed PPU
+writes and IRQ/mode boundaries still constrain the interval. Multi-M-cycle
+ticks keep their original APU ordering. The CPU decoder is also embedded in
+the bounded runner, with ordinary ticks inlined and boundary handling kept
+out of line. Single stepping uses the same decoder. No save schema changed.
+
+Exploratory five-pair comparisons rejected forced MMU-read inlining: it
+regressed Polished by about 4% and gave up most raster gains. Retaining CPU
+tick inlining and the resident decoder helped CPU stress; renewing PPU and
+CPU intervals supplied the larger raster/window instruction reductions.
+
+Final comparison uses the same compiler, dependencies, environment and
+release policy as the preceding pass, with source/harness equality checked.
+Seven alternating pairs, 1,800 measured / 300 warmup frames for Polished and
+600/120 elsewhere, 48 kHz audio except silent, no simultaneous builds/tests.
+All 112 timing outputs and 16 counter outputs match exact model, dot, video,
+audio, sample and PC signatures. Counters use 600/120 for every workload.
+
+| Workload | Baseline | Candidate | Speedup | Fewer instructions | Remaining 3DS factor |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| polished | 0.875429 s | 0.803402 s | 1.090× | 1.50% | 0.93× |
+| silent | 0.668755 s | 0.640859 s | 1.044× | 1.93% | 0.72× |
+| dmg | 0.302191 s | 0.300274 s | 1.006× | -1.51% | 0.97× |
+| cpu | 0.343741 s | 0.297084 s | 1.157× | 11.28% | 0.97× |
+| cgb | 0.110430 s | 0.113214 s | 0.975× | -2.96% | 0.44× |
+| wave | 0.163904 s | 0.134016 s | 1.223× | 13.24% | 0.53× |
+| hell | 0.348214 s | 0.308221 s | 1.130× | 11.88% | 1.05× |
+| window | 0.361725 s | 0.315888 s | 1.145× | 15.25% | 1.07× |
+
+Original seven-case geometric-mean throughput improves **8.63%**; the
+synthetic window case is excluded. CGB acid2 takes 2.52% longer and executes
+2.96% more instructions; DMG acid2 executes 1.51% more instructions with
+nearly unchanged elapsed time. Candidate instruction counts, in table order:
+3,217,118,667 / 2,495,014,712 / 3,357,366,511 / 3,358,328,530 /
+1,518,226,364 / 1,842,526,360 / 3,609,467,049 / 3,685,434,508.
+
+The instruction-budget model now places all eight cases below the provisional
+1.1× remaining-speedup gate. The hardest cases are raster (1.05×) and
+synthetic window (1.07×). These are uncalibrated host-instruction estimates,
+not measured console speeds. The core builds successfully for ARMv6K with
+filesystem storage disabled, but has not been linked or run on hardware.
+
+The target assembly also exposes a material code-size tradeoff. The bounded
+runner grows from 263 to 8,221 static instruction sites because it now
+contains the decoder; single-step grows from 5,264 to 6,937 sites. The new
+boundary helper has 131 sites. Static sites do not measure executed
+instructions, but this larger instruction footprint could hurt ARM11 cache
+behavior. Actual target timing must validate the host-oriented layout before
+claiming console readiness.
+
+The same screenshot-verified indoor Polished movement sequence from the
+preceding pass uses 6,600 setup frames and 3,600 measured frames. Seven
+alternating pairs give 2.039695 s → 1.979765 s (**1.030×**), with all 14
+signatures exact. Matched 3,600-frame minus 1-frame counters after the same
+setup reduce the 3,599-frame instruction delta from 18,464,861,676 to
+17,633,204,397 (4.50%). That is 0.2926 billion instructions per emulated
+second, or a **1.02×** planning factor. Both prefix and long-run signatures
+match. This remains one indoor scene, not general gameplay coverage.
+
+The new differential regression compares queued execution against ordinary
+single stepping across DMG/MGB/CGB revisions and both CGB speeds. It mixes
+LCDC/STAT/LY/VRAM observations, LYC delays, interrupts, LCD restart, OAM/VRAM
+DMA and timer writes, checking full observations and every audio sample.
+
+Validation: `cargo fmt --all`, strict workspace/all-target Clippy, `cargo
+test` and `cargo test --release` pass. Both full suites report **1,593 passed,
+0 failed and 41 existing ignored tests**, counting the nested tuning test.
+The all-features core check, minimal-feature library/buffer tests and ARMv6K
+library/assembly build also pass. Gambatte remains opt-in and was not run.
+Full logs are `test-debug.log`, `test-release.log`, `test-minimal.log`,
+`clippy.log` and `all-features.log` under `/tmp/vibe-perf-next/`.
+
+The user requested stopping at this checkpoint because New 3DS hardware is
+currently unavailable. Further optimization and console work are deferred.
+The first hardware pass should compare this CPU layout with the smaller
+previous decoder and measure active gameplay with exact audio, including
+frontend costs. The planning gate is met for this limited corpus; hardware
+readiness is not established.
+
+Artifacts (temporary, not committed): `/tmp/vibe-perf-next/final/` contains
+all alternating timings, counter CSVs, signatures and binary hashes;
+`recertified/run-robssxl7/` contains the isolated candidate source/build and
+compiler metadata; `play-timing.log`, `play-counts.json` and
+`play-provenance.json` hold gameplay evidence. `arm-recertified.s`,
+`arm-static.json` and `arm-build.log` record the target build/code-size audit.
+The prior candidate binary is `/tmp/vibe-perf-november/ppu-final/run-k4y41evc/`.
 
 ## November 2026: PPU size captures and window transactions
 

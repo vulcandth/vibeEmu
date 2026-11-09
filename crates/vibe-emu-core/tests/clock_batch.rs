@@ -239,6 +239,90 @@ fn opcode_and_operand_fetches_synchronize_device_boundaries() {
 }
 
 #[test]
+fn ppu_deadlines_after_bus_access_preserve_raster_irq_and_dma_order() {
+    // Alternate LCDC maps, observe STAT/LY/VRAM, and change LYC while clocks
+    // are queued. The ordinary instruction runner is the independent timing
+    // reference; it never enables the MMU's PPU queue.
+    let program = [
+        0x3e,
+        0xf3,
+        0xe0,
+        0x40, // LCDC: window/map enabled
+        0xf0,
+        0x41,
+        0xea,
+        0x00,
+        0xc0, // STAT -> WRAM
+        0x3e,
+        0xb3,
+        0xe0,
+        0x40, // Switch window map
+        0xf0,
+        0x44,
+        0xea,
+        0x01,
+        0xc0, // LY -> WRAM
+        0x3e,
+        0,
+        0xe0,
+        0x45, // Delayed CGB LYC write
+        0x3e,
+        0x78,
+        0xe0,
+        0x41, // Enable every STAT source
+        0xfa,
+        0x00,
+        0x80,
+        0xea,
+        0x02,
+        0xc0, // Observe VRAM ownership
+        0xc3,
+        ENTRY as u8,
+        (ENTRY >> 8) as u8,
+    ];
+    for (model, double_speed) in models() {
+        let mut actual = machine(model, double_speed, &program);
+        let mut expected = machine(model, double_speed, &program);
+        for gb in [&mut actual, &mut expected] {
+            gb.cpu.ime = true;
+            gb.mmu.ie_reg = 0x1f;
+            gb.mmu.write_byte(0xff4a, 0);
+            gb.mmu.write_byte(0xff4b, 47);
+        }
+        let audio = actual.mmu.apu.enable_output(48_000);
+        let reference_audio = expected.mmu.apu.enable_output(48_000);
+        for iteration in 0..384 {
+            if iteration % 37 == 0 {
+                let (address, value) = [
+                    (0xff40, 0),
+                    (0xff40, 0xf3),
+                    (0xff45, 153),
+                    (0xff46, 0xc0),
+                    (0xff07, 5),
+                    (0xff05, 0xff),
+                    (0xff55, 0x81),
+                    (0xff55, 0),
+                ][iteration / 37 % 8];
+                actual.mmu.write_byte(address, value);
+                expected.mmu.write_byte(address, value);
+            }
+            compare_run(
+                &mut actual,
+                &mut expected,
+                [4, 17, 128, 256, 1024, 2048][iteration % 6],
+            );
+            drain_equal(&audio, &reference_audio);
+            if iteration % 31 == 0 {
+                compare_saved_observations(&actual, &expected);
+            }
+            actual.mmu.ppu.clear_frame_flag();
+            expected.mmu.ppu.clear_frame_flag();
+        }
+        compare_saved_observations(&actual, &expected);
+    }
+}
+
+#[test]
 fn queued_clocks_precede_oam_incrementer_and_stack_bus_effects() {
     for (model, double_speed) in models() {
         let mut corruptions = 0;

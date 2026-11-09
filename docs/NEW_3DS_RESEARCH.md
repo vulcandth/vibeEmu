@@ -1,5 +1,40 @@
 # New 3DS performance research
 
+## November 2026 checkpoint: awaiting hardware
+
+The latest [clock-interval pass](PERFORMANCE.md#november-2026-renewing-clock-intervals-after-bus-observations)
+continues from `885cf94`. It renews safe PPU/CPU intervals after bus
+observations and embeds the decoder in the bounded runner. Seven alternating
+pairs improve original-corpus geometric-mean throughput by **8.63%**, with
+**1.157× CPU**, **1.130× raster** and **1.145× synthetic window** throughput.
+CGB acid2 regresses by 2.52%; all output signatures match. The screenshot-
+verified indoor gameplay sequence improves by **1.030×**, with exact outputs.
+
+All eight cases now fall below the provisional **1.1×** remaining-speedup
+planning gate. The largest factors are raster **1.05×** and synthetic window
+**1.07×**; the indoor gameplay factor is **1.02×**. These use uncalibrated host
+instruction ratios and CPI assumptions, not console measurements. The corpus
+includes only one indoor gameplay scene and does not establish general game
+performance.
+
+The core again compiles for ARMv6K with filesystem storage disabled. Inlining
+expands the bounded runner from 263 to 8,221 static instruction sites and
+single-step from 5,264 to 6,937; the boundary helper has 131 sites. That code
+footprint may cost more on ARM11 than on the desktop. Hardware validation
+should compare this layout against the smaller decoder as well as checking
+frontend/audio costs. No console executable has been linked or run.
+
+Both full debug and release suites pass **1,593 tests** each (including the
+nested tuning test), with zero failures and 41 existing ignored tests.
+Formatting, strict workspace/all-target Clippy, all-features checking and
+minimal-feature library/buffer tests also pass. Gambatte was not run.
+
+**Work is paused at the user's request:** hardware is currently unavailable,
+and the host estimate is close enough to stop here. Keep the measured
+candidate for later hardware comparison; no further optimization or target
+frontend work is planned until resumed. The following sections are historical
+results for their named revisions, not the current remaining-speedup factors.
+
 ## November 2026 continuation
 
 The newest [PPU capture/window pass](PERFORMANCE.md#november-2026-ppu-size-captures-and-window-transactions)

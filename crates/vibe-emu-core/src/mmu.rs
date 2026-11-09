@@ -286,6 +286,25 @@ impl Mmu {
             )
     }
 
+    /// Re-certify the current post-access PPU state before choosing a new CPU
+    /// interval. Pending timer effects and bus owners retain their old limits.
+    pub(crate) fn refresh_cpu_batch_idle_cycles(&mut self, double_speed: bool) -> u16 {
+        debug_assert!(self.peripheral_batch.active && self.defer_ppu_ticks);
+        self.refresh_ppu_deadline();
+        self.cpu_batch_idle_cycles(double_speed)
+    }
+
+    #[inline]
+    fn refresh_ppu_deadline(&mut self) {
+        // A bus observation catches the PPU up and invalidates its previous
+        // deadline. Re-certify the post-access state before forcing a clock
+        // through the PPU. Never query a stale PPU with queued dots; delayed
+        // writes, IRQ edges, DMA and mode boundaries still limit idle_dots().
+        if self.ppu_idle_remaining == 0 && self.pending_ppu_dots == 0 {
+            self.ppu_idle_remaining = self.ppu.idle_dots();
+        }
+    }
+
     /// Transfer a certified sequence of ordinary M-cycles to the device queues
     /// once. No IRQ, serial edge or DMA activity can occur in this interval.
     pub(crate) fn queue_idle_cpu_cycles(&mut self, cycles: u16, double_speed: bool) {
@@ -404,6 +423,7 @@ impl Mmu {
         if !self.defer_ppu_ticks {
             return self.ppu.step(dots, &mut self.if_reg);
         }
+        self.refresh_ppu_deadline();
         if dots <= self.ppu_idle_remaining {
             self.ppu_idle_remaining -= dots;
             self.pending_ppu_dots += dots;
