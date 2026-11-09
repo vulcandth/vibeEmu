@@ -2021,6 +2021,14 @@ mod inspection_tests {
                         mmu.write_byte(0x0000, 0x0a);
                         mmu.write_byte(0x2000, 3);
                         mmu.write_byte(0xff70, 5);
+                        for (bank, bytes) in mmu.wram.iter_mut().enumerate() {
+                            for (offset, byte) in bytes.iter_mut().enumerate() {
+                                *byte = (offset as u8).wrapping_mul(29) ^ (bank as u8 * 17);
+                            }
+                        }
+                        for (offset, byte) in mmu.hram.iter_mut().enumerate() {
+                            *byte = (offset as u8).wrapping_mul(11);
+                        }
                         if boot {
                             mmu.load_boot_rom(vec![0xa5; 0x900]);
                         }

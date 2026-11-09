@@ -2,6 +2,40 @@
 
 ## November 2026 continuation
 
+The newest [PPU capture/window pass](PERFORMANCE.md#november-2026-ppu-size-captures-and-window-transactions)
+continues from `c43704c`. It skips redundant OBJ-size captures and extends
+native CGB tile transactions through window restarts while preserving exact
+fetch timing and output. Seven alternating pairs show 1.079× raster
+throughput and 1.496× on a new synthetic window stress ROM. The original
+seven-case mean improves 1.16%; Polished regresses by 0.74% with audio and
+1.81% silently. All video/audio/timing signatures match, and the expanded
+independent PPU references pass. Both full debug and release suites pass
+1,592 tests (including the nested tuning test), with no failures and 41
+existing ignored tests. Formatting, strict workspace Clippy, and feature
+configuration checks pass.
+
+A fresh direct comparison of the complete continuation against `b07b777`
+measures 11.81% geometric-mean throughput improvement across the original
+seven workloads, with 1.303× CPU stress and 1.229× raster stress. The added
+synthetic window case improves by 1.615× and is excluded from that mean.
+Every paired signature matches. These are measured endpoint comparisons,
+not products of earlier speedups; see the performance report for medians.
+
+Current instruction-budget factors are about **1.10× for CPU stress,
+1.19× for raster stress, and 1.26× for the synthetic window stress**. These
+remain uncalibrated estimates; neither the provisional gate nor console
+readiness has been achieved. The final PPU candidate compiles to ARMv6K with
+filesystem storage disabled (`arm-ppu-build.log`). It has not been linked
+or run as a console application.
+
+A deterministic, screenshot-verified Polished room-movement scene also
+matches exact outputs across revisions. Seven pairs show 1.010× throughput
+against `c43704c`; a matched-prefix counter subtraction gives about 0.3064
+billion instructions per emulated second, or **1.07×** in the planning model.
+This adds one indoor gameplay scene to the intro evidence; it does not cover
+battles or general gameplay. The methodology and input sequence are recorded
+in the performance report.
+
 The [CPU layout pass](PERFORMANCE.md#november-2026-cpu-clock-code-layout)
 continues from `b07b777`. Seven alternating pairs retain identical output
 signatures, with 4.63% geometric-mean host throughput improvement. CPU stress

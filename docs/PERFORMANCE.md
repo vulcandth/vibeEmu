@@ -1,6 +1,8 @@
 # Core performance and the 3DS target
 
-The [November memory-dispatch pass](#november-2026-memory-dispatch-and-portable-save-buffers)
+The [November PPU capture/window pass](#november-2026-ppu-size-captures-and-window-transactions)
+removes redundant capture work and extends tile transactions through CGB
+window restarts. The [November memory-dispatch pass](#november-2026-memory-dispatch-and-portable-save-buffers)
 reduces common CPU memory-access work and restores ARM core builds.
 The [November CPU layout experiment](#november-2026-cpu-clock-code-layout)
 passed full validation. The [October 2026 architectural pass](#october-2026-shared-cpu-deadlines-tile-transactions-and-exact-audio)
@@ -20,6 +22,135 @@ The subsequent [implementation pass](#arm-setup-caching-ppu-cartridge-and-apu)
 removes those costs and the square/wave edge divisions from the hot ARM paths.
 The [FIFO/noise pass and branch comparison](#fifo-and-noise-optimizations-branch-comparison-with-main)
 cover the complete performance branch against `main`.
+
+## November 2026: PPU size captures and window transactions
+
+Continuation baseline: `c43704c`. The line initializer already supplies every
+OBJ-size capture until LCDC.2 changes. A derived stability flag now avoids
+repeating those captures after unrelated LCDC writes, while actual size
+changes retain both the scalar and batched capture behavior. Stationary
+captures update at most two phase-dependent positions directly. The flag is
+omitted from saves and defaults to conservative recapture after restoration.
+
+Native CGB window raster rendering now uses timed tile transactions too.
+The renderer computes the first eligible WX/LCDC.5 restart from the existing
+FIFO output timeline, truncates background output at that dot, and restarts
+window name/bitplane reads at their original times. It retains startup and
+left-edge OBJ delays, fine-scroll discard, palette/priority output, window
+line counting, and exact TILE_SEL glitches. Background-only and window
+variants are specialized separately. DMG/compatibility rendering keeps its
+dot path; the original native dot renderer remains an independent reference.
+No hardware timing or save format changed. The existing derived tile-cache
+contents can differ, as in the preceding tile-transaction pass.
+
+The five-pair exploratory capture-only variant improved raster throughput by
+1.090×. Splitting the PPU's event processing into a separate non-inlined
+function reduced that gain to 1.049× and was rejected. A general window
+transaction implementation improved the synthetic window workload but
+slightly regressed background workloads; separate window specializations
+were retained for the final comparison.
+
+Same compiler, pinned dependencies, host settings and workload policy as the
+memory-dispatch pass. Seven alternating pairs, no concurrent builds/tests,
+1,800/300 frames for Polished and 600/120 elsewhere, with 48 kHz audio except
+silent. Source equality and compiler/environment/lockfile identity were
+checked before timing. All **112 timing outputs and 16 counter outputs**
+retain exact model/dots/video/audio/sample/PC signatures.
+
+| Workload | Baseline | Candidate | Speedup | Fewer instructions | Remaining 3DS factor |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| polished | 0.848248 s | 0.854506 s | 0.993× | -0.06% | 0.95× |
+| silent | 0.654109 s | 0.665920 s | 0.982× | -0.07% | 0.74× |
+| dmg | 0.288006 s | 0.287408 s | 1.002× | 0.36% | 0.96× |
+| cpu | 0.328612 s | 0.327761 s | 1.003× | -0.04% | 1.10× |
+| cgb | 0.107003 s | 0.106623 s | 1.004× | -0.17% | 0.43× |
+| wave | 0.166218 s | 0.162713 s | 1.022× | -0.07% | 0.62× |
+| hell | 0.370494 s | 0.343260 s | 1.079× | 7.28% | 1.19× |
+| window (synthetic) | 0.537405 s | 0.359179 s | 1.496× | 34.77% | 1.26× |
+
+The original seven-case geometric-mean throughput improves **1.16%**;
+the new synthetic case is excluded from that mean. Polished regresses by
+0.74% with audio and 1.81% without it. Candidate process instruction counts
+are 3,266,140,511 / 2,544,037,019 / 3,307,286,983 / 3,785,162,955 /
+1,474,649,682 / 2,123,807,009 / 4,095,913,102 / 4,348,578,665 in table order.
+The 3DS factors use the same uncalibrated assumptions, not measured ARM
+execution. Raster stress still exceeds the provisional 1.1× gate; the
+synthetic window stress also exceeds it despite its larger improvement.
+The broader goal remains unfinished.
+
+A separate direct comparison measures the whole November continuation against
+`b07b777`, rather than multiplying the individual pass medians. The same
+seven-pair policy and exact signatures produce **11.81%** geometric-mean
+throughput improvement across the original corpus:
+
+| Workload | `b07b777` | Current candidate | Speedup |
+| --- | ---: | ---: | ---: |
+| polished | 0.950087 s | 0.889863 s | 1.068× |
+| silent | 0.765052 s | 0.682162 s | 1.122× |
+| dmg | 0.292263 s | 0.292283 s | 1.000× |
+| cpu | 0.435271 s | 0.333929 s | 1.303× |
+| cgb | 0.110019 s | 0.109851 s | 1.002× |
+| wave | 0.188179 s | 0.165436 s | 1.137× |
+| hell | 0.424376 s | 0.345349 s | 1.229× |
+| window (synthetic, excluded from mean) | 0.581986 s | 0.360379 s | 1.615× |
+
+All 112 outputs in this separate comparison and its 16 counter outputs match.
+Compiler, overrides and dependency lockfiles match; results are retained in
+`/tmp/vibe-perf-november/continuation-retained/` and
+`continuation-comparison.log`. This table describes Linux core performance,
+not Windows or console measurements.
+
+A separate deterministic Polished scene probe reaches the player's room,
+closes the menu, then walks right/down/left/up in 90-frame intervals.
+Screenshots confirm movement and scrolling rather than a stationary menu.
+Against `c43704c`, seven pairs with 6,600 setup frames and 3,600 measured
+frames give **2.027193 s → 2.006581 s (1.010×)** with exact video/audio/dot/PC
+signatures. This is one indoor scene, not battles or broad gameplay coverage.
+
+Its temporary harness sends Start for two frames every 120 frames before
+frame 3,000; from 3,000 through 5,999 it sends two-frame Start pulses every
+600 frames and A pulses every 30 frames otherwise. It closes the menu with
+Start at frames 6,000–6,005, releases through 6,119, then cycles directions.
+The shared harness and binary/ROM hashes are retained in
+`/tmp/vibe-perf-november/profile_play.rs` and `play-provenance.json`; screenshots
+are in `play4-screens/`, with results in `play-comparison.log`.
+
+Separate instruction counters subtract a matched 6,600+1-frame process run
+from the 6,600+3,600-frame run, isolating 60.257 emulated seconds of the scene
+(including hashing/draining). The differences are 18,456,857,644 baseline
+and 18,464,862,423 candidate instructions: **0.3064 billion instructions per
+emulated second**, approximately **1.07×** under the same uncalibrated 3DS
+model. This small instruction increase coexists with the host timing gain.
+Both long and prefix counter signatures match; `play-counts.json` records
+the arithmetic. This scene reaches the provisional gate, while raster stress
+and the synthetic window case still do not.
+
+Generate the deterministic synthetic ROM with:
+
+```bash
+python3 scripts/generate_window_benchmark.py target/window-raster.gbc
+```
+
+It initializes tile bytes, enables the window at WX=40/WY=0, and repeatedly
+switches only LCDC.6 while rendering. It is a renderer stress case, not
+representative gameplay. The checked-in generator reproduces the exact ROM
+used above; the ordinary ROM corpus is unchanged.
+
+All 61 focused PPU tests pass with tracing, including 7,680 stationary-capture
+cases, the expanded 43,008-case raster sweep, tuned captures, mode switches,
+mid-line restoration, and existing timing/cache continuation references.
+The MMU differential test now seeds distinct WRAM banks and HRAM bytes too.
+Formatting, strict workspace Clippy, the minimal-feature library/buffer tests,
+and the all-features check pass. The actual candidate also builds an ARMv6K
+core rlib and assembly without default filesystem storage. Both full debug
+and release suites pass 1,591 ordinary tests plus the nested tuning test,
+with 41 existing ignored tests and no failures.
+
+Evidence: `/tmp/vibe-perf-november/ppu-final/`, `ppu-retained/`,
+`ppu-final-comparison.log`, `ppu-final-focused.log`, `ppu-final-minimal.log`,
+`ppu-final-clippy.log`, `arm-ppu-build.log`, `captures-comparison.log`, and
+`window-specialized-*.log`. The memory-dispatch baseline is the unchanged
+`memory-final/run-9uvxz_c1` snapshot, verified against `c43704c`.
 
 ## November 2026: memory dispatch and portable save buffers
 
