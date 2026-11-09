@@ -39,6 +39,10 @@ def main():
     parser.add_argument(
         "--prepare-only", action="store_true", help="snapshot sources and prepare manifests without building"
     )
+    parser.add_argument(
+        "--workload", choices=("core", "polished-room"), default="core",
+        help="shared harness from this checkout (used for both revisions)",
+    )
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     args.output.mkdir(parents=True, exist_ok=True)
@@ -68,7 +72,9 @@ def main():
             ["git", "diff", "HEAD", "--", "Cargo.toml", "Cargo.lock", "crates/vibe-emu-core"], cwd=repo,
         ))
 
-    harness = (repo / "crates/vibe-emu-core/examples/profile_core.rs").read_text()
+    example = "profile_polished_room.rs" if args.workload == "polished-room" else "profile_core.rs"
+    harness = (repo / "crates/vibe-emu-core/examples" / example).read_text()
+    revision += "\nworkload: " + args.workload
     bounded_run = "gb.cpu\n                .run_for_dots(&mut gb.mmu, (target - gb.cpu.cycles).min(4096) as u16);"
     if "pub fn run_for_dots(" not in (core / "src/cpu.rs").read_text():
         if harness.count(bounded_run) != 1:
