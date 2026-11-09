@@ -10,14 +10,35 @@ Full debug/release tests and strict Clippy pass. The old instruction-budget
 model still asks for about **1.28× / 1.35×** additional CPU/raster speedup,
 so the broader target remains unfinished.
 
-An isolated target-build prototype makes only filesystem-backed `state_store`
-and its `tempfile` dependency optional. The default still includes slot-file
-storage; `--no-default-features` retains the complete emulation core and
-buffer-based save-state encoding/decoding. This prototype successfully builds
-an ARMv6K core rlib and assembly using the installed Rust 1.100.0 nightly and
-`-Z build-std=std,panic_abort`. It demonstrates a route around the dependency
-failure below, without patching libc/rustix or changing emulation. It is not
-yet a production feature, a linked console executable, or a runtime test.
+The subsequent [memory-dispatch pass](PERFORMANCE.md#november-2026-memory-dispatch-and-portable-save-buffers)
+improves host geometric-mean throughput another 6.85% against `5850607`, with
+1.126× CPU and 1.112× raster speedups and exact output signatures. CGB acid2
+regresses by 1.92%. Its instruction-budget factors are about **1.10× / 1.28×**;
+raster stress remains outside the provisional planning gate. Both full debug
+and release suites pass 1,591 tests each (including the nested tuning test),
+with no failures and 41 existing ignored tests. Strict Clippy, the
+all-features core check and minimal-feature tests also pass.
+
+The core now makes filesystem-backed `state_store` and its `tempfile`
+dependency optional through the default-enabled `state-store` feature.
+`--no-default-features` retains the complete emulation core and buffer-based
+save-state encoding/decoding. The real working-tree core successfully builds
+an ARMv6K rlib and assembly using the installed Rust 1.100.0 nightly
+(`feaadeeac`, LLVM 23.1.1):
+
+```bash
+cargo +nightly rustc --offline --locked -p vibe-emu-core --lib --release \
+  --no-default-features --target armv6k-nintendo-3ds \
+  -Z build-std=std,panic_abort \
+  --target-dir /tmp/vibe-perf-november/arm-target -- --emit=asm
+```
+
+This bypasses the dependency failure below without patching libc/rustix or
+changing emulation. Minimal-feature continuation tests retain exact audio
+and save-buffer behavior; the normal dependency tree excludes tempfile and
+rustix. No SDK was installed, no console executable was linked, and no
+runtime performance was measured. Default filesystem storage still retains
+the dependency responsible for the older target failure.
 
 Both the `b07b777` CPU and the retained clock-layout CPU were compiled with
 that same prototype configuration. In the emitted ARM `Cpu::step`, textual
@@ -29,10 +50,10 @@ a console speedup. No hardware CPI or ARM/x86 dynamic ratio is inferred.
 Sources, compiler commands and logs are under
 `/tmp/vibe-perf-november/arm-core/`; assembly is preserved as
 `arm-baseline.s` and `arm-layout.s`, with static counts in
-`arm-layout-counts.json`. The normal core's dependency graph is unchanged:
-shipping the optional storage boundary and validating its feature combinations
-remain follow-up work. The October target failure remains relevant to the
-unchanged default configuration.
+`arm-layout-counts.json`. The current production build log is
+`/tmp/vibe-perf-november/arm-current-build.log`; feature checks and dependency
+evidence are recorded alongside the memory-dispatch benchmarks. The October
+target failure remains relevant to the default storage configuration.
 
 ## October 2026 status
 

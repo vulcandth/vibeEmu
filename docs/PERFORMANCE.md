@@ -1,5 +1,7 @@
 # Core performance and the 3DS target
 
+The [November memory-dispatch pass](#november-2026-memory-dispatch-and-portable-save-buffers)
+reduces common CPU memory-access work and restores ARM core builds.
 The [November CPU layout experiment](#november-2026-cpu-clock-code-layout)
 passed full validation. The [October 2026 architectural pass](#october-2026-shared-cpu-deadlines-tile-transactions-and-exact-audio)
 combines CPU clock dispatch, PPU tile transactions and exact settled audio
@@ -18,6 +20,68 @@ The subsequent [implementation pass](#arm-setup-caching-ppu-cartridge-and-apu)
 removes those costs and the square/wave edge divisions from the hot ARM paths.
 The [FIFO/noise pass and branch comparison](#fifo-and-noise-optimizations-branch-comparison-with-main)
 cover the complete performance branch against `main`.
+
+## November 2026: memory dispatch and portable save buffers
+
+Continuation baseline: `5850607`. Ordinary ROM, WRAM, echo RAM and HRAM reads
+now use a small MMU dispatcher. ROM reads share the cartridge's existing
+bank-window mapping and retain its mapping refresh and bus latch. Boot ROM
+and DMA ROM accesses, device reads and memory with peripheral side effects
+retain the previous read path. CPU DMA-conflict handling, bus latches and
+watchpoints are unchanged. There is no new emulation mode or timing shortcut.
+
+The filesystem-backed `state_store` module and its `tempfile` dependency now
+belong to a default-enabled `state-store` feature. Disabling default features
+retains all emulation and buffer save/load APIs while removing `tempfile` and
+`rustix` from the normal dependency graph. Existing desktop callers retain
+their slot-storage API. No dependency versions or save formats changed.
+
+Same Linux i7-4790, Rust 1.98.1, opt-level 3, thin LTO, one codegen unit, pinned
+dependencies and shared profiling harness as the preceding pass. Seven
+alternating pairs per workload, with no concurrent builds or tests. Polished
+uses 1,800/300 measured/warmup frames; other cases use 600/120. Audio is 48 kHz
+except the silent case. The measured core source matches the working tree.
+
+| Workload | Baseline | Candidate | Speedup | Fewer instructions | Remaining 3DS factor |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| polished | 0.927290 s | 0.876698 s | 1.058× | 5.38% | 0.95× |
+| silent | 0.736507 s | 0.671492 s | 1.097× | 6.81% | 0.74× |
+| dmg | 0.299715 s | 0.292826 s | 1.024× | 0.43% | 0.96× |
+| cpu | 0.390306 s | 0.346576 s | 1.126× | 14.15% | 1.10× |
+| cgb | 0.107375 s | 0.109440 s | 0.981× | 0.94% | 0.43× |
+| wave | 0.182771 s | 0.167734 s | 1.090× | 13.77% | 0.62× |
+| hell | 0.408631 s | 0.367420 s | 1.112× | 5.18% | 1.28× |
+
+Geometric-mean throughput improves **6.85%**. CGB acid2 takes 1.92% more time
+despite retiring fewer instructions. All 98 timing outputs and 14 separate
+counter outputs have identical model/dots/video/audio/sample/PC signatures.
+Counters again cover startup, 600/120 frames, hashing and draining. Candidate
+instruction counts are 3,264,342,211 / 2,542,239,859 / 3,319,169,137 /
+3,783,587,990 / 1,472,131,376 / 2,122,257,553 / 4,417,601,599 in table order.
+Do not multiply speedups from separately timed sessions.
+
+The last column retains the uncalibrated 1.5 ARM/x86 instruction ratio,
+1.5 ARM CPI and 80% of one 804 MHz core. CPU stress just reaches the
+provisional 1.1× planning gate; raster stress still needs about 1.28×.
+These host intro/test workloads do not establish representative gameplay or
+console performance. The broader target remains unfinished.
+
+Formatting, strict workspace/all-targets Clippy and the all-features core
+check pass. Full debug and release suites each pass 1,590 ordinary tests plus
+the nested tuning test, with 41 existing ignored tests and no failures.
+The targeted MMU differential check compares every address against the old dispatcher on DMG and CGB,
+with boot overlays and ROM/WRAM DMA, including bus latches, watchpoints and
+serialized side effects. Minimal-feature tests cover mapper/clock/IRQ
+behavior and save-state continuation during DMA, exact stereo output and
+rejection of malformed buffers without mutation. The real core now compiles
+to ARMv6K rlib and assembly with `--no-default-features`; see the
+[target build details](NEW_3DS_RESEARCH.md#november-2026-continuation).
+
+Evidence: `/tmp/vibe-perf-november/memory-baseline/`, `memory-final/`,
+`memory-retained/`, `memory-final-comparison.log`, `minimal-tests.log`,
+`minimal-dependencies.txt`, and `arm-current-build.log`. An earlier five-pair
+exploratory comparison is retained in `memory-comparison.log`; the table
+above is the final rebuilt comparison and supersedes those exploratory medians.
 
 ## November 2026: CPU clock code layout
 
@@ -38,7 +102,7 @@ of CPU stress, raster stress and the Polished intro (1,800/300 frames each):
 - Add forced MMU read inlining to the clock-layout variant:
   1.015× / 1.040× / 1.009×. Not retained.
 
-Only the clock-layout attributes are currently applied. They change compiler
+Only the clock-layout attributes were retained in that pass. They change compiler
 placement, not clock deadlines, bus semantics or rendering algorithms. Seven
 alternating pairs across the usual corpus retain identical model/dots/video/
 audio/sample/PC signatures. Polished uses 1,800/300 frames; other cases use
@@ -69,10 +133,9 @@ with 41 existing ignored tests and no failures. Evidence and isolated source
 diffs are in
 `/tmp/vibe-perf-november/`: `baseline/`, `layout/`, `rom-path/`, `inline-bus/`,
 `retained/`, and `cpu-report.txt` / `hell-report.txt`. Compiler/dependency
-identity and retained source equality were checked before timing. The earlier
-ARM `tempfile`/`rustix` blocker remains unresolved. Next work must go beyond
-compiler placement to reduce device-dispatch or memory-access work, and
-restore target code generation for a current ARM assessment.
+identity and retained source equality were checked before timing. At that revision the ARM `tempfile`/`rustix` blocker was unresolved.
+The subsequent memory-dispatch pass above reduces memory-access work and
+restores target code generation with optional filesystem storage.
 
 ## October 2026: shared CPU deadlines, tile transactions and exact audio
 

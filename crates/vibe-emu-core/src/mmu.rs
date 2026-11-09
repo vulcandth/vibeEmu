@@ -1245,6 +1245,34 @@ impl Mmu {
 
     /// Read a byte from the memory map, subject to DMA blocking and bus-open rules.
     pub fn read_byte(&mut self, addr: u16) -> u8 {
+        // Ordinary memory neither observes peripheral clocks nor changes bus
+        // ownership. Keep it in this small dispatcher; device reads and ROM
+        // overlays/conflicts retain the synchronized path below. WRAM and HRAM
+        // remain readable during DMA (CPU-specific conflicts are handled by Cpu).
+        let value = match addr {
+            0x0000..=0x7fff if !self.boot_mapped && self.dma_cycles == 0 => {
+                self.cart.as_mut().map_or(0xff, |cart| cart.read_rom(addr))
+            }
+            0xc000..=0xcfff | 0xe000..=0xefff => self.wram[0][usize::from(addr & 0xfff)],
+            0xd000..=0xdfff | 0xf000..=0xfdff => {
+                self.wram[self.wram_bank][usize::from(addr & 0xfff)]
+            }
+            0xff80..=0xfffe => {
+                let value = self.hram[usize::from(addr - 0xff80)];
+                self.data_bus = value;
+                self.watchpoints.note_read(self.last_cpu_pc, addr, value);
+                return value;
+            }
+            _ => return self.read_byte_observed(addr),
+        };
+        self.data_bus = value;
+        self.main_bus = value;
+        self.watchpoints.note_read(self.last_cpu_pc, addr, value);
+        value
+    }
+
+    #[inline(never)]
+    fn read_byte_observed(&mut self, addr: u16) -> u8 {
         self.synchronize_ppu_access(addr);
         if (0xff04..=0xff07).contains(&addr) {
             self.synchronize_timer();
@@ -1973,6 +2001,74 @@ impl Default for Mmu {
 mod inspection_tests {
     use super::*;
     use crate::watchpoints::Watchpoint;
+
+    #[test]
+    fn memory_dispatch_preserves_full_bus_reads_and_observation_state() {
+        for model in [Model::default(), Model::Cgb(CgbRevision::RevE)] {
+            for boot in [false, true] {
+                for dma_source in [None, Some(0x0000), Some(0xc000)] {
+                    let make = || {
+                        let mut mmu = Mmu::new(model);
+                        let mut rom = vec![0; 0x20000];
+                        for (i, byte) in rom.iter_mut().enumerate() {
+                            *byte = (i as u8).wrapping_mul(17) ^ (i >> 14) as u8;
+                        }
+                        rom[0x143] = if model.is_cgb() { 0x80 } else { 0 };
+                        rom[0x147] = 3;
+                        rom[0x148] = 2;
+                        rom[0x149] = 3;
+                        mmu.load_cart(Cartridge::from_bytes(rom));
+                        mmu.write_byte(0x0000, 0x0a);
+                        mmu.write_byte(0x2000, 3);
+                        mmu.write_byte(0xff70, 5);
+                        if boot {
+                            mmu.load_boot_rom(vec![0xa5; 0x900]);
+                        }
+                        if let Some(source) = dma_source {
+                            mmu.write_byte(0xff46, (source >> 8) as u8);
+                            mmu.dma_step(24);
+                        }
+                        mmu.last_cpu_pc = Some(0x4567);
+                        mmu.watchpoints.set_watchpoints(vec![Watchpoint {
+                            id: 7,
+                            enabled: true,
+                            range: 0..=u16::MAX,
+                            on_read: true,
+                            on_write: false,
+                            on_execute: false,
+                            on_jump: false,
+                            value_match: None,
+                            message: None,
+                        }]);
+                        mmu
+                    };
+                    let mut fast = make();
+                    let mut reference = make();
+                    for addr in 0..=u16::MAX {
+                        assert_eq!(
+                            fast.read_byte(addr),
+                            reference.read_byte_observed(addr),
+                            "{model:?}, boot={boot}, DMA={dma_source:?}, address={addr:04x}"
+                        );
+                        assert_eq!(
+                            (fast.data_bus, fast.main_bus),
+                            (reference.data_bus, reference.main_bus)
+                        );
+                        assert_eq!(
+                            fast.watchpoints.take_hit(),
+                            reference.watchpoints.take_hit()
+                        );
+                    }
+                    // Include mapper/bus latches and side effects of every I/O
+                    // read, not just the values returned by the dispatchers.
+                    assert!(
+                        serde_json::to_value(&fast).unwrap()
+                            == serde_json::to_value(&reference).unwrap()
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn inspection_preserves_bus_oam_palette_dma_and_watchpoint_state() {

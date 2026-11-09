@@ -52,6 +52,20 @@ aims for cycle-accurate emulation of the CPU, MMU, PPU, and APU.
 - Optional tracing features behind feature flags (`ppu-trace`, `apu-trace`,
   `cpu-trace`)
 
+The default `state-store` Cargo feature provides filesystem-backed save slots
+and recovery through `state_store`. Consumers that supply their own storage
+can use `default-features = false` to omit that module and its `tempfile`
+dependency. `GameBoy::save_state`, `prepare_state`, and `load_state` remain
+available and preserve the complete machine as validated byte buffers. This
+does not change emulation, rendering, audio, or the save-state format, and it
+does not make the core `no_std`.
+
+For example, a target with its own filesystem adapter can depend on:
+
+```toml
+vibe-emu-core = { version = "0.0.2", default-features = false }
+```
+
 Audio output stays connected across software APU power cycles (`NR52`): the
 existing consumer receives silence while powered off and resumes on power-on.
 The mixer distinguishes a disabled DAC (analog silence) from an enabled DAC
