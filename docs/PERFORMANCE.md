@@ -112,7 +112,7 @@ battle, outdoor, sprite-heavy or general gameplay coverage.
 
 ## Accuracy and validation
 
-At the current checkpoint and again after preserving the gameplay harness:
+At core checkpoint `1fab122` and again after preserving the gameplay harness:
 
 - `cargo fmt --all` and strict workspace/all-target Clippy pass.
 - `cargo test` and `cargo test --release` each report **1593 passed, 0 failed,
@@ -124,6 +124,15 @@ At the current checkpoint and again after preserving the gameplay harness:
 - Differential tests compare original dot/scalar paths, complete observable
   timing state, fetch/register boundaries, IRQ/DMA behavior, all audio samples
   and save/restore continuation. See the workflow for test entry points.
+
+Pre-merge CI also exposed an outage of the original boot-fixture server.
+Downloads retain the original host as primary, fall back to a pinned mirror,
+and verify the original published SHA-256
+hashes on both downloaded and cached bytes. All nine mirrored revisions were
+verified, including byte equality with the seven existing local fixtures;
+boot behavior and test expectations are unchanged. Three additional fixture
+regressions check primary preference, verified fallback and corrupt-data
+rejection. Empty-cache BullyGB and model-boot tests pass using the fallback.
 
 Gambatte is separate and was not rerun in this pass. The existing
 [Gambatte review](GAMBATTE_REVIEW.md) and failure inventory remain useful

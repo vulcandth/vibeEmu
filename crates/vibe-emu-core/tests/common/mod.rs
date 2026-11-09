@@ -1,3 +1,5 @@
+mod bootrom_download;
+
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -38,6 +40,10 @@ fn http_client() -> &'static reqwest::blocking::Client {
 }
 
 fn download_bytes(url: &str) -> Vec<u8> {
+    try_download_bytes(url).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn try_download_bytes(url: &str) -> Result<Vec<u8>, String> {
     let mut last_error = String::new();
 
     for attempt in 1..=DOWNLOAD_ATTEMPTS {
@@ -47,7 +53,7 @@ fn download_bytes(url: &str) -> Vec<u8> {
                 let status = resp.status();
                 if status.is_success() {
                     match resp.bytes() {
-                        Ok(bytes) => return bytes.to_vec(),
+                        Ok(bytes) => return Ok(bytes.to_vec()),
                         Err(err) => {
                             last_error = format!("failed to read response body: {err}");
                         }
@@ -67,7 +73,9 @@ fn download_bytes(url: &str) -> Vec<u8> {
         }
     }
 
-    panic!("failed to download {url} after {DOWNLOAD_ATTEMPTS} attempts: {last_error}");
+    Err(format!(
+        "failed to download {url} after {DOWNLOAD_ATTEMPTS} attempts: {last_error}"
+    ))
 }
 
 fn ensure_test_roms() {
@@ -211,13 +219,17 @@ fn ensure_c_sp_test_rom_bundle(dir: &Path) {
 }
 
 fn download_file(url: &str, dest: &Path) {
+    let bytes = download_bytes(url);
+    write_downloaded_bytes(&bytes, dest);
+}
+
+fn write_downloaded_bytes(bytes: &[u8], dest: &Path) {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).expect("failed to create destination directory");
     }
 
-    let bytes = download_bytes(url);
     let tmp = dest.with_extension("tmp");
-    fs::write(&tmp, &bytes).expect("failed to write temporary file");
+    fs::write(&tmp, bytes).expect("failed to write temporary file");
     fs::rename(&tmp, dest).unwrap_or_else(|_| {
         // On Windows rename can fail if the destination already exists.
         let _ = fs::remove_file(dest);
@@ -356,28 +368,82 @@ pub fn bootroms_dir() -> PathBuf {
     dir
 }
 
-fn ensure_bootrom(url: &str, filename: &str) -> PathBuf {
+fn ensure_bootrom(filename: &str) -> PathBuf {
+    // The original gbdev.gg8.se host can be unavailable on clean CI runners.
+    // Pin the mirror revision AND the original published SHA-256 values from
+    // https://gbdev.gg8.se/files/roms/bootroms/readme.txt. These are identical
+    // hardware dumps, not replacement boot ROMs with different startup timing.
+    let (remote_path, expected) = match filename {
+        "dmg_boot.bin" => (
+            "Game%20Boy/GB_dmg.bin",
+            "cf053eccb4ccafff9e67339d4e78e98dce7d1ed59be819d2a1ba2232c6fce1c7",
+        ),
+        "dmg0_boot.bin" => (
+            "Game%20Boy/GB_dmg0.bin",
+            "26e71cf01e301e5dc40e987cd2ecbf6d0276245890ac829db2a25323da86818e",
+        ),
+        "mgb_boot.bin" => (
+            "Game%20Boy/GB_mgb.bin",
+            "a8cb5f4f1f16f2573ed2ecd8daedb9c5d1dd2c30a481f9b179b5d725d95eafe2",
+        ),
+        "sgb_boot.bin" => (
+            "Game%20Boy/GB_sgb.bin",
+            "0e4ddff32fc9d1eeaae812a157dd246459b00c9e14f2f61751f661f32361e360",
+        ),
+        "sgb2_boot.bin" => (
+            "Game%20Boy/GB_sgb2.bin",
+            "fd243c4fb27008986316ce3df29e9cfbcdc0cd52704970555a8bb76edbec3988",
+        ),
+        "cgb_boot.bin" => (
+            "Game%20Boy%20Color/GBC_cgb.bin",
+            "b4f2e416a35eef52cba161b159c7c8523a92594facb924b3ede0d722867c50c7",
+        ),
+        "cgb0_boot.bin" => (
+            "Game%20Boy%20Color/GBC_cgb0.bin",
+            "3a307a41689bee99a9a32ea021bf45136906c86b2e4f06c806738398e4f92e45",
+        ),
+        "cgb_agb0_boot.bin" => (
+            "Game%20Boy%20Color/GBC_agb0.bin",
+            "fe2d45405531756d87622abde6127c804bd675cb968081b2c052497a470ffeb2",
+        ),
+        "cgb_agb_boot.bin" => (
+            "Game%20Boy%20Color/GBC_agb.bin",
+            "fe3cceb79930c4cb6c6f62f742c2562fd4c96b827584ef8ea89d49b387bd6860",
+        ),
+        _ => panic!("unknown boot ROM fixture: {filename}"),
+    };
+    // Several tests can request the same missing boot ROM at once. Keep
+    // verification and atomic cache publication together within this process.
+    static BOOT_ROM_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = BOOT_ROM_LOCK.lock().expect("boot ROM cache lock poisoned");
     let path = bootroms_dir().join(filename);
-    if !path.exists() {
-        download_file(url, &path);
+    let cached = path.exists();
+    let bytes = if cached {
+        fs::read(&path).expect("failed to read cached boot ROM")
+    } else {
+        bootrom_download::download_verified(
+            &format!("https://gbdev.gg8.se/files/roms/bootroms/{filename}"),
+            &format!("https://raw.githubusercontent.com/abdess/retrobios/e4f8bb336a35e2869de4b6039e79cca4deb35643/bios/Nintendo/{remote_path}"),
+            expected,
+            try_download_bytes,
+        ).unwrap_or_else(|error| panic!("failed to fetch {filename}: {error}"))
+    };
+    bootrom_download::verify(&bytes, expected)
+        .unwrap_or_else(|error| panic!("{filename}: {error}"));
+    if !cached {
+        write_downloaded_bytes(&bytes, &path);
     }
     path
 }
 
 #[allow(dead_code)]
 pub fn dmg_boot_rom_path() -> PathBuf {
-    ensure_bootrom(
-        "https://gbdev.gg8.se/files/roms/bootroms/dmg_boot.bin",
-        "dmg_boot.bin",
-    )
+    ensure_bootrom("dmg_boot.bin")
 }
 
 #[allow(dead_code)]
 pub fn cgb_boot_rom_path() -> PathBuf {
-    ensure_bootrom(
-        "https://gbdev.gg8.se/files/roms/bootroms/cgb_boot.bin",
-        "cgb_boot.bin",
-    )
+    ensure_bootrom("cgb_boot.bin")
 }
 
 /// Fetch the boot ROM matching the actual silicon/boot revision.
@@ -395,10 +461,7 @@ pub fn model_boot_rom_path(model: vibe_emu_core::hardware::Model) -> PathBuf {
         Model::Agb0 => "cgb_agb0_boot.bin",
         Model::Agb => "cgb_agb_boot.bin",
     };
-    ensure_bootrom(
-        &format!("https://gbdev.gg8.se/files/roms/bootroms/{filename}"),
-        filename,
-    )
+    ensure_bootrom(filename)
 }
 
 #[allow(dead_code)]

@@ -15,6 +15,12 @@ are evidence caches, not prerequisites for resuming.
    new work, or continue an explicitly assigned branch.
 3. Run the existing accuracy tests before diagnosing a performance regression.
    ROM bundles download on the first integration test run; preserve them.
+   Boot fixtures prefer the original host with an immutable mirror as backup,
+   and verify the original published
+   SHA-256 hashes; cached bytes are checked too. If a download host fails,
+   confirm the source and byte identity before changing URLs. Exercise the
+   affected tests from a backed-up empty fixture cache; a warm local cache
+   can conceal CI download failures. Never substitute different boot code.
    See [BUILD.md](../BUILD.md) for Linux dependencies and other host setup.
 4. Pick one measured bottleneck. Make an isolated experiment, compare it with
    the same baseline, and retain it only after checking accuracy and the full
