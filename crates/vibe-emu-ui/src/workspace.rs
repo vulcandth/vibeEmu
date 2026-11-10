@@ -588,7 +588,7 @@ mod tests {
                     }
                 });
                 let draw = |width, events| {
-                    ctx.run_ui(
+                    let mut output = ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(
                                 egui::Pos2::ZERO,
@@ -604,7 +604,10 @@ mod tests {
                                 });
                             });
                         },
-                    )
+                    );
+                    // These layout tests inspect shapes without a GPU renderer.
+                    output.textures_delta.clear();
+                    output
                 };
                 // Resize the same live context down and back up, with Debug
                 // both present and absent, rather than testing fresh layouts.
@@ -700,7 +703,7 @@ mod tests {
             ctx.global_style_mut(|style| style.animation_time = 0.0);
             let draw = |events| {
                 let mut trigger = egui::Rect::NOTHING;
-                let output = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(
                             egui::Pos2::ZERO,
@@ -721,6 +724,7 @@ mod tests {
                         });
                     },
                 );
+                output.textures_delta.clear();
                 (trigger, output)
             };
             draw(vec![]);
@@ -776,7 +780,7 @@ mod tests {
             let viewport_width = std::cell::Cell::new(width);
             let draw = |events| {
                 let mut rects = [egui::Rect::NOTHING; 6];
-                let _ = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(
                             egui::Pos2::ZERO,
@@ -807,6 +811,7 @@ mod tests {
                         });
                     },
                 );
+                output.textures_delta.clear();
                 rects
             };
             let click = |position| {

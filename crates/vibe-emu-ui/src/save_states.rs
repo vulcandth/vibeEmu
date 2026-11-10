@@ -227,7 +227,7 @@ mod tests {
                 state.message =
                     "A failed import leaves the current machine and Recovery unchanged.".into();
                 state.open = true;
-                let output = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
                         ..Default::default()
@@ -236,11 +236,15 @@ mod tests {
                         assert!(state.draw(ui.ctx(), true).is_none());
                     },
                 );
+                // This layout test has no renderer to upload the font atlas.
+                output.textures_delta.clear();
                 assert!(!output.shapes.is_empty());
                 state.open = false;
-                let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ctx.run_ui(egui::RawInput::default(), |ui| {
                     assert!(state.draw(ui.ctx(), true).is_none());
-                });
+                })
+                .textures_delta
+                .clear();
             }
         }
     }
