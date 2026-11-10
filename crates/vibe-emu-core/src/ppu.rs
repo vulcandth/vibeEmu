@@ -9949,7 +9949,12 @@ mod mode3_timing_tests {
                                 ppu.tuning = tuning;
                                 ppu.set_dmg_compat_mode(compat);
                                 ppu.write_reg(0xff40, 0);
-                                for (sprite, x) in ppu.oam.chunks_exact_mut(4).zip([0, 16, 88, 168])
+                                for (sprite, x) in ppu
+                                    .oam
+                                    .as_chunks_mut::<4>()
+                                    .0
+                                    .iter_mut()
+                                    .zip([0, 16, 88, 168])
                                 {
                                     sprite.copy_from_slice(&[16, x, x, 0]);
                                 }
@@ -10318,7 +10323,8 @@ mod mode3_timing_tests {
                             ppu.write_reg(0xff4a, 0);
                             ppu.write_reg(0xff4b, 79);
                             ppu.write_reg(0xff41, 0x78);
-                            for (i, sprite) in ppu.oam.chunks_exact_mut(4).enumerate() {
+                            for (i, sprite) in ppu.oam.as_chunks_mut::<4>().0.iter_mut().enumerate()
+                            {
                                 sprite.copy_from_slice(&[
                                     16 + (i / 10) as u8 * 8,
                                     [0, 8, 8, 24, 79, 80, 128, 160, 167, 255][i % 10],
@@ -10421,7 +10427,7 @@ mod mode3_timing_tests {
                 ppu.write_reg(0xFF41, 0x78);
                 ppu.write_reg(0xFF45, 2);
                 ppu.write_reg(0xFF4B, 79);
-                for (i, sprite) in ppu.oam.chunks_exact_mut(4).enumerate() {
+                for (i, sprite) in ppu.oam.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                     sprite.copy_from_slice(&[
                         16 + (i / 10) as u8 * 8,
                         [0, 1, 8, 8, 31, 72, 80, 160, 167, 255][i % 10],
@@ -10593,7 +10599,7 @@ mod mode3_timing_tests {
                     if seed % 4 == 0 {
                         // Saturate the ten-OBJ limit while retaining the final
                         // bus/scan state for the remaining invisible selections.
-                        for sprite in ppu.oam.chunks_exact_mut(4) {
+                        for sprite in ppu.oam.as_chunks_mut::<4>().0 {
                             sprite[0] = ppu.ly + 16;
                         }
                     }
@@ -11463,7 +11469,7 @@ mod mode3_timing_tests {
                     ppu.write_reg(0xFF40, 0xF7);
                     ppu.write_reg(0xFF6C, opri);
                     // Include offscreen OBJs and deliberately unsorted X values.
-                    for (i, sprite) in ppu.oam.chunks_exact_mut(4).enumerate() {
+                    for (i, sprite) in ppu.oam.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                         sprite.copy_from_slice(&[
                             16 + (i / 10) as u8 * 8,
                             [167, 0, 8, 80, 16, 255, 1, 80, 160, 32][i % 10],
@@ -11486,7 +11492,7 @@ mod mode3_timing_tests {
                 while dots < 70_224 * 3 {
                     // Stable periods exercise batching; bursts of writes and
                     // DMA overlap exercise its guards, at varying dot phases.
-                    if iteration % 113 == 0 {
+                    if iteration.is_multiple_of(113) {
                         let addr = [0xFF41, 0xFF45, 0xFF43, 0xFF42, 0xFF4A, 0xFF4B, 0xFF40]
                             [(iteration / 113) % 7];
                         let value = if addr == 0xFF40 {
@@ -11497,8 +11503,8 @@ mod mode3_timing_tests {
                         fast.write_reg(addr, value);
                         reference.write_reg(addr, value);
                     }
-                    if model.is_cgb() && iteration % 307 == 0 {
-                        let compatible = (iteration / 307) % 2 == 0;
+                    if model.is_cgb() && iteration.is_multiple_of(307) {
+                        let compatible = (iteration / 307).is_multiple_of(2);
                         fast.set_dmg_compat_mode(compatible);
                         reference.set_dmg_compat_mode(compatible);
                     }
@@ -11515,7 +11521,7 @@ mod mode3_timing_tests {
                         fast.oam[index] = iteration as u8;
                         reference.oam[index] = iteration as u8;
                     }
-                    let m_dots = if iteration % 2 == 0 { 2 } else { 4 };
+                    let m_dots = if iteration.is_multiple_of(2) { 2 } else { 4 };
                     let cycles = if idle_batch {
                         (fast.idle_dots().min(512) / m_dots * m_dots).max(m_dots)
                     } else {

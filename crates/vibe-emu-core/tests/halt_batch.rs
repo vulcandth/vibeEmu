@@ -122,7 +122,7 @@ fn halt_batches_preserve_wakeup_dma_serial_and_frame_boundaries() {
                             break;
                         }
                     }
-                    if iteration % 113 == 0 {
+                    if iteration.is_multiple_of(113) {
                         assert_eq!(actual.mmu.ppu.framebuffer(), expected.mmu.ppu.framebuffer());
                         assert_eq!(
                             actual.capture_boot_handoff_snapshot(),
@@ -286,7 +286,7 @@ fn bounded_runner_preserves_ppu_accesses_dma_and_interrupts() {
                 for (i, byte) in gb.mmu.ppu.vram.iter_mut().flatten().enumerate() {
                     *byte = (i as u8).wrapping_mul(37).wrapping_add((i >> 8) as u8);
                 }
-                for (i, sprite) in gb.mmu.ppu.oam.chunks_exact_mut(4).enumerate() {
+                for (i, sprite) in gb.mmu.ppu.oam.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                     sprite.copy_from_slice(&[
                         16 + (i as u8 % 18) * 8,
                         (i as u8).wrapping_mul(17),

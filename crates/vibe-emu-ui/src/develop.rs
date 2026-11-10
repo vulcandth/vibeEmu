@@ -199,7 +199,7 @@ impl VibeEmuApp {
                         .current_rom_path
                         .as_ref()
                         .and(self.debugger_snapshot.clone());
-                    egui::CentralPanel::default().show_inside(ui, |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
                         let mut viewer = Viewer {
                             app: self,
                             snapshot: snapshot.as_ref(),

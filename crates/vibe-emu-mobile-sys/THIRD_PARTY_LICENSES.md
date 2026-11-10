@@ -869,8 +869,8 @@ Public License instead of this License.  But first, please read
 ### Apache License 2.0
 
 Used by:
-- [cc 1.2.58](https://github.com/rust-lang/cc-rs)
-- [find-msvc-tools 0.1.9](https://github.com/rust-lang/cc-rs)
+- [cc 1.11.1](https://github.com/rust-lang/cc-rs)
+- [find-msvc-tools 0.1.15](https://github.com/rust-lang/cc-rs)
 
 ```text
                               Apache License
@@ -1081,7 +1081,7 @@ limitations under the License.
 ### Apache License 2.0
 
 Used by:
-- [shlex 1.3.0](https://github.com/comex/rust-shlex)
+- [shlex 2.0.1](https://github.com/comex/rust-shlex)
 
 ```text
 Apache License

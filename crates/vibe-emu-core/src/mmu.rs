@@ -829,7 +829,7 @@ impl Mmu {
     // Both checksums and all header bytes matter, not just the global checksum.
     fn apply_sgb_header_boot(&mut self, rom: &[u8]) {
         let mut packets = [0u8; 96];
-        for (n, packet) in packets.chunks_exact_mut(16).enumerate() {
+        for (n, packet) in packets.as_chunks_mut::<16>().0.iter_mut().enumerate() {
             packet[0] = 0xf1 + 2 * n as u8;
             for i in 0..14 {
                 let addr = 0x104 + n * 14 + i;
@@ -843,7 +843,7 @@ impl Mmu {
         // Fixed setup takes 270848 dots through LCD enable. Time below is
         // relative to that instruction's completion (LCD is already six dots in).
         let mut dots = 20u32;
-        for (n, packet) in packets.chunks_exact(16).enumerate() {
+        for (n, packet) in packets.as_chunks::<16>().0.iter().enumerate() {
             let zero_bits: u32 = packet.iter().map(|b| b.count_zeros()).sum();
             dots += 10340 + 4 * zero_bits;
             for frame in 0..4 {
@@ -1758,7 +1758,7 @@ impl Mmu {
         let next = ((640 - self.dma_cycles).div_ceil(4) as usize).min(159);
         let incoming = self.dma_read_byte(self.dma_source.wrapping_add(next as u16));
         let word = next & !1;
-        let enabled = self.ppu.oam.chunks_exact(4).any(|row| {
+        let enabled = self.ppu.oam.as_chunks::<4>().0.iter().any(|row| {
             (0x98..=0x9f).contains(&row[0])
                 && row[1] <= 0xa7
                 && (9..=0x9f).contains(&row[2])
@@ -1838,7 +1838,7 @@ impl Mmu {
             let elapsed = initial - self.dma_cycles;
             let current_dest = ((elapsed / per_byte) + 1).min(0xA1) as u8;
             self.ppu.oam_dma_current_dest = current_dest;
-            if elapsed % per_byte == 0 {
+            if elapsed.is_multiple_of(per_byte) {
                 let idx: u16 = elapsed / per_byte;
                 if idx < 0xA0 {
                     // Clear `last_cpu_pc` to avoid attributing DMA-originated reads
