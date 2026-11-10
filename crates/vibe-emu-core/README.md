@@ -37,6 +37,7 @@
 `vibe-emu-core` is the platform-agnostic Game Boy and Game Boy Color emulation
 library at the heart of [vibeEmu](https://github.com/vulcandth/vibeEmu). It
 aims for cycle-accurate emulation of the CPU, MMU, PPU, and APU.
+The core requires Rust 1.88 or newer.
 
 ## Features
 

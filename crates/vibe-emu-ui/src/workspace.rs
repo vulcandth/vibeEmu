@@ -598,7 +598,7 @@ mod tests {
                             ..Default::default()
                         },
                         |ui| {
-                            egui::Panel::top("menus").show_inside(ui, |ui| {
+                            egui::Panel::top("menus").show(ui, |ui| {
                                 main_menu_bar(ui, show_debug, |ui, menu| {
                                     let _ = ui.button(format!("{} commands", menu.title()));
                                 });

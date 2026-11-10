@@ -211,7 +211,7 @@ impl Sgb {
         match value {
             0x30 => self.pulse = true,
             0 if self.pulse => {
-                if self.bit % 128 != 0 || self.bit == 0 || self.stop {
+                if !self.bit.is_multiple_of(128) || self.bit == 0 || self.stop {
                     self.command.fill(0);
                     self.bit = 0;
                     self.stop = false;
@@ -243,7 +243,7 @@ impl Sgb {
                         self.command[self.bit / 8] |= 1 << (self.bit % 8);
                     }
                     self.bit += 1;
-                    self.stop = self.bit % 128 == 0;
+                    self.stop = self.bit.is_multiple_of(128);
                 }
             }
             _ => {}
@@ -265,7 +265,7 @@ impl Sgb {
                 }
             }
             4 => {
-                for block in c[2..len].chunks_exact(6).take(usize::from(c[1])) {
+                for block in c[2..len].as_chunks::<6>().0.iter().take(usize::from(c[1])) {
                     let control = block[0] & 7;
                     let inside = block[1] & 3;
                     let outside = (block[1] >> 4) & 3;
@@ -554,7 +554,7 @@ mod tests {
     use super::*;
 
     fn send(sgb: &mut Sgb, command: &[u8]) {
-        for packet in command.chunks_exact(16) {
+        for packet in command.as_chunks::<16>().0 {
             sgb.write_joyp(0);
             sgb.write_joyp(0x30);
             for byte in packet {

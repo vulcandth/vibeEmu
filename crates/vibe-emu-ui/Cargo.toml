@@ -2,6 +2,7 @@
 name = "vibe-emu-ui"
 version = "0.0.1"
 edition = "2024"
+rust-version = "1.95"
 authors = ["vulcandth <vulcandth@gmail.com>"]
 description = "Desktop UI for the vibeEmu Game Boy emulator"
 repository = "https://github.com/vulcandth/vibeEmu"
@@ -19,7 +20,7 @@ vibe-emu-frontend = { path = "../vibe-emu-frontend" }
 vibe-emu-core.workspace = true
 vibe-emu-mobile = { path = "../vibe-emu-mobile" }
 clap = { version = "4.6.0", features = ["derive"] }
-eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow", "wgpu", "wayland", "x11"] }
+eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "wgpu", "wayland", "x11"] }
 egui_dock = "0.21"
 serde_json = "1"
 winit = { version = "0.30.13", default-features = false, features = ["x11", "wayland"] }
@@ -37,16 +38,16 @@ gilrs = "0.11"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 wgpu = { version = "30", default-features = false, features = ["vulkan", "gles"] }
-rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
+rfd = { version = "0.18.0", default-features = false, features = ["gtk3"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
-rfd = { version = "0.17.2" }
+rfd = { version = "0.18.0" }
 
 [target.'cfg(windows)'.dependencies]
-wgpu = { version = "29", default-features = false, features = ["dx12", "vulkan"] }
+wgpu = { version = "30", default-features = false, features = ["dx12", "vulkan"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-wgpu = { version = "29", default-features = false, features = ["metal"] }
+wgpu = { version = "30", default-features = false, features = ["metal"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

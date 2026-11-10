@@ -6,7 +6,9 @@ This document provides detailed build instructions for vibeEmu on Windows, Linux
 
 ### All Platforms
 
-- **Rust toolchain**: Install the latest stable Rust toolchain from [rustup.rs](https://rustup.rs/)
+- **Rust toolchain**: Install the latest stable Rust toolchain from [rustup.rs](https://rustup.rs/).
+  The desktop dependency stack requires Rust 1.95 or newer; the standalone core
+  requires Rust 1.88 or newer.
 - **Git**: For cloning the repository
 
 ### Windows
@@ -310,6 +312,11 @@ Then commit updated files under `gfx/` before running release workflows.
 
 ## Dependency updates and license report
 
+Keep `eframe`, `egui_dock`, and every platform-specific `wgpu` dependency on
+compatible releases. Currently `egui_dock` 0.21 requires egui 0.36, so the
+desktop uses `eframe` 0.36.2 and `wgpu` 30. Upgrade to egui 0.37 only when
+a compatible docking release is available.
+
 After updating dependency manifests, run `cargo update` and validate with
 `cargo deny --locked check`. The audit includes test dependencies used to
 fetch and unpack ROMs.
@@ -320,6 +327,18 @@ same version locally and commit the regenerated report with dependency updates:
 ```bash
 cargo install cargo-about --version 0.8.4 --locked
 cargo about generate --locked --config about.toml about.hbs -o THIRD_PARTY_LICENSES.md
+```
+
+Also regenerate the reports shipped with individual crates, using each crate's
+own template and configuration (run from the repository root):
+
+```bash
+for crate in vibe-emu-core vibe-emu-ui vibe-emu-mobile vibe-emu-mobile-sys; do
+    cargo about generate --locked \
+        --manifest-path "crates/$crate/Cargo.toml" \
+        --config "crates/$crate/about.toml" \
+        "crates/$crate/about.hbs" -o "crates/$crate/THIRD_PARTY_LICENSES.md"
+done
 ```
 
 Keep the explicit license-file clarifications in `about.toml` when updating

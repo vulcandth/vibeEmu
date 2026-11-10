@@ -445,11 +445,11 @@ impl Serial {
         if self.master_clock {
             return;
         }
-        if let Some(state) = self.transfer.as_mut() {
-            if state.shift(&mut self.sb) {
-                let outgoing = state.outgoing;
-                self.finish_transfer(outgoing, if_reg);
-            }
+        if let Some(state) = self.transfer.as_mut()
+            && state.shift(&mut self.sb)
+        {
+            let outgoing = state.outgoing;
+            self.finish_transfer(outgoing, if_reg);
         }
     }
 

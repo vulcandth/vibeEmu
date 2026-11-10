@@ -2566,7 +2566,7 @@ impl VibeEmuApp {
             i.raw
                 .dropped_files
                 .iter()
-                .filter_map(|file| file.path.clone())
+                .map(|file| file.path().to_path_buf())
                 .collect()
         });
 
@@ -2619,14 +2619,14 @@ impl eframe::App for VibeEmuApp {
         let ctx = ui.ctx().clone();
         self.draw_save_states(&ctx);
 
-        egui::Panel::top("menu_bar").show_inside(ui, |ui| {
+        egui::Panel::top("menu_bar").show(ui, |ui| {
             self.draw_menu_bar(ui);
         });
 
         if self.ui_config.preferences.show_status {
             egui::Panel::bottom("status_bar")
                 .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(4.0))
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     let total_width = ui.available_width();
 
                     ui.horizontal(|ui| {
@@ -2691,7 +2691,7 @@ impl eframe::App for VibeEmuApp {
         }
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 if self.ui_config.preferences.workspace == Workspace::Develop {
                     self.draw_develop_workspace(ui);
                     return;
@@ -2819,7 +2819,7 @@ impl VibeEmuApp {
                         });
                     }
                     _ => {
-                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
                             self.draw_about_content(ui);
                         });
                     }
@@ -2914,7 +2914,7 @@ impl VibeEmuApp {
                         });
                     }
                     _ => {
-                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
                             self.draw_legal_content(ui, document);
                         });
                     }
@@ -2968,7 +2968,7 @@ impl VibeEmuApp {
                     }
                     _ => {
                         let ctx = ui.ctx().clone();
-                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
                             self.draw_options_content(ui, &ctx);
                         });
                     }
@@ -3000,7 +3000,7 @@ impl VibeEmuApp {
                         });
                     }
                     _ => {
-                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
                             self.draw_debugger_content(ui);
                         });
                     }
@@ -3578,7 +3578,7 @@ impl VibeEmuApp {
                         });
                     }
                     _ => {
-                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
                             self.draw_watchpoints_content(ui);
                         });
                     }
@@ -3831,7 +3831,7 @@ impl VibeEmuApp {
                     }
                     _ => {
                         let ctx = ui.ctx().clone();
-                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
                             self.draw_vram_viewer_content(ui, &ctx, ppu_snapshot.as_ref());
                         });
                     }
